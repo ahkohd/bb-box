@@ -3,6 +3,7 @@
 // into the document. Each backend's are with its driver under src/backends/.
 
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
+import { PRODUCT } from "../brand.ts";
 
 export type { GeneralConfig } from "./document.ts";
 
@@ -24,7 +25,7 @@ export const GENERAL_SETTINGS = {
     experimental_multiline: true,
     label: "Box sizes",
     description:
-      "Changes to each kind's presets as JSON. Leave empty for bb-box's own: small, medium and large are 2, 4 and 8 cores with 4, 8 and 16 GiB " +
+      `Changes to each kind's presets as JSON. Leave empty for ${PRODUCT}'s own: small, medium and large are 2, 4 and 8 cores with 4, 8 and 16 GiB ` +
       "for linux, and twice that for the desktops; the default is small, and the largest custom size is twice large with " +
       'a 256 GiB disk. For example {"linux": {"default": "medium", "large": {"cores": 12, "memoryMiB": 24576}, "largest": {"diskGiB": 512}}}.',
   },

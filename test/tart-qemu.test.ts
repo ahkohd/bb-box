@@ -17,7 +17,7 @@ import { FAKE_DISK_GIB, FAKE_MAC, FAKE_WINDOWS_IMAGE, WINDOWS_TOOLS, addImage, a
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 
 const MAC = FAKE_MAC;
-/** Where the fake ssh runs what bb-box sends a Windows VM, which it reaches at 127.0.0.1 through the Mac. */
+/** Where the fake ssh runs what BB Box sends a Windows VM, which it reaches at 127.0.0.1 through the Mac. */
 const GUEST = "127.0.0.1";
 const KIND = "windows-arm64-desktop";
 const SMALL: MachineSize = { cores: 4, memoryMiB: 8192, diskGiB: null };
@@ -74,7 +74,7 @@ function setup(values: Record<string, unknown> = {}, options: TartBackendOptions
   );
   const config = tartConfig({ "tart-windows-image": FAKE_WINDOWS_IMAGE, "tart-reserve-disk-gib": 0, ...values });
   /** A backend on the Mac: another install's, or this one's after a restart. */
-  // How often the backend said a kind changed by itself, so bb-box gives its boxes the change.
+  // How often the backend said a kind changed by itself, so BB Box gives its boxes the change.
   const kindsChanged = { count: 0 };
   const make = (installId = "test", counts = warm) => {
     const context = { ...testContext(new MemoryStorage(), installId, { warm: counts }), kindsChanged: () => void kindsChanged.count++ };
@@ -342,7 +342,7 @@ test("Windows on a Mac offers video by choice while every Mac's image records Op
   const before = kindsChanged.count;
   await backend.capacity(KIND, SMALL, [], signal());
   assert.deepEqual(kind().capabilities.displays[1], { id: "video", protocol: "selkies", resizable: true, cursor: "stream" }, "it opens as video (#865)");
-  // So a box made before, as just after bb-box restarted while the Mac's video was not ready, gets it too.
+  // So a box made before, as just after BB Box restarted while the Mac's video was not ready, gets it too.
   assert.equal(kindsChanged.count, before + 1, "the backend says the kind changed");
   await backend.capacity(KIND, SMALL, [], signal());
   assert.equal(kindsChanged.count, before + 1, "and only when it does");
@@ -790,7 +790,7 @@ test("the doctor checks QEMU, the Hypervisor framework, the firmware and the Win
   writeFileSync(join(build, "image.json"), imageRecord(KIND, { built: new Date(Date.now() - 61 * day).toISOString(), tools: WINDOWS_TOOLS }));
   assert.equal(
     check(`image.mac1.${KIND}`)?.fix,
-    "Build it again on mac1 with setup/tart/prepare-windows-image.sh --iso <ISO> --iso-sha256 <its SHA-256> --key '<bb-box's public key>' --name bb-box-windows --replace.",
+    "Build it again on mac1 with setup/tart/prepare-windows-image.sh --iso <ISO> --iso-sha256 <its SHA-256> --key '<BB Box's public key>' --name bb-box-windows --replace.",
   );
   writeFileSync(join(build, "image.json"), imageRecord(KIND, { contract: 0 }));
   report = await backend.doctor(signal());

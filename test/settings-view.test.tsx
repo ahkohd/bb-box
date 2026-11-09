@@ -61,7 +61,7 @@ test("status is never more certain than the checks: ready within the hour, passe
   expect(statusLine(state([{ id: "a", checkedAgo: 60_000 }, { id: "b", checkedAgo: 120_000 }]), NOW, 0)).toMatchObject({ headline: "All 2 backends ready", checkFirst: false, tone: "ok" });
   const old = statusLine(state([{ id: "a", checkedAgo: 4 * 60_000 }, { id: "b", checkedAgo: 6 * HOUR }]), NOW, 0);
   expect(old.headline).toBe("All 2 backends passed their last check");
-  expect(old.details).toContain("checked between 4 minutes ago and 6 hours ago");
+  expect(old.details).toContain("checked between 4 min ago and 6 h ago");
   expect(old.checkFirst).toBe(true);
   expect(statusLine(state([{ id: "a", checkedAgo: 6 * HOUR }]), NOW, 0).headline).toBe("Fake a passed its last check");
   expect(statusLine(state([{ id: "a", checkedAgo: null }]), NOW, 0)).toMatchObject({ headline: "Fake a is not checked yet", checkFirst: true });

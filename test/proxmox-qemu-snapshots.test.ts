@@ -126,10 +126,10 @@ test("the plan checks every disk's storage: an EFI disk on raw files refuses the
   state.proxmox.guests.get(vmid)!.config.efidisk0 = `files:${vmid}/vm-${vmid}-disk-9.raw,efitype=4m,size=4M`;
   const plan = await state.backend.planSnapshots(guest, "linux", null);
   assert.equal(plan.take.ok, false);
-  assert.equal(plan.take.why, `Guest ${vmid}'s efidisk0 is on files, and files (directory, raw files) takes no snapshots, so bb-box takes no snapshot of it.`);
+  assert.equal(plan.take.why, `Guest ${vmid}'s efidisk0 is on files, and files (directory, raw files) takes no snapshots, so BB Box takes no snapshot of it.`);
 });
 
-test("a memory snapshot is planned on the storage Proxmox saves it to, at twice the VM's memory and 500 MiB, or refused where bb-box cannot tell", async () => {
+test("a memory snapshot is planned on the storage Proxmox saves it to, at twice the VM's memory and 500 MiB, or refused where BB Box cannot tell", async () => {
   const state = world();
   const { guest, vmid } = await linuxBox(state);
   const memoryMiB = Number(state.proxmox.guests.get(vmid)!.config.memory);
@@ -146,7 +146,7 @@ test("a memory snapshot is planned on the storage Proxmox saves it to, at twice 
   state.proxmox.guests.get(vmid)!.config.scsi1 = `second:vm-${vmid}-disk-5,size=8G`;
   const ambiguous = await state.backend.planSnapshots(guest, "linux", null);
   assert.equal(ambiguous.take.memory, null);
-  assert.equal(ambiguous.take.memoryWhy, "Proxmox would save its memory on one of local-lvm, second, and bb-box cannot tell which. Set vmstatestorage on the VM, or take one without memory.");
+  assert.equal(ambiguous.take.memoryWhy, "Proxmox would save its memory on one of local-lvm, second, and BB Box cannot tell which. Set vmstatestorage on the VM, or take one without memory.");
   assert.equal(ambiguous.take.ok, true, "a disk take is still planned");
   addStorage(state.proxmox, "ceph", "rbd", { shared: 1 });
   state.proxmox.guests.get(vmid)!.config.scsi2 = `ceph:vm-${vmid}-disk-6,size=8G`;
@@ -154,7 +154,7 @@ test("a memory snapshot is planned on the storage Proxmox saves it to, at twice 
   assert.equal(shared.take.memory?.storage.name, "ceph", "shared storage first, as Proxmox chooses");
   assert.equal(shared.take.memory?.storage.key, "proxmox:shared:ceph");
   state.proxmox.storageConfigs.delete("ceph");
-  assert.match((await state.backend.planSnapshots(guest, "linux", null)).take.memoryWhy ?? "", /^bb-box cannot read the settings of ceph, where one of its disks is/);
+  assert.match((await state.backend.planSnapshots(guest, "linux", null)).take.memoryWhy ?? "", /^BB Box cannot read the settings of ceph, where one of its disks is/);
 });
 
 test("a stopped VM's take is refused in words about the box, and its storage key is the pool's, as the container backend's is", async () => {

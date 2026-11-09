@@ -1,5 +1,6 @@
 import type { BbPluginApi, PluginAgentToolResult, PluginInteractionCancelReason } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { PRODUCT } from "../brand.ts";
 import { BoxError, describeError, describeErrorForAgent, errorForAgent, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
 import { countsAgainstLimit, snapshotLine, type Caller, type Standing } from "../core/snapshot.ts";
 import { YesNeeded, type RestoreAnswer } from "../core/snapshots.ts";
@@ -11,7 +12,7 @@ import { agentErrorText, boxParam, failure, ready, runsOnBox, thread, using, wit
 import { boxDetail, startingWords } from "./views.ts";
 import { forkedFromWords, isAcquiring, isMachineName } from "../core/boxes.ts";
 
-const FORK_NAME_RULE = 'a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-".';
+const FORK_NAME_RULE = 'a lower-case letter first, then letters, digits and "-", up to 32 characters, not ending in "-".';
 import { next } from "./views.ts";
 
 const QUIET_WAIT_MS = 60_000;
@@ -55,7 +56,7 @@ function boxSnapshotsText(app: BbBox, threadId: string, box: BoxRecord, standing
 }
 
 function takenNote(answer: { readonly evicted?: { readonly name: string } | null; readonly evictionRefused?: string | null }, perBox: number): string {
-  if (answer.evicted) return `\nThe box was at its limit of ${perBox}, so bb-box deleted the oldest snapshot an agent of this thread took and nobody kept: "${answer.evicted.name}".`;
+  if (answer.evicted) return `\nThe box was at its limit of ${perBox}, so ${PRODUCT} deleted the oldest snapshot an agent of this thread took and nobody kept: "${answer.evicted.name}".`;
   if (answer.evictionRefused) return `\n${answer.evictionRefused}`;
   return "";
 }
@@ -74,10 +75,10 @@ function cancelledText(reason: PluginInteractionCancelReason, box: string): Plug
     "thread-stopped": "the thread was stopped",
     "thread-deleted": "the thread was deleted",
     "server-restarted": "BB's server restarted",
-    "plugin-disposed": "bb-box stopped, as for an update",
+    "plugin-disposed": `${PRODUCT} stopped, as for an update`,
     "request-aborted": "the request was cancelled",
   };
-  const text = `bb-box did not restore box ${box}: ${why[reason]}. Nothing changed.${next("Carry on with the box as it is, or ask again with box_restore if the person wants it.")}`;
+  const text = `${PRODUCT} did not restore box ${box}: ${why[reason]}. Nothing changed.${next("Carry on with the box as it is, or ask again with box_restore if the person wants it.")}`;
   return reason === "user" || reason === "timeout" ? text : { content: [{ type: "text", text }], isError: true };
 }
 
@@ -194,7 +195,7 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
         if (snapshot === undefined) {
           await app.snapshots.checkForkOfBox(caller, box, standing, input);
           const answer = await app.snapshots.take(caller, box, standing, { name: "for a fork" });
-          if (!answer.snapshot) throw new BoxError("failed", `bb-box took no snapshot of box ${box.name} to fork.`);
+          if (!answer.snapshot) throw new BoxError("failed", `${PRODUCT} took no snapshot of box ${box.name} to fork.`);
           taken = { id: answer.snapshot.id, words: `${takenText(answer, box.name, app.snapshots.settings.perBox)}${takenNote(answer, app.snapshots.settings.perBox)}\n` };
         }
         let answer;
@@ -203,13 +204,13 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
         } catch (error) {
           if (!taken) throw error;
           const removed = await app.snapshots.delete(caller, standing, taken.id).then(
-            () => `bb-box deleted the snapshot "for a fork" it took for this, as the fork was refused.`,
-            (cause: unknown) => `bb-box could not delete the snapshot "for a fork" it took for this: ${describeError(cause, "Deleting it")} Delete it with box_snapshot_delete.`,
+            () => `${PRODUCT} deleted the snapshot "for a fork" it took for this, as the fork was refused.`,
+            (cause: unknown) => `${PRODUCT} could not delete the snapshot "for a fork" it took for this: ${describeError(cause, "Deleting it")} Delete it with box_snapshot_delete.`,
           );
           throw new BoxError(error instanceof BoxError ? error.code : "failed", `${describeError(error, "Forking the box")}\n${taken.words}${removed}`, `${describeErrorForAgent(error, "Forking the box")}\n${taken.words}${removed}`);
         }
         const made = answer.box;
-        if (!made) throw new BoxError("not_found", "bb-box has no record of the fork's box any more.");
+        if (!made) throw new BoxError("not_found", `${PRODUCT} has no record of the fork's box any more.`);
         const origin = made.fork ? `\n${forkedFromWords(made.fork)}` : "";
         const settled = await ready(app, made, signal);
         const before = taken?.words ?? "";
@@ -230,7 +231,7 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
   registerTool({
     name: "box_restore",
     description:
-      "Restore a box to one of its snapshots when an attempt went wrong, rather than undoing it by hand. Everything on its disk since then goes, and the box restarts, so every process in it ends. bb-box always takes an undo first, a snapshot of the box once stopped. While Settings turn agents' restores off, this opens a form for a yes given in the thread and answers at once: then end your turn. A box this thread or another runs on, or one of the person's machines, is restored only through such a form, and only where bb-box allows it; this says so when it does not.",
+      `Restore a box to one of its snapshots when an attempt went wrong, rather than undoing it by hand. Everything on its disk since then goes, and the box restarts, so every process in it ends. ${PRODUCT} always takes an undo first, a snapshot of the box once stopped. While Settings turn agents' restores off, this opens a form for a yes given in the thread and answers at once: then end your turn. A box this thread or another runs on, or one of the person's machines, is restored only through such a form, and only where ${PRODUCT} allows it; this says so when it does not.`,
     presentation: { label: { pending: "Restoring a box", completed: "Restored a box" } },
     parameters: z.object({
       box: boxParam,
@@ -243,7 +244,7 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
         const id = thread(threadId);
         if (replace !== true) {
           return {
-            content: [{ type: "text", text: `A restore replaces the box's disk with the snapshot's: everything on it since goes, and every process in it ends. bb-box changed nothing.${next("Call box_restore with replace true if you mean it.")}` }],
+            content: [{ type: "text", text: `A restore replaces the box's disk with the snapshot's: everything on it since goes, and every process in it ends. ${PRODUCT} changed nothing.${next("Call box_restore with replace true if you mean it.")}` }],
             isError: true,
           };
         }
@@ -275,7 +276,7 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
             if (result.outcome === "cancelled") return cancelledText(result.reason, box.name);
             if (!isRestoreYes(result.value, payload.plan)) {
               return {
-                content: [{ type: "text", text: `bb-box did not restore box ${box.name}: the form's answer was not a yes to this restore. Nothing changed.${next("Ask again with box_restore if the person wants it.")}` }],
+                content: [{ type: "text", text: `${PRODUCT} did not restore box ${box.name}: the form's answer was not a yes to this restore. Nothing changed.${next("Ask again with box_restore if the person wants it.")}` }],
                 isError: true,
               };
             }
@@ -295,7 +296,7 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
               release();
             }
           }
-          throw new BoxError("in_use", `What restoring box ${box.name} would do kept changing, so bb-box asked ${ASKS_AGAIN_AT_MOST} times and restored nothing.`);
+          throw new BoxError("in_use", `What restoring box ${box.name} would do kept changing, so ${PRODUCT} asked ${ASKS_AGAIN_AT_MOST} times and restored nothing.`);
         }
       } catch (error) {
         return snapshotFailure(error, "Restoring the box");

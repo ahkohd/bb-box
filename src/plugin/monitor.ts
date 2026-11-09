@@ -12,6 +12,7 @@ import type { Machine, MonitorSnapshot, MonitorStatus, SlotReading } from "../mo
 import { assessHealth } from "../monitor/health.ts";
 import type { MonitorConfig } from "../core/document.ts";
 import type { DoctorCheck } from "../backends/types.ts";
+import { PRODUCT } from "../brand.ts";
 
 export const MONITOR_OFF_WORDS = "The Monitor is off. Turn it on under Monitor in BB Box's settings.";
 export const SERVER_MACHINE = "server";
@@ -58,15 +59,15 @@ export interface LightSampler {
 }
 
 export function unreadableWords(name: string): string {
-  return `bb-box cannot read box ${name}: it is not a BB machine and runs no shell bb-box can read.`;
+  return `${PRODUCT} cannot read box ${name}: it is not a BB machine and runs no shell ${PRODUCT} can read.`;
 }
 
 export function offlineMachineWords(name: string): string {
-  return `bb-box cannot read box ${name} now: its BB machine is not answering BB, and it runs no shell bb-box can read without it.`;
+  return `${PRODUCT} cannot read box ${name} now: its BB machine is not answering BB, and it runs no shell ${PRODUCT} can read without it.`;
 }
 
 export function stillJoiningWords(name: string): string {
-  return `bb-box cannot read box ${name} now: it is still joining BB, and it runs no shell bb-box can read without it.`;
+  return `${PRODUCT} cannot read box ${name} now: it is still joining BB, and it runs no shell ${PRODUCT} can read without it.`;
 }
 
 export function unreadReason(name: string, enrol: { readonly state: string; readonly hostId: string | null }): string {

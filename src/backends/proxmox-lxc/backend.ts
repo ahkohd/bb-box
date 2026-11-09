@@ -221,6 +221,7 @@ import {
 } from "./config.ts";
 import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 import { storedKeyPair } from "../ssh-key.ts";
+import { PRODUCT } from "../../brand.ts";
 
 const WARM = "warm";
 const FILLING = "filling";
@@ -414,8 +415,8 @@ function powerOf(status: string): PowerState {
 /** A linux-desktop box got no GPU, and no other GPU can take it. */
 function noGpu(failed: ReadonlyMap<string, string>, why: string, server = false, agentWhy = why): BackendError {
   const reasons = [...failed].map(([gpu, reason]) => `GPU ${gpu}: ${reason}`).join("; ");
-  if (server) return new BackendError("no_capacity", `The box did not get its card, so bb-box released it (${reasons}). ${why} Try again later, or ask for gpu none.`, `The box did not get its card, so bb-box released it (${reasons}). ${agentWhy} Try again later, or ask for gpu none.`);
-  const words = (said: string) => `The desktop started without a GPU, so bb-box released it (${reasons}). ${said} Try again later, or use a linux-desktop-cpu box, whose desktop runs without a GPU.`;
+  if (server) return new BackendError("no_capacity", `The box did not get its card, so ${PRODUCT} released it (${reasons}). ${why} Try again later, or ask for gpu none.`, `The box did not get its card, so ${PRODUCT} released it (${reasons}). ${agentWhy} Try again later, or ask for gpu none.`);
+  const words = (said: string) => `The desktop started without a GPU, so ${PRODUCT} released it (${reasons}). ${said} Try again later, or use a linux-desktop-cpu box, whose desktop runs without a GPU.`;
   return new BackendError("no_capacity", words(why), words(agentWhy));
 }
 
@@ -794,7 +795,7 @@ function powerBox(config: Record<string, unknown>, helper: string): string | nul
 
 
 const POWER_REFUSALS: Readonly<Record<string, string>> = {
-  "not-the-box": "the guest at that VMID is not the box bb-box asked for",
+  "not-the-box": `the guest at that VMID is not the box ${PRODUCT} asked for`,
   generation: "its GPU marker changed meanwhile",
   withdrawn: "the request was gone when the helper read the guest under its lock",
   "no-claim": "the helper holds no granted claim for its GPU marker",
@@ -811,7 +812,7 @@ const POWER_REFUSALS: Readonly<Record<string, string>> = {
   running: "it is running",
   template: "it is a template",
   "not-served": "its pool is not one the helper serves",
-  "not-bb-box": "its description names no bb-box install",
+  "not-bb-box": `its description names no ${PRODUCT} install`,
   failed: "Proxmox's own call failed",
 };
 
@@ -821,15 +822,15 @@ function powerWords(answer: HelperPower): string {
 }
 
 function blockedWords(view: Extract<CardsView, { is: "blocked" }>): string {
-  return `bb-box cannot claim a card for a GPU desktop now. ${view.why}${view.fix ? ` ${view.fix}` : ""}`;
+  return `${PRODUCT} cannot claim a card for a GPU desktop now. ${view.why}${view.fix ? ` ${view.fix}` : ""}`;
 }
 
 function blockedRefusal(view: Extract<CardsView, { is: "blocked" }>, instead: string): Refusal {
-  return { person: blockedWords(view), agent: `bb-box cannot claim a card for a GPU box now. ${view.why} ${instead}` };
+  return { person: blockedWords(view), agent: `${PRODUCT} cannot claim a card for a GPU box now. ${view.why} ${instead}` };
 }
 
 function untestedRefusal(node: string, words: string): Refusal {
-  return { person: words, agent: `Not made: the GPU helper on ${node} gives no box a card on the node's pve-container. Ask for gpu none, or ask the user. bb-box changed nothing.` };
+  return { person: words, agent: `Not made: the GPU helper on ${node} gives no box a card on the node's pve-container. Ask for gpu none, or ask the user. ${PRODUCT} changed nothing.` };
 }
 
 function notAnsweredForAgent(node: string, answer: MarkAnswer): string {
@@ -1181,7 +1182,7 @@ export class ProxmoxLxcBackend implements Backend {
     return { macs, smbios: null };
   }
 
-  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the copy a restore needs. Try again later, or ask the user to make room for the copy.`)): Promise<number> {
+  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so ${PRODUCT} has none for the copy a restore needs. Try again later, or ask the user to make room for the copy.`)): Promise<number> {
     if (this.#nextVmid === null) {
       const stored = await this.#context.storage.get<number>(NEXT_VMID);
       this.#nextVmid ??= typeof stored === "number" && this.#inRange(stored) ? stored : this.#config.vmids.first;
@@ -1217,7 +1218,7 @@ export class ProxmoxLxcBackend implements Backend {
     const api = await this.client();
     const from = this.#vmid(source);
     const config = await this.#ownConfig(api, source, signal);
-    if ((await api.status(from, signal))?.status === "running") throw new SnapshotFailed(`Guest ${from} is running, and bb-box copies a guest only once it has stopped.`);
+    if ((await api.status(from, signal))?.status === "running") throw new SnapshotFailed(`Guest ${from} is running, and ${PRODUCT} copies a guest only once it has stopped.`);
     const template = typeof source.data?.template === "number" ? source.data.template : null;
     const vmid = await this.#claimFree(api, signal);
     try {
@@ -1242,7 +1243,7 @@ export class ProxmoxLxcBackend implements Backend {
     const from = this.#vmid(ref.guest);
     const config = await this.#ownOrCopyConfig(api, ref.guest, signal);
     const template = typeof ref.guest.data?.template === "number" ? ref.guest.data.template : null;
-    const vmid = await this.#claimFree(api, signal, (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the held copy. Try again later, or ask the user to make room for the copy.`));
+    const vmid = await this.#claimFree(api, signal, (range) => new SnapshotFailed(`Every VMID ${range} is in use, so ${PRODUCT} has none for the held copy. Try again later, or ask the user to make room for the copy.`));
     try {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
@@ -1259,7 +1260,7 @@ export class ProxmoxLxcBackend implements Backend {
     const config = await this.#copyConfig(api, copy, signal);
     if (!config) throw gone(vmid);
     const madeFor = `bb-box install ${this.#context.installId} box ${label.box} held copy of snapshot ${label.snapshot}`;
-    if (!String(config.description ?? "").startsWith(madeFor)) throw new SnapshotFailed(`Guest ${vmid} is not the copy bb-box made of snapshot ${label.snapshot}, so bb-box does not label it as one.`);
+    if (!String(config.description ?? "").startsWith(madeFor)) throw new SnapshotFailed(`Guest ${vmid} is not the copy ${PRODUCT} made of snapshot ${label.snapshot}, so ${PRODUCT} does not label it as one.`);
     const template = typeof copy.data?.template === "number" ? copy.data.template : null;
     const owner = copyOwner(this.#context.installId, this.#boxData(copy));
     await disarm(this.#writesFor(api, owner), vmid, signal);
@@ -1337,7 +1338,7 @@ export class ProxmoxLxcBackend implements Backend {
     const tags = parseTags(config.tags);
     const box = typeof copy.data?.box === "string" ? copy.data.box : "";
     const described = typeof config.description === "string" && config.description.startsWith(`bb-box install ${this.#context.installId} box ${box} held copy of snapshot `);
-    if (!isHeldCopy(tags) && !isEarlierGuest(tags) && !described) throw new SnapshotFailed(`Guest ${copy.ref} is not a held copy or an earlier guest of box ${box}, so bb-box does not delete it as one.`);
+    if (!isHeldCopy(tags) && !isEarlierGuest(tags) && !described) throw new SnapshotFailed(`Guest ${copy.ref} is not a held copy or an earlier guest of box ${box}, so ${PRODUCT} does not delete it as one.`);
     await this.#forget(this.#vmid(copy));
     await this.#owned(api).destroy(this.#vmid(copy), copyOwner(this.#context.installId, this.#boxData(copy)), signal);
   }
@@ -1346,7 +1347,7 @@ export class ProxmoxLxcBackend implements Backend {
     const api = await this.client();
     const from = this.#vmid(copy);
     const config = await this.#copyConfig(api, copy, signal);
-    if (!config || !isTemplate(config)) throw new SnapshotFailed(`Guest ${from} is not a held copy of box ${box.name} that bb-box can use.`);
+    if (!config || !isTemplate(config)) throw new SnapshotFailed(`Guest ${from} is not a held copy of box ${box.name} that ${PRODUCT} can use.`);
     const template = typeof copy.data?.template === "number" ? copy.data.template : null;
     const vmid = await this.#claimFree(api, signal);
     try {
@@ -1431,7 +1432,7 @@ export class ProxmoxLxcBackend implements Backend {
     const card = held.part === "none" ? null : (cards.find((each) => each.uuid === held.card) ?? null);
     const wanted = held.part === "none" ? [] : card ? linesFor(card, deviceSetOf(parseTags(config.tags), typeof config.description === "string" ? config.description : "")) : null;
     const named = held.part === "none" ? "no card" : card ? cardName(card) : `card ${held.card}`;
-    if (!wanted) throw new SnapshotFailed(`The host's GPU helper on ${api.node} lists no device nodes for ${named}, so bb-box cannot check CT ${vmid}'s lines against its claim.`);
+    if (!wanted) throw new SnapshotFailed(`The host's GPU helper on ${api.node} lists no device nodes for ${named}, so ${PRODUCT} cannot check CT ${vmid}'s lines against its claim.`);
     const { lacks, extra } = linesDiffer(gpuDeviceLines(config), wanted);
     if (!lacks.length && !extra.length) return;
     const wrong = [...(lacks.length ? [`it lacks ${lacks.join(", ")}`] : []), ...(extra.length ? [`it has ${extra.join(", ")}`] : [])].join(", and ");
@@ -1510,7 +1511,7 @@ export class ProxmoxLxcBackend implements Backend {
     const pin: CardPin = { part: held.part, card: held.card, node: key, reservation: null };
     const reservation = await underCardLock(key, async () => {
       const fresh = await this.#cardsView(api, signal);
-      if (fresh.is !== "on") throw new BackendError("no_capacity", fresh.is === "blocked" ? blockedWords(fresh) : `The GPU helper's report on ${api.node} went while bb-box held box ${box}'s card.`);
+      if (fresh.is !== "on") throw new BackendError("no_capacity", fresh.is === "blocked" ? blockedWords(fresh) : `The GPU helper's report on ${api.node} went while ${PRODUCT} held box ${box}'s card.`);
       const refused = await this.#noRoomOn(api, fresh, pin, vmid, signal);
       if (refused) throw refusedWith("no_capacity", refused);
       return reservationsOn(key).add(held.card!, held.part, DESKTOP_GPU_MIB, box, null);
@@ -1536,7 +1537,7 @@ export class ProxmoxLxcBackend implements Backend {
   async #noRoomOn(api: Proxmox, view: Extract<CardsView, { is: "on" }>, pin: CardPin, vmid: number, signal?: AbortSignal): Promise<Refusal | null> {
     const card = view.lines.cards.find((each) => each.uuid === pin.card);
     if (!card) {
-      const gone = `The GPU helper on ${api.node} no longer lists card ${pin.card}, which the box holds. A restore keeps a box on its card, so bb-box does not move it to another one.`;
+      const gone = `The GPU helper on ${api.node} no longer lists card ${pin.card}, which the box holds. A restore keeps a box on its card, so ${PRODUCT} does not move it to another one.`;
       return { person: gone, agent: `${gone} Ask the user.` };
     }
     const reservations = reservationsOn(this.#cardKey(api));
@@ -1559,7 +1560,7 @@ export class ProxmoxLxcBackend implements Backend {
     const named = cardName(card);
     const namer = await this.#namer(await api.listPool(this.#config.proxmox.pool, signal), view.lines, placed.reasons, false);
     const full = (audience: typeof PERSON | { readonly to: "agent"; readonly threadId: string | null }) =>
-      `${named.charAt(0).toUpperCase()}${named.slice(1)}, which the box holds, cannot take it now: ${placed.reasons.map((reason) => blockWords(reason, namer, audience)).join("; ")}. A restore keeps a box on its card, so bb-box does not move it to another one.`;
+      `${named.charAt(0).toUpperCase()}${named.slice(1)}, which the box holds, cannot take it now: ${placed.reasons.map((reason) => blockWords(reason, namer, audience)).join("; ")}. A restore keeps a box on its card, so ${PRODUCT} does not move it to another one.`;
     return { person: `${full(PERSON)} Release another desktop box on ${named}, or try again later.`, agent: `${full({ to: "agent", threadId: null })} Try again later, or ask the user.` };
   }
 
@@ -1618,7 +1619,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (seen) return { driver: seen, refused: null };
     return {
       driver: null,
-      refused: { why: `bb-box cannot tell the NVIDIA driver on ${api.node}: it has no GPU helper, and no running box of this install there showed the driver.`, fix: `Set up the helper with host/setup-gpu.sh, as root on ${api.node}, or start a box there.` },
+      refused: { why: `${PRODUCT} cannot tell the NVIDIA driver on ${api.node}: it has no GPU helper, and no running box of this install there showed the driver.`, fix: `Set up the helper with host/setup-gpu.sh, as root on ${api.node}, or start a box there.` },
     };
   }
 
@@ -1644,7 +1645,7 @@ export class ProxmoxLxcBackend implements Backend {
   async placeForkGpu(box: BoxIdentity, gpu: GpuPart, signal?: AbortSignal): Promise<void> {
     this.clearForkGpu(box.boxId);
     const desktop = currentKindId(box.kind) === "linux-desktop";
-    if (gpu !== "none" && !desktop) throw new BackendError("unsupported", `A fork of a ${box.kind} box takes gpu none. Fork it with gpu none. bb-box copied nothing.`);
+    if (gpu !== "none" && !desktop) throw new BackendError("unsupported", `A fork of a ${box.kind} box takes gpu none. Fork it with gpu none. ${PRODUCT} copied nothing.`);
     if (gpu === "whole" && !this.#wholeOn()) throw new BackendError("unsupported", wholeCardsOffForFork(this).person, wholeCardsOffForFork(this).agent);
     if (gpu === "none") {
       if (desktop) this.#forkGpu.set(box.boxId, { part: "none", card: null, reservation: null, node: "" });
@@ -1652,7 +1653,7 @@ export class ProxmoxLxcBackend implements Backend {
     }
     const api = await this.client();
     const offer = this.#offers().find((candidate) => candidate.flavour === "desktop");
-    if (!offer) throw new BackendError("unsupported", `Not forked: ${api.node} has no GPU desktop to place a fork on. Fork it with gpu none. bb-box copied nothing.`);
+    if (!offer) throw new BackendError("unsupported", `Not forked: ${api.node} has no GPU desktop to place a fork on. Fork it with gpu none. ${PRODUCT} copied nothing.`);
     try {
       const placed = await this.#placeNew(api, offer, makingOf(box), new Set(), new Set(), signal, cardPartOf(gpu));
       this.#forkGpu.set(box.boxId, { part: placed.part, card: placed.card.uuid, reservation: placed.reservation, node: this.#cardKey(api) });
@@ -1680,7 +1681,7 @@ export class ProxmoxLxcBackend implements Backend {
         ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
         sourceConfig: (api, guest, signal) => this.#ownOrCopyConfig(api, guest, signal),
         rootDisk: () => "rootfs",
-        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Not forked: every VMID ${range} is in use, so bb-box has none for the fork. Try again later, or ask the user. bb-box copied nothing.`)),
+        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Not forked: every VMID ${range} is in use, so ${PRODUCT} has none for the fork. Try again later, or ask the user. ${PRODUCT} copied nothing.`)),
         unreserve: (vmid) => this.#reserved.delete(vmid),
         forget: (vmid) => this.#forget(vmid),
         guest: (node, vmid, template, boxId, build) => this.#guest(node, vmid, template, boxId, null, null, build, null),
@@ -1843,8 +1844,8 @@ export class ProxmoxLxcBackend implements Backend {
         `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, ` +
           `so ${box}${grown ? `, which needs ${formatMiB(need)} more,` : ""} does not fit. ` +
           (grown || memoryFree > reserve.memoryMiB
-            ? "Release a box, ask for less memory, or lower the memory kept free in bb-box's settings."
-            : "Release a box, or lower the memory kept free in bb-box's settings."),
+            ? `Release a box, ask for less memory, or lower the memory kept free in ${PRODUCT}'s settings.`
+            : `Release a box, or lower the memory kept free in ${PRODUCT}'s settings.`),
       ];
     };
     // What any box of the size needs, new or warm.
@@ -1859,7 +1860,7 @@ export class ProxmoxLxcBackend implements Backend {
         grow * 1024 > diskFree
           ? `${storageFree}, less than the ${Math.ceil(grow)} GiB a ${size!.diskGiB} GiB disk adds to the template's. Ask for a smaller disk or release boxes.`
           : `${storageFree} and keeps ${reserve.diskGiB} GiB free, so a ${size!.diskGiB} GiB disk, ${Math.ceil(grow)} GiB more than the template's, does not fit. ` +
-            "Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings.",
+            `Ask for a smaller disk, release boxes, or lower the disk kept free in ${PRODUCT}'s settings.`,
       );
     }
     // What only a new guest needs.
@@ -1867,11 +1868,11 @@ export class ProxmoxLxcBackend implements Backend {
     if (diskFree < reserve.diskGiB * 1024) {
       fresh.push(
         `The ${storage} storage on ${api.node} has ${Math.floor(diskFree / 1024)} GiB free, less than the ${reserve.diskGiB} GiB kept free. ` +
-          `Release boxes, free some space, or lower the disk kept free in bb-box's settings.`,
+          `Release boxes, free some space, or lower the disk kept free in ${PRODUCT}'s settings.`,
       );
     }
     if (this.#freeVmid(guests) === null) {
-      fresh.push(`Every VMID from ${first} to ${last} is in use. Release a box, or widen the VMID range in bb-box's settings.`);
+      fresh.push(`Every VMID from ${first} to ${last} is in use. Release a box, or widen the VMID range in ${PRODUCT}'s settings.`);
     }
     if (choice.gpus) limits.push({ resource: "gpu-desktops", used: choice.gpus.used, total: choice.gpus.total, reserve: 0, unit: "count" });
     if (choice.problem) fresh.push(choice.problem);
@@ -1940,7 +1941,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (!templates.some((template) => template.gpu !== null)) {
       return refusedChoice(least(templates), {
         person: `The desktop templates on ${node} carry no card's device lines, and ${node} has no GPU helper to give a desktop its card. Set up the helper with host/setup-gpu.sh, as root on ${node}, or ask for gpu none.`,
-        agent: `Not made: ${node} has no GPU helper to give a desktop its card. Ask for gpu none, or ask the user. bb-box changed nothing.`,
+        agent: `Not made: ${node} has no GPU helper to give a desktop its card. Ask for gpu none, or ask the user. ${PRODUCT} changed nothing.`,
       });
     }
 
@@ -1959,11 +1960,11 @@ export class ProxmoxLxcBackend implements Backend {
     const cpu = this.#offers().some((other) => other.flavour === "desktop-cpu");
     const gpus = { used, total: perGpu * desktops.size };
     if (free > unplaced) return { template, gpus, problem: null };
-    const full = `Every GPU on ${node} runs ${perGpu} desktop ${perGpu === 1 ? "box" : "boxes"}, the most bb-box's settings allow.`;
+    const full = `Every GPU on ${node} runs ${perGpu} desktop ${perGpu === 1 ? "box" : "boxes"}, the most ${PRODUCT}'s settings allow.`;
     return {
       ...refusedChoice(template, {
         person: `${full} ${cpu ? "Use a linux-desktop-cpu box, or release a desktop box." : "Release a desktop box, or raise the desktops per GPU."}`,
-        agent: `Not made: ${full} ${cpu ? "Ask for linux-desktop-cpu, or ask the user." : "Ask the user."} bb-box changed nothing.`,
+        agent: `Not made: ${full} ${cpu ? "Ask for linux-desktop-cpu, or ask the user." : "Ask the user."} ${PRODUCT} changed nothing.`,
       }),
       gpus,
     };
@@ -2115,9 +2116,9 @@ export class ProxmoxLxcBackend implements Backend {
             const view = await this.#cardsView(api, signal);
             if (gpuPart === "whole") await this.#wholeOnTheNode(api, view, signal);
             if (view.is === "blocked") throw refusedWith("no_capacity", blockedRefusal(view, "Ask for gpu none, or ask the user."));
-            if (view.is === "on") placed = await step("place", () => this.#placeImageDesktop(api, id, "The guest bb-box had made for this desktop", making, refusedCards, new Set(failed.keys()), signal, cardPart));
+            if (view.is === "on") placed = await step("place", () => this.#placeImageDesktop(api, id, `The guest ${PRODUCT} had made for this desktop`, making, refusedCards, new Set(failed.keys()), signal, cardPart));
           } else if (kept === "strip") {
-            noCardLines = await this.#noCardFrom(api, id, "The guest bb-box had made for this desktop", await this.#cardsView(api, signal), signal);
+            noCardLines = await this.#noCardFrom(api, id, `The guest ${PRODUCT} had made for this desktop`, await this.#cardsView(api, signal), signal);
           }
           if (placed) placed.reservation.vmid = id;
         }
@@ -2141,7 +2142,7 @@ export class ProxmoxLxcBackend implements Backend {
           if (asked && !placed) {
             const answer = await step("gpu", () => this.#askHelper(api, id, asked, signal));
             if (answer.is !== "granted") {
-              const refusedWords = `The host's GPU helper on ${api.node} did not give box ${box.name} gpu none, ${answer.is === "refused" ? `as ${answer.why}` : "in time"}, so the card's device lines its image carries stay. bb-box released the guest it had made.`;
+              const refusedWords = `The host's GPU helper on ${api.node} did not give box ${box.name} gpu none, ${answer.is === "refused" ? `as ${answer.why}` : "in time"}, so the card's device lines its image carries stay. ${PRODUCT} released the guest it had made.`;
               throw new BackendError("no_capacity", `${refusedWords} Try again, or run bb box doctor.`, `${refusedWords} Try again later, or ask the user.`);
             }
           }
@@ -2163,7 +2164,7 @@ export class ProxmoxLxcBackend implements Backend {
                 this.#context.logError("acquire", new Error(`The GPU helper on ${api.node} refused ${cardName(card)} for box ${box.name}, as ${answer.why}, so bb-box released its guest and places it once more, on another card.`));
                 continue;
               }
-              const refusedWords = `The host's GPU helper on ${api.node} refused ${cardName(card)} for box ${box.name}, as ${"why" in answer ? answer.why : "it gave no answer"}${refusedCards.size ? ", after it had refused another card" : ""}. bb-box released the guest it had made; nothing else changed.`;
+              const refusedWords = `The host's GPU helper on ${api.node} refused ${cardName(card)} for box ${box.name}, as ${"why" in answer ? answer.why : "it gave no answer"}${refusedCards.size ? ", after it had refused another card" : ""}. ${PRODUCT} released the guest it had made; nothing else changed.`;
               throw new BackendError(
                 "no_capacity",
                 answer.is === "refused" ? `${refusedWords} Try again, or run bb box doctor.` : notAnsweredWords(api.node, answer),
@@ -2176,7 +2177,7 @@ export class ProxmoxLxcBackend implements Backend {
         if (!placed && withCard) {
           if ((await api.status(id, signal))?.status === "running") cardClaim = await step("gpu", () => this.#markedClaim(api, id, signal));
           else {
-            const gate = await step("gpu", () => this.#gateStart(api, id, ours, signal, (why) => `bb-box did not start the guest it had made for box ${box.name}, and releases it: ${why}`));
+            const gate = await step("gpu", () => this.#gateStart(api, id, ours, signal, (why) => `${PRODUCT} did not start the guest it had made for box ${box.name}, and releases it: ${why}`));
             gated = gate.reservation;
             cardClaim = gate.claim;
             heldGpu = gate.gpu;
@@ -2329,7 +2330,7 @@ export class ProxmoxLxcBackend implements Backend {
       const wrong = !checked.ok && wrongCardSeen(checked, claimedCard);
       if (startedHere && wrong && server && pin && !checked.ok) {
         await this.#stopAndLetGo(api, vmid, owner, gate.reservation, "stop a restored box that did not get its card", signal);
-        throw leftStopped(await this.#cardFact(api, held!.part, claimedCard, null, null, signal), checked.why, "A restore starts a box only on the card it holds, so bb-box did not move it.");
+        throw leftStopped(await this.#cardFact(api, held!.part, claimedCard, null, null, signal), checked.why, `A restore starts a box only on the card it holds, so ${PRODUCT} did not move it.`);
       }
       if (startedHere && wrong && server && !checked.ok) {
         const moved = await this.#startOnAnotherCard(api, vmid, owner, gate, checked.why, readyMs, step, signal);
@@ -2378,7 +2379,7 @@ export class ProxmoxLxcBackend implements Backend {
       reservations.dropStopped(vmid);
     });
     const moved = await step("gpu", () => this.#gateStart(api, vmid, owner, signal, (refused) => refused, new Set([card]))).catch((error: unknown) => {
-      throw left(`bb-box could not place it on another card: ${message(error)}`, `bb-box could not place it on another card: ${agentMessageOf(error) ?? message(error)}`);
+      throw left(`${PRODUCT} could not place it on another card: ${message(error)}`, `${PRODUCT} could not place it on another card: ${agentMessageOf(error) ?? message(error)}`);
     });
     if (!moved.claim?.card || moved.claim.card === card) {
       reservations.drop(moved.reservation);
@@ -2395,7 +2396,7 @@ export class ProxmoxLxcBackend implements Backend {
     const checked = await step("card", () => this.#readCard(api, vmid, moved.claim!.card!, signal));
     if (checked.ok || !wrongCardSeen(checked, moved.claim!.card!)) return { gate: moved, checked };
     await this.#stopAndLetGo(api, vmid, owner, moved.reservation, "stop a box that did not get its card", signal);
-    throw left(`bb-box moved it to another card, and it did not get that one either: ${checked.why}.`);
+    throw left(`${PRODUCT} moved it to another card, and it did not get that one either: ${checked.why}.`);
   }
 
   async #stopAndLetGo(api: Proxmox, vmid: number, owner: GuestOwner, reservation: Reservation | null, doing: string, signal?: AbortSignal): Promise<void> {
@@ -2450,7 +2451,7 @@ export class ProxmoxLxcBackend implements Backend {
     const api = await this.client();
     const config = await this.#ownConfig(api, guest, signal);
     const from = sizeOf(config);
-    if (!from) throw new Error(`Container ${this.#vmid(guest)} does not say its cores and memory, so bb-box cannot resize it.`);
+    if (!from) throw new Error(`Container ${this.#vmid(guest)} does not say its cores and memory, so ${PRODUCT} cannot resize it.`);
     if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
       throw new BackendError("unsupported", `A container's disk only grows, and this one's is ${from.diskGiB} GiB.`);
     }
@@ -2483,7 +2484,7 @@ export class ProxmoxLxcBackend implements Backend {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const from = sizeOf(await this.#ownConfig(api, guest, signal));
-    if (!from) throw new Error(`Container ${vmid} does not say its cores and memory, so bb-box cannot resize it.`);
+    if (!from) throw new Error(`Container ${vmid} does not say its cores and memory, so ${PRODUCT} cannot resize it.`);
     if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
       throw new BackendError("unsupported", `A container's disk only grows, and this one's is ${from.diskGiB} GiB.`);
     }
@@ -2708,7 +2709,7 @@ export class ProxmoxLxcBackend implements Backend {
     const from = sizeOf(config);
     if (!from) {
       reservations.drop(reservation);
-      throw new Error(`Container ${facts.vmid} does not say its cores and memory, so bb-box cannot resize it.`);
+      throw new Error(`Container ${facts.vmid} does not say its cores and memory, so ${PRODUCT} cannot resize it.`);
     }
     if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
       reservations.drop(reservation);
@@ -2719,7 +2720,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (change.changedSinceAgreed) throw new GpuPlanChanged(change.changedSinceAgreed.person, change.changedSinceAgreed.agent, change);
     if (change.way === "restart" && !options.restart) {
       reservations.drop(reservation);
-      throw new BackendError("unsupported", `${change.words} It needs a restart, which the resize was not allowed. bb-box changed nothing.`, `Not resized: ${change.words} Call box_resize with restart true to do that, or ask the user. bb-box changed nothing.`);
+      throw new BackendError("unsupported", `${change.words} It needs a restart, which the resize was not allowed. ${PRODUCT} changed nothing.`, `Not resized: ${change.words} Call box_resize with restart true to do that, or ask the user. ${PRODUCT} changed nothing.`);
     }
     if (view.is !== "on" || decided.is === "refused" || decided.is === "blocked") throw new BackendError("no_capacity", change.words);
     try {
@@ -2748,8 +2749,8 @@ export class ProxmoxLxcBackend implements Backend {
     if (!options.installUserspace) {
       throw new BackendError(
         "unsupported",
-        `${capitalise(facts.box.name)} has no NVIDIA userspace for the host's driver ${driver}, which a card needs, and this resize cannot install it. bb-box changed nothing.`,
-        `Not resized: ${facts.box.name} has no NVIDIA userspace for the host's driver ${driver}, which a card needs. Ask the user. bb-box changed nothing.`,
+        `${capitalise(facts.box.name)} has no NVIDIA userspace for the host's driver ${driver}, which a card needs, and this resize cannot install it. ${PRODUCT} changed nothing.`,
+        `Not resized: ${facts.box.name} has no NVIDIA userspace for the host's driver ${driver}, which a card needs. Ask the user. ${PRODUCT} changed nothing.`,
       );
     }
     await options.installUserspace(driver, signal);
@@ -2803,7 +2804,7 @@ export class ProxmoxLxcBackend implements Backend {
         said = `The GPU helper on ${api.node} did not grant CT ${vmid} its claim back as ${markerTag(back)}: ${"why" in answer ? answer.why : "no answer"}.`;
       } catch (error) {
         again = !signal.aborted;
-        said = `bb-box could not ask for CT ${vmid}'s claim back: ${message(error)}`;
+        said = `${PRODUCT} could not ask for CT ${vmid}'s claim back: ${message(error)}`;
       }
       if (!again || tried >= PUT_BACK_TRIES) {
         this.#context.logError("resize: ask for the GPU claim back", new Error(said));
@@ -2829,7 +2830,7 @@ export class ProxmoxLxcBackend implements Backend {
       return { person: said, agent: said };
     }
     const said = message(error).replace(/\.$/, "");
-    return { person: `bb-box could not ask for its new GPU, as ${said}`, agent: `bb-box could not ask for its new GPU, as ${agentMessageOf(error)?.replace(/\.$/, "") ?? said}` };
+    return { person: `${PRODUCT} could not ask for its new GPU, as ${said}`, agent: `${PRODUCT} could not ask for its new GPU, as ${agentMessageOf(error)?.replace(/\.$/, "") ?? said}` };
   }
 
   async #heldNow(api: Proxmox, vmid: number, signal: AbortSignal): Promise<HeldNow> {
@@ -2870,7 +2871,7 @@ export class ProxmoxLxcBackend implements Backend {
     const markerStands = held.marker !== null && (held.marker.part !== (had?.part ?? "none") || held.marker.card !== (had?.card ?? null));
     const name = facts.box.name;
     const holding = !held.known
-      ? `bb-box cannot tell yet whether the host's GPU helper on ${api.node} grants its request ${held.marker ? markerTag(held.marker) : "for a card"}: until it answers, ${name} holds ${held.claim?.answer === "asked" ? `${before}, or ${asksNow} once it is granted` : before}, and ${stopped ? "its start" : "its next start"} waits for the answer.`
+      ? `${PRODUCT} cannot tell yet whether the host's GPU helper on ${api.node} grants its request ${held.marker ? markerTag(held.marker) : "for a card"}: until it answers, ${name} holds ${held.claim?.answer === "asked" ? `${before}, or ${asksNow} once it is granted` : before}, and ${stopped ? "its start" : "its next start"} waits for the answer.`
       : held.claim?.answer === "refused"
         ? `Its marker still asks for ${asksNow}, which the host's GPU helper refused, and the helper holds no claim for it, so its next start places it on a card with room for that, or does not start it.`
         : same
@@ -3039,7 +3040,7 @@ export class ProxmoxLxcBackend implements Backend {
         memory > memoryFree
           ? `${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(memory)} more the box needs. Release a box or ask for less memory.`
           : `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so the ${formatMiB(memory)} more the box needs does not fit. ` +
-              "Release a box, ask for less memory, or lower the memory kept free in bb-box's settings.",
+              `Release a box, ask for less memory, or lower the memory kept free in ${PRODUCT}'s settings.`,
       );
     }
     const grow = to.diskGiB !== null ? Math.max(0, to.diskGiB - (from.diskGiB ?? to.diskGiB)) : 0;
@@ -3052,7 +3053,7 @@ export class ProxmoxLxcBackend implements Backend {
         problems.push(
           grow * 1024 > diskFree
             ? `${storageFree}, less than the ${grow} GiB more the disk needs. Ask for a smaller disk or release boxes.`
-            : `${storageFree} and keeps ${reserve.diskGiB} GiB free, so ${grow} GiB more disk does not fit. Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings.`,
+            : `${storageFree} and keeps ${reserve.diskGiB} GiB free, so ${grow} GiB more disk does not fit. Ask for a smaller disk, release boxes, or lower the disk kept free in ${PRODUCT}'s settings.`,
         );
       }
     }
@@ -3207,7 +3208,7 @@ export class ProxmoxLxcBackend implements Backend {
         API,
         message(error),
         unauthorised
-          ? "Check the API token ID and secret in bb-box's settings."
+          ? `Check the API token ID and secret in ${PRODUCT}'s settings.`
           : "Check the API URL, and that BB's server can reach it. Set the TLS fingerprint from the setup guide's token file, or the CA certificate if a private CA signed the API's certificate.",
       );
       skip(...later);
@@ -3219,7 +3220,7 @@ export class ProxmoxLxcBackend implements Backend {
         api = await this.client();
         pass(NODE, `Boxes run on ${api.node}.`);
       } catch (error) {
-        fail(NODE, message(error), "Set the node in bb-box's settings to one the API lists.");
+        fail(NODE, message(error), `Set the node in ${PRODUCT}'s settings to one the API lists.`);
         skip(...later.slice(1));
       }
     }
@@ -3311,7 +3312,7 @@ export class ProxmoxLxcBackend implements Backend {
             name,
             missing ? `CT ${template} does not exist on ${node}, or is not in pool ${pool}.` : message(error),
             missing
-              ? `Build it with the setup guide's template/build.sh, or remove it from the ${FLAVOUR_NAMES[listed.flavour]} templates in bb-box's settings.`
+              ? `Build it with the setup guide's template/build.sh, or remove it from the ${FLAVOUR_NAMES[listed.flavour]} templates in ${PRODUCT}'s settings.`
               : audit(error, `Give the token VM.Audit and VM.Clone on /vms/${template}.`),
           );
         }
@@ -3362,18 +3363,18 @@ export class ProxmoxLxcBackend implements Backend {
               name: GPU_REPORT[1],
               status: "skipped",
               detail:
-                `The token can read no VM named ${GPU_REPORT_VM} on ${node}, so bb-box reads GPU memory in desktops: ` +
+                `The token can read no VM named ${GPU_REPORT_VM} on ${node}, so ${PRODUCT} reads GPU memory in desktops: ` +
                 `a GPU that other work frees shows as free once a desktop reads it. ${setup} to have the host report it within seconds.`,
               fix: null,
             });
           } else if (!report) warn(GPU_REPORT, `VM ${vm.vmid} (${GPU_REPORT_VM}) has no report in its notes yet.`, fix);
           else if (this.#now() - report.at >= GPU_REPORT_FRESH_MS) {
-            warn(GPU_REPORT, `The host's report in VM ${vm.vmid} is from ${ago(this.#now() - report.at)}, so bb-box reads GPU memory in desktops.`, fix);
+            warn(GPU_REPORT, `The host's report in VM ${vm.vmid} is from ${ago(this.#now() - report.at)}, so ${PRODUCT} reads GPU memory in desktops.`, fix);
           } else if (unnamed.length) {
             warn(
               GPU_REPORT,
-              `The host's report has no GPU ${unnamed.join(" or ")}, so bb-box reads ${unnamed.length === 1 ? "its" : "their"} memory in desktops.`,
-              "Name each GPU in bb-box's settings by the UUID nvidia-smi -L shows on the host.",
+              `The host's report has no GPU ${unnamed.join(" or ")}, so ${PRODUCT} reads ${unnamed.length === 1 ? "its" : "their"} memory in desktops.`,
+              `Name each GPU in ${PRODUCT}'s settings by the UUID nvidia-smi -L shows on the host.`,
             );
           } else {
             pass(GPU_REPORT, `The host reports ${report.gpus.length === 1 ? "1 GPU" : `${report.gpus.length} GPUs`} in VM ${vm.vmid}, written ${ago(this.#now() - report.at)}.`);
@@ -3392,7 +3393,7 @@ export class ProxmoxLxcBackend implements Backend {
               id: check[0],
               name: check[1],
               status: "skipped",
-              detail: "No desktop has read its memory yet. A GPU desktop reads it as it starts, and bb-box reads it every few minutes while one runs.",
+              detail: `No desktop has read its memory yet. A GPU desktop reads it as it starts, and ${PRODUCT} reads it every few minutes while one runs.`,
               fix: null,
             });
             continue;
@@ -3420,7 +3421,7 @@ export class ProxmoxLxcBackend implements Backend {
           const named = holders.map((holder) => `CT ${holder.vmid}`).join(", ");
           if (whole.length === 1 && holders.length === 1) pass(check, `CT ${whole[0]!.vmid} holds card ${card.index} whole, and no other guest has its lines.`);
           else if (whole.length === 0) pass(check, `No box holds card ${card.index} whole.`);
-          else fail(check, `Card ${card.index} is held whole and also by another guest: ${named}. A claim went wrong.`, "Stop the guests that should not hold it. bb-box does not move them.");
+          else fail(check, `Card ${card.index} is held whole and also by another guest: ${named}. A claim went wrong.`, `Stop the guests that should not hold it. ${PRODUCT} does not move them.`);
         }
         const inUse = await this.cardsInUse(signal).catch(() => null);
         const limit = this.#config.desktop.perGpu;
@@ -3434,7 +3435,7 @@ export class ProxmoxLxcBackend implements Backend {
       const bridge = this.#config.network.bridge;
       try {
         if (await api.interfaceExists(bridge, signal)) pass(BRIDGE, `${bridge} exists on ${node}.`);
-        else fail(BRIDGE, `${node} has no ${bridge}.`, "Create the bridge with the host setup script, or set the bridge in bb-box's settings.");
+        else fail(BRIDGE, `${node} has no ${bridge}.`, `Create the bridge with the host setup script, or set the bridge in ${PRODUCT}'s settings.`);
       } catch (error) {
         fail(BRIDGE, message(error), audit(error, `Give the token Sys.Audit on /nodes/${node}.`));
       }
@@ -3451,9 +3452,9 @@ export class ProxmoxLxcBackend implements Backend {
           fail(
             VMIDS,
             [foreign.length ? `A guest that is not this install's is in its VMID range from ${first} to ${last}: ${foreign.join("; ")}.` : "", ...seen, unseen].filter(Boolean).join(" "),
-            "Give each install a VMID range of its own: move or delete each guest that is not this install's, or change this install's VMID range in bb-box's settings. bb-box takes no VMID meanwhile.",
+            `Give each install a VMID range of its own: move or delete each guest that is not this install's, or change this install's VMID range in ${PRODUCT}'s settings. ${PRODUCT} takes no VMID meanwhile.`,
           );
-        } else if (used < total) pass(VMIDS, `${total - used} of ${total} VMIDs from ${first} to ${last} are free, and no guest the token can see there is another install's or not bb-box's. ${unseen}`);
+        } else if (used < total) pass(VMIDS, `${total - used} of ${total} VMIDs from ${first} to ${last} are free, and no guest the token can see there is another install's or not ${PRODUCT}'s. ${unseen}`);
         else warn(VMIDS, `All ${total} VMIDs from ${first} to ${last} are in use. ${unseen}`, "Release boxes, or widen the VMID range.");
         const others = await this.#others(api, guests, signal);
         if (others) notes.push(others);
@@ -3473,12 +3474,12 @@ export class ProxmoxLxcBackend implements Backend {
         notes.push(
           `Box user ${this.#config.ssh.user} in each template must accept this SSH key in ~/.ssh/authorized_keys: ${keys.publicKey}`,
         );
-        pass(SSH_KEY_CHECK, keys.generated ? "bb-box made a key; its public key is below." : "From bb-box's settings; its public key is below.");
+        pass(SSH_KEY_CHECK, keys.generated ? `${PRODUCT} made a key; its public key is below.` : `From ${PRODUCT}'s settings; its public key is below.`);
       } else {
-        fail(SSH_KEY_CHECK, "ssh-keygen cannot read the SSH private key in bb-box's settings.", "Paste the whole private key, or clear the setting so bb-box makes one.");
+        fail(SSH_KEY_CHECK, `ssh-keygen cannot read the SSH private key in ${PRODUCT}'s settings.`, `Paste the whole private key, or clear the setting so ${PRODUCT} makes one.`);
       }
     } catch (error) {
-      fail(SSH_KEY_CHECK, message(error), "Check the SSH private key in bb-box's settings, or clear it so bb-box makes one.");
+      fail(SSH_KEY_CHECK, message(error), `Check the SSH private key in ${PRODUCT}'s settings, or clear it so ${PRODUCT} makes one.`);
     }
 
     const ok = checks.every((check) => check.status !== "fail");
@@ -3502,12 +3503,12 @@ export class ProxmoxLxcBackend implements Backend {
     if (!wrong.length) {
       const read = this.#cardsCheckedAt
         ? `Every running box with a GPU listed its claimed card in nvidia-smi ${ago(this.#now() - this.#cardsCheckedAt)}`
-        : "bb-box has not yet run nvidia-smi in the running boxes with a GPU, as it does every 10 minutes";
+        : `${PRODUCT} has not yet run nvidia-smi in the running boxes with a GPU, as it does every 10 minutes`;
       return { status: "ok", detail: `${read}, and the GPU helper reports no running guest on another card's lines.`, fix: null };
     }
     return {
       status: "fail",
-      detail: `${wrong.join("; ")}. bb-box places no new box on those cards until it is put right, and does not stop the boxes.`,
+      detail: `${wrong.join("; ")}. ${PRODUCT} places no new box on those cards until it is put right, and does not stop the boxes.`,
       fix: "Restart each box named: its start places it on its card again. If it comes back on the wrong card, the node's card numbering changed; bb box doctor's GPU helper check has more.",
     };
   }
@@ -3544,7 +3545,7 @@ export class ProxmoxLxcBackend implements Backend {
   }
 
   async dispose(): Promise<void> {
-    this.#stopping.abort(new Error("bb-box is stopping."));
+    this.#stopping.abort(new Error(`${PRODUCT} is stopping.`));
     await this.#http.destroy();
     await this.#upkeep.running?.catch(() => undefined);
     await (await this.#ssh?.catch(() => null))?.ssh.dispose();
@@ -3561,7 +3562,7 @@ export class ProxmoxLxcBackend implements Backend {
           if (nodes.length !== 1) {
             throw new Error(
               nodes.length
-                ? `The Proxmox API lists ${nodes.length} nodes (${nodes.join(", ")}). Set the node in bb-box's settings.`
+                ? `The Proxmox API lists ${nodes.length} nodes (${nodes.join(", ")}). Set the node in ${PRODUCT}'s settings.`
                 : "The Proxmox API lists no online node.",
             );
           }
@@ -3649,7 +3650,7 @@ export class ProxmoxLxcBackend implements Backend {
     const vm = await api.vmNotes(GPU_REPORT_VM, signal);
     const tooOld = tooOldForWhole(api.node, vm ? (parseGpuHelper(vm.notes)?.version ?? null) : null);
     if (!tooOld) return;
-    const said = `bb-box did not write ${markerTag(asked)} on CT ${vmid}, which would ask the host's GPU helper for a whole card: ${api.node} cannot give a box a whole card now, as ${tooOld.why}.`;
+    const said = `${PRODUCT} did not write ${markerTag(asked)} on CT ${vmid}, which would ask the host's GPU helper for a whole card: ${api.node} cannot give a box a whole card now, as ${tooOld.why}.`;
     throw new BackendError("no_capacity", `${said} ${tooOld.fix}`, `${said} Ask the user.`);
   }
 
@@ -3679,22 +3680,22 @@ export class ProxmoxLxcBackend implements Backend {
       if (helper.serves && !helper.serves.listed.includes(pool) && helper.serves.unlisted === 0) return null;
       const at = /^\s*at (\d+)\s*$/m.exec(vm.notes);
       const ageMs = at ? this.#now() - Number(at[1]) * 1000 : null;
-      const only = `bb-box starts, stops and deletes this install's guests on ${api.node} only through it. ${throughIt}`;
+      const only = `${PRODUCT} starts, stops and deletes this install's guests on ${api.node} only through it. ${throughIt}`;
       if (ageMs === null) throw new Error(`The GPU helper on ${api.node} has written no time in VM ${vm.vmid}'s report, and ${only}`);
       if (ageMs >= GPU_HELPER_FRESH_MS) throw new Error(`The GPU helper on ${api.node} last reported ${ago(ageMs)}, in VM ${vm.vmid}, and ${only}`);
-      if (ageMs <= -GPU_HELPER_CLOCK_AHEAD_MS) throw new Error(`The GPU helper's report in VM ${vm.vmid} is dated ahead of this BB server's clock, so bb-box cannot tell whether the helper still runs, and ${only}`);
+      if (ageMs <= -GPU_HELPER_CLOCK_AHEAD_MS) throw new Error(`The GPU helper's report in VM ${vm.vmid} is dated ahead of this BB server's clock, so ${PRODUCT} cannot tell whether the helper still runs, and ${only}`);
       if (helper.tested === false && atLeast(helper.version, STOPS_ONLY_UNTESTED_FROM)) {
         if (await this.#plainGuest(api, vmid, config, signal)) return null;
         if (action === "delete" && (await this.#unusedClone(api, vmid, config, signal))) return null;
       }
       return helper.version;
     }
-    const why = unread !== null ? `bb-box cannot read the GPU helper's report on ${api.node} (${message(unread)})` : vm ? `VM ${vm.vmid}'s report has no helper line bb-box can read, as while host/setup-gpu.sh restarts the helper` : `the token can read no VM named ${GPU_REPORT_VM} on ${api.node}`;
+    const why = unread !== null ? `${PRODUCT} cannot read the GPU helper's report on ${api.node} (${message(unread)})` : vm ? `VM ${vm.vmid}'s report has no helper line ${PRODUCT} can read, as while host/setup-gpu.sh restarts the helper` : `the token can read no VM named ${GPU_REPORT_VM} on ${api.node}`;
     if (await this.#powerKnown(key)) {
       throw new Error(`CT ${vmid} was not acted on: ${why}, and the GPU helper there, which starts, stops and deletes this install's guests, has done so before. Try again in a minute. ${throughIt}`);
     }
     if (marked || (gpu && unread !== null)) {
-      throw new Error(`CT ${vmid} was not acted on: ${why}, and bb-box starts, stops and deletes a guest with a GPU marker or a GPU's device lines only while it can read the helper. Try again in a minute. ${throughIt}`);
+      throw new Error(`CT ${vmid} was not acted on: ${why}, and ${PRODUCT} starts, stops and deletes a guest with a GPU marker or a GPU's device lines only while it can read the helper. Try again in a minute. ${throughIt}`);
     }
     return null;
   }
@@ -3737,7 +3738,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (!helper?.version || helper.tested !== false || !atLeast(helper.version, STOPS_ONLY_UNTESTED_FROM)) return null;
     const pool = this.#config.proxmox.pool;
     if (helper.serves && !helper.serves.listed.includes(pool) && helper.serves.unlisted === 0) return null;
-    return `The GPU helper on ${api.node}, bb-box-gpu ${helper.version}, was not tested on pve-container ${helper.pveContainer}, so it starts no GPU desktop there, and bb-box makes none. Install a bb-box-gpu release newer than ${helper.version} that was tested on pve-container ${helper.pveContainer}: run host/setup-gpu.sh from that BB Box release, as root on ${api.node}.`;
+    return `The GPU helper on ${api.node}, bb-box-gpu ${helper.version}, was not tested on pve-container ${helper.pveContainer}, so it starts no GPU desktop there, and ${PRODUCT} makes none. Install a bb-box-gpu release newer than ${helper.version} that was tested on pve-container ${helper.pveContainer}: run host/setup-gpu.sh from that BB Box release, as root on ${api.node}.`;
   }
 
   async #plainGuest(api: Proxmox, vmid: number, config: Record<string, unknown>, signal?: AbortSignal): Promise<boolean> {
@@ -3771,7 +3772,7 @@ export class ProxmoxLxcBackend implements Backend {
     await plain.configure(vmid, owner, (config) => {
       const tags = parseTags(config.tags);
       tag = `bb-power.${action}.${this.#context.installId}.${powerBox(config, helper) ?? "-"}.g${markerOf(tags)?.generation ?? 0}.n${nonce}`;
-      if (!POWER_TAG.test(tag)) throw new Error(`bb-box cannot ask the GPU helper on ${api.node} to ${action} CT ${vmid}: its install or box ID makes the request ${tag}, which is not a Proxmox tag the helper reads.`);
+      if (!POWER_TAG.test(tag)) throw new Error(`${PRODUCT} cannot ask the GPU helper on ${api.node} to ${action} CT ${vmid}: its install or box ID makes the request ${tag}, which is not a Proxmox tag the helper reads.`);
       return { tags: [...tags.filter((each) => !each.startsWith("bb-power.")), tag] };
     }, signal);
     try {
@@ -3792,20 +3793,20 @@ export class ProxmoxLxcBackend implements Backend {
       if (answer) {
         const words = `The GPU helper on ${api.node} did not ${action} CT ${vmid}, as ${powerWords(answer)}.`;
         if (answer.reason !== "not-the-box") throw new Error(words);
-        this.#sighted(vmid, `${words} bb-box acts on it no more.`);
-        throw new NoLongerOurs(`${words} bb-box acts on it no more.`);
+        this.#sighted(vmid, `${words} ${PRODUCT} acts on it no more.`);
+        throw new NoLongerOurs(`${words} ${PRODUCT} acts on it no more.`);
       }
-      if (waited >= POWER_WAIT_MS) throw new Error(`The GPU helper on ${api.node} did not answer bb-box's request to ${action} CT ${vmid} within ${POWER_WAIT_MS / 1000} s, so bb-box withdrew it. Run bb box doctor.`);
+      if (waited >= POWER_WAIT_MS) throw new Error(`The GPU helper on ${api.node} did not answer ${PRODUCT}'s request to ${action} CT ${vmid} within ${POWER_WAIT_MS / 1000} s, so ${PRODUCT} withdrew it. Run bb box doctor.`);
       const now = await plain.readIfThere(vmid, owner, signal).catch((error: unknown) => {
         if (error instanceof NoLongerOurs) this.#sighted(vmid, error.message);
         throw error;
       });
-      if (!now && action !== "delete") throw new NoLongerOurs(`CT ${vmid} has gone while bb-box asked the GPU helper on ${api.node} to ${action} it.`);
+      if (!now && action !== "delete") throw new NoLongerOurs(`CT ${vmid} has gone while ${PRODUCT} asked the GPU helper on ${api.node} to ${action} it.`);
       if (!now) {
         goneAt ??= waited;
         if (waited - goneAt >= DELETED_UNANSWERED_MS) return;
       } else if (!parseTags(now.tags).includes(tag)) {
-        throw new Error(`bb-box's request to ${action} CT ${vmid} was taken off it before the GPU helper on ${api.node} answered, as when bb-box asks it something else about the box meanwhile.`);
+        throw new Error(`${PRODUCT}'s request to ${action} CT ${vmid} was taken off it before the GPU helper on ${api.node} answered, as when ${PRODUCT} asks it something else about the box meanwhile.`);
       }
       await (this.#options.sleep ?? pause)(ANSWER_POLL_MS, signal);
     }
@@ -3825,14 +3826,14 @@ export class ProxmoxLxcBackend implements Backend {
       if (config && !carriesAnother(config, install) && described === install) continue;
       if (tagged === null && guest.tags.includes(TAG) && (described === null || described === install)) continue;
       const theirs = tagged ?? described;
-      found.push(theirs ? `CT ${guest.vmid}, of install ${theirs}` : `CT ${guest.vmid}, which is not bb-box's`);
+      found.push(theirs ? `CT ${guest.vmid}, of install ${theirs}` : `CT ${guest.vmid}, which is not ${PRODUCT}'s`);
     }
     return found;
   }
 
   #rangeWords(foreign: readonly string[]): string {
     const { first, last } = this.#config.vmids;
-    return `bb-box takes no VMID from ${first} to ${last} while a guest that is not this install's is in that range: ${foreign.join("; ")}. Give each install a VMID range of its own: move or delete ${foreign.length === 1 ? "it" : "them"}, or change this install's VMID range in bb-box's settings.`;
+    return `${PRODUCT} takes no VMID from ${first} to ${last} while a guest that is not this install's is in that range: ${foreign.join("; ")}. Give each install a VMID range of its own: move or delete ${foreign.length === 1 ? "it" : "them"}, or change this install's VMID range in ${PRODUCT}'s settings.`;
   }
 
   async #ownRange(api: Proxmox, signal?: AbortSignal): Promise<void> {
@@ -3943,7 +3944,7 @@ export class ProxmoxLxcBackend implements Backend {
 
   #vmid(guest: Guest): number {
     const vmid = Number(guest.ref);
-    if (!this.#inRange(vmid)) throw new Error(`Guest ${guest.ref} is outside bb-box's VMID range, so bb-box leaves it alone.`);
+    if (!this.#inRange(vmid)) throw new Error(`Guest ${guest.ref} is outside ${PRODUCT}'s VMID range, so ${PRODUCT} leaves it alone.`);
     return vmid;
   }
 
@@ -4109,7 +4110,7 @@ export class ProxmoxLxcBackend implements Backend {
       if (!(error instanceof ProxmoxError && error.gone)) throw error;
       // It may be away while build.sh --replace swaps it.
       if ((await this.#templateBack(api, template, Date.now() + this.#templateWaitMs, signal)) === "away") {
-        throw new Error(`CT template ${template} does not exist on ${api.node}, or is not in pool ${this.#config.proxmox.pool}. Run the doctor check in bb-box's panel.`);
+        throw new Error(`CT template ${template} does not exist on ${api.node}, or is not in pool ${this.#config.proxmox.pool}. Run the doctor check in ${PRODUCT}'s panel.`);
       }
       config = await api.config(template, signal);
     }
@@ -4183,7 +4184,7 @@ export class ProxmoxLxcBackend implements Backend {
       if (vmid === null) {
         throw new BackendError(
           "no_capacity",
-          `Every VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is in use. Release a box, or widen the VMID range in bb-box's settings.`,
+          `Every VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is in use. Release a box, or widen the VMID range in ${PRODUCT}'s settings.`,
         );
       }
       this.#reserved.add(vmid);
@@ -4209,7 +4210,7 @@ export class ProxmoxLxcBackend implements Backend {
         if (state === "away") {
           throw new Error(
             `CT template ${template} on ${api.node} was still missing, or not yet a template, after ${Math.round(this.#templateWaitMs / 1000)} s ` +
-              `(${message(error)}). Run the doctor check in bb-box's panel.`,
+              `(${message(error)}). Run the doctor check in ${PRODUCT}'s panel.`,
           );
         }
         if (state === "back") {
@@ -4361,7 +4362,7 @@ export class ProxmoxLxcBackend implements Backend {
     const tags = parseTags(config.tags);
     const configured = LXC_FLAVOURS.some((flavour) => this.#config.flavours[flavour].templates.some((template) => template.vmid === vmid));
     const ours = tags.includes(installTag(this.#context.installId)) && (tags.includes(IMAGE_BOX) || tags.some((tag) => tag.startsWith(IMAGE_TAG)));
-    if (configured || !ours || !this.#inRange(vmid)) throw new Error(`CT ${vmid} is not an image box or build of this install's, so bb-box leaves it.`);
+    if (configured || !ours || !this.#inRange(vmid)) throw new Error(`CT ${vmid} is not an image box or build of this install's, so ${PRODUCT} leaves it.`);
     await this.#forget(vmid);
     // A captured build is protected, as templates are.
     if (config.protection) await this.#owned(api).writeOn(vmid, this.#image(), config, { delete: ["protection"] }, signal);
@@ -4438,7 +4439,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (!ready) {
       throw new Error(
         `Port ${port} of ${host} is open, but SSH as ${user} did not answer within ${seconds(left)}. ` +
-          `Check that user ${user} in the ${kind ?? "box's"} template accepts bb-box's key.`,
+          `Check that user ${user} in the ${kind ?? "box's"} template accepts ${PRODUCT}'s key.`,
       );
     }
   }
@@ -4659,7 +4660,7 @@ export class ProxmoxLxcBackend implements Backend {
     const view = await this.#cardsView(api, signal);
     if (view.is === "blocked") return { is: "unread", host: api.node, why: view.why, setup: GPU_HELPER_GUIDE };
     if (view.is === "none") {
-      const why = (await this.#nodeHasCards(api)) ? `${api.node} has no GPU helper, so bb-box cannot list who holds its cards.` : `${api.node} reports no NVIDIA cards: it has no GPU helper, and no GPU desktop template names a card.`;
+      const why = (await this.#nodeHasCards(api)) ? `${api.node} has no GPU helper, so ${PRODUCT} cannot list who holds its cards.` : `${api.node} reports no NVIDIA cards: it has no GPU helper, and no GPU desktop template names a card.`;
       return { is: "unread", host: api.node, why, setup: GPU_HELPER_GUIDE };
     }
     const guests = await api.listPool(this.#config.proxmox.pool, signal);
@@ -4914,8 +4915,8 @@ export class ProxmoxLxcBackend implements Backend {
     const outcome = await underCardLock(key, async () => {
       const view = await this.#cardsView(api, signal);
       if (view.is === "blocked") throw refusedWith("no_capacity", blockedRefusal(view, "Ask for gpu none, or ask the user."));
-      if (view.is === "none") throw new BackendError("no_capacity", `The GPU helper's report on ${api.node} went while bb-box placed a desktop. Try again.`);
-      if (part === "whole" && !view.writes) throw new BackendError("no_capacity", `The GPU helper on ${api.node} turned its writes off while bb-box placed a whole card. Try again.`);
+      if (view.is === "none") throw new BackendError("no_capacity", `The GPU helper's report on ${api.node} went while ${PRODUCT} placed a desktop. Try again.`);
+      if (part === "whole" && !view.writes) throw new BackendError("no_capacity", `The GPU helper on ${api.node} turned its writes off while ${PRODUCT} placed a whole card. Try again.`);
       const guests = await api.listPool(this.#config.proxmox.pool, signal);
       const placed = await this.#placement(api, offer, view, guests, refused, failed, part);
       if (placed.is === "refused") return { refused: placed, guests, lines: view.lines } as const;
@@ -4999,7 +5000,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (marker.generation <= (lines?.ledger.get(vmid)?.answered ?? 0)) return null;
     const answer = await this.#askHelper(api, vmid, marker, signal);
     if (answer.is === "granted") return claimOf(marker, "granted");
-    const refusedWords = `The host's GPU helper on ${api.node} refused CT ${vmid}'s marker ${markerTag(marker)}, as ${"why" in answer ? answer.why : "it gave no answer"}. bb-box released the guest; nothing else changed.`;
+    const refusedWords = `The host's GPU helper on ${api.node} refused CT ${vmid}'s marker ${markerTag(marker)}, as ${"why" in answer ? answer.why : "it gave no answer"}. ${PRODUCT} released the guest; nothing else changed.`;
     throw new BackendError("no_capacity", answer.is === "refused" ? refusedWords : notAnsweredWords(api.node, answer), answer.is === "refused" ? refusedWords : notAnsweredForAgent(api.node, answer));
   }
 
@@ -5062,7 +5063,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (view.is === "none") return UNGATED;
     if (view.is === "blocked") {
       if (granted) return { claim: claimOf(marker, "granted"), reservation: null, gpu: await this.#heldGpu(marker.card) };
-      throw notStarted(`bb-box cannot see a grant of its GPU marker ${markerTag(marker)}. ${view.why}${view.fix ? ` ${view.fix}` : ""}`, `bb-box cannot see a grant of its GPU marker ${markerTag(marker)}. ${view.why} ${START_LATER}`);
+      throw notStarted(`${PRODUCT} cannot see a grant of its GPU marker ${markerTag(marker)}. ${view.why}${view.fix ? ` ${view.fix}` : ""}`, `${PRODUCT} cannot see a grant of its GPU marker ${markerTag(marker)}. ${view.why} ${START_LATER}`);
     }
     const gpu = (claim: CardClaim): StartGate => ({ claim, reservation: null, gpu: this.#gpuIdOf(claim.card, view.notes) });
     const claim = view.lines.ledger.get(vmid)?.claim ?? null;
@@ -5182,7 +5183,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (!templates.length) {
       return refusedChoice(offer.config.templates[0]!, {
         person: `Every desktop template on ${node} carries a card's device lines, so none gives a desktop with no GPU. Ask for linux-desktop-cpu, or build a desktop template with no card with build.sh desktop, as root on ${node}.`,
-        agent: `Not made: every desktop template on ${node} carries a card. Ask for linux-desktop-cpu, or ask the user. bb-box changed nothing.`,
+        agent: `Not made: every desktop template on ${node} carries a card. Ask for linux-desktop-cpu, or ask the user. ${PRODUCT} changed nothing.`,
       });
     }
     return { template: templates.reduce((best, template) => ((counts.get(template.vmid) ?? 0) < (counts.get(best.vmid) ?? 0) ? template : best)), gpus: null, problem: null };
@@ -5241,7 +5242,7 @@ export class ProxmoxLxcBackend implements Backend {
       if (signal?.aborted) throw error;
       return message(error);
     });
-    if (typeof result === "string") return { ok: false, why: `bb-box could not run the check in it: ${result}`, seen: [], userspace: null, reading: "incomplete", userspaceOff: false };
+    if (typeof result === "string") return { ok: false, why: `${PRODUCT} could not run the check in it: ${result}`, seen: [], userspace: null, reading: "incomplete", userspaceOff: false };
     const driver = await this.#helperDriver(api, signal);
     const checked = judgeCardCheck(`${result.stdout}\n${result.stderr}`, card, driver);
     if (checked.ok) this.#mismatches.delete(vmid);
@@ -5394,7 +5395,7 @@ export class ProxmoxLxcBackend implements Backend {
     const outcome = await underCardLock(key, async () => {
       const view = await this.#cardsView(api, signal);
       if (view.is === "blocked") throw refusedWith("no_capacity", blockedRefusal(view, "Ask for gpu none, or ask the user."));
-      if (view.is !== "on" || (needsWrites && !view.writes)) throw new BackendError("no_capacity", `The GPU helper's report on ${api.node} changed while bb-box placed ${what}. Try again.`);
+      if (view.is !== "on" || (needsWrites && !view.writes)) throw new BackendError("no_capacity", `The GPU helper's report on ${api.node} changed while ${PRODUCT} placed ${what}. Try again.`);
       const cards = only ? await only(view) : null;
       const guests = await api.listPool(this.#config.proxmox.pool, signal);
       const placed = this.#serverPlacement(api, view, guests, refused, failed, part, needMiB, cards, what === "a desktop" ? "desktop" : "server");
@@ -5429,7 +5430,7 @@ export class ProxmoxLxcBackend implements Backend {
       if (cards && !cards.size) {
         throw refusedWith("no_capacity", {
           person: `${what} carries no card's device lines, and the GPU helper on ${api.node} has writes off, so it cannot give the desktop a card. Turn writes on with host/setup-gpu.sh, or ask for gpu none.`,
-          agent: `Not made: the GPU helper on ${api.node} cannot give this desktop a card now. Ask for gpu none, or ask the user. bb-box changed nothing.`,
+          agent: `Not made: the GPU helper on ${api.node} cannot give this desktop a card now. Ask for gpu none, or ask the user. ${PRODUCT} changed nothing.`,
         });
       }
       return cards;
@@ -5443,7 +5444,7 @@ export class ProxmoxLxcBackend implements Backend {
     const wanted = withCard ? (!marker || marker.part === "none" ? "place" : "as-is") : gpuDeviceLines(config).length ? "strip" : "as-is";
     if (wanted === "as-is") return wanted;
     if ((await api.status(vmid, signal))?.status === "running") {
-      const words = `The guest bb-box had made for box ${name} was running before bb-box ${withCard ? "gave it its card" : "took out the card's device lines it carries"}, so bb-box released it.`;
+      const words = `The guest ${PRODUCT} had made for box ${name} was running before ${PRODUCT} ${withCard ? "gave it its card" : "took out the card's device lines it carries"}, so ${PRODUCT} released it.`;
       throw new BackendError("no_capacity", `${words} Try again.`, `${words} Try again, or ask the user.`);
     }
     return wanted;
@@ -5455,7 +5456,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (view.is === "on" && view.writes) return view.lines;
     throw refusedWith("no_capacity", {
       person: `${what} carries a card's device lines, and the GPU helper on ${api.node} ${view.is === "on" ? "has writes off" : "is not there to take them out"}, so a desktop with no GPU would get a card. Ask for gpu shared, or turn the helper's writes on with host/setup-gpu.sh.`,
-      agent: `Not made: ${what.charAt(0).toLowerCase()}${what.slice(1)} carries a card's device lines on ${api.node}, and the GPU helper cannot take them out now. Ask for gpu shared, or ask the user. bb-box changed nothing.`,
+      agent: `Not made: ${what.charAt(0).toLowerCase()}${what.slice(1)} carries a card's device lines on ${api.node}, and the GPU helper cannot take them out now. Ask for gpu shared, or ask the user. ${PRODUCT} changed nothing.`,
     });
   }
 
@@ -5646,7 +5647,7 @@ export class ProxmoxLxcBackend implements Backend {
       await this.#owned(api).configure(vmid, warmGuest, { tags: [...withStartTag(tags(FILLING), low), ...marked] }, signal);
       if (asked && placed) {
         const answer = await this.#askHelper(api, vmid, asked, signal);
-        if (answer.is === "refused") throw new Error(`The host's GPU helper on ${api.node} refused ${cardName(placed.card)} for a warm linux-desktop box, as ${answer.why}, so bb-box released it.`);
+        if (answer.is === "refused") throw new Error(`The host's GPU helper on ${api.node} refused ${cardName(placed.card)} for a warm linux-desktop box, as ${answer.why}, so ${PRODUCT} released it.`);
         if (answer.is !== "granted") throw new Error(notAnsweredWords(api.node, answer));
       }
       await this.#owned(api).start(vmid, warmGuest, signal);
@@ -5656,7 +5657,7 @@ export class ProxmoxLxcBackend implements Backend {
         await this.#sawDisplay(this.#gpuOf(template), display);
         if (display.mode !== "gpu") {
           this.#avoidGpu(this.#gpuOf(template));
-          throw new Error(`A warm linux-desktop box started without GPU ${this.#gpuOf(template) ?? "unknown"} (${display.reason || "no reason given"}), so bb-box released it.`);
+          throw new Error(`A warm linux-desktop box started without GPU ${this.#gpuOf(template) ?? "unknown"} (${display.reason || "no reason given"}), so ${PRODUCT} released it.`);
         }
       }
       await this.#owned(api).configure(vmid, warmGuest, { tags: [...withStartTag(tags(WARM), low), ...marked] }, signal);

@@ -73,6 +73,7 @@ import { EXAMPLE, SLOT_KIND, hostKeysFor, type SshPoolConfig, type SshPoolHost, 
 import { PoolSlots, lendingSlots, lendingWords, listsSlots, poolSlotOf, slotDeviceOffer, slotsSetUp, type PoolMacView } from "./slots.ts";
 import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, grantInput, parseDisplay, parseGrant, parseGranted, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
 import { storedKeyPair } from "../ssh-key.ts";
+import { PRODUCT } from "../../brand.ts";
 
 const SSH_KEY = "ssh-key";
 const RECORD = "machine/";
@@ -250,7 +251,7 @@ function message(error: unknown): string {
 
 /** Why a box's machine cannot be reached while its line is out of the settings. */
 function missing(name: string): string {
-  return `Machine ${name} is not in the SSH host pool's settings now, so bb-box cannot reach its box. Put its line back in ssh-pool-machines, or release the box, which leaves the machine as it is.`;
+  return `Machine ${name} is not in the SSH host pool's settings now, so ${PRODUCT} cannot reach its box. Put its line back in ssh-pool-machines, or release the box, which leaves the machine as it is.`;
 }
 
 /** The last lines of a command's error output, for a reason or a doctor check. */
@@ -459,7 +460,7 @@ export class SshPoolBackend implements Backend {
     if (!machine) throw new Error(`${mac} is not in the SSH host pool's settings.`);
     const { ssh } = await this.#keys();
     const result = await ssh.run(this.#access(machine, machine.admin.user), script, { timeoutMs: PROBE_TIMEOUT_MS, signal, maxOutputBytes: 64 * 1024 });
-    if (result.exitCode !== 0 && !result.stdout.trim()) throw new Error(`${mac} did not answer bb-box's probe: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+    if (result.exitCode !== 0 && !result.stdout.trim()) throw new Error(`${mac} did not answer ${PRODUCT}'s probe: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
     return result.stdout;
   }
 
@@ -490,7 +491,7 @@ export class SshPoolBackend implements Backend {
       access: (machine, user) => this.#access(machine, user),
       publicKey: async () => {
         const { publicKey } = await this.#keys();
-        if (!publicKey) throw new Error("ssh-keygen cannot read the SSH private key in bb-box's settings. Paste the whole key, or clear it so bb-box makes one.");
+        if (!publicKey) throw new Error(`ssh-keygen cannot read the SSH private key in ${PRODUCT}'s settings. Paste the whole key, or clear it so ${PRODUCT} makes one.`);
         return publicKey;
       },
       readyTimeoutMs: () => this.#options.readyTimeoutMs ?? null,
@@ -506,7 +507,7 @@ export class SshPoolBackend implements Backend {
   }
 
   #slotsOf(guest: Guest): PoolSlots {
-    if (!this.#machines.has(poolSlotOf(guest)!.mac)) throw new BackendError("gone", `The pool's Mac of box guest ${guest.ref} is not in the SSH host pool's settings now, so bb-box cannot reach its iOS slot. Put its line back in ssh-pool-machines.`);
+    if (!this.#machines.has(poolSlotOf(guest)!.mac)) throw new BackendError("gone", `The pool's Mac of box guest ${guest.ref} is not in the SSH host pool's settings now, so ${PRODUCT} cannot reach its iOS slot. Put its line back in ssh-pool-machines.`);
     return this.slots;
   }
 
@@ -748,7 +749,7 @@ export class SshPoolBackend implements Backend {
       const views = (await this.#survey(signal)).filter((view) => this.#lists(view.machine, kind.id));
       const candidates = this.#candidates(views, kind.id, box.size);
       const { publicKey } = await this.#keys();
-      if (!publicKey) throw new Error("ssh-keygen cannot read the SSH private key in bb-box's settings. Paste the whole key, or clear it so bb-box makes one.");
+      if (!publicKey) throw new Error(`ssh-keygen cannot read the SSH private key in ${PRODUCT}'s settings. Paste the whole key, or clear it so ${PRODUCT} makes one.`);
       for (const view of candidates) {
         const { machine } = view;
         const generation = view.probe.status!.generation!;
@@ -843,7 +844,7 @@ export class SshPoolBackend implements Backend {
     const record = await this.#read(machine);
     if (record?.state === "out-of-service") return;
     const probe = await this.#status(machine, signal);
-    if (!probe.status) throw new Error(`Machine ${machine.name} cannot be reset now: ${probe.problem} bb-box tries again later.`);
+    if (!probe.status) throw new Error(`Machine ${machine.name} cannot be reset now: ${probe.problem} ${PRODUCT} tries again later.`);
     const { status } = probe;
     const marker = status.owner;
     const ours =
@@ -912,7 +913,7 @@ export class SshPoolBackend implements Backend {
       if (result.exitCode === EXIT.restoring) restoring = true;
       else if (!(restoring && (result.exitCode === 255 || result.timedOut))) {
         // In a home reset, SSH failing means the machine went away mid-reset: the sweep finishes it later.
-        if (result.exitCode === 255 || result.timedOut) throw new Error(`Machine ${machine.name} stopped answering during its reset: ${said(result)} bb-box finishes the reset later.`);
+        if (result.exitCode === 255 || result.timedOut) throw new Error(`Machine ${machine.name} stopped answering during its reset: ${said(result)} ${PRODUCT} finishes the reset later.`);
         return { generation: null, reason: `Its reset failed: ${said(result)}` };
       }
       // The whole-machine reset, or a Mac's sign-in of its next box user, runs on, and may restart the machine.
@@ -1044,7 +1045,7 @@ export class SshPoolBackend implements Backend {
     if (result.exitCode !== EXIT.ok) throw new Error(`Machine ${machine.name} did not give its desktop's sign-in: ${said(result)}`);
     const signIn = parseDisplay(result.stdout);
     if (!signIn || signIn.user !== access.user) {
-      throw new Error(`Machine ${machine.name} did not give box user ${access.user}'s sign-in for its desktop. Run this bb-box's setup/ssh-pool/setup-mac.sh on it with sudo.`);
+      throw new Error(`Machine ${machine.name} did not give box user ${access.user}'s sign-in for its desktop. Run this ${PRODUCT}'s setup/ssh-pool/setup-mac.sh on it with sudo.`);
     }
     return {
       route: ssh.route(access, SCREEN_SHARING_PORT),
@@ -1083,14 +1084,14 @@ export class SshPoolBackend implements Backend {
     const { status } = view.probe;
     if (status?.marker === "owner" && status.owner) {
       const { install, name, box } = status.owner;
-      const of = install === this.#context.installId ? "" : ` of bb-box install ${install || "with no ID"}`;
+      const of = install === this.#context.installId ? "" : ` of ${PRODUCT} install ${install || "with no ID"}`;
       throw new Error(`Machine ${ref} is held by box ${name || box || "with no ID"}${of}. Release the box first.`);
     }
     if (view.state === "free") return;
     if (view.state !== "out-of-service") throw new Error(`Machine ${ref} is ${view.state}, not out of service.`);
     if (!status) throw new Error(`Machine ${ref} cannot be reset: ${view.probe.problem}`);
     if (status.owner && status.owner.install !== this.#context.installId) {
-      const by = status.owner.install ? `another bb-box install, ${status.owner.install}` : "an operator on the machine";
+      const by = status.owner.install ? `another ${PRODUCT} install, ${status.owner.install}` : "an operator on the machine";
       throw new Error(`Machine ${ref} is being reset by ${by}. Leave it to finish, or run the reset again on the machine.`);
     }
     this.#resetting.add(ref);
@@ -1098,7 +1099,7 @@ export class SshPoolBackend implements Backend {
       const args = ["reset", ...resetMode(machine)];
       const outcome = await this.#reset(machine, args, releaseInput(this.#context.installId, null), signal);
       if (outcome.generation === null) {
-        const reason = outcome.reason ?? "Another bb-box install holds it.";
+        const reason = outcome.reason ?? `Another ${PRODUCT} install holds it.`;
         await this.#outOfService(machine, status.generation ?? view.generation, reason);
         throw new Error(`Machine ${ref} is still out of service. ${reason}`);
       }
@@ -1124,13 +1125,13 @@ export class SshPoolBackend implements Backend {
     try {
       keys = await this.#keys();
       if (keys.publicKey) {
-        pass(SSH_KEY_CHECK, keys.generated ? "bb-box made a key; its public key is below." : "From bb-box's settings; its public key is below.");
+        pass(SSH_KEY_CHECK, keys.generated ? `${PRODUCT} made a key; its public key is below.` : `From ${PRODUCT}'s settings; its public key is below.`);
         notes.push(`Give setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, this public key with --key, so each machine's admin user accepts it: ${keys.publicKey}`);
       } else {
-        fail(SSH_KEY_CHECK, "ssh-keygen cannot read the SSH private key in bb-box's settings.", "Paste the whole private key, or clear the setting so bb-box makes one.");
+        fail(SSH_KEY_CHECK, `ssh-keygen cannot read the SSH private key in ${PRODUCT}'s settings.`, `Paste the whole private key, or clear the setting so ${PRODUCT} makes one.`);
       }
     } catch (error) {
-      fail(SSH_KEY_CHECK, message(error), "Check the SSH private key in bb-box's settings, or clear it so bb-box makes one.");
+      fail(SSH_KEY_CHECK, message(error), `Check the SSH private key in ${PRODUCT}'s settings, or clear it so ${PRODUCT} makes one.`);
     }
 
     if (!this.#config.machines.length) {
@@ -1180,7 +1181,7 @@ export class SshPoolBackend implements Backend {
           `${where} did not answer: ${probe.problem}`,
           hostKey
             ? `Put ${name}'s current host key in the host keys setting. ${mac ? "setup-mac.sh" : "setup.sh"} prints it.`
-            : `Check that ${name} is on and that BB's server reaches it, and that its admin user accepts bb-box's key: run ${mac ? "setup-mac.sh" : "setup.sh"} on it with --key and the public key below.`,
+            : `Check that ${name} is on and that BB's server reaches it, and that its admin user accepts ${PRODUCT}'s key: run ${mac ? "setup-mac.sh" : "setup.sh"} on it with --key and the public key below.`,
         );
         skip(...rest);
         continue;
@@ -1188,15 +1189,15 @@ export class SshPoolBackend implements Backend {
       pass(SSH, `${where} answers.`);
       const { status } = probe;
       if (!status || status.helper === null) {
-        fail(HELPER, `bb-box's helper did not run: ${probe.problem ?? "it gave no version."}`, `Run ${setup}.`);
+        fail(HELPER, `${PRODUCT}'s helper did not run: ${probe.problem ?? "it gave no version."}`, `Run ${setup}.`);
         skip(...after);
         continue;
       }
       if (status.helper < HELPER_VERSION || status.generation === null) {
         fail(
           HELPER,
-          status.generation === null ? `The machine has no reset generation in ${stateDir(machine)}.` : `The helper is version ${status.helper}; this bb-box needs ${HELPER_VERSION}.`,
-          `Run this bb-box's ${setup}.`,
+          status.generation === null ? `The machine has no reset generation in ${stateDir(machine)}.` : `The helper is version ${status.helper}; this ${PRODUCT} needs ${HELPER_VERSION}.`,
+          `Run this ${PRODUCT}'s ${setup}.`,
         );
       } else pass(HELPER, `Version ${status.helper}, reset generation ${status.generation}.`);
       const arch = ARCH[machine.os];
@@ -1225,7 +1226,7 @@ export class SshPoolBackend implements Backend {
       if (missing.length || forBB.length || oldNode) fail(TOOLS, found, `On ${name}: ${fixes.join(" ")}`);
       else if (forGit.length) warn(TOOLS, `${found} Boxes there enrol in BB, but cannot use the thread's GitHub access, which git takes through gh.`, `On ${name}: ${gitFix}`);
       else if (!enrolment) {
-        warn(TOOLS, `The helper does not say whether ${name} has Node.js, npm, git and gh, which enrolment and the thread's GitHub access need.`, `Run this bb-box's ${setup}.`);
+        warn(TOOLS, `The helper does not say whether ${name} has Node.js, npm, git and gh, which enrolment and the thread's GitHub access need.`, `Run this ${PRODUCT}'s ${setup}.`);
       } else {
         const linger = mac ? "" : status.systemd ? " It has systemd, so BB's daemon lingers." : " There is no systemd, so BB's daemon runs without linger.";
         pass(TOOLS, `Everything the helper, enrolment and the thread's GitHub access need, with Node.js ${node}.${linger}`);
@@ -1246,9 +1247,9 @@ export class SshPoolBackend implements Backend {
       if (install && install !== this.#context.installId) others.set(install, (others.get(install) ?? 0) + 1);
       const reset = `"sudo /usr/local/libexec/bb-box/machine ${["reset", ...resetMode(machine)].join(" ")}"`;
       if (view.state === "out-of-service") {
-        warn(STATE, `Out of service: ${view.reason}`, `Fix the cause on ${name}, then reset it there with ${reset}. bb-box lends it again once it is clean.`);
+        warn(STATE, `Out of service: ${view.reason}`, `Fix the cause on ${name}, then reset it there with ${reset}. ${PRODUCT} lends it again once it is clean.`);
       } else if (view.state === "resetting" && status.owner && !install) {
-        warn(STATE, "An operator's reset on the machine has not finished.", `If it is not still running, run ${reset} on ${name} again. bb-box lends it again once it is clean.`);
+        warn(STATE, "An operator's reset on the machine has not finished.", `If it is not still running, run ${reset} on ${name} again. ${PRODUCT} lends it again once it is clean.`);
       } else pass(STATE, `${this.#describe(view)}${leftoverWords(xcodes.get(machine)?.status?.mac?.leftovers ?? null)}`);
       // A machine shows 90% of its memory, as fits() allows.
       const has = machineSize(status);
@@ -1267,7 +1268,7 @@ export class SshPoolBackend implements Backend {
       if (record?.state !== "held" || !record.owner) continue;
       notes.push(
         `Machine ${name} is not in ssh-pool-machines, but box ${record.owner.name ?? record.owner.boxId} held it when it was last seen. ` +
-          "bb-box cannot reach that box, and leaves the machine as it is. Put the machine's line back, or release the box, which does not reset the machine.",
+          `${PRODUCT} cannot reach that box, and leaves the machine as it is. Put the machine's line back, or release the box, which does not reset the machine.`,
       );
     }
     if (others.size) {
@@ -1389,7 +1390,7 @@ export class SshPoolBackend implements Backend {
     else fail(ids.FULL_DISK, "The helper lacks Full Disk Access, so a reset cannot remove the folders macOS protects, such as ~/Library/Mail, and would put the Mac out of service.", `On ${name}: ${FULL_DISK_FIX}`);
     // The people's homes box users can enter, which the doctor's status call lists (047).
     const open = xcodeProbe?.status?.mac?.openHomes ?? null;
-    if (open === null) warn(ids.HOMES, "The Mac's helper did not say whose homes box users can enter: it is older than this bb-box's.", `Run setup-mac.sh again on ${name}.`);
+    if (open === null) warn(ids.HOMES, `The Mac's helper did not say whose homes box users can enter: it is older than this ${PRODUCT}'s.`, `Run setup-mac.sh again on ${name}.`);
     else if (open.length) {
       const homes = open.map((user) => `/Users/${user}`);
       warn(
@@ -1400,8 +1401,8 @@ export class SshPoolBackend implements Backend {
     } else pass(ids.HOMES, "Box users cannot enter any person's home.");
     // Either way works (058): it says what each gives.
     if (mac.sip === true) pass(ids.SIP, "On. Cua Driver has its grants; any other program a box runs needs a person to grant it macOS permissions, in the desktop's viewer.");
-    else if (mac.sip === false) pass(ids.SIP, "Off, so bb-box grants box users' programs the macOS permissions they ask for (box_grant). Keep this Mac for agents: with SIP off, a process with root can change the system.");
-    else warn(ids.SIP, "The Mac's helper did not say whether System Integrity Protection is on: it is older than this bb-box's.", `Run setup-mac.sh again on ${name}.`);
+    else if (mac.sip === false) pass(ids.SIP, `Off, so ${PRODUCT} grants box users' programs the macOS permissions they ask for (box_grant). Keep this Mac for agents: with SIP off, a process with root can change the system.`);
+    else warn(ids.SIP, `The Mac's helper did not say whether System Integrity Protection is on: it is older than this ${PRODUCT}'s.`, `Run setup-mac.sh again on ${name}.`);
 
     // Xcode is optional, so a Mac without it passes; the pool's check warns when only some Macs have it.
     const xcode = xcodeProbe?.status?.mac?.xcode;
@@ -1409,7 +1410,7 @@ export class SshPoolBackend implements Backend {
       warn(
         ids.XCODE,
         `The helper did not say whether the Mac has Xcode.${xcodeProbe?.problem ? ` ${xcodeProbe.problem}` : ""} ${mac.xcode ? "The offers keep what it found before." : "Until it does, boxes here have neither Xcode nor the iOS Simulator."}`,
-        `Run this bb-box's setup/ssh-pool/setup-mac.sh on ${name} with sudo, which updates the helper and prepares Xcode. Then run the doctor again.`,
+        `Run this ${PRODUCT}'s setup/ssh-pool/setup-mac.sh on ${name} with sudo, which updates the helper and prepares Xcode. Then run the doctor again.`,
       );
     }
     else if (!xcode.version) pass(ids.XCODE, "None, so boxes here have neither Xcode nor the iOS Simulator.");
@@ -1646,10 +1647,10 @@ export class SshPoolBackend implements Backend {
       if (machine.os === "macos" && record?.state === "resetting" && Date.now() - record.since < (this.#options.macSilenceMs ?? MAC_SILENCE_MS)) return { state: "resetting", reason: null };
       return out(`It does not answer over SSH: ${probe.problem}`);
     }
-    if (!status) return out(`bb-box's helper did not run: ${probe.problem} Run ${setup}.`);
+    if (!status) return out(`${PRODUCT}'s helper did not run: ${probe.problem} Run ${setup}.`);
     // Whatever else is wrong, a box holds it: an old helper only stops new claims.
     if (status.marker === "owner") return { state: "held", reason: null };
-    if (status.helper === null || status.helper < HELPER_VERSION) return out(`bb-box's helper is missing or too old. Run this bb-box's ${setup}.`);
+    if (status.helper === null || status.helper < HELPER_VERSION) return out(`${PRODUCT}'s helper is missing or too old. Run this ${PRODUCT}'s ${setup}.`);
     if (status.generation === null) return out(`It has no reset generation. Run ${setup}.`);
     if (record?.state === "out-of-service") {
       // Back once the operator has reset it on the machine: clean, at a later generation.

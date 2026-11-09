@@ -1,6 +1,6 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
-import { useId, useState } from "react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { useId, useRef, useState } from "react";
+import { BoxDialog, DialogButton, useDialogAction } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -8,11 +8,12 @@ import { cn } from "@/lib/utils";
 import { isSecretState } from "./config.ts";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { describedBy, unplacedProblems } from "./settings-draft-fields.tsx";
+import { INVALID_BORDER } from "./size-field.ts";
 import { FILES_PART, operationId } from "./settings-drafts.ts";
 import { Section } from "./settings-fields.tsx";
 import { RowNote } from "./settings-parts.tsx";
 import { filePath, newFilePath, storedAt, type Path } from "./settings-paths.ts";
-import { ChangedChip, ConflictNote, RestoredNote, SaveBar, focusAfterRender, useDraft, type Draft } from "./settings-saving.tsx";
+import { ChangedChip, ConflictNote, refusedInstant, RestoredNote, SaveBar, focusAfterRender, useDraft, type Draft } from "./settings-saving.tsx";
 
 const CONTENT_PLACEHOLDER = "Paste the file's text. It is never shown again.";
 export const ADD_FILE = "files/add";
@@ -35,7 +36,7 @@ function ContentEditor({ draft, path, label, onEmptied, onClose }: { draft: Draf
         aria-label={label}
         aria-describedby={describedBy(problem && `${id}-problem`, conflict && `${id}-conflict`)}
         aria-invalid={problem ? true : undefined}
-        className={cn("min-h-24 font-mono text-xs", value && "border-warning/60")}
+        className={cn("min-h-24 font-mono text-xs", problem && INVALID_BORDER)}
         placeholder={CONTENT_PLACEHOLDER}
         autoComplete="off"
         spellCheck={false}
@@ -181,7 +182,11 @@ export function BoxFilesSection() {
   const draft = useDraft(FILES_PART, "files for every box");
   const [opened, setOpened] = useState<readonly string[]>([]);
   const [removing, setRemoving] = useState<string | null>(null);
+  const remembered = useRef<string | null>(null);
+  if (removing) remembered.current = removing;
+  const pathShown = removing ?? remembered.current;
   const [removed, setRemoved] = useState<string | null>(null);
+  const removal = useDialogAction(() => setRemoving(null));
   const files = draft.latest.document.general.files ?? [];
   const newFiles = [...draft.entry.edits].filter(([, edit]) => edit.value.kind === "new-file").map(([path]) => path);
   const editing = (path: string) => opened.includes(path) || draft.edit(filePath(path))?.kind === "secret";
@@ -260,37 +265,52 @@ export function BoxFilesSection() {
             ))}
           </div>
         ) : null}
-        {removeKey ? <RowNote note={instant.note(removeKey)} /> : null}
+        {removing === null && removeKey ? <RowNote note={instant.note(removeKey)} /> : null}
         <SaveBar draft={draft} inline primary="Save files" unplaced={unplacedProblems(draft, placed)} />
       </div>
-      <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove ~/{removing}?</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2">
-                <p>Boxes made from now on no longer get it. Boxes already made keep their copy.</p>
-                <p>Its content is deleted from BB Box and cannot be shown or got back; to use it again, paste it again.</p>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => {
-                const path = removing;
-                setRemoving(null);
-                if (!path) return;
-                setRemoved(path);
-                void instant.run(writes.removeFile(state, path));
-              }}
-            >
-              Remove file
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <BoxDialog
+        open={removing !== null}
+        title={pathShown ? `Remove ~/${pathShown}?` : "Nothing to remove"}
+        busy={removal.busy}
+        refused={removal.refused}
+        onClose={removal.close}
+        footer={
+          pathShown ? (
+            <>
+              <DialogButton variant="outline" onClick={removal.close}>
+                Cancel
+              </DialogButton>
+              <DialogButton
+                danger
+                busyWords="Removing…"
+                onClick={() => {
+                  const path = pathShown;
+                  if (!path) return;
+                  void removal.run(async () => {
+                    const outcome = await instant.run(writes.removeFile(state, path));
+                    if (outcome?.kind === "saved" || outcome?.kind === "already") {
+                      setRemoved(path);
+                      return null;
+                    }
+                    return refusedInstant(outcome, instant.note(switchKey.removeFile(path)));
+                  });
+                }}
+              >
+                Remove file
+              </DialogButton>
+            </>
+          ) : (
+            <DialogButton variant="outline" onClick={removal.close}>
+              Close
+            </DialogButton>
+          )
+        }
+      >
+        <div className="space-y-2">
+          <p>Boxes made from now on no longer get it. Boxes already made keep their copy.</p>
+          <p>Its content is deleted from BB Box and cannot be shown or got back. To use it again, paste it again.</p>
+        </div>
+      </BoxDialog>
     </Section>
   );
 }

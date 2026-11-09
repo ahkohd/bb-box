@@ -53,7 +53,7 @@ test("the API's certificate is trusted by its fingerprint", async () => {
 test("a different certificate is refused, and the error says which one it saw", async () => {
   const other = Array(32).fill("AA").join(":");
   await assert.rejects(node({ "proxmox-lxc-tls-fingerprint": other }), (error: Error) => {
-    assert.match(error.message, new RegExp(`fingerprint ${fingerprint}, not the one in bb-box's settings`));
+    assert.match(error.message, new RegExp(`fingerprint ${fingerprint}, not the one in BB Box's settings`));
     return true;
   });
 });

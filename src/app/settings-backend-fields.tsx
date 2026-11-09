@@ -1,6 +1,6 @@
 import { experimental_Icon as Icon } from "@get-bb/plugin-sdk/app";
 import { Fragment, useEffect, useId, useState, type ReactNode } from "react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { BoxDialog, DialogButton } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -17,7 +17,10 @@ import { backendPart, operationId } from "./settings-drafts.ts";
 import { Card, FOCUS_RING, Group, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
 import { backendFieldPath, hostEnabledPath, hostFieldPath, hostNoun, hostPath, newHostPath, plain, storedProblemPath, type Path, type PlainValue } from "./settings-paths.ts";
 import { ChangedChip, ConflictNote, focusAfterRender, saveOnEnter, type Draft } from "./settings-saving.tsx";
+import { SideLabelField } from "./field-shell.tsx";
+import { INVALID_BORDER } from "./size-field.ts";
 import { plural } from "./settings-status.ts";
+import { PRODUCT } from "./product.ts";
 
 export { backendPart };
 
@@ -153,41 +156,37 @@ interface RowIds {
 function FieldShell({ draft, path, ids, label, help, chips, problem, stacked, onTheirs, children }: { draft: Draft; path: Path; ids: RowIds; label: string; help: string; chips?: ReactNode; problem: string | null; stacked?: boolean; onTheirs?: () => void; children: ReactNode }) {
   const conflict = draft.conflict(path);
   return (
-    <div className="px-4 py-3" data-setting-row={path}>
-      <div className={cn("flex flex-col gap-2", !stacked && "sm:flex-row sm:items-start sm:justify-between sm:gap-5")}>
-        <div className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-1.5">
-            <label htmlFor={ids.control} className="text-sm text-foreground">
-              {label}
-            </label>
-            {chips}
-            <ChangedChip show={draft.changed(path) && !conflict} />
-          </span>
-          <Help id={ids.help} text={help} label={label} />
-          {problem ? (
-            <p id={ids.problem} role="alert" className="mt-0.5 text-xs text-destructive-text">
-              {problem}
-            </p>
-          ) : null}
-        </div>
-        <div className={cn("flex min-w-0 flex-col gap-1", stacked ? "w-full" : "w-full sm:w-72 sm:shrink-0 sm:items-end")}>{children}</div>
-      </div>
-      {conflict ? (
-        <ConflictNote
-          id={ids.conflict}
-          conflict={conflict}
-          onTheirs={() => {
-            draft.forget(path);
-            onTheirs?.();
-            focusAfterRender(path);
-          }}
-          onMine={() => {
-            draft.keepMine(path);
-            focusAfterRender(path);
-          }}
-        />
-      ) : null}
-    </div>
+    <SideLabelField
+      path={path}
+      htmlFor={ids.control}
+      label={label}
+      chips={chips}
+      changed={<ChangedChip show={draft.changed(path) && !conflict} />}
+      help={<Help id={ids.help} text={help} label={label} />}
+      problem={problem}
+      problemId={problem ? ids.problem : undefined}
+      stacked={stacked}
+      controlClassName={stacked ? "w-full" : "w-full sm:w-72 sm:items-end"}
+      conflict={
+        conflict ? (
+          <ConflictNote
+            id={ids.conflict}
+            conflict={conflict}
+            onTheirs={() => {
+              draft.forget(path);
+              onTheirs?.();
+              focusAfterRender(path);
+            }}
+            onMine={() => {
+              draft.keepMine(path);
+              focusAfterRender(path);
+            }}
+          />
+        ) : null
+      }
+    >
+      {children}
+    </SideLabelField>
   );
 }
 
@@ -241,7 +240,7 @@ export function PlainFieldRow({ form, field, path, label, effective, disabled }:
       data-draft-path={path}
       aria-describedby={describe}
       aria-invalid={problem ? true : undefined}
-      className={cn("min-h-20 font-mono text-xs", changed && "border-warning/60")}
+      className={cn("min-h-20 font-mono text-xs", problem && INVALID_BORDER)}
       spellCheck={false}
       autoComplete="off"
       disabled={disabled}
@@ -255,7 +254,7 @@ export function PlainFieldRow({ form, field, path, label, effective, disabled }:
       data-draft-path={path}
       aria-describedby={describe}
       aria-invalid={problem ? true : undefined}
-      className={cn("h-8 text-xs", field.type === "number" ? "w-full text-right tabular-nums sm:w-28" : "w-full", changed && "border-warning/60")}
+      className={cn("h-8 text-xs", field.type === "number" ? "w-full text-right tabular-nums sm:w-28" : "w-full", problem && INVALID_BORDER)}
       inputMode={field.type === "number" ? "numeric" : undefined}
       autoComplete="off"
       spellCheck={false}
@@ -422,8 +421,8 @@ function hostEstimate(form: BackendForm, host: HostRow, field: FieldView): Effec
   if (backendField && own !== null && own !== "") return { value: withUnit(own as string | number, field), from: `${form.driver.label}'s setting` };
   const name = host.saved ? host.name : host.name.trim() || `the new ${noun}`;
   const estimate = form.state.backends.find((each) => each.id === form.config.id)?.hostEstimates?.[host.saved ? host.name : ""]?.[field.key];
-  if (estimate !== undefined) return { value: withUnit(estimate, field), from: `bb-box's estimate for ${name}` };
-  return { value: "", from: `bb-box's estimate for ${name}, once it has read the ${noun}` };
+  if (estimate !== undefined) return { value: withUnit(estimate, field), from: `${PRODUCT}'s estimate for ${name}` };
+  return { value: "", from: `${PRODUCT}'s estimate for ${name}, once it has read the ${noun}` };
 }
 
 function HostDetails({ form, host, noun }: { form: BackendForm; host: HostRow; noun: string }) {
@@ -488,7 +487,7 @@ function HostDetails({ form, host, noun }: { form: BackendForm; host: HostRow; n
           <div className="px-4 pb-1 pt-3">
             <p className="text-xs font-normal text-foreground">Its own shared iOS host size</p>
             <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">
-              Empty takes {form.driver.label}'s setting, or bb-box's estimate for this {noun}. A change reaches the next shared host made on it; one running now keeps its size.
+              Empty takes {form.driver.label}'s setting, or {PRODUCT}'s estimate for this {noun}. A change reaches the next shared host made on it; one running now keeps its size.
             </p>
           </div>
         ) : null}
@@ -637,7 +636,7 @@ export function HostsSection({ form, forced, onRemove, settingUp = false }: { fo
           </Rows>
         </Card>
       ) : (
-        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-subtle-foreground">No {noun} yet. Add {noun} names one and how bb-box reaches it.</p>
+        <p className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-subtle-foreground">No {noun} yet. Add {noun} names one and how {PRODUCT} reaches it.</p>
       )}
     </Group>
   );
@@ -647,34 +646,30 @@ export function RemoveHostDialog({ name, noun, backend, rowOf, onCancel, onConfi
   const [last, setLast] = useState<string | null>(null);
   if (name !== null && name !== last) setLast(name);
   return (
-    <AlertDialog open={name !== null} onOpenChange={(open) => !open && onCancel()}>
-      <AlertDialogContent
-        onCloseAutoFocus={(event) => {
-          if (!last) return;
-          event.preventDefault();
-          document.querySelector<HTMLElement>(`[data-host-row="${CSS.escape(rowOf(last))}"]`)?.focus();
-        }}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            Remove {name} from {backend} when you save?
-          </AlertDialogTitle>
-          <AlertDialogDescription asChild>
-            <div className="space-y-2">
-              <p>New boxes stop going to {name}. Its shared iOS host is deleted when its last box goes, and its warm VMs are released.</p>
-              <p>
-                BB Box refuses to remove a {noun} while boxes are on it: turn its switch off and release them first. The removal waits for Save, with the rest of the form.
-              </p>
-            </div>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => name && onConfirm(name)}>
+    <BoxDialog
+      open={name !== null}
+      title={`Remove ${name ?? last ?? "it"} from ${backend} when you save?`}
+      onClose={onCancel}
+      onCloseAutoFocus={(event) => {
+        if (!last) return;
+        event.preventDefault();
+        document.querySelector<HTMLElement>(`[data-host-row="${CSS.escape(rowOf(last))}"]`)?.focus();
+      }}
+      footer={
+        <>
+          <DialogButton variant="outline" onClick={onCancel}>
+            Cancel
+          </DialogButton>
+          <DialogButton danger onClick={() => name && onConfirm(name)}>
             Remove when I save
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+          </DialogButton>
+        </>
+      }
+    >
+      <div className="space-y-2">
+        <p>New boxes stop going to {name}. Its shared iOS host is deleted when its last box goes, and its warm VMs are released.</p>
+        <p>BB Box refuses to remove a {noun} while boxes are on it: turn its switch off and release them first. The removal waits for Save, with the rest of the form.</p>
+      </div>
+    </BoxDialog>
   );
 }

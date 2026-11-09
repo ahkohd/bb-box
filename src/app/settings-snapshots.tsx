@@ -10,6 +10,7 @@ import { BackendChips, Card, Chevron, Group, ProviderGlyph, RowButton, Rows } fr
 import { ceilingPath, snapshotPath } from "./settings-paths.ts";
 import { RestoredNote, SaveBar, useDraft, type Draft } from "./settings-saving.tsx";
 import { backendLabel, kindName } from "./settings-status.ts";
+import { PRODUCT } from "./product.ts";
 
 const SNAPSHOTS_CHECK = ".snapshots";
 export const AGENTS_RESTORE_LABEL = "Agents may restore their own boxes";
@@ -45,7 +46,7 @@ function typedRoom(draft: Draft, path: string, stored: number): number {
 
 function roomWords(roomPercent: number): string {
   const past = roomThresholds(roomPercent);
-  return `Snapshots on thin storage grow as a box changes, and a full pool stops every box on it. A new snapshot is refused past this, or past ${past.metadata}% of a thin pool's metadata. Past ${past.sweep}%, bb-box deletes agents' snapshots on that storage that nobody kept, oldest first. ${SNAPSHOT_LIMITS.roomPercent.least} to ${SNAPSHOT_LIMITS.roomPercent.most}.`;
+  return `Snapshots on thin storage grow as a box changes, and a full pool stops every box on it. A new snapshot is refused past this, or past ${past.metadata}% of a thin pool's metadata. Past ${past.sweep}%, ${PRODUCT} deletes agents' snapshots on that storage that nobody kept, oldest first. ${SNAPSHOT_LIMITS.roomPercent.least} to ${SNAPSHOT_LIMITS.roomPercent.most}.`;
 }
 
 function count(n: number, word: string): string {
@@ -62,22 +63,22 @@ function PaidRow({ draft, state, config, live }: { draft: Draft; state: ConfigSt
   const view = live.snapshots!;
   const paid = view.paid!;
   const money = (amount: number) => moneyWords(amount, paid.currency);
-  const unknown = paid.unknown ? ` ${count(paid.unknown, "snapshot")} at a price bb-box does not know, left out.` : "";
+  const unknown = paid.unknown ? ` ${count(paid.unknown, "snapshot")} at a price ${PRODUCT} does not know, left out.` : "";
   const description: ReactNode = (
     <>
-      {view.price ? `${view.price.known ? `${priceWords(view.price)} for each snapshot.` : "bb-box does not know its price, so only you take snapshots there."} ` : ""}
+      {view.price ? `${view.price.known ? `${priceWords(view.price)} for each snapshot.` : `${PRODUCT} does not know its price, so only you take snapshots there.`} ` : ""}
       {paid.billing ? (
         <span data-bill-slot className="block min-h-[3lh]">
           {paid.billing === "billed" && paid.included
             ? billedSentence(paid.included, money(paid.monthly))
-            : `bb-box could not read what ${backendLabel(state, config)} bills just now, so it counts each of the ${count(paid.count, "saved snapshot")} it knows of at full price: about ${money(paid.monthly)} a month, an estimate.`}
+            : `${PRODUCT} could not read what ${backendLabel(state, config)} bills just now, so it counts each of the ${count(paid.count, "saved snapshot")} it knows of at full price: about ${money(paid.monthly)} a month, an estimate.`}
         </span>
       ) : (
         <>
           Held now: {count(paid.count, "snapshot")}, about {money(paid.monthly)} a month.{unknown} Spent this month so far, deleted ones included: {money(paid.spent)}.
         </>
       )}
-      {paid.past ? <span className="mt-1 block text-warning-text">The rate held is past this ceiling: bb-box refuses new paid snapshots, undos, Keep and renewals there until you raise it or delete some. It deletes none by itself.</span> : null}
+      {paid.past ? <span className="mt-1 block text-warning-text">The rate held is past this ceiling: {PRODUCT} refuses new paid snapshots, undos, Keep and renewals there until you raise it or delete some. It deletes none by itself.</span> : null}
     </>
   );
   return <DraftNumberRow draft={draft} path={ceilingPath(config.id)} label={backendLabel(state, config)} description={description} unit={`${paid.currency === "EUR" ? "EUR" : "$"} a month`} unitWord={`${paid.currency === "EUR" ? "euros" : "dollars"} a month`} decimal />;
@@ -169,7 +170,7 @@ export function SnapshotsOptions({ agents, pictures }: { agents: ReactNode; pict
               label="Keep keeps a snapshot for"
               unit="days"
               unitWord="days"
-              description={`From the day you keep it, unless you choose a date. A kept snapshot is yours, outlives its box's release, and bb-box deletes it after its date. Only you keep one. Keeping it again adds these days to its date. ${SNAPSHOT_LIMITS.keepDays.least} to ${SNAPSHOT_LIMITS.keepDays.most}.`}
+              description={`From the day you keep it, unless you choose a date. A kept snapshot is yours, outlives its box's release, and ${PRODUCT} deletes it after its date. Only you keep one. Keeping it again adds these days to its date. ${SNAPSHOT_LIMITS.keepDays.least} to ${SNAPSHOT_LIMITS.keepDays.most}.`}
             />
           </Rows>
         </Card>
@@ -186,7 +187,7 @@ export function SnapshotsOptions({ agents, pictures }: { agents: ReactNode; pict
       </Group>
       <Group
         title="Paid snapshots"
-        description="A ceiling on the monthly rate of what is held, for each provider and account, 5 a month unless you set it: every paid snapshot held, kept or not, times its daily price, times 30; where a provider's plan includes some, as boat.dev's does, only those past them, as it bills. A take, an undo, a Keep or a renewal that would pass it is refused. It is not a cap on the bill, and bb-box never deletes snapshots to get under it."
+        description={`A ceiling on the monthly rate of what is held, for each provider and account, 5 a month unless you set it: every paid snapshot held, kept or not, times its daily price, times 30; where a provider's plan includes some, as boat.dev's does, only those past them, as it bills. A take, an undo, a Keep or a renewal that would pass it is refused. It is not a cap on the bill, and ${PRODUCT} never deletes snapshots to get under it.`}
       >
         <Card>
           {paid.length ? (

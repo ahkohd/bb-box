@@ -226,7 +226,7 @@ test("a snapshots folder on another volume than the VMs is refused before anythi
   const plan = await backend.planSnapshots(guest, "macos-desktop", null, signal());
   assert.equal(plan.take.ok, false);
   assert.equal(plan.take.why, "the snapshots folder on mac1 is on another volume than the VMs, so a copy there would be a full copy. Move it to the VMs' volume.");
-  await assert.rejects(backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true }, recorder().hooks, signal()), (error: unknown) => error instanceof SnapshotFailed && /is on another volume than the VMs, so a copy there would be a full copy\. Move it to the VMs' volume\. bb-box suspended nothing\./.test(error.message));
+  await assert.rejects(backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true }, recorder().hooks, signal()), (error: unknown) => error instanceof SnapshotFailed && /is on another volume than the VMs, so a copy there would be a full copy\. Move it to the VMs' volume\. BB Box suspended nothing\./.test(error.message));
   assert.deepEqual(readdirSync(snaps).filter((entry) => entry.startsWith("sn")), [], "nothing copied");
   assert.ok(!tartCalls(mac).some((call) => call[1] === "suspend"), "refused before the suspend");
   assert.equal(await backend.power(guest), "running");
@@ -240,8 +240,8 @@ test("a take is refused when the VMs' volume has less free than the floor, befor
   writeFileSync(join(mac, ".nix-profile", "bin", "df"), `#!/bin/sh\necho 'Filesystem 1024-blocks Used Available Capacity Mounted on'\necho 'fake 1073741824 1063256064 10485760 99% /'\n`);
   const plan = await backend.planSnapshots(guest, "macos-desktop", null, signal());
   assert.deepEqual([plan.take.ok, plan.fork.ok], [false, false]);
-  assert.match(plan.take.why ?? "", /has 10 GiB free, and bb-box copies a VM there only with at least 50 GiB free/);
-  await assert.rejects(backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true }, recorder().hooks, signal()), (error: unknown) => error instanceof SnapshotFailed && /10 GiB free, and bb-box copies a VM there only with at least 50 GiB free.*bb-box suspended nothing\./.test(error.message));
+  assert.match(plan.take.why ?? "", /has 10 GiB free, and BB Box copies a VM there only with at least 50 GiB free/);
+  await assert.rejects(backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true }, recorder().hooks, signal()), (error: unknown) => error instanceof SnapshotFailed && /10 GiB free, and BB Box copies a VM there only with at least 50 GiB free.*BB Box suspended nothing\./.test(error.message));
   assert.ok(!existsSync(join(snaps, SNAP)) && !existsSync(join(snaps, `${SNAP}.part`)));
   assert.ok(!tartCalls(mac).some((call) => call[1] === "suspend"), "refused before the suspend");
   await backend.release(guest, releasing);
@@ -299,7 +299,7 @@ test("a task reads its outcome from the Mac's folders: a take done, cut short or
   const rollback = { kind: "rollback" as const, vm: "bb-box-bxone", id: SNAP, attempt: "a1b2c3d4e5f6" };
   assert.deepEqual(taskOutcome(rollback, listing(""), `done ${SNAP} a1b2c3d4e5f6\n`), { state: "ok" });
   assert.deepEqual(taskOutcome(rollback, listing(""), `running\nswapping ${SNAP} a1b2c3d4e5f6 42 Sun Nov  1 00:00:00 2026\n`), { state: "running" });
-  assert.deepEqual(taskOutcome(rollback, listing(""), `undone ${SNAP} a1b2c3d4e5f6\n`), { state: "failed", unchanged: true, words: "bb-box stopped before it finished putting the snapshot's copy in the VM's place, and the Mac put the VM's own folder back as it was" });
+  assert.deepEqual(taskOutcome(rollback, listing(""), `undone ${SNAP} a1b2c3d4e5f6\n`), { state: "failed", unchanged: true, words: "BB Box stopped before it finished putting the snapshot's copy in the VM's place, and the Mac put the VM's own folder back as it was" });
   assert.deepEqual(taskOutcome(rollback, listing(""), `done ${SNAP} ffffffffffff\n`), { state: "failed", unchanged: true, words: "the Mac has no record of putting this snapshot back for this restore, so it did not begin, and the VM is as it was" }, "an earlier restore's done is not this one's");
   assert.equal(taskOutcome(rollback, listing(""), "unhealed\n").state, "failed");
   assert.deepEqual(taskOutcome(rollback, listing(""), "unhealed\n"), { state: "failed", words: "the VM's folder is missing, and the Mac has neither the snapshot's whole copy nor the VM's own folder set aside to put back" });
@@ -344,7 +344,7 @@ test("a snapshot whose memory was saved under another macOS build or Tart is not
   writeFileSync(join(mac, ".fake-macos-build"), "27B5");
   const plan = await backend.planSnapshots(guest, "macos-desktop", { id: SNAP, ref: SNAP, guest }, signal());
   assert.equal(plan.restore.way, "none");
-  assert.match(plan.restore.why ?? "", /saved while the Mac ran macOS build 27A1, and the Mac runs 27B5 now, so bb-box does not restore it.*Fork it instead/);
+  assert.match(plan.restore.why ?? "", /saved while the Mac ran macOS build 27A1, and the Mac runs 27B5 now, so BB Box does not restore it.*Fork it instead/);
   assert.equal(plan.fork.ok, true, "a fork starts from the disk");
   await backend.stop(guest);
   await assert.rejects(backend.rollbackSnapshot(guest, { id: SNAP, ref: SNAP, guest }, recorder().hooks, signal()), (error: unknown) => error instanceof SnapshotFailed && /27B5/.test(error.message));
@@ -460,7 +460,7 @@ test("macOS's identity reset keeps a box whose MAC address matches its marker, a
   const root = macosBox();
   const box = "aa:bb:cc:00:00:01";
   assert.equal(tool(root, box, "boot").code, 0);
-  assert.equal(status(root, box).boot, "off", "off until bb-box enables it");
+  assert.equal(status(root, box).boot, "off", "off until BB Box enables it");
   assert.equal(tool(root, box, "enable").code, 0);
   tool(root, box, "boot");
   assert.equal(status(root, box).boot, "unarmed");
@@ -574,7 +574,7 @@ test("a box whose restore was cut short is put right when it starts or its power
   const live = `${process.pid} ${startedAt(process.pid)}`;
   cutShort(snaps, vms, guest.ref, "swapping", { restore: "whole", aside: true, pid: live });
   assert.equal(await backend.power(guest), "stopped", "never gone while a restore runs");
-  await assert.rejects(backend.start(guest, signal()), /bb-box is putting a snapshot in the place of bb-box-\S+ on the Mac, so it does not start it until that has ended/);
+  await assert.rejects(backend.start(guest, signal()), /BB Box is putting a snapshot in the place of bb-box-\S+ on the Mac, so it does not start it until that has ended/);
   assert.ok(!existsSync(join(vms, guest.ref)), "nothing moved under a live restore");
   writeFileSync(join(snaps, ".rollbacks", guest.ref), `swapping ${SNAP} a1b2c3d4e5f6 ${process.pid} Thu Jan  1 00:00:00 1970\n`);
   assert.equal(await backend.power(guest), "stopped", "a reused PID with another start time is not the restore's shell, so the power read puts the copy in");
@@ -633,7 +633,7 @@ test("the start just after a restore never boots the VM from its disk when the s
   const { backend, guest, vms } = await suspendedWithSnapshot();
   await backend.rollbackSnapshot(guest, { id: SNAP, ref: SNAP, guest }, recorder().hooks, signal());
   writeFileSync(join(vms, guest.ref, "state.vzvmsave"), "corrupt");
-  await assert.rejects(backend.start(guest, signal()), /did not resume, so bb-box did not boot it from its disk/);
+  await assert.rejects(backend.start(guest, signal()), /did not resume, so BB Box did not boot it from its disk/);
   assert.ok(existsSync(join(vms, guest.ref, "state.vzvmsave")), "its memory is kept");
   await backend.start(guest, signal());
   assert.equal(await backend.power(guest), "running");
@@ -645,7 +645,7 @@ test("a copy APFS cannot clone is refused, never made in full, and the box resum
   const box = identity();
   const guest = await backend.acquire(box, null, acquiring, signal());
   writeFileSync(join(mac, ".fake-clone-fails"), "");
-  await assert.rejects(backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true }, recorder().hooks, signal()), (error: unknown) => error instanceof SnapshotFailed && /APFS could not clone .* and bb-box makes no full copy of a VM/.test(error.message));
+  await assert.rejects(backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true }, recorder().hooks, signal()), (error: unknown) => error instanceof SnapshotFailed && /APFS could not clone .* and BB Box makes no full copy of a VM/.test(error.message));
   assert.ok(!existsSync(join(snaps, SNAP)) && !existsSync(join(snaps, `${SNAP}.part`)));
   assert.equal(await backend.power(guest), "running");
   await backend.release(guest, releasing);
@@ -707,7 +707,7 @@ test("a fork whose disk would mount from the Mac's own container, or will not at
   dataVolume(mac);
   writeFileSync(join(mac, ".fake-diskutil-container"), "disk3");
   const fork = identity();
-  await assert.rejects(backend.forkSnapshot({ id: SNAP, ref: SNAP, guest }, fork, null, acquiring, signal()), /names the Mac's own container, so bb-box changed nothing.*could not remove the source's identity from the fork's disk before its first boot, so it makes no fork/s);
+  await assert.rejects(backend.forkSnapshot({ id: SNAP, ref: SNAP, guest }, fork, null, acquiring, signal()), /names the Mac's own container, so BB Box changed nothing.*could not remove the source's identity from the fork's disk before its first boot, so it makes no fork/s);
   assert.ok(!existsSync(join(vms, `bb-box-${fork.boxId}`)));
   assert.ok(!tartCalls(mac).some((call) => call[0] === "diskutil" && call[1] === "mount"), "nothing mounted");
   rmSync(join(mac, ".fake-diskutil-container"));
@@ -721,7 +721,7 @@ test("a fork is never made over a VM that is there already, so it always gets a 
   dataVolume(mac);
   const fork = identity();
   spawnSync("cp", ["-r", "--sparse=always", join(vms, guest.ref), join(vms, `bb-box-${fork.boxId}`)]);
-  await assert.rejects(backend.forkSnapshot({ id: SNAP, ref: SNAP, guest }, fork, null, acquiring, signal()), /is there already, so bb-box makes no fork over it/);
+  await assert.rejects(backend.forkSnapshot({ id: SNAP, ref: SNAP, guest }, fork, null, acquiring, signal()), /is there already, so BB Box makes no fork over it/);
   await backend.release(guest, releasing);
 });
 
@@ -789,7 +789,7 @@ function throughGuestTool(backend: TartBackend, testRoot: { readonly root: strin
   };
 }
 
-test("070 close-out: through bb-box's own boxes and snapshots, a Tart Linux box that bb-box stops takes a fork-safe snapshot, its identity reset read just before the stop, and Keep takes it; one stopped another way takes one that is not fork-safe", async () => {
+test("070 close-out: through BB Box's own boxes and snapshots, a Tart Linux box that BB Box stops takes a fork-safe snapshot, its identity reset read just before the stop, and Keep takes it; one stopped another way takes one that is not fork-safe", async () => {
   const ssh = fakeSsh();
   const mac = ssh.home(MAC);
   fakeMacTools(mac);
@@ -823,7 +823,7 @@ test("070 close-out: through bb-box's own boxes and snapshots, a Tart Linux box 
   await tart!.start(stopped.guest!);
   await tart!.stop!(stopped.guest!);
   const ranOutside = (await state.boxes.find(box.id))!;
-  assert.ok(ranOutside.state === "stopped" && ranOutside.stopForkSafety, "bb-box has not seen the run");
+  assert.ok(ranOutside.state === "stopped" && ranOutside.stopForkSafety, "BB Box has not seen the run");
   const afterRun = (await state.snapshots.take(COMMAND, ranOutside, standing(ranOutside), { name: "after a run outside" })).snapshot!;
   assert.deepEqual([state.store.record(afterRun.id)?.forkSafe, state.store.record(afterRun.id)?.forkSafeWhy], [null, "unread"], "the VM's files changed as it ran, so the reading is not its own");
   await state.boxes.start(THREAD, box.id, undefined, BY_COMMAND);

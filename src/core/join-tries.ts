@@ -1,5 +1,6 @@
 import type { BoxRecord } from "./boxes.ts";
 import type { DoctorCheck } from "../backends/types.ts";
+import { PRODUCT } from "../brand.ts";
 
 export type JoinProblem = "dns-timeout" | "dns" | "refused" | "unroutable" | "timeout" | "reset" | "slow";
 
@@ -119,8 +120,8 @@ export function gaveUpWords(input: { readonly sentence: string; readonly failed:
       ? `Other boxes on ${input.backendLabel} joined BB, so BB's setup is fine: the fault is in this box's network.`
       : "";
   const next = input.stopped
-    ? `bb-box gave up after ${JOIN_GIVE_UP_MS / 3_600_000} hours of tries; Join BB again starts a new round.`
-    : `bb-box tries again every ${JOIN_EVERY_MS / 60_000} minutes for up to ${JOIN_GIVE_UP_MS / 3_600_000} hours; Join BB again tries at once.`;
+    ? `${PRODUCT} gave up after ${JOIN_GIVE_UP_MS / 3_600_000} hours of tries; Join BB again starts a new round.`
+    : `${PRODUCT} tries again every ${JOIN_EVERY_MS / 60_000} minutes for up to ${JOIN_GIVE_UP_MS / 3_600_000} hours; Join BB again tries at once.`;
   return [input.sentence, after, blame, next].filter(Boolean).join(" ");
 }
 
@@ -162,7 +163,7 @@ export function joinChecks(boxes: readonly BoxRecord[], now: number): DoctorChec
     if (box.state !== "ready" || !tries || (box.enrol.state !== "enrolling" && box.enrol.state !== "failed")) return [];
     const name = `${box.name} joining BB`;
     if (box.enrol.state === "enrolling") {
-      return [{ id: `join.${box.name}`, name, status: "warn", detail: `Box ${box.name} on ${box.backendLabel} is ${joiningWords(tries, now)}.`, fix: "bb-box tries again by itself. Join BB again on the box's page, or bb box enrol, tries at once." }];
+      return [{ id: `join.${box.name}`, name, status: "warn", detail: `Box ${box.name} on ${box.backendLabel} is ${joiningWords(tries, now)}.`, fix: `${PRODUCT} tries again by itself. Join BB again on the box's page, or bb box enrol, tries at once.` }];
     }
     return [
       tries.setup

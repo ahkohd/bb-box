@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { plain, type Path, type PlainValue } from "./settings-paths.ts";
+import { INVALID_BORDER } from "./size-field.ts";
+import { SideLabelField } from "./field-shell.tsx";
 import { ChangedChip, ConflictNote, focusAfterRender, saveOnEnter, type Draft } from "./settings-saving.tsx";
 
 export function unplacedProblems(draft: Draft, placed: readonly Path[]): string[] {
@@ -44,47 +46,44 @@ export function DraftRow({
   const conflict = draft.conflict(path);
   const problem = shownProblem === undefined ? draft.problem(path) : shownProblem;
   return (
-    <div className="px-4 py-3" data-setting-row={path}>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-5">
-        <div className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-1.5">
-            <label htmlFor={id} className="text-sm text-foreground">
-              {label}
-            </label>
-            {chips}
-            <ChangedChip show={draft.changed(path) && !conflict} />
-          </span>
-          <p id={`${id}-help`} className="mt-0.5 text-xs leading-snug text-subtle-foreground">
-            {description}
-          </p>
-          {problem ? (
-            <p id={`${id}-problem`} role="alert" className="mt-0.5 text-xs text-destructive-text">
-              {problem}
-            </p>
-          ) : null}
-        </div>
-        <div className={cn("flex items-center gap-1.5 text-xs text-muted-foreground", wide ? "w-full sm:w-72 sm:shrink-0 sm:justify-end" : "shrink-0")}>
-          {children}
-          {unit}
-        </div>
+    <SideLabelField
+      path={path}
+      htmlFor={id}
+      label={label}
+      chips={chips}
+      changed={<ChangedChip show={draft.changed(path) && !conflict} />}
+      help={
+        <p id={`${id}-help`} className="mt-0.5 text-xs leading-snug text-subtle-foreground">
+          {description}
+        </p>
+      }
+      problem={problem}
+      problemId={problem ? `${id}-problem` : undefined}
+      controlClassName={cn("text-xs text-muted-foreground", wide ? "w-full sm:w-72" : undefined)}
+      conflict={
+        conflict ? (
+          <ConflictNote
+            id={`${id}-conflict`}
+            conflict={conflict}
+            shown={shown}
+            onTheirs={() => {
+              draft.forget(path);
+              onTheirs?.();
+              focusAfterRender(path);
+            }}
+            onMine={() => {
+              draft.keepMine(path);
+              focusAfterRender(path);
+            }}
+          />
+        ) : null
+      }
+    >
+      <div className={cn("flex items-center gap-1.5", wide && "sm:justify-end")}>
+        {children}
+        {unit}
       </div>
-      {conflict ? (
-        <ConflictNote
-          id={`${id}-conflict`}
-          conflict={conflict}
-          shown={shown}
-          onTheirs={() => {
-            draft.forget(path);
-            onTheirs?.();
-            focusAfterRender(path);
-          }}
-          onMine={() => {
-            draft.keepMine(path);
-            focusAfterRender(path);
-          }}
-        />
-      ) : null}
-    </div>
+    </SideLabelField>
   );
 }
 
@@ -92,7 +91,6 @@ export function DraftNumberRow({ draft, path, label, description, unit, unitWord
   const id = useId();
   const problem = draft.problem(path);
   const conflict = draft.conflict(path);
-  const changed = draft.changed(path);
   return (
     <DraftRow draft={draft} path={path} id={id} label={label} description={description} unit={unit}>
       <Input
@@ -101,7 +99,7 @@ export function DraftNumberRow({ draft, path, label, description, unit, unitWord
         aria-label={unitWord ? `${label}, in ${unitWord}` : undefined}
         aria-describedby={describedBy(`${id}-help`, problem && `${id}-problem`, conflict && `${id}-conflict`)}
         aria-invalid={problem ? true : undefined}
-        className={cn("h-8 w-20 text-right text-xs tabular-nums", changed && "border-warning/60")}
+        className={cn("h-8 w-20 text-right text-xs tabular-nums", problem && INVALID_BORDER)}
         inputMode={decimal ? "decimal" : "numeric"}
         autoComplete="off"
         disabled={disabled}
@@ -169,7 +167,7 @@ export function SecretControl({
           aria-label={set ? `New ${label}` : label}
           aria-describedby={describe}
           aria-invalid={invalid ? true : undefined}
-          className={cn("h-8 w-full text-xs", edit && "border-warning/60")}
+          className={cn("h-8 w-full text-xs", invalid && INVALID_BORDER)}
           autoComplete="new-password"
           placeholder={set ? "Paste the new value" : "Paste the value"}
           value={text}

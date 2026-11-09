@@ -28,7 +28,7 @@ test("070 unit 7: a take whose flush fails still goes ahead, and its record, its
   assert.equal(taken.state, "ready", "the take is not stopped");
   assert.equal(taken.unflushed, "sync: Input/output error");
   assert.equal(state.store.record(taken.id)?.unflushed, "sync: Input/output error", "kept on the record");
-  assert.match(takenText(answer, box.name, 5), /\nbb-box could not flush the box's writes to its disk before it \(sync: Input\/output error\), so it may miss what was written in the last seconds before it\.\n/);
+  assert.match(takenText(answer, box.name, 5), /\nBB Box could not flush the box's writes to its disk before it \(sync: Input\/output error\), so it may miss what was written in the last seconds before it\.\n/);
   assert.match(snapshotLine(taken), / · may miss its last writes$/);
 });
 

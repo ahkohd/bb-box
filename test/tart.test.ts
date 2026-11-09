@@ -109,7 +109,7 @@ test("offers macos and macos-desktop from the image, each only when it has one",
   assert.equal(desktop.arch, "arm64");
   assert.equal(desktop.gpu, false);
   assert.equal(desktop.command?.inDesktopSession, false);
-  // Tart's VNC server moves no clipboard, so bb-box does with commands in the box (#464), and takes Alt as Command.
+  // Tart's VNC server moves no clipboard, so BB Box does with commands in the box (#464), and takes Alt as Command.
   assert.deepEqual(desktop.displays, [{ id: "desktop", protocol: "rfb", resizable: false, clipboard: "commands", macKeys: "alt-command" }]);
   assert.equal(desktop.computerUse?.socket, "/Users/admin/Library/Caches/cua-driver/cua-driver.sock");
 });
@@ -224,7 +224,7 @@ test("a macOS desktop declares video while every Mac's image record lists bb-box
     return tart;
   };
   const backend = make(true);
-  // Before a Mac answers, as just after bb-box starts, a macOS desktop keeps the video it has: its kind does not yet say.
+  // Before a Mac answers, as just after BB Box starts, a macOS desktop keeps the video it has: its kind does not yet say.
   const someGuest = { ref: "a-vm", data: {} } as unknown as Parameters<TartBackend["asOffered"]>[0];
   assert.equal(await backend.asOffered(someGuest, "macos-desktop"), false);
   assert.equal(await backend.asOffered(someGuest, "macos"), true);
@@ -304,7 +304,7 @@ test("acquire claims the VM before it writes anything, then clones, starts and r
   assert.equal(access?.ssh?.user, "admin");
   assert.equal(displays[0]!.minSize, undefined, "a viewer cannot resize a macOS desktop");
   // This Mac has no python3 for the VNC holder, so the desktop says how to give it one.
-  await assert.rejects(displays[0]!.open(), /mac1 could not start the desktop's stream for bb-box-\S+: The Mac has no python3 for bb-box's VNC holder: install Xcode's command line tools there \(xcode-select --install\)\./);
+  await assert.rejects(displays[0]!.open(), /mac1 could not start the desktop's stream for bb-box-\S+: The Mac has no python3 for BB Box's VNC holder: install Xcode's command line tools there \(xcode-select --install\)\./);
 
   // The VM's commands went to the VM, the rest to the Mac, and the VM is named after the box.
   const targets = new Set(ssh.log().map((entry) => entry.target));
@@ -576,7 +576,7 @@ test("a VM runs while a process holds Tart's run lock on its config.json, and is
   assert.equal(stateOfImage(), "suspended");
 });
 
-test("an ASIF disk is sized from bb-box's note, which a clone takes from tart get of its image, once a build, never of a VM that may start (F-10)", async () => {
+test("an ASIF disk is sized from BB Box's note, which a clone takes from tart get of its image, once a build, never of a VM that may start (F-10)", async () => {
   const { mac, backend } = setup();
   const image = join(mac, ".tart", "vms", FAKE_IMAGE);
   writeFileSync(join(image, "config.json"), JSON.stringify({ ...JSON.parse(readFileSync(join(image, "config.json"), "utf8")), diskFormat: "asif" }));
@@ -739,7 +739,7 @@ test("says why a run ended from what the Mac recorded (#406)", () => {
     crash: null,
   });
   assert.equal(parseEnded("gone\n"), null);
-  assert.equal(endReason(end({ pid: null }), "tart run"), null, "a run started before bb-box recorded them");
+  assert.equal(endReason(end({ pid: null }), "tart run"), null, "a run started before BB Box recorded them");
   assert.deepEqual(endReason(end({ status: 1, endedAt: 5, output: "Error: VM stopped" }), "tart run"), { reason: "tart run exited with status 1. Its last output: Error: VM stopped", crashed: true, at: 5 });
   assert.deepEqual(endReason(end({ bootedAt: 1_790_000_100_000 }), "tart run"), { reason: "The Mac restarted at 2026-09-21 14:15:00 UTC, which ended tart run.", crashed: true, at: 1_790_000_100_000 });
   assert.deepEqual(endReason(end({}), "QEMU"), { reason: "QEMU ended, but left no exit status.", crashed: false, at: null });
@@ -828,7 +828,7 @@ test("image operations on a Mac: an image box, its capture with its record besid
   await assert.rejects(images.remove("mac1/bb-box-macos", signal()), /bb-box-macos on mac1 is not an image box or build of this install's/);
   assert.deepEqual((await images.list()).boxes, []);
 
-  // A new build by the prepare script, from a copy of setup/ on the Mac, as the user bb-box logs in as.
+  // A new build by the prepare script, from a copy of setup/ on the Mac, as the user BB Box logs in as.
   const setupDir = join(dir, "setup");
   mkdirSync(join(setupDir, "tart"), { recursive: true });
   mkdirSync(join(setupDir, "proxmox-lxc"), { recursive: true });
@@ -876,7 +876,7 @@ test("image operations on a Mac: an image box, its capture with its record besid
   assert.equal(images.check!("linux-arm64"), "bb-box-check-headless");
 });
 
-test("a standard image's prepare script runs detached on the Mac, so its build outlives a link that drops, and bb-box follows its log again (#707)", async () => {
+test("a standard image's prepare script runs detached on the Mac, so its build outlives a link that drops, and BB Box follows its log again (#707)", async () => {
   const { mac, context, ssh } = setup();
   const backend = new TartBackend(tartConfig({}), context, { ...FAKES, sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 100))) });
   made.push(backend);
@@ -979,8 +979,8 @@ test("the doctor judges each Tart image by the record beside it (049)", async ()
   }
   const linux = check("linux-arm64");
   assert.equal(linux.status, "warn");
-  assert.match(linux.detail, /It is 15 days old, more than 14, .* It has no build of BB's app, .* It was built with other pins than this bb-box's/);
-  assert.equal(linux.fix, "Build it again on mac1 with setup/tart/prepare-linux-image.sh --key '<bb-box's public key>' --name bb-box-linux --bb-url <BB's server URL> --replace.");
+  assert.match(linux.detail, /It is 15 days old, more than 14, .* It has no build of BB's app, .* It was built with other pins than this BB Box's/);
+  assert.equal(linux.fix, "Build it again on mac1 with setup/tart/prepare-linux-image.sh --key '<BB Box's public key>' --name bb-box-linux --bb-url <BB's server URL> --replace.");
 
   // A macOS image without Xcode warns (#475).
   writeFileSync(join(records, "bb-box-macos.json"), imageRecord("macos", { pins: macosPins, bbApp: app }));
@@ -992,7 +992,7 @@ test("the doctor judges each Tart image by the record beside it (049)", async ()
   report = await backend.doctor();
   assert.equal(check("macos").status, "warn");
   assert.match(check("macos").detail, /^bb-box-macos, 4 cores and 8 GiB as prepared\. It has no image record/);
-  assert.equal(check("macos").fix, "Build it again on mac1 with setup/tart/prepare-image.sh --key '<bb-box's public key>' --name bb-box-macos --bb-url <BB's server URL> --replace.");
+  assert.equal(check("macos").fix, "Build it again on mac1 with setup/tart/prepare-image.sh --key '<BB Box's public key>' --name bb-box-macos --bb-url <BB's server URL> --replace.");
 });
 
 test("doctor says what is missing on the Mac", async () => {
@@ -1346,12 +1346,12 @@ test("prepare-ios-image.sh finds VMs by their folders, without tart list, so a V
   assert.deepEqual(askedTartToReadDisks(tartCalls(mac)), []);
 });
 
-test("grant-tcc.sh reads a VM's state from its folder and Tart's run lock, as bb-box does, without tart list, so it opens no disk (F-12)", async () => {
+test("grant-tcc.sh reads a VM's state from its folder and Tart's run lock, as BB Box does, without tart list, so it opens no disk (F-12)", async () => {
   const { mac } = setup();
   const script = join(import.meta.dirname, "..", "setup", "tart", "grant-tcc.sh");
   const text = readFileSync(script, "utf8");
-  assert.ok(text.includes(`run_lock_holders() { perl -e '${RUN_LOCK_HOLDERS_PL}' "$@"; }`), "it reads the run lock with bb-box's own perl");
-  assert.ok(text.includes(TART_LISTS_SH), "it lists a VM by its folder as bb-box does");
+  assert.ok(text.includes(`run_lock_holders() { perl -e '${RUN_LOCK_HOLDERS_PL}' "$@"; }`), "it reads the run lock with BB Box's own perl");
+  assert.ok(text.includes(TART_LISTS_SH), "it lists a VM by its folder as BB Box does");
   assert.doesNotMatch(text, /tart (list|get)/);
   const grant = (vm: string) =>
     new Promise<{ code: number | null; stderr: string }>((resolve) => {
@@ -1502,7 +1502,7 @@ test("ios, withheld until a Mac lists the iOS image's devices, is offered once w
   try {
     const [silent] = await fresh().withheldKinds("ios", signal());
     assert.equal(silent?.passing, true);
-    assert.match(silent?.why ?? "", /^mac1 did not answer, so bb-box cannot read which devices its iOS image offers: .*is its volume mounted\?/s);
+    assert.match(silent?.why ?? "", /^mac1 did not answer, so BB Box cannot read which devices its iOS image offers: .*is its volume mounted\?/s);
   } finally {
     rmSync(tart);
     renameSync(`${tart}.away`, tart);
@@ -1520,18 +1520,18 @@ test("the iOS image setting is a Tart VM name of its own, and needs a macOS imag
     const parsed = parse(values);
     return parsed.enabled && !parsed.ok ? parsed.problems : [];
   };
-  assert.deepEqual(problems({ "tart-ios-image": "bb box ios" }), ['Tart: the iOS image "bb box ios" is not a Tart VM name bb-box can use.']);
+  assert.deepEqual(problems({ "tart-ios-image": "bb box ios" }), ['Tart: the iOS image "bb box ios" is not a Tart VM name BB Box can use.']);
   assert.deepEqual(problems({ "tart-ios-image": "bb-box-ios", "tart-macos-image": "", "tart-macos-desktop-image": "", "tart-linux-image": "bb-box-linux" }), [
     "Tart: the iOS image is built on the macOS image, so give a macOS image too.",
   ]);
   assert.deepEqual(problems({ "tart-ios-image": "bb-box-macos" }), ['Tart: "bb-box-macos" is another kind\'s image; the iOS image is a VM of its own.']);
 });
 
-test("what a Mac's empty shared iOS host sizes take is bb-box's estimate from the Mac it last read, read once when first asked, and open pages are told (067)", async () => {
+test("what a Mac's empty shared iOS host sizes take is BB Box's estimate from the Mac it last read, read once when first asked, and open pages are told (067)", async () => {
   const { make } = setup();
   let told = 0;
   const tart = make({ ...testContext(new MemoryStorage()), factsChanged: () => (told += 1) });
-  assert.deepEqual(tart.hostEstimates(), {}, "nothing is known before bb-box reads the Mac");
+  assert.deepEqual(tart.hostEstimates(), {}, "nothing is known before BB Box reads the Mac");
   for (let tries = 0; tries < 200 && !told; tries += 1) await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(told, 1);
   const mac = tart.hostEstimates().mac1!;

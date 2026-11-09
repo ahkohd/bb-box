@@ -7,6 +7,7 @@ import { joinAdvice, joinWords } from "./first-run.tsx";
 import { joiningWords, tryWords } from "../core/join-tries.ts";
 import { holdsNoCardWhileStopped, HOLDS_NO_CARD } from "../plugin/gpu-page.ts";
 import { controlWord, displayWord } from "./status.ts";
+import { PRODUCT } from "./product.ts";
 
 export interface RowItem {
   readonly text: string;
@@ -125,7 +126,7 @@ export function rowLine(box: BoxView, facts: RowFacts): RowLine {
     case "releasing":
       return { tone: "busy", items: [{ text: "Releasing…" }] };
     case "gone":
-      return { tone: "bad", items: [{ text: "Gone" }, { text: "deleted outside bb-box" }] };
+      return { tone: "bad", items: [{ text: "Gone" }, { text: `deleted outside ${PRODUCT}` }] };
     case "failed": {
       const failedAt = box.log?.lastStart?.failedAt ?? null;
       return { tone: "bad", items: [{ text: "Failed", tone: "danger", reason: box.error ?? undefined }, ...(failedAt !== null ? [{ text: rowAgo(failedAt, now) }] : [])] };

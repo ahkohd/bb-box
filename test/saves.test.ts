@@ -269,7 +269,7 @@ test("a file's content and the tailnet's credentials carry versions too, and an 
   assert.deepEqual(again.state.document.general.files, general.files);
 });
 
-test("a secret changed outside bb-box's saves, as by a write cut short, gets a version no save used, on a new revision", async () => {
+test("a secret changed outside BB Box's saves, as by a write cut short, gets a version no save used, on a new revision", async () => {
   const started = await start(ON);
   const before = await started.rpc<ConfigState>("config.get", null);
   const saved = await started.rpc<ApplyResult>("config.apply", { draft: withBoxesPerThread(before.document, 2), revision: before.revision });
@@ -286,7 +286,7 @@ test("a secret changed outside bb-box's saves, as by a write cut short, gets a v
   assert.equal((await started.rpc<ConfigState>("config.get", null)).revision, after.revision, "a start with nothing changed outside writes nothing");
 });
 
-test("a document an earlier bb-box saved since is read, and the receipts kept", async () => {
+test("a document an earlier BB Box saved since is read, and the receipts kept", async () => {
   const started = await start(ON);
   const before = await started.rpc<ConfigState>("config.get", null);
   const saved = await started.rpc<ApplyResult>("config.apply", { draft: withBoxesPerThread(before.document, 2), revision: before.revision, operation: "op-before" });

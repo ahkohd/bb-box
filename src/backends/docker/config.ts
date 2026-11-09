@@ -10,6 +10,7 @@
 import { endpointOf } from "../../host/relay.ts";
 import { BOXES_PER_CARD, DESKTOP_GPU_MIB, MOST_GPU_MEMORY_MIB, SERVER_GPU_MIB } from "../card-check.ts";
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const DOCKER_KINDS = ["linux", "linux-desktop-cpu", "linux-desktop", "linux-desktop-wayland-cpu"] as const;
 export type DockerKind = (typeof DOCKER_KINDS)[number];
@@ -77,7 +78,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "Host",
     description:
-      "The Docker daemon boxes run on. Give unix:///path/to/docker.sock, ssh://user@host, tcp://host:port, wsl://distro or wsl://user@distro, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. wsl:// reaches Docker in that WSL distribution through wsl.exe and docker system dial-stdio, not through WSL's localhost forwarder. Over SSH, BB's server user must log in without a prompt. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket.",
+      `The Docker daemon boxes run on. Give unix:///path/to/docker.sock, ssh://user@host, tcp://host:port, wsl://distro or wsl://user@distro, or bb:<machine ID> for a BB machine, which ${PRODUCT} reaches through BB. wsl:// reaches Docker in that WSL distribution through wsl.exe and docker system dial-stdio, not through WSL's localhost forwarder. Over SSH, BB's server user must log in without a prompt. Empty uses the docker CLI's own default on BB's server: DOCKER_HOST, its current context, or the local socket.`,
     group: "connection",
     default: "",
   },
@@ -85,7 +86,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "Docker on the machine",
     description:
-      "Where Docker is on a BB machine, when Host is bb:<machine ID>. Give wsl://distro or wsl://user@distro, unix:///path/to/docker.sock, or tcp://host:port. bb-box sends it when that machine's relay opens, and the machine dials it instead of its own DOCKER_HOST or docker context. Empty leaves those. On a Windows machine whose Docker is at tcp://127.0.0.1, set wsl://<distro>: WSL's localhost forwarder drops attached output, so docker exec prints nothing and exits 0.",
+      `Where Docker is on a BB machine, when Host is bb:<machine ID>. Give wsl://distro or wsl://user@distro, unix:///path/to/docker.sock, or tcp://host:port. ${PRODUCT} sends it when that machine's relay opens, and the machine dials it instead of its own DOCKER_HOST or docker context. Empty leaves those. On a Windows machine whose Docker is at tcp://127.0.0.1, set wsl://<distro>: WSL's localhost forwarder drops attached output, so docker exec prints nothing and exits 0.`,
     group: "connection",
     default: "",
   },
@@ -122,7 +123,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "boolean",
     label: "GPU boxes",
     description:
-      "Offers Linux servers and desktops on the host's NVIDIA cards, shared or, where whole cards are on, a card to themselves. The NVIDIA Container Toolkit must list the cards as CDI devices (nvidia-ctk cdi generate). With Docker in boxes on, every box can open every card, with a GPU or without: bb-box places boxes on cards, but does not fence them. Not set here, it reads gpu-desktops, off unless that is set.",
+      `Offers Linux servers and desktops on the host's NVIDIA cards, shared or, where whole cards are on, a card to themselves. The NVIDIA Container Toolkit must list the cards as CDI devices (nvidia-ctk cdi generate). With Docker in boxes on, every box can open every card, with a GPU or without: ${PRODUCT} places boxes on cards, but does not fence them. Not set here, it reads gpu-desktops, off unless that is set.`,
     group: "gpus",
     default: false,
     replaces: DOCKER_KEYS.gpuDesktops,
@@ -139,7 +140,7 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "boolean",
     label: "Whole cards",
     description:
-      "Lets a box have a card to itself. Off, no box is given a whole card or changes to one; boxes that have one keep it until they change or are released. A whole card is where bb-box places boxes, not a fence. Not set here, it follows the install-wide option general.wholeCards, off unless that is set.",
+      `Lets a box have a card to itself. Off, no box is given a whole card or changes to one; boxes that have one keep it until they change or are released. A whole card is where ${PRODUCT} places boxes, not a fence. Not set here, it follows the install-wide option general.wholeCards, off unless that is set.`,
     group: "gpus",
   },
   [DOCKER_KEYS.gpuMemoryMiB]: {
@@ -166,14 +167,14 @@ export const DOCKER_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [DOCKER_KEYS.network]: {
     type: "string",
     label: "Network",
-    description: "The Docker network bb-box makes for its boxes, apart from the host's other containers.",
+    description: `The Docker network ${PRODUCT} makes for its boxes, apart from the host's other containers.`,
     group: "advanced",
     default: DOCKER_DEFAULTS.network,
   },
   [DOCKER_KEYS.boxes]: {
     type: "number",
     label: "Most boxes",
-    description: "The most bb-box containers on the host at once, running or stopped. This counts those of every bb-box install that uses the host.",
+    description: `The most ${PRODUCT} containers on the host at once, running or stopped. This counts those of every ${PRODUCT} install that uses the host.`,
     group: "advanced",
     default: DOCKER_DEFAULTS.boxes,
   },
@@ -243,7 +244,7 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
     [DOCKER_KEYS.desktopImage, "desktop", desktop],
     [DOCKER_KEYS.waylandImage, "Wayland desktop", wayland],
   ] as const) {
-    if (image && !IMAGE.test(image)) problem(key, `Docker: the ${what} image "${image}" is not an image reference bb-box can use.`);
+    if (image && !IMAGE.test(image)) problem(key, `Docker: the ${what} image "${image}" is not an image reference ${PRODUCT} can use.`);
   }
   if (!linux && !desktop && !wayland) problem(DOCKER_KEYS.linuxImage, "Docker: give a linux or a desktop image.");
   // On unless set to false (041).

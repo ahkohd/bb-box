@@ -8,7 +8,7 @@ import { gpuWhenNotAsked, isGpuPart } from "../core/gpu.ts";
 import type { Contract } from "../plugin/contract.ts";
 import type { FieldView } from "../plugin/configuration.ts";
 import type { SettingsCard, SettingsCardHolder, SettingsCards } from "../plugin/gpu-settings.ts";
-import { capitalised, cardName, gib, GPU_CHOICE_LABELS, kindGpuChoices, kindGpuWords, limitAfterSave, loweredLimitWords, readAgo, wholeCardsNow, wholeKeptWords } from "./gpu-settings-words.ts";
+import { capitalised, cardName, cardsReadWords, gib, GPU_CHOICE_LABELS, kindGpuChoices, kindGpuWords, limitAfterSave, loweredLimitWords, wholeCardsNow, wholeKeptWords } from "./gpu-settings-words.ts";
 import { MenuSelect } from "./box-form.tsx";
 import { boxPage } from "./box-route.ts";
 import { useBoxesNav } from "./box-nav.tsx";
@@ -125,8 +125,7 @@ function CardRow({ card }: { card: SettingsCard }) {
 }
 
 function cardsHeading(cards: Extract<SettingsCards, { is: "read" }>, now: number): string {
-  const when = cards.at ? ` ${readAgo(cards.at, now)}` : "";
-  return cards.source === "helper" ? `The cards on ${cards.host}, as its GPU helper reported them${when}.` : `The cards on ${cards.host}, as Docker lists them${when}.`;
+  return cardsReadWords(cards.host, cards.source, cards.at ? cards.at : null, now);
 }
 
 function CardsList({ cards }: { cards: SettingsCards | null }) {

@@ -1,5 +1,6 @@
 import type { MessageDispatchHookContext, MessageDispatchHookDecision } from "@get-bb/plugin-sdk";
 import type { BoxRecord } from "../core/boxes.ts";
+import { PRODUCT } from "../brand.ts";
 
 export interface HeldMachine {
   readonly box: string;
@@ -20,11 +21,11 @@ export const HOLD_ASKS_AGAIN_MS = 15_000;
 
 export function heldWords(held: Pick<HeldMachine, "name"> & { readonly unconfirmed?: boolean }): string {
   if (held.unconfirmed) {
-    const words = `bb-box could not confirm its restore of box ${held.name}, the machine this thread runs on, so this message waits. bb box doctor says why.`;
-    return words.length <= HOLD_REASON_CHARACTERS ? words : "bb-box could not confirm its restore of the machine this thread runs on, so this message waits. bb box doctor says why.";
+    const words = `${PRODUCT} could not confirm its restore of box ${held.name}, the machine this thread runs on, so this message waits. bb box doctor says why.`;
+    return words.length <= HOLD_REASON_CHARACTERS ? words : `${PRODUCT} could not confirm its restore of the machine this thread runs on, so this message waits. bb box doctor says why.`;
   }
-  const words = `bb-box is restoring box ${held.name}, the machine this thread runs on. This message waits until the box is ready again.`;
-  return words.length <= HOLD_REASON_CHARACTERS ? words : "bb-box is restoring the machine this thread runs on. This message waits until it is ready again.";
+  const words = `${PRODUCT} is restoring box ${held.name}, the machine this thread runs on. This message waits until the box is ready again.`;
+  return words.length <= HOLD_REASON_CHARACTERS ? words : `${PRODUCT} is restoring the machine this thread runs on. This message waits until it is ready again.`;
 }
 
 export class TurnHold {

@@ -12,7 +12,7 @@ import { InUseDialog, ProblemLine, type InUse } from "./box-actions.tsx";
 import { EmptyPanel, forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { leaveModifiedClick } from "./modified-click.ts";
 import { BoxRowsSkeleton, LoadFailed, WhileLoading } from "./loading-states.tsx";
-import { useThreadTitles } from "./desktop.tsx";
+import { threadGroupHeading, useThreadTitles } from "./desktop.tsx";
 import { useBoxesNav } from "./box-nav.tsx";
 import { boxPage } from "./box-route.ts";
 import { IMAGE_REQUEST, NewBox, useDesktopOnDemand, useDesktopProblemShownOnce, type SizeRequest } from "./new-box.tsx";
@@ -42,7 +42,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   const now = useNow(boxes.some(isMoving) || (runsOn !== null && isMoving(runsOn.box)));
   // One list (the operator, 4 October 2026): the box this thread runs on first, with a "This thread" badge, then the thread's own.
   const rows: { box: BoxView; held: Held | null }[] = [
-    ...(runsOn ? [{ box: runsOn.box, held: { owner: runsOn.owner, threadId: runsOn.threadId, threadTitle: runsOn.threadId ? (titles[runsOn.threadId] ?? null) : null } }] : []),
+    ...(runsOn ? [{ box: runsOn.box, held: { owner: runsOn.owner, threadId: runsOn.threadId, threadTitle: runsOn.threadId ? (runsOn.threadId in titles ? threadGroupHeading(titles[runsOn.threadId]) : null) : null } }] : []),
     ...boxes.map((box) => ({ box, held: null })),
   ];
 
@@ -50,8 +50,8 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
     let refused: string | null;
     try {
       const answer = await result;
-      refused = answer.error;
       if (answer.threads?.length) onThreads?.(answer.threads);
+      refused = answer.threads?.length ? null : answer.error;
     } catch (caught) {
       refused = message(caught);
     }
@@ -65,10 +65,14 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   const onDemand = useDesktopOnDemand(state?.desktopOnDemand, threadId, refresh);
   // A desktop box not made after its image was built shows as a refused acquire does, once, until dismissed.
   useDesktopProblemShownOnce(state?.desktopProblem, setProblem);
-  const act = async (method: BoxAction, box: BoxView, options: { readonly force?: boolean; readonly deleteKept?: boolean } = {}) => {
+  const act = async (method: BoxAction, box: BoxView, options: { readonly force?: boolean; readonly deleteKept?: boolean } = {}): Promise<string | null> => {
     const guarded = method === "release" || method === "stop";
     const input = { threadId, box: box.id, ...(guarded && options.force ? { force: true } : {}), ...(method === "release" && options.deleteKept ? { deleteKept: true } : {}) };
-    setProblem(await settle(rpc.call(method, input), guarded ? (threads) => setInUse({ method, box, threads, ...(options.deleteKept ? { deleteKept: true } : {}) }) : undefined));
+    const refused = await settle(rpc.call(method, input), guarded ? (threads) => setInUse({ method, box, threads, ...(options.deleteKept ? { deleteKept: true } : {}) }) : undefined);
+    const shownInDialog = options.force === true || method === "release" || method === "forget";
+    if (!refused) setProblem(null);
+    else if (!shownInDialog) setProblem(refused);
+    return refused;
   };
 
   if (error) return <LoadFailed what="The boxes" error={error} onRetry={refresh} />;
@@ -129,7 +133,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
           <p className="mt-1">A computer for this thread.</p>
         </EmptyPanel>
       )}
-      <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} onClose={() => setInUse(null)} onForce={(found) => void act(found.method, found.box, { force: true, deleteKept: found.deleteKept === true })} />
+      <InUseDialog inUse={inUse} words={{ release: "Release", stop: "Stop" }} busyWords={{ release: "Releasing…", stop: "Stopping…" }} onClose={() => setInUse(null)} onForce={(found) => act(found.method, found.box, { force: true, deleteKept: found.deleteKept === true })} />
     </div>
   );
 }

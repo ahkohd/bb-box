@@ -1,8 +1,11 @@
 import type { MachineSize, Holds, Price, SnapshotSize } from "../backends/types.ts";
+import { SNAPSHOT_LIMITS } from "../core/document.ts";
+import { keptUntilAfter, utcDay } from "../core/snapshot.ts";
 import type { BoxSnapshotsView, RestorePreview, SnapshotRowView } from "../plugin/contract.ts";
+import { PRODUCT } from "./product.ts";
+import { THIS_BOX_THREAD } from "./thread-title.ts";
 
 const DAY_MS = 24 * 60 * 60_000;
-const MINUTE_MS = 60_000;
 const SHARES_BLOCKS: ReadonlySet<string> = new Set(["lvmthin", "zfspool", "rbd", "btrfs"]);
 
 function clock24(at: number): string {
@@ -24,7 +27,7 @@ export function snapshotDay(at: number): string {
 export const KEEP_SOON_MS = 3 * DAY_MS;
 
 export function keepDay(at: number): string {
-  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }).format(at);
+  return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).format(at);
 }
 
 export function keepWords(keptUntil: number, now: number): { readonly words: string; readonly soon: boolean } {
@@ -36,6 +39,12 @@ export function keepWords(keptUntil: number, now: number): { readonly words: str
 
 export function utcDate(at: number): string {
   return new Date(at).toISOString().slice(0, 10);
+}
+
+export function keepOpeningDate(keptUntil: number | null, keepDays: number, now: number): string {
+  if (keptUntil === null || keptUntil <= now) return utcDay(keptUntilAfter(now, keepDays));
+  const renewed = Math.min(keptUntilAfter(keptUntil, keepDays), keptUntilAfter(now, SNAPSHOT_LIMITS.keepDays.most));
+  return utcDay(renewed < keptUntil ? keptUntil : renewed);
 }
 
 export function snapshotWhen(at: number, now: number): string {
@@ -52,14 +61,12 @@ export function whenInSentence(at: number, now: number): string {
   return `on ${snapshotDay(at)} at ${clock24(at)}`;
 }
 
-export function agoWords(ms: number): string {
-  const minutes = Math.max(0, Math.round(ms / MINUTE_MS));
-  if (minutes < 1) return "under a minute";
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
-  const days = Math.floor(hours / 24);
-  return hours % 24 ? `${days} d ${hours % 24} h` : `${days} d`;
+export function screenAround(name: string, at: number, now: number): string {
+  const clock = clock24(at);
+  if (sameDay(at, now)) return `${name}'s screen around ${clock}`;
+  if (sameDay(at, now - DAY_MS)) return `${name}'s screen yesterday around ${clock}`;
+  if (now - at < 6 * DAY_MS) return `${name}'s screen on ${new Intl.DateTimeFormat("en-GB", { weekday: "long" }).format(at)} at ${clock}`;
+  return `${name}'s screen on ${snapshotDay(at)} at ${clock}`;
 }
 
 export function aboutWords(ms: number): string {
@@ -122,7 +129,7 @@ export function attentionWords(row: SnapshotRowView, boxName: string): string | 
     case "incomplete":
       return `Incomplete${row.error ? `: ${row.error.replace(/\.$/, "")}` : ""}. Delete it to finish the clean-up`;
     case "unavailable":
-      return `Unavailable: bb-box cannot reach ${row.host ?? "its host"}`;
+      return `Unavailable: ${PRODUCT} cannot reach ${row.host ?? "its host"}`;
     case "lost":
       return `Lost: ${row.host ?? "its host"} no longer has it`;
     default:
@@ -132,7 +139,7 @@ export function attentionWords(row: SnapshotRowView, boxName: string): string | 
 
 export function restoreWhyNot(row: SnapshotRowView, view: BoxSnapshotsView, boxName: string, boxState: string): string | null {
   if (view.restoring) return `${boxName} is being restored`;
-  if (view.unconfirmed) return "bb-box could not confirm its last restore";
+  if (view.unconfirmed) return `${PRODUCT} could not confirm its last restore`;
   if (view.offer?.restore === "none") return "its backend restores none";
   if (row.guest === "earlier") return "it is on the earlier guest: fork only";
   if (row.state === "taking") return "it is still being taken";
@@ -144,7 +151,7 @@ export function restoreWhyNot(row: SnapshotRowView, view: BoxSnapshotsView, boxN
 
 export function forkWhyNot(row: SnapshotRowView, view: BoxSnapshotsView, boxName: string): string | null {
   if (view.restoring) return `${boxName} is being restored`;
-  if (view.unconfirmed) return "bb-box could not confirm its last restore";
+  if (view.unconfirmed) return `${PRODUCT} could not confirm its last restore`;
   return row.forkWhy;
 }
 
@@ -171,13 +178,13 @@ export interface Loss {
 }
 
 export function threadLosses(preview: RestorePreview, boxName: string): Loss[] {
-  return preview.threads.map((thread) => ({ key: `thread:${thread.id}`, words: `${thread.title} is ${thread.running ? "working" : "idle"} on ${boxName}: its worktree, uncommitted files and session there would go.` }));
+  return preview.threads.map((thread) => ({ key: `thread:${thread.id}`, words: `${thread.title ? `"${thread.title}"` : THIS_BOX_THREAD} is ${thread.running ? "working" : "idle"} on ${boxName}: its worktree, uncommitted files and session there would go.` }));
 }
 
 export function otherLosses(preview: RestorePreview): Loss[] {
   const losses: Loss[] = [];
   if (preview.control) losses.push({ key: "control", words: "A person has control of its desktop." });
-  if (preview.terminals === null) losses.push({ key: "terminals", words: "bb-box could not tell whether a BB terminal is open on it." });
+  if (preview.terminals === null) losses.push({ key: "terminals", words: `${PRODUCT} could not tell whether a BB terminal is open on it.` });
   else if (preview.terminals > 0) losses.push({ key: "terminals", words: preview.terminals === 1 ? "A terminal is open on it." : `${preview.terminals} terminals are open on it.` });
   return losses;
 }

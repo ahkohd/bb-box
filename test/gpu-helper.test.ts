@@ -137,7 +137,7 @@ test("--help and --version say what the helper is, and an argument it cannot rea
   assert.deepEqual(node.writes(), []);
 });
 
-test("it leaves alone every guest it must: outside its pools, privileged, a template, running, locked, with pending device changes, malformed or double markers, not bb-box's, unmarked with NVIDIA lines, and an unknown card (section 14)", () => {
+test("it leaves alone every guest it must: outside its pools, privileged, a template, running, locked, with pending device changes, malformed or double markers, not BB Box's, unmarked with NVIDIA lines, and an unknown card (section 14)", () => {
   const node = new FakeNode({ writes: "on" });
   const ask = marker("shared", CARD_A, 2);
   node.guest(300, { box: "bx300", marker: ask, pool: "elsewhere" });
@@ -330,7 +330,7 @@ test("071 unit 8b: a whole claim yields only the asking install's own stopped sh
   assert.deepEqual(node.lines(824), []);
 });
 
-test("a lost ledger is rebuilt from the guests: matching guests are granted; a stopped copy, a guest whose lines do not match and a whole box whose card a stopped box still has are refused and keep their lines, and bb-box's next request decides them (re-review R3)", () => {
+test("a lost ledger is rebuilt from the guests: matching guests are granted; a stopped copy, a guest whose lines do not match and a whole box whose card a stopped box still has are refused and keep their lines, and BB Box's next request decides them (re-review R3)", () => {
   const node = new FakeNode({ writes: "on", ledger: false });
   node.guest(900, { box: "bx900", name: "amber-fox", marker: marker("shared", CARD_A, 3), lines: cardLines(CARD_A, "server"), running: true });
   const copy = { box: "bx900", name: "amber-fox", hostname: "bb-box-copy-901", marker: marker("shared", CARD_A, 3), lines: cardLines(CARD_A, "server") };
@@ -360,12 +360,12 @@ test("a lost ledger is rebuilt from the guests: matching guests are granted; a s
   assert.deepEqual(node.guestWrites(), [], "nor does a later pass, or the boot pass");
   node.mark(902, marker("whole", CARD_B, 3));
   ran(node);
-  assert.ok(claims(node).includes(`claim 902 g3 granted whole ${B}`), "bb-box's next request for the whole box is answered");
+  assert.ok(claims(node).includes(`claim 902 g3 granted whole ${B}`), "BB Box's next request for the whole box is answered");
   assert.deepEqual(node.lines(903), [], "and the stopped shared box yields to it then");
   assert.deepEqual(node.lines(901), cardLines(CARD_A, "server"), "the copy keeps its lines until it asks");
   node.mark(904, marker("shared", CARD_B, 5));
   ran(node);
-  assert.ok(claims(node).includes(`claim 904 g5 refused whole-taken ${B} 902`), "bb-box's next request is answered");
+  assert.ok(claims(node).includes(`claim 904 g5 refused whole-taken ${B} 902`), "BB Box's next request is answered");
   assert.deepEqual(node.lines(904), cardLines(CARD_A, "server"), "a refusal changes nothing");
 });
 
@@ -488,7 +488,7 @@ test("the boot pass puts each claimed guest's lines right from its card's UUID, 
   assert.equal(node.report(), report, "the boot pass leaves the report to the service");
 });
 
-test("the report: today's bb-box reads its at and gpu lines, it names the helper, the driver, each card, the holders and the answers, says when the card mapping moved since the last boot, and stays under 8,192 characters", () => {
+test("the report: today's BB Box reads its at and gpu lines, it names the helper, the driver, each card, the holders and the answers, says when the card mapping moved since the last boot, and stays under 8,192 characters", () => {
   const node = new FakeNode({ writes: "off" });
   node.guest(214, { box: "bx214", marker: marker("shared", CARD_A, 8), lines: cardLines(CARD_A, "server"), running: true });
   ran(node);
@@ -527,11 +527,11 @@ test("the report: today's bb-box reads its at and gpu lines, it names the helper
   assert.ok(text.length < 8192, `the report is ${text.length} characters`);
   assert.equal(lines(crowded, "holder").length, 60, "every holder is listed");
   assert.match(crowded.reportLines().at(-1)!, /^omitted \d+ (?:ledger lines|refusals in force|answers)/);
-  assert.deepEqual(lines(crowded, "ledger").filter((line) => line.startsWith("ledger entries ")), ["ledger entries 120"], "the count of ledger entries is always there, so bb-box knows when some are left out");
+  assert.deepEqual(lines(crowded, "ledger").filter((line) => line.startsWith("ledger entries ")), ["ledger entries 120"], "the count of ledger entries is always there, so BB Box knows when some are left out");
   assert.deepEqual(parseGpuReport(text)!.gpus.length, 2);
 });
 
-test("when nvidia-smi fails, no card is listed and no claim is granted; the report says why, today's bb-box still reads it, and lines already written stay", () => {
+test("when nvidia-smi fails, no card is listed and no claim is granted; the report says why, today's BB Box still reads it, and lines already written stay", () => {
   const node = new FakeNode({ writes: "on" });
   node.guest(1500, { box: "bx1500", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "server") });
   ran(node);
@@ -600,7 +600,7 @@ test("the service writes the report on its first pass after a start, though noth
   assert.match(service.output(), /the report written 1 times \(1 on start, 0 for a change, 0 for memory alone, 0 as a heartbeat, 0 after a clock step\)/);
 });
 
-test("the report lists each ledger entry: its box, the generation answered and the claim, so bb-box can ask above it and read a grant exactly (071 unit 4, Opus 1)", () => {
+test("the report lists each ledger entry: its box, the generation answered and the claim, so BB Box can ask above it and read a grant exactly (071 unit 4, Opus 1)", () => {
   const node = new FakeNode({ writes: "off" });
   node.guest(1800, { box: "bx1800", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
   node.guest(1801, { box: "bx1801", marker: marker("shared", CARD_B, 3), lock: "backup" });
@@ -616,7 +616,7 @@ test("the report lists each ledger entry: its box, the generation answered and t
   assert.deepEqual(lines(node, "ledger"), ["ledger unknown"], "with a ledger it cannot read, it says so, rather than list none");
 });
 
-test("a ledger from a newer protocol: the helper acts on nothing and says so, and today's bb-box still reads the report", () => {
+test("a ledger from a newer protocol: the helper acts on nothing and says so, and today's BB Box still reads the report", () => {
   const node = new FakeNode({ writes: "on" });
   node.write("var/lib/bb-box-gpu/ledger", JSON.stringify({ protocol: 2, guests: {}, answers: [] }));
   node.guest(1600, { box: "bx1600", marker: marker("shared", CARD_A, 1) });
@@ -1402,7 +1402,7 @@ function powered(node: FakeNode): string[] {
   return lines(node, "power");
 }
 
-test("071 unit 5, go review 3 H1: the helper starts, stops, shuts down and deletes a guest bb-box asks it to, under the guest's config lock, with writes on or off, and acts on each request once", () => {
+test("071 unit 5, go review 3 H1: the helper starts, stops, shuts down and deletes a guest BB Box asks it to, under the guest's config lock, with writes on or off, and acts on each request once", () => {
   for (const writes of ["off", "on"] as const) {
     const node = new FakeNode({ writes });
     node.guest(2700, { box: "bx2700", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
@@ -1436,7 +1436,7 @@ test("071 unit 5, go review 3 H1: the helper starts, stops, shuts down and delet
     ran(node);
     assert.deepEqual(node.powerLog().slice(-2), ["destroy 2700", "removed 2700"], writes);
     assert.ok(!node.exists(2700));
-    assert.deepEqual(powered(node), ["power 2700 n0e0e0e0e delete done"], "the answer outlives the guest, for bb-box to read");
+    assert.deepEqual(powered(node), ["power 2700 n0e0e0e0e delete done"], "the answer outlives the guest, for BB Box to read");
     assert.equal(node.guestWrites().length, before, `${writes}: no config is written for a power request`);
   }
 });
@@ -1484,7 +1484,7 @@ test("071 unit 5, go review 3 H1: the helper refuses a request for another box, 
   assert.ok(powered(node).includes("power 2715 n3b3b3b3b start refused pending"), "a pending device change, which a start would apply, blocks it");
   node.ask(2711, "bb-power.start.4kq7.bx2711.g2");
   ran(node);
-  assert.ok(!powered(node).some((line) => line.startsWith("power 2711 n") && line.includes(" start done")), "a request not in bb-box's form is not acted on");
+  assert.ok(!powered(node).some((line) => line.startsWith("power 2711 n") && line.includes(" start done")), "a request not in BB Box's form is not acted on");
   assert.deepEqual(node.powerLog(), []);
 
   node.guest(9100, { box: "bx9100", kind: "linux-desktop", template: true, lines: cardLines(CARD_A, "desktop") });
@@ -1497,7 +1497,7 @@ test("071 unit 5, go review 3 H1: the helper refuses a request for another box, 
   assert.deepEqual(node.powerLog(), []);
 });
 
-test("071 unit 5, go review 3 H1: a guest replaced at its VMID while bb-box's request waits for the config lock, by another box of the same install carrying the request, is not started, stopped or deleted", async () => {
+test("071 unit 5, go review 3 H1: a guest replaced at its VMID while BB Box's request waits for the config lock, by another box of the same install carrying the request, is not started, stopped or deleted", async () => {
   for (const action of ["start", "stop", "delete"] as const) {
     for (const writes of ["off", "on"] as const) {
       const node = new FakeNode({ writes });

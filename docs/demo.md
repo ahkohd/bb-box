@@ -13,7 +13,7 @@ The video is recorded in a box, on a fresh BB with no account, so no deployment'
 3. The person opens the right panel, then the Box panel, then **Open desktop**, and maximises the pane to watch the desktop.
 4. The person opens the Monitor in BB's sidebar on the desktop box for a few seconds, its CPU and memory moving, and hides it again.
 5. In the Box panel, **New box**, a Linux server with the form's defaults, then **Open terminal** on its row, and `uname -sm && nproc` in it.
-6. **Open on the Boxes page** in the server box's menu: its page, with its Activity for a moment, then **Take snapshot** in its Snapshots card, named "before".
+6. **Details** in the server box's menu: its page, with its Activity for a moment, then **Take snapshot** in its Snapshots card, named "before".
 7. BB's back button, to the thread's terminal tab, where `sudo rm /usr/bin/git && git status` breaks the box: 'git: command not found'. `exit` ends the terminal, so no terminal is open on the box.
 8. BB's forward button, back to the box's page, and **Restore** on the snapshot's row. The dialog has its undo ticked, and as nothing else is open on the box, its button says only **Restore** and the box's name. The box comes back on a new microVM, and the notice at the top of its page says it was restored, with **Undo…**.
 

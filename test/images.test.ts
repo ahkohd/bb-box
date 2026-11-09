@@ -43,11 +43,11 @@ test("a record reads from its JSON and from a description's last JSON line (049)
   assert.deepEqual(parseImageRecord(JSON.parse(JSON.stringify(written))), written);
   const description = `bb-box desktop template (GPU 0000:01:00.0), built 2026-10-02. See /usr/share/bb-box/template-release inside.\n${JSON.stringify(written)}\n`;
   assert.deepEqual(recordInDescription(description), written);
-  assert.equal(recordInDescription("bb-box linux template, built 2026-09-28."), null, "built before records");
-  assert.equal(recordInDescription("bb-box linux template\n{not json"), null);
+  assert.equal(recordInDescription("BB Box linux template, built 2026-09-28."), null, "built before records");
+  assert.equal(recordInDescription("BB Box linux template\n{not json"), null);
   assert.equal(parseImageRecord({ ...written, built: "yesterday" }), null);
   assert.equal(parseImageRecord({ kind: "linux" }), null);
-  // What it does not need it fills in, so a record from a later bb-box still reads.
+  // What it does not need it fills in, so a record from a later BB Box still reads.
   assert.deepEqual(parseImageRecord({ contract: 2, kind: "linux", build: "b", built: "2026-10-01T00:00:00Z", extra: true }), {
     contract: 2,
     image: "standard",
@@ -85,7 +85,7 @@ test("the pins' digest is the build's: Linux's files, or a script's pin lines, a
 
 const jq = spawnSync("jq", ["--version"]).status === 0;
 
-test("image-record.sh writes a record bb-box reads, with the pins' digest bb-box computes", { skip: !jq || !existsSync("/etc/os-release") }, async () => {
+test("image-record.sh writes a record BB Box reads, with the pins' digest BB Box computes", { skip: !jq || !existsSync("/etc/os-release") }, async () => {
   // As finalize.sh runs it after a GPU desktop's build, with a build directory and template-release.
   const dir = tempDir("image-record");
   const [build, out] = [join(dir, "build"), join(dir, "out")];
@@ -146,11 +146,11 @@ test("an image says what it is and how old", () => {
   assert.match(describeImage(record(300), NOW), /built 7 December 2025/);
 });
 
-test("a fresh image built with this bb-box's pins and BB's app passes", () => {
+test("a fresh image built with this BB Box's pins and BB's app passes", () => {
   const judged = judgeImage(record(), facts, REBUILD);
   assert.deepEqual([judged.status, judged.fix], ["ok", null]);
   assert.match(judged.detail, /^Standard image build\.\S+, built 2 October \(1 day ago\)/);
-  // What bb-box cannot tell does not count against it.
+  // What BB Box cannot tell does not count against it.
   assert.equal(judgeImage(record(), { os: "linux", pins: null, bbApp: null, now: NOW }, REBUILD).status, "ok");
 });
 
@@ -172,11 +172,11 @@ test("an image warns when it has no record, is old, or has another BB app or oth
 
   const pins = judgeImage(record(1, { pins: "q".repeat(64) }), facts, REBUILD);
   assert.deepEqual([pins.status, pins.fix], ["warn", REBUILD]);
-  assert.match(pins.detail, /built with other pins than this bb-box's/);
+  assert.match(pins.detail, /built with other pins than this BB Box's/);
 
   const chrome = judgeImage(record(1, { tools: { chrome: "156.0.8078.79" } }), { ...facts, pinChrome: "154.0.8037.92" }, REBUILD);
   assert.equal(chrome.status, "warn");
-  assert.match(chrome.detail, /Its Chrome is 156\.0\.8078\.79, newer than this bb-box's pin 154\.0\.8037\.92/);
+  assert.match(chrome.detail, /Its Chrome is 156\.0\.8078\.79, newer than this BB Box's pin 154\.0\.8037\.92/);
   assert.equal(chrome.fix, "Update the pins first, or leave this image until the pins catch up.");
   const alsoOld = judgeImage(record(15, { tools: { chrome: "156.0.8078.79" } }), { ...facts, pinChrome: "154.0.8037.92" }, REBUILD);
   assert.equal(alsoOld.fix, `Update the pins first, or leave this image until the pins catch up. ${REBUILD}`);
@@ -186,11 +186,11 @@ test("an image warns when it has no record, is old, or has another BB app or oth
 test("an image fails with an older contract, or NVIDIA's userspace other than the host's driver", () => {
   const contract = judgeImage(record(20, { contract: IMAGE_CONTRACT - 1 }), facts, REBUILD);
   assert.equal(contract.status, "fail");
-  assert.match(contract.detail, new RegExp(`It keeps image contract ${IMAGE_CONTRACT - 1}, and this bb-box needs ${IMAGE_CONTRACT}, so its boxes may not work\\. It is 20 days old`));
+  assert.match(contract.detail, new RegExp(`It keeps image contract ${IMAGE_CONTRACT - 1}, and this BB Box needs ${IMAGE_CONTRACT}, so its boxes may not work\\. It is 20 days old`));
   const newerChrome = { ...facts, pinChrome: "154.0.8037.92" };
   const failedAndNewer = judgeImage(record(1, { contract: IMAGE_CONTRACT - 1, tools: { chrome: "156.0.8078.79" } }), newerChrome, REBUILD);
   assert.equal(failedAndNewer.status, "fail");
-  assert.match(failedAndNewer.detail, /Its Chrome is 156\.0\.8078\.79, newer than this bb-box's pin 154\.0\.8037\.92/);
+  assert.match(failedAndNewer.detail, /Its Chrome is 156\.0\.8078\.79, newer than this BB Box's pin 154\.0\.8037\.92/);
   assert.equal(failedAndNewer.fix, REBUILD, "a failure is rebuilt; the pin line is only for a warning");
   const failedOldAndNewer = judgeImage(record(20, { contract: IMAGE_CONTRACT - 1, tools: { chrome: "156.0.8078.79" } }), newerChrome, REBUILD);
   assert.equal(failedOldAndNewer.fix, REBUILD);

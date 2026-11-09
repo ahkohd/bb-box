@@ -47,6 +47,7 @@ import { abortable } from "../core/abortable.ts";
 import { LINUX_LEAST_MEMORY_GIB, formatMiB } from "../core/sizes.ts";
 import { readIdentityResets, resetThatRemoved, type IdentityReset } from "../core/identity.ts";
 import { JOIN_TRIES, backendVerdict, dueToJoin, failedBeforeTries, gaveUpWords, joinProblem, nextTry, plainJoinFailure, tryWords, waitWords, waitingToJoin } from "../core/join-tries.ts";
+import { PRODUCT } from "../brand.ts";
 
 interface TryOutcome {
   resetFound: { readonly machine: string; readonly reset: IdentityReset } | null;
@@ -328,7 +329,7 @@ interface Step {
 /** The steps of an enrolment. The log lists them in the order they start. */
 const STEPS: readonly Step[] = [
   { end: "requested", after: [], label: "asking BB", alongside: true },
-  { end: "called", after: [], label: "BB calling bb-box's create" },
+  { end: "called", after: [], label: `BB calling ${PRODUCT}'s create` },
   { end: "prepared", after: ["called"], label: "reaching the box" },
   { end: "install", after: ["prepared"], label: "BB preparing the enrolment" },
   { end: "installed", after: ["install"], label: "BB's installer in the box" },
@@ -359,10 +360,10 @@ export type EnrolSince = "ready" | "resumed" | "restored" | "reset" | "retry";
 
 const SINCE: Record<EnrolSince, string> = {
   ready: "it was ready",
-  resumed: "bb-box resumed following it",
-  restored: "bb-box found the restored box answering",
-  reset: "bb-box found its identity reset",
-  retry: "bb-box tried again",
+  resumed: `${PRODUCT} resumed following it`,
+  restored: `${PRODUCT} found the restored box answering`,
+  reset: `${PRODUCT} found its identity reset`,
+  retry: `${PRODUCT} tried again`,
 };
 
 /** When each step of one enrolment ended, counted from `origin`. */
@@ -478,7 +479,7 @@ export class Enrolment {
   dispose(): void {
     for (const cancel of this.#nextTries.values()) cancel();
     this.#nextTries.clear();
-    this.#stopping.abort(new Error("bb-box stopped, as for a reload"));
+    this.#stopping.abort(new Error(`${PRODUCT} stopped, as for a reload`));
   }
 
   #tryAt(boxId: string, at: number): void {
@@ -512,7 +513,7 @@ export class Enrolment {
     return {
       id: MACHINE_PROVIDER_ID,
       displayName: "bb-box",
-      description: "A box an agent or the bb-box panel acquired. bb-box adds it when the box is ready.",
+      description: `A box an agent or the ${PRODUCT} panel acquired. ${PRODUCT} adds it when the box is ready.`,
       icon: "Box",
       inputs: z.object({ boxId: z.string().min(1) }),
       create: async ({ inputs, key, checkpoint, report, signal }) => {
@@ -537,7 +538,7 @@ export class Enrolment {
           phases?.mark("bootstrapped");
           return { status: "created", name: machineName(box), resource: { boxId: box.id } };
         } catch (error) {
-          if (this.#isStopping(error) || signal.aborted) return { status: "failed", message: `bb-box stopped while it installed BB in box ${box.name}; its next run installs it again.` };
+          if (this.#isStopping(error) || signal.aborted) return { status: "failed", message: `${PRODUCT} stopped while it installed BB in box ${box.name}; its next run installs it again.` };
           const described = describeError(error, `Enrolling box ${box.name}`);
           const message = plainJoinFailure(described);
           if (message !== described) this.#deps.log?.(described);
@@ -671,7 +672,7 @@ export class Enrolment {
 
   async #reach(box: BoxRecord): Promise<Reach> {
     const { command, daemonKeptByHost } = await this.#deps.boxes.transports(box);
-    if (!command) throw new Error(`bb-box cannot run commands in box ${box.name}.`);
+    if (!command) throw new Error(`${PRODUCT} cannot run commands in box ${box.name}.`);
     return { command, daemonKeptByHost };
   }
 
@@ -727,7 +728,7 @@ export class Enrolment {
         if (!host) return false;
         if (since === "reset" && host.id === box.identityReset?.machine) {
           await this.#deps.boxes.update(box, (latest) => (latest.identityReset ? { identityReset: { ...latest.identityReset, retiredAt: null } } : {}));
-          throw new Error(`BB gave back machine ${host.id}, which the identity reset left, so bb-box removes it again at its next sweep before it enrols the box`);
+          throw new Error(`BB gave back machine ${host.id}, which the identity reset left, so ${PRODUCT} removes it again at its next sweep before it enrols the box`);
         }
         phases.mark("requested");
         const recorded = await this.#deps.boxes.update(box, () => ({ enrol: { state: "enrolling", hostId: host.id, error: null } }));
@@ -1344,8 +1345,8 @@ export class Enrolment {
     );
     if (!settled?.joinTries) return;
     if (planned.next !== null) this.#tryAt(boxId, planned.next);
-    const when = planned.next === null ? null : `bb-box tries again in ${waitWords(planned.next - this.#now())}.`;
-    const after = when ?? `bb-box gave up, ${waitWords(now - since)} after the first failure of this round.`;
+    const when = planned.next === null ? null : `${PRODUCT} tries again in ${waitWords(planned.next - this.#now())}.`;
+    const after = when ?? `${PRODUCT} gave up, ${waitWords(now - since)} after the first failure of this round.`;
     this.#deps.log?.(
       planned.gaveUp
         ? `Box ${settled.name} did not join BB after ${failed} ${failed === 1 ? "try" : "tries"}${planned.setup ? `, and no box on ${settled.backendLabel} reaches BB` : verdict === "others joined" ? `, while other boxes on ${settled.backendLabel} joined` : ""}: ${found.sentence} ${after}`
@@ -1359,9 +1360,9 @@ export class Enrolment {
   }
 
   async joinAgain(box: BoxRecord): Promise<JoinAgain> {
-    if (box.role === "machine") throw new BoxError("unsupported", `Box ${box.name} is a thread's own machine, which BB adds itself, so bb-box cannot add it to BB again.`);
+    if (box.role === "machine") throw new BoxError("unsupported", `Box ${box.name} is a thread's own machine, which BB adds itself, so ${PRODUCT} cannot add it to BB again.`);
     if (!box.capabilities.enrol) throw new BoxError("unsupported", `A ${box.kindLabel} box cannot become a BB machine.`);
-    if (box.state !== "ready") throw new BoxError("not_ready", `Box ${box.name} is ${box.state}, and only a ready box can join BB. bb-box does not start a box to add it to BB: start it first.`);
+    if (box.state !== "ready") throw new BoxError("not_ready", `Box ${box.name} is ${box.state}, and only a ready box can join BB. ${PRODUCT} does not start a box to add it to BB: start it first.`);
     if (box.enrol.state === "enrolled") return { is: "joined", box };
     if (this.isTrying(box.id) || joiningNow(box)) return { is: "joining", box };
     const known = namedMachine(box);

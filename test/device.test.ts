@@ -545,7 +545,7 @@ describe("box_device's parameters, refusals and words (063, 6.3)", () => {
     assert.equal(deviceStateWords({ ...state, power: { is: "booted", awake: false } }).startsWith("booted, asleep"), true);
     const outside = { ...state, settings: { ...state.settings, appearance: { known: true, value: "light", at: 3, by: "outside" } } } as DeviceState;
     assert.equal(deviceStateWords(outside), "booted, turned left, 2622x1206, light, changed outside bb-box, text size large");
-    assert.equal(lostWords("rotate", state), "The connection to the box ended while turning the device, so bb-box cannot tell whether it turned. It is now booted, turned left, 2622x1206, dark, text size large. Read box_status before trying again.");
+    assert.equal(lostWords("rotate", state), "The connection to the box ended while turning the device, so BB Box cannot tell whether it turned. It is now booted, turned left, 2622x1206, dark, text size large. Read box_status before trying again.");
     assert.equal(controlDeadlineMs({ action: "install", paths: ["a.app"] }), 300_000);
     assert.equal(controlDeadlineMs({ action: "home" }), 10_000);
     const shared = { ...state, settings: { ...state.settings, changesShowAtStart: true } } as DeviceState;

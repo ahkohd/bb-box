@@ -1,5 +1,6 @@
 import { recordInDescription } from "../images.ts";
 import type { GpuPart } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export { CARD_CHECK_COMMAND, CHECK_DONE, DESKTOP_GPU_MIB, SERVER_GPU_MIB, cardFactWords, judgeCardCheck, memoryWords, wrongCardSeen, type CardCheck, type CardReading, type SeenCard } from "../card-check.ts";
 
@@ -21,13 +22,13 @@ export interface Refusal {
 export function serverRefusal(node: string, why: string, personFix: string): Refusal {
   return {
     person: `${node} cannot give a server a shared GPU now: ${why}. ${personFix}`,
-    agent: `Not made: ${node} cannot give a server a shared GPU now: ${why}. Ask for gpu none, or ask the user. bb-box changed nothing.`,
+    agent: `Not made: ${node} cannot give a server a shared GPU now: ${why}. Ask for gpu none, or ask the user. ${PRODUCT} changed nothing.`,
   };
 }
 
 export function wholeRefusal(node: string, why: string, personFix: string): Refusal {
   return {
     person: `${node} cannot give a box a whole card now: ${why}. ${personFix}`,
-    agent: `Not made: ${node} cannot give a box a whole card now: ${why}. Ask for gpu shared, or ask the user. bb-box changed nothing.`,
+    agent: `Not made: ${node} cannot give a box a whole card now: ${why}. Ask for gpu shared, or ask the user. ${PRODUCT} changed nothing.`,
   };
 }

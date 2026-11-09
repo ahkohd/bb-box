@@ -64,7 +64,7 @@ test("the threads' processes end before a Windows box's machine is removed: each
   assert.ok(!sent[0]!.includes("Schedule.Service"), "over SSH, not in the desktop session");
 });
 
-test("bb-box hides BB's console windows in the desktop session, Windows Terminal's own where it hosts them, not a minimise (bb-requests 27)", async () => {
+test("BB Box hides BB's console windows in the desktop session, Windows Terminal's own where it hosts them, not a minimise (bb-requests 27)", async () => {
   const sent: string[] = [];
   const transport = { run: async (script: string) => (sent.push(script), { exitCode: 0, stdout: "consoles=1 hidden=1\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 }) } as unknown as CommandTransport;
   assert.deepEqual(await hideBbConsoles(transport, { timeoutMs: 60_000 }), { consoles: 1, hidden: 1 });

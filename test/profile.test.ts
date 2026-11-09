@@ -4,7 +4,7 @@ import { allocationLines, collectionLine, gcLines, memoryLine, ownerOf, profileL
 
 const frame = (functionName: string, url = "", lineNumber = 0) => ({ functionName, url, lineNumber });
 
-test("a profile's summary names a long busy span by the frames it ran under, files from bb-box's folder, and the functions with time of their own", () => {
+test("a profile's summary names a long busy span by the frames it ran under, files from BB Box's folder, and the functions with time of their own", () => {
   // root > idle; root > handler (src/plugin/rpc.ts:11) > slow (src/core/views.ts:41); root > node's own code.
   const profile: CpuProfile = {
     nodes: [
@@ -26,8 +26,8 @@ test("a profile's summary names a long busy span by the frames it ran under, fil
   ]);
 });
 
-test("busy time goes to bb-box when bb-box's code is anywhere under it, as what it calls of BB's runs for it, then to another plugin, BB, Node, or garbage collection", () => {
-  // root > bb's handler > bb-box's relay > bb's storage write; root > another plugin; root > bb alone; root > gc.
+test("busy time goes to BB Box when BB Box's code is anywhere under it, as what it calls of BB's runs for it, then to another plugin, BB, Node, or garbage collection", () => {
+  // root > bb's handler > BB Box's relay > bb's storage write; root > another plugin; root > bb alone; root > gc.
   const profile: CpuProfile = {
     nodes: [
       { id: 1, callFrame: frame("(root)"), children: [2, 3, 6, 7, 8] },

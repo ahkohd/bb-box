@@ -10,15 +10,7 @@ import { experimental_Icon as Icon, experimental_usePluginId, UrlLink, useBbNavi
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+import { BoxDialog, DialogButton } from "./box-dialog.tsx";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -59,7 +51,7 @@ import { BoxListSkeleton, BoxRowsSkeleton, LoadFailed, NewBoxButtonSpace, Snapsh
 import { busyUntil, type ShownBusy } from "./row-line.ts";
 import { useWakeAt } from "./row-status.tsx";
 import { silentWhy } from "./box-words.ts";
-import { threadTitle, ThreadWorking } from "./thread-chips.tsx";
+import { THIS_BOX_THREAD, threadTitle, ThreadWorking, UNTITLED_THREAD } from "./thread-chips.tsx";
 import { chosenThreadTitle } from "../plugin/thread-on-box.ts";
 import { BarNumbers, OtherViews, otherViewsNow, useBarNumbersShown, ViewSwitchButton } from "./view-bar.tsx";
 import { boxPage, otherView, pageOfView, routeOf, wayBack, type BoxViewName, type BoxViewRoute } from "./box-route.ts";
@@ -108,6 +100,7 @@ import { otherScreen, screenTitle, screensOf, screenWord, type Screen } from "./
 import { choices, filtering, shown, splitGroups, TAG_GROUPS, tagCounts, type Filters, type Sort } from "./boxes-filter.ts";
 import { keepListPlace, leaveRow, listPlace, noteListScroll, saveListPlace, useReturnToPlace } from "./list-place.ts";
 import { PageTabs, SearchRow } from "./boxes-toolbar.tsx";
+import { PRODUCT } from "./product.ts";
 
 export const DESKTOP_ACTION = "desktop";
 export const DEVICE_ACTION = "device";
@@ -1001,7 +994,7 @@ function TypeTextField({
   const commitAfter = useRef(false);
   const hint = long ? "Long text goes as a paste." : "Enter sends it. Shift+Enter starts a new line. Esc closes.";
   return (
-    <div role="group" aria-label={`Type text into ${name}`} className="absolute inset-x-2 bottom-2 z-10 mx-auto max-w-xl rounded-lg border border-border bg-popover p-2 text-popover-foreground shadow-lg">
+    <div role="group" aria-label={`Type text into ${name}`} className="absolute inset-x-2 bottom-2 z-10 mx-auto max-w-xl rounded-lg border border-border bg-popover p-2 text-popover-foreground">
       <Textarea
         aria-label="Text to type"
         aria-describedby={hintId}
@@ -1682,7 +1675,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
         async () => {
           try {
             downloadPicture(await picture, `${model} ${new Date().toISOString().slice(0, 19).replace(/:/g, ".")}.png`);
-            flashFor(`Downloaded the ${model}'s screen.`, "This browser did not let bb-box put a picture on this computer's clipboard, so it saved it instead.");
+            flashFor(`Downloaded the ${model}'s screen.`, `This browser did not let ${PRODUCT} put a picture on this computer's clipboard, so it saved it instead.`);
           } catch (caught) {
             flashFor(`Could not take the ${model}'s screenshot.`, message(caught));
           }
@@ -1959,7 +1952,7 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
         ) : box.state === "failed" ? (
           <Notice detail={box.error ?? undefined}>{box.name} failed to start.</Notice>
         ) : box.state === "gone" ? (
-          <Notice>{box.name} was deleted outside bb-box.</Notice>
+          <Notice>{box.name} was deleted outside {PRODUCT}.</Notice>
         ) : box.state !== "ready" ? (
           <Notice>{box.name} is being released.</Notice>
         ) : quiet ? (
@@ -1989,38 +1982,17 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
           </Notice>
         ) : null}
       </div>
-      <AlertDialog open={pasteField !== null} onOpenChange={(open) => !open && setPasteField(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Paste into {box?.name ?? "the box"}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deviceShown
-                ? DEVICE_PASTE_FIELD_WORDS
-                : stream === "selkies"
-                  ? "This computer's clipboard cannot be read here. Paste text or an image below: it goes to the box's clipboard and is pasted where the cursor is."
-                  : "This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <Textarea
-            aria-label="Text to paste"
-            value={pasteField ?? ""}
-            onChange={(event) => setPasteField(event.target.value)}
-            onPaste={(event) => {
-              // An image pasted here goes to the box at once, as the video client takes images (#609).
-              const video = session.current instanceof SelkiesSession ? session.current : null;
-              const image = video ? Array.from(event.clipboardData.files).find((file) => file.type.startsWith("image/")) : undefined;
-              if (!video || !image) return;
-              event.preventDefault();
-              setPasteField(null);
-              void video.pasteImage(image);
-            }}
-            rows={4}
-            autoFocus
-          />
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <Button
-              type="button"
+      <BoxDialog
+        open={pasteField !== null}
+        title={`Paste into ${box?.name ?? "the box"}`}
+        description={deviceShown ? DEVICE_PASTE_FIELD_WORDS : stream === "selkies" ? "This computer's clipboard cannot be read here. Paste text or an image below: it goes to the box's clipboard and is pasted where the cursor is." : "This computer's clipboard cannot be read here. Paste the text below: it goes to the box's clipboard and is pasted where the cursor is."}
+        onClose={() => setPasteField(null)}
+        footer={
+          <>
+            <DialogButton variant="outline" onClick={() => setPasteField(null)}>
+              Cancel
+            </DialogButton>
+            <DialogButton
               disabled={!pasteField}
               onClick={() => {
                 if (pasteField) pasteText(pasteField);
@@ -2028,28 +2000,39 @@ function DesktopViewerAs({ threadId, boxId, newTab, onBack, screen = null, openS
               }}
             >
               {deviceShown ? "Paste into the device" : "Paste into the box"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={copyField !== null} onOpenChange={(open) => !open && setCopyField(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Copied in {box?.name ?? "the box"}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {copyField instanceof Blob ? "This computer's clipboard cannot be written here. Right-click the image and copy it." : "This computer's clipboard cannot be written here. Select the text and copy it."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {copyField instanceof Blob ? (
-            <CopiedImage image={copyField} />
-          ) : (
-            <Textarea aria-label="Text from the box" readOnly value={copyField ?? ""} rows={4} autoFocus onFocus={(event) => event.currentTarget.select()} />
-          )}
-          <AlertDialogFooter>
-            <AlertDialogCancel>Close</AlertDialogCancel>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+            </DialogButton>
+          </>
+        }
+      >
+        <Textarea
+          aria-label="Text to paste"
+          value={pasteField ?? ""}
+          onChange={(event) => setPasteField(event.target.value)}
+          onPaste={(event) => {
+            const video = session.current instanceof SelkiesSession ? session.current : null;
+            const image = video ? Array.from(event.clipboardData.files).find((file) => file.type.startsWith("image/")) : undefined;
+            if (!video || !image) return;
+            event.preventDefault();
+            setPasteField(null);
+            void video.pasteImage(image);
+          }}
+          rows={4}
+          autoFocus
+        />
+      </BoxDialog>
+      <BoxDialog
+        open={copyField !== null}
+        title={`Copied in ${box?.name ?? "the box"}`}
+        description={copyField instanceof Blob ? "This computer's clipboard cannot be written here. Right-click the image and copy it." : "This computer's clipboard cannot be written here. Select the text and copy it."}
+        onClose={() => setCopyField(null)}
+        footer={
+          <DialogButton variant="outline" onClick={() => setCopyField(null)}>
+            Close
+          </DialogButton>
+        }
+      >
+        {copyField instanceof Blob ? <CopiedImage image={copyField} /> : <Textarea aria-label="Text from the box" readOnly value={copyField ?? ""} rows={4} autoFocus onFocus={(event) => event.currentTarget.select()} />}
+      </BoxDialog>
     </div>
   );
 }
@@ -2277,20 +2260,25 @@ function BoxViewPage({ route }: { route: BoxViewRoute }) {
   );
 }
 
-const knownTitles = new Map<string, string>();
+const knownTitles = new Map<string, string | null>();
 
 export function forgetThreadTitles(): void {
   knownTitles.clear();
 }
 
-/** The titles of the threads whose boxes the page lists, fetched once each; a thread that cannot be read shows its ID. */
-export function sidebarTitle(thread: { readonly title?: string | null; readonly titleFallback?: string | null }, threadId: string): string {
-  return thread.title?.trim() || thread.titleFallback?.trim() || threadId;
+export function sidebarTitle(thread: { readonly title?: string | null; readonly titleFallback?: string | null }, _threadId: string): string | null {
+  return thread.title?.trim() || thread.titleFallback?.trim() || null;
 }
 
-export function useThreadTitles(threadIds: readonly string[]): Record<string, string> {
+export function threadGroupHeading(title: string | null | undefined): string {
+  if (title === undefined) return "Thread";
+  if (!title || title === THIS_BOX_THREAD) return UNTITLED_THREAD;
+  return title;
+}
+
+export function useThreadTitles(threadIds: readonly string[]): Record<string, string | null> {
   const sdk = useSdk();
-  const [titles, setTitles] = useState<Record<string, string>>(() => Object.fromEntries(threadIds.flatMap((threadId) => (knownTitles.has(threadId) ? [[threadId, knownTitles.get(threadId)!]] : []))));
+  const [titles, setTitles] = useState<Record<string, string | null>>(() => Object.fromEntries(threadIds.flatMap((threadId) => (knownTitles.has(threadId) ? [[threadId, knownTitles.get(threadId)!]] : []))));
   const key = threadIds.join(" ");
   useEffect(() => {
     let cancelled = false;
@@ -2304,7 +2292,7 @@ export function useThreadTitles(threadIds: readonly string[]): Record<string, st
           if (!cancelled) setTitles((current) => ({ ...current, [threadId]: title }));
         })
         .catch(() => {
-          if (!cancelled) setTitles((current) => ({ ...current, [threadId]: threadId }));
+          if (!cancelled) setTitles((current) => ({ ...current, [threadId]: null }));
         });
     }
     return () => {
@@ -2460,14 +2448,14 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   const offered = choices(tabBoxes);
   const kept = Object.fromEntries(TAG_GROUPS.map((group) => [group, filters[group].filter((value) => offered[group].includes(value))])) as unknown as Filters;
   const threadOf = new Map(threads.flatMap((entry) => (entry.thread ? [[entry.threadId, entry.thread] as const] : [])));
-  const titleOf = (threadId: string): string | undefined => {
+  const titleOf = (threadId: string): string | null | undefined => {
     const thread = threadOf.get(threadId);
     const chosen = thread ? chosenThreadTitle({ id: threadId, title: thread.title }) : null;
     if (chosen) return threadTitle({ id: threadId, title: chosen, running: thread?.running ?? false });
     return titles[threadId];
   };
-  const machineListed = machines.map((entry) => ({ box: entry.box, entry, busy: mineNow.get(entry.box.id)?.busy ?? null, words: entry.threads.map((thread) => thread.title ?? ""), activeAt: mineNow.get(entry.box.id)?.activeAt }));
-  const threadListed = threads.map(({ threadId, box, busy, activeAt }) => ({ box, threadId, busy: busy ?? null, words: [titleOf(threadId) ?? ""], activeAt }));
+  const machineListed = machines.map((entry) => ({ box: entry.box, entry, busy: mineNow.get(entry.box.id)?.busy ?? null, words: entry.threads.map((thread) => threadTitle(thread)), activeAt: mineNow.get(entry.box.id)?.activeAt }));
+  const threadListed = threads.map(({ threadId, box, busy, activeAt }) => ({ box, threadId, busy: busy ?? null, words: [threadGroupHeading(titleOf(threadId))], activeAt }));
   const machineRows = shown(machineListed, search, kept, sort);
   const threadRows = shown(threadListed, search, kept, sort);
   const counts = tagCounts(tab === "machines" ? machineListed : threadListed, search, kept);
@@ -2570,7 +2558,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
                       onStop={() => void machineActions.act("stop", entry.box)}
                       onStart={() => void machineActions.act("start", entry.box)}
                       onRemove={() => machineActions.askRemove(entry.box)}
-                      onForget={() => void machineActions.act("forget", entry.box)}
+                      onForget={() => machineActions.act("forget", entry.box)}
                     />
                   ))}
                 </div>
@@ -2578,7 +2566,7 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
             ) : null}
             {tab === "threads"
               ? [...groups].map(([threadId, rows]) => {
-                  const heading = titleOf(threadId) ?? "Thread";
+                  const heading = threadGroupHeading(titleOf(threadId));
                   return (
                     <section key={threadId} aria-label={heading} className="overflow-hidden rounded-lg border border-border bg-card">
                       <div className="mt-1.5 flex h-7 items-center gap-3 pl-4 pr-3">

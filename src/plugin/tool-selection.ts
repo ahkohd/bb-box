@@ -6,6 +6,7 @@ import { z } from "zod";
 import { registeredTools } from "./purposes.ts";
 import { acquireParameters, resizeParameters } from "./tools.ts";
 import { forkParameters } from "./snapshot-tools.ts";
+import { PRODUCT } from "../brand.ts";
 
 type Parameters = Record<string, unknown>;
 
@@ -70,7 +71,7 @@ export function withoutWholeCards(): ReadonlyMap<string, Parameters> {
 
 export function selectTools(bb: BbPluginApi, wholeCards: () => boolean, logError: (operation: string, error: unknown) => void, skills: readonly string[] | null = manifestSkills()): void {
   if (skills === null) {
-    logError("tool selection", new Error("bb-box could not read its skills' names, so it leaves BB's own tool selection in place, and box_acquire, box_fork and box_resize advertise gpu whole while whole cards are off."));
+    logError("tool selection", new Error(`${PRODUCT} could not read its skills' names, so it leaves BB's own tool selection in place, and box_acquire, box_fork and box_resize advertise gpu whole while whole cards are off.`));
     return;
   }
   try {

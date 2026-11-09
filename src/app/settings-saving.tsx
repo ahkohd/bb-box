@@ -271,7 +271,12 @@ export function barOf(draft: Draft, savedShown: boolean, words: SaveWords = SAVE
   return null;
 }
 
-export function SaveBar({ draft, primary, inline = false, unplaced = [], actions, words = SAVE_WORDS, ready = true }: { draft: Draft; primary?: string; inline?: boolean; unplaced?: readonly string[]; actions?: ReactNode; words?: SaveWords; ready?: boolean }) {
+export function refusedInstant(outcome: InstantOutcome | null, note: InstantNote | null): string | null {
+  if (outcome?.kind === "saved" || outcome?.kind === "already") return null;
+  return note?.text ?? "Not removed. Nothing changed.";
+}
+
+export function SaveBar({ draft, primary, inline = false, unplaced = [], actions, words = SAVE_WORDS, ready = true, presentation, controls }: { draft: Draft; primary?: string; inline?: boolean; unplaced?: readonly string[]; actions?: ReactNode; words?: SaveWords; ready?: boolean; presentation?: { readonly words: string; readonly tone: BarTone; readonly retry: boolean; readonly show: boolean } | null; controls?: ReactNode }) {
   const registry = useRegistry();
   const outcome = draft.entry.outcome;
   const shownAt = draft.entry.outcomeShownAt;
@@ -290,7 +295,7 @@ export function SaveBar({ draft, primary, inline = false, unplaced = [], actions
   const [focusWithin, setFocusWithin] = useState(false);
   const status = useRef<HTMLSpanElement>(null);
   const savedShown = savedOutcome && (shownAt === null || Date.now() - shownAt < SAVED_BAR_MS || focusWithin);
-  const bar = barOf(draft, savedShown, words);
+  const bar = presentation === undefined ? barOf(draft, savedShown, words) : presentation;
   const busy = bar?.tone === "busy";
   const showButtons = bar !== null && (bar.tone !== "done" || draft.changes > 0);
   useLayoutEffect(() => {
@@ -298,7 +303,6 @@ export function SaveBar({ draft, primary, inline = false, unplaced = [], actions
   }, [focusWithin, showButtons]);
   if (!bar) return null;
   const canSave = !busy && !draft.conflicts.length && (bar.retry || (draft.changes > 0 && ready));
-  const keepsFocus = (enabled: boolean) => !enabled && !busy;
   return (
     <div className={inline ? "flex" : "pointer-events-none sticky bottom-3 z-20 mt-6 flex justify-center"}>
       <div
@@ -308,7 +312,7 @@ export function SaveBar({ draft, primary, inline = false, unplaced = [], actions
         onBlur={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocusWithin(false);
         }}
-        className="pointer-events-auto flex w-full max-w-xl flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-popover px-3 py-2 shadow-[0_2px_10px_rgb(0_0_0/0.25)]"
+        className={cn("pointer-events-auto flex w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-border bg-popover px-3 py-2", controls ? "max-w-2xl" : "max-w-xl")}
       >
         <span ref={status} tabIndex={-1} role="status" aria-live="polite" className={cn("rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring", "min-w-0 flex-1 basis-56 text-xs leading-snug", bar.tone === "bad" ? "text-destructive-text" : bar.tone === "warn" ? "text-warning-text" : bar.tone === "done" ? "text-foreground" : "text-muted-foreground")}>
           {bar.tone === "done" ? <Icon name="Check" className="mr-1 inline size-3.5 align-[-2px]" aria-hidden /> : null}
@@ -317,39 +321,23 @@ export function SaveBar({ draft, primary, inline = false, unplaced = [], actions
           {unplaced.length ? <span className="mt-1 block text-destructive-text">{unplaced.join(" ")}</span> : null}
         </span>
         {showButtons ? (
-          <span className="flex shrink-0 flex-wrap items-center gap-1.5">
+          <span className="ml-auto flex min-w-0 w-full max-w-full basis-full flex-wrap items-center justify-end gap-1.5 sm:w-auto sm:basis-auto">
             {actions}
             {bar.show ? (
               <Button type="button" variant="ghost" size="sm" className="h-7" onClick={draft.revealFirst}>
                 Show
               </Button>
             ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7"
-              disabled={keepsFocus(draft.changes > 0 || draft.entry.operation !== null)}
-              aria-disabled={busy || undefined}
-              aria-description={words.discard}
-              onClick={() => {
-                if (!busy) draft.discard();
-              }}
-            >
-              Discard
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="h-7"
-              disabled={keepsFocus(canSave)}
-              aria-disabled={busy || undefined}
-              onClick={() => {
-                if (canSave) draft.save();
-              }}
-            >
-              {bar.retry ? words.again : (primary ?? words.save)}
-            </Button>
+            {controls ?? (
+              <>
+                <Button type="button" variant="ghost" size="sm" className="h-7" disabled={busy || !(draft.changes > 0 || draft.entry.operation !== null)} aria-description={words.discard} onClick={() => draft.discard()}>
+                  Discard
+                </Button>
+                <Button type="button" size="sm" className="h-7" disabled={!canSave} onClick={() => draft.save()}>
+                  {bar.retry ? words.again : (primary ?? words.save)}
+                </Button>
+              </>
+            )}
           </span>
         ) : null}
       </div>

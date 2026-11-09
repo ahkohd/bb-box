@@ -2,6 +2,7 @@ import type { CardClaim, GpuPart } from "../types.ts";
 import { judgeGpuHelper, parseGpuHelper } from "./gpu-helper.ts";
 import { answerTo, cardName, markerOf, markerTag, parseHelperLines, type ClaimMarker, type HelperCard, type HelperHolder, type HelperLines, type MarkAnswer } from "./gpu-marking.ts";
 import type { BoxMaking, CardBlock } from "./gpu-refusals.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const ANSWER_WAIT_MS = 10_000;
 export const ANSWER_POLL_MS = 500;
@@ -48,20 +49,20 @@ export function cardsView(notes: string | null, seen: ReportSeen): CardsView {
   if (verdict.status === "fail") return { is: "blocked", why: verdict.detail, fix: verdict.fix };
   const lines = parseHelperLines(notes);
   if (lines.ledgerUnknown) {
-    return { is: "blocked", why: `The GPU helper on ${seen.node} reports its ledger as unknown, as while it waits to rebuild a lost ledger from a full reading of every card, so bb-box cannot see its claims.`, fix: `Read why in VM ${seen.vmid}'s error lines, or with journalctl -u bb-box-gpu on ${seen.node}.` };
+    return { is: "blocked", why: `The GPU helper on ${seen.node} reports its ledger as unknown, as while it waits to rebuild a lost ledger from a full reading of every card, so ${PRODUCT} cannot see its claims.`, fix: `Read why in VM ${seen.vmid}'s error lines, or with journalctl -u bb-box-gpu on ${seen.node}.` };
   }
   if (!lines.ledgerReported) {
-    return { is: "blocked", why: `bb-box-gpu ${helper.version} on ${seen.node} does not report its ledger, which bb-box reads to claim a card.`, fix: `Run host/setup-gpu.sh from this BB Box's setup guide, as root on ${seen.node}.` };
+    return { is: "blocked", why: `bb-box-gpu ${helper.version} on ${seen.node} does not report its ledger, which ${PRODUCT} reads to claim a card.`, fix: `Run host/setup-gpu.sh from this BB Box's setup guide, as root on ${seen.node}.` };
   }
   if (lines.omitted.length) {
-    return { is: "blocked", why: `VM ${seen.vmid}'s report leaves lines out (${lines.omitted.join("; ")}), so bb-box cannot see every guest that holds a card on ${seen.node}.`, fix: `Read what the helper says with journalctl -u bb-box-gpu on ${seen.node}.` };
+    return { is: "blocked", why: `VM ${seen.vmid}'s report leaves lines out (${lines.omitted.join("; ")}), so ${PRODUCT} cannot see every guest that holds a card on ${seen.node}.`, fix: `Read what the helper says with journalctl -u bb-box-gpu on ${seen.node}.` };
   }
   if (!lines.cards.length) return { is: "blocked", why: `The GPU helper on ${seen.node} lists no card in VM ${seen.vmid}'s report.`, fix: `Run systemctl status bb-box-gpu and nvidia-smi as root on ${seen.node}.` };
   const unmapped = lines.cards.filter((card) => card.minor === null || card.drmCard === null || card.drmRender === null);
   if (unmapped.length) {
     return {
       is: "blocked",
-      why: `The GPU helper on ${seen.node} cannot map ${inWords(unmapped.map(cardName))} to ${unmapped.length === 1 ? "its" : "their"} device nodes, so bb-box cannot tell which guests hold ${unmapped.length === 1 ? "it" : "them"}.`,
+      why: `The GPU helper on ${seen.node} cannot map ${inWords(unmapped.map(cardName))} to ${unmapped.length === 1 ? "its" : "their"} device nodes, so ${PRODUCT} cannot tell which guests hold ${unmapped.length === 1 ? "it" : "them"}.`,
       fix: `Run nvidia-smi and ls -l /dev/dri/by-path as root on ${seen.node}.`,
     };
   }

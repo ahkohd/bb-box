@@ -23,7 +23,7 @@ test("071 unit 8, round 3, Astra 3: a skill whose SKILL.md has CRLF line endings
   assert.deepEqual(manifestSkills(root)?.sort(), ["crlf-skill", "lf-skill"]);
 });
 
-test("071 unit 8, round 3, Astra 2: a manifest or skills folder bb-box cannot read gives no skills, never an error", () => {
+test("071 unit 8, round 3, Astra 2: a manifest or skills folder BB Box cannot read gives no skills, never an error", () => {
   assert.equal(manifestSkills(plugin("{ not json")), null, "a manifest that is not JSON");
   assert.equal(manifestSkills(plugin(null)), null, "no manifest");
   assert.equal(manifestSkills(plugin(JSON.stringify({ bb: { skills: ["missing"] } }))), null, "a skills folder that is not there");

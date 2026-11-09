@@ -5,6 +5,7 @@ import { GENERAL_DEFAULTS, KINDS_WITH_GPU_DEFAULT, MONITOR_DEFAULTS, WHOLE_CARDS
 import { PRESETS, describeSize, kindSizes, type Preset, type SizeChange } from "../core/sizes.ts";
 import { DEFAULT_TAILNET_TAGS } from "../core/tailnet.ts";
 import type { FieldView } from "./configuration.ts";
+import { PRODUCT } from "../brand.ts";
 
 export interface Change {
   readonly path: string;
@@ -429,26 +430,26 @@ export const OPTIONS: readonly OptionInfo[] = [
   { name: "general.boxesPerThread", type: { kind: "whole", least: 0, most: 10_000 }, default: GENERAL_DEFAULTS.boxesPerThread, help: "The most boxes a thread may hold at once; 0 for no limit." },
   { name: "general.enrol", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.enrol, help: "Whether boxes join BB as machines, so threads and terminals can use them." },
   { name: "general.video", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.video, help: "Whether Linux desktops drawn on the CPU show as video." },
-  { name: "general.nightlyImages", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.nightlyImages, help: "Whether bb-box rebuilds the standard images that are due at 03:00 each night." },
+  { name: "general.nightlyImages", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.nightlyImages, help: `Whether ${PRODUCT} rebuilds the standard images that are due at 03:00 each night.` },
   { name: "general.identityResetBackends", type: { kind: "tags" }, default: "", help: "The backends whose new Linux and macOS boxes get an identity marker, so that a copy of one resets its identity (070), comma-separated backend IDs. None by default." },
   { name: "general.testDevice", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.testDevice, help: "Advanced: whether Linux and macOS boxes offer the test device in place of a phone." },
   { name: "general.wholeCards", type: { kind: "boolean" }, default: WHOLE_CARDS_BY_DEFAULT, help: "Whether a Linux box or desktop may have a whole card, a GPU to itself, on a backend whose own whole-cards field is unset. A backend's whole-cards field wins where it is set. Off by default." },
   { name: "general.encoderLedger", type: { kind: "boolean" }, default: GENERAL_DEFAULTS.encoderLedger, help: "Advanced: whether each Mac's video encoder is shared out fairly between its iOS streams." },
   { name: "general.iosEncoder", type: { kind: "choice", values: ["auto", "hardware", "software"] }, default: GENERAL_DEFAULTS.iosEncoder, help: "Advanced: how an ios box's device video is encoded." },
-  { name: "general.tailnet.mode", type: { kind: "choice", values: ["off", "oauth"] }, default: "off", help: "oauth joins the machines bb-box rents to your tailnet with a Tailscale OAuth client; off joins none." },
+  { name: "general.tailnet.mode", type: { kind: "choice", values: ["off", "oauth"] }, default: "off", help: `oauth joins the machines ${PRODUCT} rents to your tailnet with a Tailscale OAuth client; off joins none.` },
   { name: "general.tailnet.tags", type: { kind: "tags" }, default: DEFAULT_TAILNET_TAGS.join(","), help: "The tags machines join the tailnet with, comma-separated." },
   { name: "general.tailnet.clientId", type: { kind: "secret" }, default: null, help: "The Tailscale OAuth client's ID. A secret: give it with --secret." },
   { name: "general.tailnet.clientSecret", type: { kind: "secret" }, default: null, help: "The Tailscale OAuth client's secret. A secret: give it with --secret." },
   { name: "general.snapshots.perBox", type: { kind: "whole", ...SNAPSHOT_LIMITS.perBox }, default: SNAPSHOT_DEFAULTS.perBox, help: "The most snapshots a box holds; kept ones count, undos are counted apart." },
-  { name: "general.snapshots.roomPercent", type: { kind: "whole", ...SNAPSHOT_LIMITS.roomPercent }, default: SNAPSHOT_DEFAULTS.roomPercent, help: "How full a host's storage may be, in percent, for bb-box to take a snapshot there; 7 points above it, bb-box deletes agents' snapshots nobody kept." },
-  { name: "general.snapshots.keepDays", type: { kind: "whole", ...SNAPSHOT_LIMITS.keepDays }, default: SNAPSHOT_DEFAULTS.keepDays, help: "How many days Keep keeps a snapshot from the day it is kept, or adds to a keep that has not ended, unless a date is given; bb-box deletes it after." },
+  { name: "general.snapshots.roomPercent", type: { kind: "whole", ...SNAPSHOT_LIMITS.roomPercent }, default: SNAPSHOT_DEFAULTS.roomPercent, help: `How full a host's storage may be, in percent, for ${PRODUCT} to take a snapshot there; 7 points above it, ${PRODUCT} deletes agents' snapshots nobody kept.` },
+  { name: "general.snapshots.keepDays", type: { kind: "whole", ...SNAPSHOT_LIMITS.keepDays }, default: SNAPSHOT_DEFAULTS.keepDays, help: `How many days Keep keeps a snapshot from the day it is kept, or adds to a keep that has not ended, unless a date is given; ${PRODUCT} deletes it after.` },
   { name: "general.snapshots.agentsRestore", type: { kind: "boolean" }, default: SNAPSHOT_DEFAULTS.agentsRestore, help: "Whether an agent restores its thread's own boxes without asking, always with an undo; off, it asks for a yes in the thread through a form." },
   { name: "general.snapshots.agentsMemory", type: { kind: "boolean" }, default: SNAPSHOT_DEFAULTS.agentsMemory, help: "Whether an agent may restore a snapshot that holds a box's memory; off, only the person restores one." },
   { name: "monitor.enabled", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.enabled, help: "Whether the Monitor runs: machine status in BB's sidebar, its sampling, background monitoring and its notifications. The sidebar changes when BB next loads." },
   { name: "monitor.refreshIntervalSeconds", type: { kind: "whole", least: MONITOR_REFRESH_SECONDS.least, most: MONITOR_REFRESH_SECONDS.most }, default: MONITOR_DEFAULTS.refreshIntervalSeconds, help: "Seconds between readings while machine status is open." },
-  { name: "monitor.backgroundMonitoring", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.backgroundMonitoring, help: "Whether bb-box checks BB's server's CPU and memory every 30 s while nobody looks." },
+  { name: "monitor.backgroundMonitoring", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.backgroundMonitoring, help: `Whether ${PRODUCT} checks BB's server's CPU and memory every 30 s while nobody looks.` },
   { name: "monitor.pressureNotifications", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.pressureNotifications, help: "Whether background monitoring shows a toast when CPU or memory stays high." },
-  { name: "monitor.boxHistory", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.boxHistory, help: "Whether bb-box keeps each box's history: a light reading of every running box once a minute, for the 1 h, 24 h and 7 d of a box's page." },
+  { name: "monitor.boxHistory", type: { kind: "boolean" }, default: MONITOR_DEFAULTS.boxHistory, help: `Whether ${PRODUCT} keeps each box's history: a light reading of every running box once a minute, for the 1 h, 24 h and 7 d of a box's page.` },
 ];
 
 const CEILING_OPTION = /^general\.snapshots\.ceilings\.([A-Za-z0-9][A-Za-z0-9._-]*)$/;

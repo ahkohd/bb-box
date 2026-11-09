@@ -177,7 +177,7 @@ test("the cache measures a Mac once at a time, keeps the newest, and is read bac
   assert.equal(restored[0]!.capabilities.hardwareEncoder.is, "yes");
 });
 
-test("a report says which probe made it, and one from an older probe is stale, so bb-box measures the Mac again", async () => {
+test("a report says which probe made it, and one from an older probe is stale, so BB Box measures the Mac again", async () => {
   const fresh = parseMacProbe(BOTH, "mac-1", 1_000, "mac");
   assert.equal(fresh.probe, PROBE_VERSION);
   assert.equal(measuredByOlderProbe(fresh), false);

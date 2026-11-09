@@ -140,7 +140,7 @@ test("a release deletes the box's snapshots that live on the provider, and stops
   await state.snapshots.take(COMMAND, box, standing(box), { name: "two" });
   state.provider.remove = "failed";
   const stopped = await state.boxes.release(THREAD, box.id, "done with it", BY_COMMAND);
-  assert.match(stopped?.error ?? "", /snapshots live on .*'s account, not on the box, and would go on costing after its release, so bb-box released nothing/);
+  assert.match(stopped?.error ?? "", /snapshots live on .*'s account, not on the box, and would go on costing after its release, so BB Box released nothing/);
   assert.notEqual(await state.backend.power(box.guest!), null, "the guest is still there");
   await state.boxes.release(THREAD, box.id, "done with it", BY_COMMAND);
   assert.equal(state.provider.held.size, 0, "nothing is left on the provider");
@@ -153,9 +153,9 @@ test("Keep and fork are refused in plain words where the backend says forks wait
   const box = await readyBox(state);
   const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "one" })).snapshot!;
   const keep = await rejection(state.snapshots.keep(COMMAND, standing(box), taken.id));
-  assert.equal(keep.message, `bb-box keeps only a snapshot it can fork after its box's release, and ${NOT_YET}. So it does not keep "one".`);
+  assert.equal(keep.message, `BB Box keeps only a snapshot it can fork after its box's release, and ${NOT_YET}. So it does not keep "one".`);
   const fork = await rejection(state.snapshots.fork(COMMAND, box, standing(box), taken.id));
-  assert.equal(fork.message, `bb-box does not fork "one": ${NOT_YET}.`);
+  assert.equal(fork.message, `BB Box does not fork "one": ${NOT_YET}.`);
 });
 
 function onlyOldGuest(state: World, old: Guest): void {
@@ -199,7 +199,7 @@ test("Astra 2: the old guest stays until the new one starts; a new guest that do
   const old = box.guest!;
   startsOnly(state, old);
   const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), target.id));
-  assert.match(refused.message, /Its new guest did not start: boat cancelled the sandbox\. bb-box deleted the new guest and kept the old one\./);
+  assert.match(refused.message, /Its new guest did not start: boat cancelled the sandbox\. BB Box deleted the new guest and kept the old one\./);
   const after = (await state.boxes.find(box.id))!;
   assert.equal(after.guest!.ref, old.ref);
   assert.equal(after.state, "ready");
@@ -288,7 +288,7 @@ test("Astra 5: a snapshot found again after its records were lost keeps its back
   assert.deepEqual(state.store.record(taken.id)?.price, PRICE);
 });
 
-test("Astra 6: a release deletes the box's snapshots the provider lists though bb-box's records lost them, and confirms them gone", async () => {
+test("Astra 6: a release deletes the box's snapshots the provider lists though BB Box's records lost them, and confirms them gone", async () => {
   const state = world();
   onProvider(state, 10);
   const box = await readyBox(state);
@@ -339,7 +339,7 @@ test("R2: a new guest that goes before its access file is written rolls back to 
     return writeAccess(current, signal);
   };
   const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), target.id));
-  assert.match(refused.message, /could not write its new guest's access file: replacement cancelled before access write\. bb-box deleted the new guest and kept the old one\./);
+  assert.match(refused.message, /could not write its new guest's access file: replacement cancelled before access write\. BB Box deleted the new guest and kept the old one\./);
   const after = (await state.boxes.find(box.id))!;
   assert.equal(after.guest!.ref, old.ref);
   assert.equal(await state.backend.power(old), "running");
@@ -361,7 +361,7 @@ test("R5: a restart while putting the old guest back resumes it from its journal
     if (!crashed && operation?.step === "swap-back") {
       crashed = true;
       state.snapshots.dispose();
-      throw new Error("bb-box stopped while it put the old guest back");
+      throw new Error("BB Box stopped while it put the old guest back");
     }
     return update(...args);
   }) as typeof update;
@@ -391,7 +391,7 @@ test("070 unit 11b: on a provider that keeps a snapshot as it is, Keep holds it 
   assert.equal(kept.forkSafe, 9);
   state.store.updateRecord(older.id, { forkSafe: 7 });
   const refused = await rejection(state.snapshots.keep(COMMAND, standing(box), older.id));
-  assert.equal(refused.message, `${box.name} had version 7 of the identity reset when "older" was taken, and bb-box forks ${state.backend.label}'s boxes only from version 8: it could not be forked after a release, so bb-box does not keep it.`);
+  assert.equal(refused.message, `${box.name} had version 7 of the identity reset when "older" was taken, and BB Box forks ${state.backend.label}'s boxes only from version 8: it could not be forked after a release, so BB Box does not keep it.`);
   const answer = await state.snapshots.keep(COMMAND, standing(box), kept.id);
   assert.equal(answer.check.way, "as-is");
   assert.ok(state.provider.labels.some((label) => label.startsWith(`snapshot ${kept.id} kept `)));

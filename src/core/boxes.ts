@@ -16,6 +16,7 @@
 // Storage keys: box/<threadId>/<boxId> holds a BoxRecord, and index/<boxId>
 // holds the thread ID, so a box can be found by its ID alone.
 
+import { PRODUCT } from "../brand.ts";
 import { foldName, providerKeys, providerName } from "./provider-name.ts";
 import { waitingToJoin, type JoinTries } from "./join-tries.ts";
 import { createHash, randomBytes } from "node:crypto";
@@ -151,7 +152,7 @@ export type BoxState =
   | "stopped"
   /** The acquire failed. The backend released what it had claimed. */
   | "failed"
-  /** The guest was deleted outside bb-box. */
+  /** The guest was deleted outside BB Box. */
   | "gone"
   | "releasing";
 
@@ -344,11 +345,11 @@ function userspaceCheck(box: BoxRecord, state: UserspaceState, unread: string | 
   const stopped = box.state === "stopped";
   const fixWhenRunning = (fix: string) => (stopped ? `Start ${box.name}, then ${fix}` : `${fix.charAt(0).toUpperCase()}${fix.slice(1)}`);
   const read = box.userspaceRead;
-  const asRead = stopped && read ? ` It is stopped: this is as bb-box read it at ${new Date(read.at).toISOString().slice(0, 16).replace("T", " ")} UTC.` : "";
+  const asRead = stopped && read ? ` It is stopped: this is as ${PRODUCT} read it at ${new Date(read.at).toISOString().slice(0, 16).replace("T", " ")} UTC.` : "";
   if (unread) return { id, name, status: "warn", detail: `${unread.replace(/\.$/, "")}.`, fix: "Run bb box doctor again; if it lasts, look at the box with bb box status." };
   switch (state.is) {
     case "updating":
-      return { id, name, status: "ok", detail: `bb-box is updating NVIDIA's userspace in ${box.name} to ${state.update.to} now, at its ${state.update.step} step.`, fix: null };
+      return { id, name, status: "ok", detail: `${PRODUCT} is updating NVIDIA's userspace in ${box.name} to ${state.update.to} now, at its ${state.update.step} step.`, fix: null };
     case "running":
       return { id, name, status: "warn", detail: `${stillRunningWords(box.name)}.`, fix: "Wait for it to end, then run bb box doctor again." };
     case "unfinished":
@@ -367,10 +368,10 @@ function userspaceCheck(box: BoxRecord, state: UserspaceState, unread: string | 
       };
     case "not-checked":
       return stopped
-        ? { id, name, status: "ok", detail: `Box ${box.name} is stopped, and bb-box has not read its NVIDIA userspace yet: it does when ${box.name} next starts.`, fix: null }
-        : { id, name, status: "ok", detail: `bb-box has not read NVIDIA's userspace in box ${box.name} yet, and did not now, as ${notReadNow ?? `the box is ${box.state}`}: the doctor reads it at its next run.`, fix: null };
+        ? { id, name, status: "ok", detail: `Box ${box.name} is stopped, and ${PRODUCT} has not read its NVIDIA userspace yet: it does when ${box.name} next starts.`, fix: null }
+        : { id, name, status: "ok", detail: `${PRODUCT} has not read NVIDIA's userspace in box ${box.name} yet, and did not now, as ${notReadNow ?? `the box is ${box.state}`}: the doctor reads it at its next run.`, fix: null };
     case "driver-unknown":
-      return { id, name, status: "warn", detail: `Box ${box.name} has ${state.version === "none" ? "no NVIDIA userspace" : `NVIDIA's userspace ${state.version}`}, and bb-box cannot tell the host's driver: ${hostUnknown ?? "its backend does not say"}`, fix: "Run bb box doctor again once the host's driver is known." };
+      return { id, name, status: "warn", detail: `Box ${box.name} has ${state.version === "none" ? "no NVIDIA userspace" : `NVIDIA's userspace ${state.version}`}, and ${PRODUCT} cannot tell the host's driver: ${hostUnknown ?? "its backend does not say"}`, fix: "Run bb box doctor again once the host's driver is known." };
     case "matches":
       return { id, name, status: "ok", detail: `Box ${box.name} has NVIDIA's userspace ${state.version}, the host's driver.`, fix: null };
   }
@@ -425,12 +426,12 @@ fi`;
 
 function gpuFixedWords(box: BoxRecord): [string, string] {
   const said = `${box.backendLabel} cannot change the GPU of its ${box.kind} boxes, so box ${box.name} keeps its GPU`;
-  return [`${said}. Make a new box with the GPU it needs.`, `Not resized: ${said}. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`];
+  return [`${said}. Make a new box with the GPU it needs.`, `Not resized: ${said}. Acquire a new box with the GPU it needs, or ask the user. ${PRODUCT} changed nothing.`];
 }
 
 function noGpuDesktopWords(box: BoxRecord, kind: string): [string, string] {
   const said = `${box.backendLabel} offers no ${kind} box with a GPU, so box ${box.name}, a desktop drawn by the CPU, cannot become a GPU desktop there`;
-  return [`Not resized: ${said}. List a GPU desktop template in BB Box's settings, or make a new ${kind} box with a GPU. bb-box changed nothing.`, `Not resized: ${said}. Acquire a ${kind} box with the GPU it needs, or ask the user. bb-box changed nothing.`];
+  return [`Not resized: ${said}. List a GPU desktop template in BB Box's settings, or make a new ${kind} box with a GPU. ${PRODUCT} changed nothing.`, `Not resized: ${said}. Acquire a ${kind} box with the GPU it needs, or ask the user. ${PRODUCT} changed nothing.`];
 }
 
 function sizeAndGpuWords(size: BoxSize, withGpuPart: boolean): string {
@@ -476,7 +477,7 @@ export function restartSeconds(box: BoxRecord, resumes: boolean): number | null 
 export const RESIZE_MEMORY_MARGIN_MIB = 512;
 
 export function restoringWords(box: Pick<BoxRecord, "name">, mark: RestoringMark): string {
-  return `Box ${box.name} is being restored to snapshot "${mark.name}", or bb-box could not confirm that restore. Check its status in a few seconds; if it stays so, bb box doctor says why, and bb box sweep checks again now.`;
+  return `Box ${box.name} is being restored to snapshot "${mark.name}", or ${PRODUCT} could not confirm that restore. Check its status in a few seconds; if it stays so, bb box doctor says why, and bb box sweep checks again now.`;
 }
 
 /** A stop bb-box did not make, why, and what bb-box did about it (#406). */
@@ -499,7 +500,7 @@ export interface UnrequestedStop {
 export const RESTART_GAP_MS = 10 * 60_000;
 
 function threadMachineWords(box: BoxRecord): string {
-  return `It is the machine of thread ${box.threadId}, and bb-box removes no thread's machine, which would release the box with the thread's worktree, so it keeps the box as it is, no longer a BB machine that connects.`;
+  return `It is the machine of thread ${box.threadId}, and ${PRODUCT} removes no thread's machine, which would release the box with the thread's worktree, so it keeps the box as it is, no longer a BB machine that connects.`;
 }
 
 function utc(ms: number): string {
@@ -510,10 +511,10 @@ function utc(ms: number): string {
 export function stopWords(box: BoxRecord): string {
   const stop = box.unrequestedStop;
   if (!stop) return "";
-  const words = [`It stopped without a request from bb-box at ${utc(stop.at)}.`, stop.reason ? sentence(stop.reason) : "Its backend does not record why."];
-  if (stop.restart?.error) words.push(`bb-box could not start it again: ${sentence(stop.restart.error)}`);
-  else if (stop.restart) words.push(box.state === "ready" ? `bb-box started it again at ${utc(stop.restart.at)}.` : "bb-box is starting it again.");
-  else if (stop.crashed) words.push(`bb-box left it stopped, as it had started it again after a stop less than ${RESTART_GAP_MS / 60_000} minutes before.`);
+  const words = [`It stopped without a request from ${PRODUCT} at ${utc(stop.at)}.`, stop.reason ? sentence(stop.reason) : "Its backend does not record why."];
+  if (stop.restart?.error) words.push(`${PRODUCT} could not start it again: ${sentence(stop.restart.error)}`);
+  else if (stop.restart) words.push(box.state === "ready" ? `${PRODUCT} started it again at ${utc(stop.restart.at)}.` : `${PRODUCT} is starting it again.`);
+  else if (stop.crashed) words.push(`${PRODUCT} left it stopped, as it had started it again after a stop less than ${RESTART_GAP_MS / 60_000} minutes before.`);
   return words.join(" ");
 }
 
@@ -551,7 +552,7 @@ export function ownedByThread(threadId: string): boolean {
 export { isMachineName };
 
 export function forkNameProblem(name: string): string | null {
-  return isMachineName(name) ? null : `Name a fork with a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". "${name}" is not one.`;
+  return isMachineName(name) ? null : `Name a fork with a lower-case letter first, then letters, digits and "-", up to 32 characters, not ending in "-". "${name}" is not one.`;
 }
 
 /**
@@ -700,7 +701,7 @@ function changedParts(from: MachineSize, to: MachineSize | null): SizePart[] {
 }
 
 export function forgetRefusal(box: Pick<BoxRecord, "name" | "backendLabel">): BoxError {
-  return new BoxError("unsupported", `Box ${box.name}'s backend, ${box.backendLabel}, is in bb-box's settings, so release the box instead: forgetting it would leave its guest running with nothing to release it.`);
+  return new BoxError("unsupported", `Box ${box.name}'s backend, ${box.backendLabel}, is in ${PRODUCT}'s settings, so release the box instead: forgetting it would leave its guest running with nothing to release it.`);
 }
 
 function observedState(power: PowerState | null | undefined): Observation["state"] {
@@ -799,7 +800,7 @@ export function endingWords(box: Pick<BoxRecord, "name" | "kindLabel" | "backend
   const minutes = Math.max(1, Math.round((endsAt - now) / 60_000));
   const at = new Date(endsAt).toISOString().slice(11, 16);
   return [
-    `Box ${box.name} (${box.kindLabel}) ends at ${at} UTC, in ${minutes} minutes: ${box.backendLabel} does not let a machine live longer, and bb-box cannot extend it.`,
+    `Box ${box.name} (${box.kindLabel}) ends at ${at} UTC, in ${minutes} minutes: ${box.backendLabel} does not let a machine live longer, and ${PRODUCT} cannot extend it.`,
     `Everything on it goes then. Copy out what you need before that, with box_copy, and push work in progress. If you still need a box after that, ask for a new one with box_acquire.`,
   ].join(" ");
 }
@@ -818,7 +819,7 @@ function observed(current: BoxRecord, power: PowerState | null, moving = false):
   const settled = current.state === "ready" || current.state === "stopped" || current.state === "gone";
   const started = (current.state === "stopping" || current.state === "starting") && current.readyAt !== null;
   if (!settled && !(moving && started)) return {};
-  if (power === null) return { state: "gone", error: "The guest was deleted outside bb-box." };
+  if (power === null) return { state: "gone", error: `The guest was deleted outside ${PRODUCT}.` };
   // The provider cannot tell, for example a machine that does not answer: keep what we know.
   if (power === "unknown") return {};
   const state = power === "running" ? "ready" : "stopped";
@@ -924,11 +925,11 @@ function sentenceOf(text: string): string {
 }
 
 function forkReleasedWords(box: Pick<BoxRecord, "fork">): string {
-  return `bb-box released it, so nothing of it acts as ${box.fork?.source.name ?? "its source"}.`;
+  return `${PRODUCT} released it, so nothing of it acts as ${box.fork?.source.name ?? "its source"}.`;
 }
 
 function forkCleanupWords(ref: string, why: string, stopped: boolean): string {
-  return `bb-box could not delete its guest ${ref} yet (${why.replace(/\.$/, "")})${stopped ? ", so it stopped it" : ", nor stop it"}. It tries again at each sweep, and never hands the fork over.`;
+  return `${PRODUCT} could not delete its guest ${ref} yet (${why.replace(/\.$/, "")})${stopped ? ", so it stopped it" : ", nor stop it"}. It tries again at each sweep, and never hands the fork over.`;
 }
 
 export function forkedFromWords(origin: ForkOrigin): string {
@@ -936,7 +937,7 @@ export function forkedFromWords(origin: ForkOrigin): string {
 }
 
 /** The error of a box restored running whose guest did not answer. The sweep clears it once the guest answers. */
-const SILENT = "Its guest was running but did not answer when bb-box restored the box's lost record. Stop and start it if commands fail.";
+const SILENT = `Its guest was running but did not answer when ${PRODUCT} restored the box's lost record. Stop and start it if commands fail.`;
 
 const SLOT_PLACE_MS = 120_000;
 
@@ -1242,7 +1243,7 @@ export class Boxes {
         const withheld = await Promise.race([ask(kind, reading).catch(() => [] as const), stillReading]);
         if (offered().has(kind)) return null;
         const label = KIND_INFO[kind]?.label ?? kind;
-        if (withheld === null) return { kind, label, words: "Being checked: bb-box is still reading whether its backends can make them now. Call box_list again in a few seconds" };
+        if (withheld === null) return { kind, label, words: `Being checked: ${PRODUCT} is still reading whether its backends can make them now. Call box_list again in a few seconds` };
         if (!withheld.length) return null;
         return { kind, label, words: `Not now: ${withheld.map((offer) => `${this.#providerName(offer.backend)} offers them, but not now: ${offer.why}`).join(" ")}` };
       }),
@@ -1421,7 +1422,7 @@ export class Boxes {
     const yours = input.threadId === OPERATOR;
     if (yours) {
       if (input.name !== undefined && !isMachineName(input.name)) {
-        throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". "${input.name}" is not one.`);
+        throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32 characters, not ending in "-". "${input.name}" is not one.`);
       }
       const kind = withDevice[0]!.kind;
       if (!kind.capabilities.enrol) throw new BoxError("unsupported", `A ${kind.label} box cannot become a BB machine, so it cannot be one of your machines.`);
@@ -1437,7 +1438,7 @@ export class Boxes {
       ? null
       : input.image === "standard" ? null : input.image !== undefined ? (this.#deps.image?.(input.projectId, wanted, input.image) ?? null) : yours ? null : (this.#deps.image?.(input.projectId, wanted) ?? null);
     if (input.image !== undefined && input.image !== "standard" && !image) {
-      throw new BoxError("not_found", `There is no image ${input.image} for ${wanted} boxes. box_list names each kind's images; "standard" is bb-box's own.`);
+      throw new BoxError("not_found", `There is no image ${input.image} for ${wanted} boxes. box_list names each kind's images; "standard" is ${PRODUCT}'s own.`);
     }
     // Spares left over from a kind that keeps none now are released, not claimed. A project's image's box claims a spare of its image's current build (#440).
     const impliedOwnVm = input.threadId === SPARES || yours || role === "machine" || tried !== null || image !== null;
@@ -1574,11 +1575,11 @@ export class Boxes {
 
   async #forkRoom(request: ForkAdmission): Promise<OfferedKind> {
     const offered = this.#deps.backends.kinds().find((candidate) => candidate.backend.id === request.backend && candidate.kind.id === request.kind);
-    if (!offered) throw new BoxError("unknown_kind", `${request.backendLabel} offers no ${request.kind} boxes now, so bb-box cannot fork one there.`);
+    if (!offered) throw new BoxError("unknown_kind", `${request.backendLabel} offers no ${request.kind} boxes now, so ${PRODUCT} cannot fork one there.`);
     const { backend, kind } = offered;
     const yours = request.threadId === OPERATOR;
     if (yours && request.name !== undefined && !isMachineName(request.name)) {
-      throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". "${request.name}" is not one.`);
+      throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32 characters, not ending in "-". "${request.name}" is not one.`);
     }
     if (yours && !kind.capabilities.enrol) throw new BoxError("unsupported", `A ${kind.label} box cannot become a BB machine, so a fork of it cannot be one of your machines.`);
     const size = request.size ?? defaultSize(kindSizes(kind.id, (await this.#deps.general()).sizes));
@@ -1706,7 +1707,7 @@ export class Boxes {
           };
           await this.#deps.kv.set(indexKey(box.id), box.threadId);
           await this.#write(box);
-          this.#event(box, "made", input.who ?? UNKNOWN_ACTOR, { words: `Claimed from bb-box's spare boxes, as ${spare.name}.` });
+          this.#event(box, "made", input.who ?? UNKNOWN_ACTOR, { words: `Claimed from ${PRODUCT}'s spare boxes, as ${spare.name}.` });
           if (box.state === "ready") this.#event(box, "ready", UNKNOWN_ACTOR);
           await this.#deps.kv.delete(recordKey(SPARES, box.id));
           this.#deps.notify(SPARES);
@@ -1795,7 +1796,7 @@ export class Boxes {
         id: `spares.image.${name}.${backend}.${kind}`,
         name: `Spare of ${name} for ${kind} on ${backend}`,
         status: "warn",
-        detail: `A spare from its build ${failed.ref} failed to start at ${when(failed.at)} UTC, so bb-box keeps none of that build until ${when(failed.at + SPARE_RETRY_MS)} UTC. Its boxes start from the build meanwhile.`,
+        detail: `A spare from its build ${failed.ref} failed to start at ${when(failed.at)} UTC, so ${PRODUCT} keeps none of that build until ${when(failed.at + SPARE_RETRY_MS)} UTC. Its boxes start from the build meanwhile.`,
         fix: "The failed box's error is in bb box list --all. A new build of the image, as a changed script or the nightly rebuild makes, is tried at once.",
       });
     }
@@ -1854,7 +1855,7 @@ export class Boxes {
         : {},
     );
     if (!marked || marked.identityReset?.foundAt !== foundAt) return null;
-    const next = marked.role === "machine" ? threadMachineWords(marked) : "so bb-box enrols the box again as a new BB machine, and keeps it.";
+    const next = marked.role === "machine" ? threadMachineWords(marked) : `so ${PRODUCT} enrols the box again as a new BB machine, and keeps it.`;
     this.#event(marked, "identity-reset", byBbBox("its BB machine went with its identity reset"), {
       words: `Box ${marked.name} reset its identity at ${utc(reset.at)}, as ${reset.why}. BB's machine ${reset.machine} went with it, ${next}`,
     });
@@ -1884,7 +1885,7 @@ export class Boxes {
       if (backend) await this.#markIdentity(updated, updated.guest, backend, {}, AbortSignal.timeout(MARKER_WRITE_MS * 2));
     }
     this.#event(updated, "enrolled-again", byBbBox("its BB machine went with its identity reset"), {
-      words: `Box ${updated.name} joined BB again as machine ${machine}, in place of ${reset.machine}, ${Math.max(1, Math.round((now - reset.foundAt) / 1000))} s after bb-box found its identity reset.`,
+      words: `Box ${updated.name} joined BB again as machine ${machine}, in place of ${reset.machine}, ${Math.max(1, Math.round((now - reset.foundAt) / 1000))} s after ${PRODUCT} found its identity reset.`,
     });
     return updated;
   }
@@ -1916,11 +1917,11 @@ export class Boxes {
             fix: `Copy what thread ${box.threadId} needs from the box with bb box run or box_copy, then end the thread or remove machine ${reset.machine} in BB, which releases the box. ${look}`,
           });
         } else if (reset.enrolledAgainAt !== null) {
-          checks.push({ id: `identity-reset.${box.name}`, name: `Identity reset of ${box.name}`, status: "warn", detail: `${what} bb-box kept the box and enrolled it again, at ${utc(reset.enrolledAgainAt)}, as BB machine ${reset.machineAgain}.`, fix: look });
+          checks.push({ id: `identity-reset.${box.name}`, name: `Identity reset of ${box.name}`, status: "warn", detail: `${what} ${PRODUCT} kept the box and enrolled it again, at ${utc(reset.enrolledAgainAt)}, as BB machine ${reset.machineAgain}.`, fix: look });
         } else {
-          const step = reset.retiredAt === null ? `BB has not yet confirmed the removal of machine ${reset.machine}, which bb-box asks for again at each sweep` : "bb-box has not yet enrolled it again as a BB machine";
+          const step = reset.retiredAt === null ? `BB has not yet confirmed the removal of machine ${reset.machine}, which ${PRODUCT} asks for again at each sweep` : `${PRODUCT} has not yet enrolled it again as a BB machine`;
           const why = box.enrol.state === "failed" && box.enrol.error ? ` Its last try failed: ${box.enrol.error}` : "";
-          checks.push({ id: `identity-reset.${box.name}`, name: `Identity reset of ${box.name}`, status: "fail", detail: `${what} bb-box kept the box; ${step}.${why}`, fix: `bb-box tries again at each sweep. ${look}` });
+          checks.push({ id: `identity-reset.${box.name}`, name: `Identity reset of ${box.name}`, status: "fail", detail: `${what} ${PRODUCT} kept the box; ${step}.${why}`, fix: `${PRODUCT} tries again at each sweep. ${look}` });
         }
       }
       const check = box.removedMachineToCheck;
@@ -1929,8 +1930,8 @@ export class Boxes {
           id: `identity-reset.${box.name}`,
           name: `Identity reset of ${box.name}`,
           status: "warn",
-          detail: `BB no longer has machine ${check.machine} of box ${box.name}, since ${utc(check.at)}, and bb-box could not read whether the box's identity reset (${check.why}), so it keeps the box.`,
-          fix: "bb-box reads the box's /var/lib/bb-box/identity-resets again at each sweep, once the box answers. If you removed the machine in BB on purpose, release the box in bb-box.",
+          detail: `BB no longer has machine ${check.machine} of box ${box.name}, since ${utc(check.at)}, and ${PRODUCT} could not read whether the box's identity reset (${check.why}), so it keeps the box.`,
+          fix: `${PRODUCT} reads the box's /var/lib/bb-box/identity-resets again at each sweep, once the box answers. If you removed the machine in BB on purpose, release the box in ${PRODUCT}.`,
         });
       }
       return checks;
@@ -1961,7 +1962,7 @@ export class Boxes {
         continue;
       }
       const now = counts[kind] ?? { ready: 0, making: 0 };
-      const keeps = `bb-box keeps ${wanted} spare ${kind} ${wanted === 1 ? "box" : "boxes"}: ${now.ready} ready, ${now.making} being made. ${cost}`;
+      const keeps = `${PRODUCT} keeps ${wanted} spare ${kind} ${wanted === 1 ? "box" : "boxes"}: ${now.ready} ready, ${now.making} being made. ${cost}`;
       const shortfall = this.#spareShortfalls.get(kind);
       if (shortfall && now.ready + now.making < wanted) {
         checks.push({ id: `spares.${kind}`, name, status: "warn", detail: `${keeps} It has too few: ${sentence(shortfall)}`, fix: `Free room where ${kind} boxes go, or set fewer spares in the ${kind} kind's settings.` });
@@ -2106,7 +2107,7 @@ export class Boxes {
             : stale
               ? `its image ${image!.name} is not in use, or its build on ${spare.backend} is not current`
               : unwanted
-                ? `bb-box keeps ${count} spare ${image ? `${image.name} ` : ""}${spare.kind} boxes${image ? ` on ${spare.backend}` : ""}`
+                ? `${PRODUCT} keeps ${count} spare ${image ? `${image.name} ` : ""}${spare.kind} boxes${image ? ` on ${spare.backend}` : ""}`
                 : resized
                   ? "its kind's default size changed"
                   : `its ${spare.kind} image on ${spare.backend} has a newer build`,
@@ -2141,7 +2142,7 @@ export class Boxes {
       if (count >= wanted) this.#spareShortfalls.delete(kind);
       for (; count < wanted && !this.#disposed; count++) {
         try {
-          await this.acquire({ threadId: SPARES, projectId: null, kind, who: byBbBox(`bb-box keeps ${wanted} spare ${kind} ${wanted === 1 ? "box" : "boxes"}`) });
+          await this.acquire({ threadId: SPARES, projectId: null, kind, who: byBbBox(`${PRODUCT} keeps ${wanted} spare ${kind} ${wanted === 1 ? "box" : "boxes"}`) });
           this.#spareShortfalls.delete(kind);
         } catch (error) {
           if (error instanceof BoxError) {
@@ -2157,7 +2158,7 @@ export class Boxes {
       const failed = await this.#deps.kv.get<{ ref: string; at: number }>(spareFailedKey(want.name, want.backend, want.kind));
       if (failed && failed.ref === want.ref && this.#now() - failed.at < SPARE_RETRY_MS) continue;
       try {
-        const made = await this.acquire({ threadId: SPARES, projectId: null, kind: want.kind, image: want.name, on: want.backend, who: byBbBox(`bb-box keeps a spare of image ${want.name}`) });
+        const made = await this.acquire({ threadId: SPARES, projectId: null, kind: want.kind, image: want.name, on: want.backend, who: byBbBox(`${PRODUCT} keeps a spare of image ${want.name}`) });
         // The build changed as it was made: it would run the script at start, so it goes, and waits a day.
         if (made.image?.state !== "baked" || made.image.from !== want.ref) {
           await this.#spareFailed(want.name, want.backend, want.kind, want.ref);
@@ -2320,7 +2321,7 @@ export class Boxes {
     const why = gpu === "none" ? `${kind} boxes from ${providers} always have a GPU` : shared ? `${providers} ${gives} ${kind} boxes a shared GPU, not a whole card` : `${providers} ${gives} ${kind} boxes no GPU`;
     const instead = gpu === "none" ? (kind === "linux-desktop" ? "Ask for linux-desktop-cpu for a desktop drawn by the CPU" : "Leave gpu out") : shared ? "Ask for gpu shared" : asked ? "Ask for gpu none" : `Ask for gpu none, or for another kind`;
     const setting = fromSetting ? `, the GPU the user set for ${kind} boxes that do not ask for one` : "";
-    if (forAgent) throw new BoxError("unsupported", `Not made: no provider here gives ${kind} boxes ${gpuPartWords(gpu)}${setting}: ${why}. ${instead}, or ask the user. bb-box changed nothing.`);
+    if (forAgent) throw new BoxError("unsupported", `Not made: no provider here gives ${kind} boxes ${gpuPartWords(gpu)}${setting}: ${why}. ${instead}, or ask the user. ${PRODUCT} changed nothing.`);
     const change = fromSetting ? `, or change ${kind}'s GPU when not asked for in BB Box's settings, or with bb box kind set ${kind} --gpu <none|shared|whole>` : "";
     throw new BoxError("unsupported", `No provider gives ${kind} boxes ${gpuPartWords(gpu)}${fromSetting ? `, ${kind}'s GPU when not asked for in BB Box's settings` : ""}: ${why}. ${instead}${change}.`);
   }
@@ -2569,7 +2570,7 @@ export class Boxes {
     const fork = box.fork!;
     const began = this.#now();
     const command = backend.forkCheckCommand ? await backend.forkCheckCommand(guest, signal) : (await backend.transports(guest, box.kind)).command;
-    if (!command) throw new BoxError("unsupported", `bb-box cannot run commands in fork ${box.name}, so it cannot check that it gave up ${fork.source.name}'s identity.`);
+    if (!command) throw new BoxError("unsupported", `${PRODUCT} cannot run commands in fork ${box.name}, so it cannot check that it gave up ${fork.source.name}'s identity.`);
     const own = await backend.guestIdentity!(guest, signal);
     const byEndpoint = backend.addressIsAnEndpoint === true;
     const expectedNow = async () => ({
@@ -2591,7 +2592,7 @@ export class Boxes {
       if (verdict.is === "ready") break;
       if (verdict.is === "refused" || look >= FORK_LOOKS) {
         const waited = verdict.is === "wait" ? ` after ${Math.round(waitMs / 1000)} s` : "";
-        throw new BoxError("failed", `bb-box did not hand fork ${box.name} over${waited}: ${verdict.why}.`);
+        throw new BoxError("failed", `${PRODUCT} did not hand fork ${box.name} over${waited}: ${verdict.why}.`);
       }
       await new Promise((resolve) => setTimeout(resolve, waitMs / FORK_LOOKS));
       signal.throwIfAborted();
@@ -2611,7 +2612,7 @@ export class Boxes {
       now = await backend.leasedAddressNow(source.guest, signal);
     } catch (error) {
       signal.throwIfAborted();
-      throw new BoxError("failed", `bb-box did not hand fork ${box.name} over: it could not read the address ${fork.source.name} holds now, so it cannot tell that the fork does not take it: ${sentenceOf(describeError(error, "Reading it"))}`);
+      throw new BoxError("failed", `${PRODUCT} did not hand fork ${box.name} over: it could not read the address ${fork.source.name} holds now, so it cannot tell that the fork does not take it: ${sentenceOf(describeError(error, "Reading it"))}`);
     }
     if (now.power === "stopped" || now.power === "gone") return { sourceAddresses: [], freedSourceAddresses: recorded };
     return { sourceAddresses: distinctAddresses([now.leased, ...recorded]), freedSourceAddresses: [] };
@@ -2824,8 +2825,8 @@ export class Boxes {
   }
 
   #backendOff(box: BoxRecord): { readonly error: string; readonly agentError: { readonly of: string; readonly words: string } } {
-    const error = `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, or its settings need fixing. Fix them in bb-box's settings.`;
-    return { error, agentError: { of: error, words: `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, or its settings need fixing, so ask the user. The box stays as it is until the backend is back.` } };
+    const error = `The ${box.backendLabel} backend that holds box ${box.name} is not in ${PRODUCT}'s settings, or its settings need fixing. Fix them in ${PRODUCT}'s settings.`;
+    return { error, agentError: { of: error, words: `The ${box.backendLabel} backend that holds box ${box.name} is not in ${PRODUCT}'s settings, or its settings need fixing, so ask the user. The box stays as it is until the backend is back.` } };
   }
 
   #backend(box: BoxRecord): Backend {
@@ -2898,7 +2899,7 @@ export class Boxes {
       } catch (error) {
         const words = `Release did not finish: ${sentenceOf(describeError(error, "Copying its kept snapshots"))}`;
         failed(words, null);
-        const next = error instanceof ReleaseWaits ? "bb-box tries again in a few minutes." : `bb-box tries again in a few minutes. ${RELEASE_OR_DELETE_KEPT}`;
+        const next = error instanceof ReleaseWaits ? `${PRODUCT} tries again in a few minutes.` : `${PRODUCT} tries again in a few minutes. ${RELEASE_OR_DELETE_KEPT}`;
         return this.update(box, () => ({ error: `${words} ${next}` }));
       }
     }
@@ -2914,7 +2915,7 @@ export class Boxes {
     }
     if (guestGone) {
       this.#deps.log?.(`${describeBox(box)}: its guest is gone, so its release, which a restart of bb-box interrupted, is done.`);
-      this.#event(box, "released", who, { backend: box.backendLabel, words: "bb-box found its guest gone after a restart." });
+      this.#event(box, "released", who, { backend: box.backendLabel, words: `${PRODUCT} found its guest gone after a restart.` });
       await this.#forget(box);
       return null;
     }
@@ -2942,7 +2943,7 @@ export class Boxes {
         const power = await backend.power(box.guest).catch(() => undefined);
         failed(describeError(error, "Releasing the box"), { state: observedState(power), at: this.#now(), from: box.backendLabel });
         return this.update(box, (current) => ({
-          error: `${sentence(describeError(error, "Releasing the box"))} bb-box tries again in a few minutes.`,
+          error: `${sentence(describeError(error, "Releasing the box"))} ${PRODUCT} tries again in a few minutes.`,
           timings: { ...current.timings, ...timings },
         }));
       }
@@ -3043,7 +3044,7 @@ export class Boxes {
     } catch (error) {
       const observation = await this.#observedAfterFailure(current, signal, true);
       this.#event(current, "stop-failed", who, { words: describeError(error, "Stopping the box"), observed: observation });
-      if (observation.state === "stopped") this.#event(current, "stopped", who, { at: observation.at, words: "bb-box found it stopped after its stop failed." });
+      if (observation.state === "stopped") this.#event(current, "stopped", who, { at: observation.at, words: `${PRODUCT} found it stopped after its stop failed.` });
       throw error;
     }
     const kept = reading ? await this.#keptAtStop(current, reading, signal) : null;
@@ -3233,7 +3234,7 @@ export class Boxes {
             return { box: current, from, to, plan, changed: false };
           }
           if (gpu.refusal) throw new BoxError(gpu.way === "no" ? "unsupported" : "no_capacity", gpu.refusal.person, gpu.refusal.agent);
-          throw new BoxError("unsupported", gpu.words, `Not resized: ${gpu.words} bb-box changed nothing.`);
+          throw new BoxError("unsupported", gpu.words, `Not resized: ${gpu.words} ${PRODUCT} changed nothing.`);
         }
         if (gpu.changedSinceAgreed) {
           await this.#rememberGpuPlan(current.id, gpu);
@@ -3260,7 +3261,7 @@ export class Boxes {
         const named = parts.length < 2 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
         const installing = installFrom && plan.gpu?.installs ? `, and installs NVIDIA's userspace ${plan.gpu.installs} in it first` : "";
         const said = `Resizing box ${current.name} to ${describeSize(to)}${gpuChanges ? `, GPU ${to.gpu}` : ""} needs a restart for its ${named}: the box shuts down and starts again${down}${installing}, which ends everything running in it.`;
-        throw new BoxError("needs_restart", `${said} bb-box changed nothing.`, gpuRestarts ? `Not resized: ${said} Call box_resize with restart true to do that, or ask the user. bb-box changed nothing.` : null);
+        throw new BoxError("needs_restart", `${said} ${PRODUCT} changed nothing.`, gpuRestarts ? `Not resized: ${said} Call box_resize with restart true to do that, or ask the user. ${PRODUCT} changed nothing.` : null);
       }
       if (restart) await options.beforeRestart?.(current);
       options.signal?.throwIfAborted();
@@ -3322,7 +3323,7 @@ export class Boxes {
         }));
         const observed = restart ? await this.#observedAfterFailure(current, recovery, false) : null;
         const parts = changedParts(from, now);
-        const sizeWords = now ? (parts.length ? ` Its ${partWords(parts)} changed: it has ${describeSize(now)} now.` : " Nothing changed.") : " bb-box could not read its size after.";
+        const sizeWords = now ? (parts.length ? ` Its ${partWords(parts)} changed: it has ${describeSize(now)} now.` : " Nothing changed.") : ` ${PRODUCT} could not read its size after.`;
         this.#event(current, "resize-failed", who, { words: `${sentence(describeError(error, "Resizing the box"))}${sizeWords}`, parts, observed });
         throw error;
       }
@@ -3351,7 +3352,7 @@ export class Boxes {
     const found = await this.#readingIn(box, host.driver, signal);
     if (found.running) {
       const said = stillRunningWords(box.name).replace(/^A/, "a");
-      throw new BoxError("try_again", `Not changed: ${said}. Resize it again once it has ended.`, `Not resized: ${said}. Call box_resize again once it has ended, or ask the user. bb-box changed nothing.`);
+      throw new BoxError("try_again", `Not changed: ${said}. Resize it again once it has ended.`, `Not resized: ${said}. Call box_resize again once it has ended, or ask the user. ${PRODUCT} changed nothing.`);
     }
     return { box: found.box, reading: found.reading };
   }
@@ -3375,13 +3376,13 @@ export class Boxes {
       const failed = await this.#fetchAndInstall(box, driver, signal ? AbortSignal.any([signal, steps.signal]) : steps.signal, steps.signal, () => steps.stepTo("install"));
       if (failed?.step === "fetch") {
         await steps.ended("fetch", failed.why, false);
-        const said = `bb-box could not download NVIDIA's installer ${driver} into box ${name}: ${failed.why.replace(/\.$/, "")}. Nothing in it changed, and it keeps no GPU`;
+        const said = `${PRODUCT} could not download NVIDIA's installer ${driver} into box ${name}: ${failed.why.replace(/\.$/, "")}. Nothing in it changed, and it keeps no GPU`;
         throw new BoxError("failed", `Not resized: ${said}. Try again later.`, `Not resized: ${said}. Try again later, or ask the user.`);
       }
       if (failed) {
         const after = await steps.ended("install", failed.why, true);
         const now = after ? ` It has ${readingWords(after)} now.` : "";
-        const said = `bb-box could not install NVIDIA's userspace ${driver} in box ${name}: ${failed.why.replace(/\.$/, "")}.${now} It goes on running with no GPU, as it was, and was not restarted`;
+        const said = `${PRODUCT} could not install NVIDIA's userspace ${driver} in box ${name}: ${failed.why.replace(/\.$/, "")}.${now} It goes on running with no GPU, as it was, and was not restarted`;
         throw new BoxError("failed", `Not resized: ${said}. Resize it again to try once more.`, `Not resized: ${said}. Ask the user.`);
       }
       await steps.stepTo("restart");
@@ -3390,7 +3391,7 @@ export class Boxes {
       } catch (error) {
         const why = describeError(error, "Checking the restart").replace(/\.$/, "");
         await steps.ended("restart", why, false);
-        const said = `bb-box installed NVIDIA's userspace ${driver} in box ${name}, but did not restart it to add its GPU: ${why}. It goes on running with no GPU`;
+        const said = `${PRODUCT} installed NVIDIA's userspace ${driver} in box ${name}, but did not restart it to add its GPU: ${why}. It goes on running with no GPU`;
         throw new BoxError(error instanceof BoxError ? error.code : "failed", `Not resized: ${said}. Resize it again once it can restart.`, `Not resized: ${said}. Ask the user.`);
       }
       return steps;
@@ -3471,7 +3472,7 @@ export class Boxes {
 
   async #gpuResizable(box: BoxRecord, resizing: Resizing | null, gpu: GpuPart, kind: string): Promise<void> {
     const chosen = chooseGpu(kind, gpu);
-    if (!chosen.ok) throw new BoxError("unsupported", chosen.message, `Not resized: ${chosen.message} bb-box changed nothing.`);
+    if (!chosen.ok) throw new BoxError("unsupported", chosen.message, `Not resized: ${chosen.message} ${PRODUCT} changed nothing.`);
     if (!resizing?.gpu) throw new BoxError("unsupported", ...(kind === box.kind ? gpuFixedWords(box) : noGpuDesktopWords(box, kind)));
     if (gpu === "whole" && !(await this.wholeCards())) throw new BoxError("unsupported", WHOLE_CARDS_OFF_FOR_RESIZE.person, WHOLE_CARDS_OFF_FOR_RESIZE.agent);
   }
@@ -3489,13 +3490,13 @@ export class Boxes {
     await this.#resizeCutShort(backend, box, box.guest?.size, signal);
     const settled = (await this.#read(box.threadId, box.id)) ?? box;
     if (settled.resize?.state === "resizing") {
-      throw new BoxError("try_again", `Not changed: bb-box could not yet read which GPU box ${box.name} holds after its last resize, which was cut short. Try again in a minute.`, `Not resized: bb-box could not yet read which GPU box ${box.name} holds after its last resize, which was cut short. Try again in a minute, or ask the user. bb-box changed nothing.`);
+      throw new BoxError("try_again", `Not changed: ${PRODUCT} could not yet read which GPU box ${box.name} holds after its last resize, which was cut short. Try again in a minute.`, `Not resized: ${PRODUCT} could not yet read which GPU box ${box.name} holds after its last resize, which was cut short. Try again in a minute, or ask the user. ${PRODUCT} changed nothing.`);
     }
     return settled;
   }
 
   async #resizeCutShort(backend: Backend, box: BoxRecord, guestSize: MachineSize | null | undefined, signal?: AbortSignal): Promise<void> {
-    const error = "bb-box restarted before the resize finished, so the box has the size its guest says now.";
+    const error = `${PRODUCT} restarted before the resize finished, so the box has the size its guest says now.`;
     const gpuCut = box.resize && box.resize.to.gpu !== undefined && box.resize.to.gpu !== (box.resize.from.gpu ?? recordedGpu(box));
     let held: GpuHandoff | null = null;
     if (gpuCut && box.guest && backend.readGpuClaim) {
@@ -3556,7 +3557,7 @@ export class Boxes {
   async #readingIn(box: BoxRecord, driver: string | null, signal?: AbortSignal): Promise<{ readonly box: BoxRecord; readonly reading: UserspaceReading; readonly running: boolean }> {
     const result = await this.runOwn(box, USERSPACE_READ, { timeoutMs: USERSPACE_READ_MS, maxOutputBytes: 2048, signal });
     const reading = result.exitCode === 0 ? judgeReading(result.stdout, driver, this.#now()) : null;
-    if (!reading) throw new BoxError("unreachable", `bb-box could not read NVIDIA's userspace in box ${box.name}: ${lastLines(`${result.stdout}\n${result.stderr}`) || `exit code ${result.exitCode}`}.`);
+    if (!reading) throw new BoxError("unreachable", `${PRODUCT} could not read NVIDIA's userspace in box ${box.name}: ${lastLines(`${result.stdout}\n${result.stderr}`) || `exit code ${result.exitCode}`}.`);
     if (updateRunning(result.stdout)) return { box: (await this.update(box, () => ({ userspaceRunningSeenAt: reading.at }))) ?? box, reading, running: true };
     const recorded = await this.update(box, (current) => ({ nvidiaUserspace: userspaceOfReading(reading), userspaceRead: reading, userspaceRunningSeenAt: null, ...settledUpdate(current.userspaceUpdate, reading) }));
     return { box: recorded ?? box, reading, running: false };
@@ -3565,7 +3566,7 @@ export class Boxes {
   async #userspaceUpdateCutShort(box: BoxRecord, signal?: AbortSignal): Promise<void> {
     let cut: BoxRecord | null = box;
     if (box.userspaceUpdate?.state === "updating") {
-      const error = "bb-box restarted before the update finished.";
+      const error = `${PRODUCT} restarted before the update finished.`;
       cut = await this.update(box, (current) => (current.userspaceUpdate?.state === "updating" ? { userspaceUpdate: { ...current.userspaceUpdate, state: "unknown", ms: null, error } } : {}));
       this.#deps.log?.(`${describeBox(box)}: an update of NVIDIA's userspace was cut short: ${error}`);
     }
@@ -3576,18 +3577,18 @@ export class Boxes {
 
   async updateUserspace(threadId: string, ref: string, options: UserspaceUpdateOptions = {}): Promise<UserspaceUpdateAnswer> {
     const box = await this.get(threadId, ref);
-    if (this.#disposed) throw new BoxError("restarting", "bb-box is stopping, as for an update. Try again once it is back.");
+    if (this.#disposed) throw new BoxError("restarting", `${PRODUCT} is stopping, as for an update. Try again once it is back.`);
     return this.#chain(box.id, () => this.#updateUserspace(box, options));
   }
 
   async #updateUserspace(box: BoxRecord, options: UserspaceUpdateOptions): Promise<UserspaceUpdateAnswer> {
     let current = await this.#stamped((await this.#read(box.threadId, box.id)) ?? box, options.signal);
     const name = current.name;
-    if (!hasGpuPart(current.kind)) throw new BoxError("unsupported", `Box ${name} is a ${current.kind} box, which has no NVIDIA userspace. bb-box changed nothing.`);
-    if (!holdsCard(recordedGpu(current))) throw new BoxError("unsupported", `Box ${name} has no GPU, so nothing in it uses NVIDIA's userspace. bb-box changed nothing.`);
+    if (!hasGpuPart(current.kind)) throw new BoxError("unsupported", `Box ${name} is a ${current.kind} box, which has no NVIDIA userspace. ${PRODUCT} changed nothing.`);
+    if (!holdsCard(recordedGpu(current))) throw new BoxError("unsupported", `Box ${name} has no GPU, so nothing in it uses NVIDIA's userspace. ${PRODUCT} changed nothing.`);
     const backend = this.#backend(current);
     const host = backend.nvidiaHost ? await backend.nvidiaHost(current.kind, options.signal) : null;
-    if (!host) throw new BoxError("unsupported", `${current.backendLabel} keeps no NVIDIA userspace in its boxes, so box ${name} has none to update. bb-box changed nothing.`);
+    if (!host) throw new BoxError("unsupported", `${current.backendLabel} keeps no NVIDIA userspace in its boxes, so box ${name} has none to update. ${PRODUCT} changed nothing.`);
     if (current.state === "stopped") throw new BoxError("not_ready", `Start box ${name} first: NVIDIA's userspace is updated in a running box. Nothing changed.`);
     this.#require(current, "ready");
     if (host.refused) throw new BoxError("unsupported", `Not changed: ${host.refused.why.replace(/\.$/, "")}.${host.refused.fix ? ` ${host.refused.fix}` : ""}`);
@@ -3597,7 +3598,7 @@ export class Boxes {
     current = before.box;
     const reading = before.reading;
     if (userspaceState(reading, current.userspaceUpdate, driver).is === "matches") {
-      return { box: current, needed: false, changed: false, from: reading, to: driver, processes: [], words: `Box ${name} already has NVIDIA's userspace ${driver}, the host's driver. bb-box changed nothing.` };
+      return { box: current, needed: false, changed: false, from: reading, to: driver, processes: [], words: `Box ${name} already has NVIDIA's userspace ${driver}, the host's driver. ${PRODUCT} changed nothing.` };
     }
     const checked = await this.runOwn(current, UPDATE_CHECK, { stdin: updateScriptText(), timeoutMs: UPDATE_CHECK_MS, maxOutputBytes: 64 * 1024, signal: options.signal });
     const verdict = judgeUpdateCheck(`${checked.stdout}\n${checked.stderr}`, driver);
@@ -3612,12 +3613,12 @@ export class Boxes {
       const failed = await this.#fetchAndInstall(current, driver, options.signal ? AbortSignal.any([options.signal, steps.signal]) : steps.signal, steps.signal, () => steps.stepTo("install"));
       if (failed?.step === "fetch") {
         await steps.ended("fetch", failed.why, false);
-        throw new BoxError("failed", `Not changed: bb-box could not download NVIDIA's installer ${driver} into box ${name}: ${failed.why.replace(/\.$/, "")}. Nothing in it changed.`);
+        throw new BoxError("failed", `Not changed: ${PRODUCT} could not download NVIDIA's installer ${driver} into box ${name}: ${failed.why.replace(/\.$/, "")}. Nothing in it changed.`);
       }
       if (failed) {
         const after = await steps.ended("install", failed.why, true);
         const now = after ? ` It has ${readingWords(after)} now${halfInstalled(after) ? `: run bb box gpu update ${name} again` : ""}.` : "";
-        throw new BoxError("failed", `bb-box could not install NVIDIA's userspace ${driver} in box ${name}: ${failed.why.replace(/\.$/, "")}.${now} It goes on running, and was not restarted.`);
+        throw new BoxError("failed", `${PRODUCT} could not install NVIDIA's userspace ${driver} in box ${name}: ${failed.why.replace(/\.$/, "")}.${now} It goes on running, and was not restarted.`);
       }
       await steps.stepTo("restart");
       try {
@@ -3626,7 +3627,7 @@ export class Boxes {
         await steps.ended("restart", describeError(error, "Checking the restart"), false);
         throw new BoxError(
           error instanceof BoxError ? error.code : "failed",
-          `bb-box installed NVIDIA's userspace ${driver} in box ${name}, but did not restart it: ${describeError(error, "Checking the restart").replace(/\.$/, "")}. Its programs keep the old libraries until it restarts. Run bb box gpu update ${name} again once it can restart.`,
+          `${PRODUCT} installed NVIDIA's userspace ${driver} in box ${name}, but did not restart it: ${describeError(error, "Checking the restart").replace(/\.$/, "")}. Its programs keep the old libraries until it restarts. Run bb box gpu update ${name} again once it can restart.`,
         );
       }
       try {
@@ -3635,13 +3636,13 @@ export class Boxes {
       } catch (error) {
         await steps.ended("restart", describeError(error, "Restarting the box"), false);
         const now = (await this.#read(current.threadId, current.id)) ?? current;
-        throw new BoxError("failed", `bb-box installed NVIDIA's userspace ${driver} in box ${name}, but could not restart it: ${describeError(error, "Restarting the box").replace(/\.$/, "")}. It is ${now.state} now, with the new userspace on its disk. Run bb box gpu update ${name} again once it runs.`);
+        throw new BoxError("failed", `${PRODUCT} installed NVIDIA's userspace ${driver} in box ${name}, but could not restart it: ${describeError(error, "Restarting the box").replace(/\.$/, "")}. It is ${now.state} now, with the new userspace on its disk. Run bb box gpu update ${name} again once it runs.`);
       }
       await steps.stepTo("check");
       const problem = await this.#checkUpdated(current, driver, steps.signal).catch((error: unknown) => describeError(error, "Checking the box"));
       if (problem) {
         await steps.ended("check", problem, true);
-        throw new BoxError("failed", `bb-box installed NVIDIA's userspace ${driver} in box ${name} and restarted it, but its check after the restart failed: ${problem.replace(/\.$/, "")}. It goes on running. Run bb box gpu update ${name} again, or bb box doctor.`);
+        throw new BoxError("failed", `${PRODUCT} installed NVIDIA's userspace ${driver} in box ${name} and restarted it, but its check after the restart failed: ${problem.replace(/\.$/, "")}. It goes on running. Run bb box gpu update ${name} again, or bb box doctor.`);
       }
       const ms = await steps.done();
       current = (await this.#read(current.threadId, current.id)) ?? current;
@@ -3697,7 +3698,7 @@ export class Boxes {
             },
           );
         }
-        const notReadNow = current.state !== "ready" ? null : this.#work.has(box.id) ? "bb-box is working on it" : "failed" in host ? `bb-box could not read the host's driver: ${host.failed.replace(/\.$/, "")}` : null;
+        const notReadNow = current.state !== "ready" ? null : this.#work.has(box.id) ? `${PRODUCT} is working on it` : "failed" in host ? `${PRODUCT} could not read the host's driver: ${host.failed.replace(/\.$/, "")}` : null;
         const state = userspaceState(current.userspaceRead, current.userspaceUpdate, driver, running);
         if (state.is === "matches" && !unread) {
           if (holdsCard(recordedGpu(current))) matching++;
@@ -3711,7 +3712,7 @@ export class Boxes {
       id: "gpu-userspace",
       name: "NVIDIA userspace",
       status: "ok",
-      detail: `${matching === 1 ? "1 box" : `${matching} boxes`} with a GPU ${matching === 1 ? "has" : "have"} NVIDIA's userspace for ${matching === 1 ? "its" : "their"} host's driver.${named.length ? ` ${named.length === 1 ? "1 box needs" : `${named.length} boxes need`} a look, below.` : ""} bb-box never updates a box's userspace by itself.`,
+      detail: `${matching === 1 ? "1 box" : `${matching} boxes`} with a GPU ${matching === 1 ? "has" : "have"} NVIDIA's userspace for ${matching === 1 ? "its" : "their"} host's driver.${named.length ? ` ${named.length === 1 ? "1 box needs" : `${named.length} boxes need`} a look, below.` : ""} ${PRODUCT} never updates a box's userspace by itself.`,
       fix: null,
     };
     return [summary, ...named];
@@ -3736,14 +3737,14 @@ export class Boxes {
     const result = await this.runOwn(box, MEMORY_IN_USE, { timeoutMs: 15_000, maxOutputBytes: 256, signal });
     const used = Number(result.stdout.trim());
     if (result.exitCode !== 0 || !Number.isFinite(used) || used <= 0) {
-      throw new BoxError("unreachable", `bb-box could not read how much memory box ${box.name} uses, so it did not shrink it: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+      throw new BoxError("unreachable", `${PRODUCT} could not read how much memory box ${box.name} uses, so it did not shrink it: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
     }
     const margin = Math.max(RESIZE_MEMORY_MARGIN_MIB, Math.round(memoryMiB / 10));
     if (used + margin > memoryMiB) {
       throw new BoxError(
         "memory_in_use",
         `Box ${box.name} uses ${formatMiB(used)} of memory now, so ${formatMiB(memoryMiB)} would leave less than ${formatMiB(margin)} free, and the kernel could end its processes. ` +
-          `Give it at least ${formatMiB(Math.ceil((used + margin) / 1024) * 1024)}, or free memory in it first. bb-box changed nothing.`,
+          `Give it at least ${formatMiB(Math.ceil((used + margin) / 1024) * 1024)}, or free memory in it first. ${PRODUCT} changed nothing.`,
       );
     }
   }
@@ -3783,7 +3784,7 @@ export class Boxes {
       this.#deps.logError("stopped", error);
     }
     if (asked && !why?.crashed) {
-      this.#event(box, "stopped", asked.by, { words: "bb-box confirmed the stop after its request had failed." });
+      this.#event(box, "stopped", asked.by, { words: `${PRODUCT} confirmed the stop after its request had failed.` });
       return box;
     }
     const now = this.#now();
@@ -3794,7 +3795,7 @@ export class Boxes {
     this.#deps.log?.(`${describeBox(box)}: ${stopWords(updated)}`);
     this.#event(updated, "stopped-unasked", BY_OUTSIDE, { at: stop.at, words: stop.reason });
     if (restart && updated.unrequestedStop === stop) {
-      const restarter = byBbBox("its VM crashed, and bb-box starts such a box again");
+      const restarter = byBbBox(`its VM crashed, and ${PRODUCT} starts such a box again`);
       void this.#chain(box.id, () => this.#start(updated, undefined, inSlot(updated), restarter)).catch(async (error) => {
         this.#deps.logError("restart", error);
         const message = describeError(error, "The start");
@@ -3973,7 +3974,7 @@ export class Boxes {
 
   async #command(box: BoxRecord): Promise<CommandTransport> {
     const { command } = await this.transports(box);
-    if (!command) throw new BoxError("unsupported", `bb-box cannot run commands in box ${box.name}: its kind has no command transport.`);
+    if (!command) throw new BoxError("unsupported", `${PRODUCT} cannot run commands in box ${box.name}: its kind has no command transport.`);
     return command;
   }
 
@@ -4093,7 +4094,7 @@ export class Boxes {
     return this.#reach(
       box,
       async (transport) => {
-        if (!transport.spawn) throw new BoxError("unsupported", `bb-box cannot keep a process running in box ${box.name}: its commands cannot.`);
+        if (!transport.spawn) throw new BoxError("unsupported", `${PRODUCT} cannot keep a process running in box ${box.name}: its commands cannot.`);
         return transport.spawn(command(capabilities.os, script, { session }), options.signal);
       },
       options.signal,
@@ -4127,12 +4128,12 @@ export class Boxes {
 
   async writeAccess(box: BoxRecord, signal?: AbortSignal): Promise<void> {
     const env = await this.#envFile(box);
-    if (env === undefined) throw new BoxError("unreachable", `bb-box could not work out the access of box ${box.name}, so it wrote no access file there.`);
+    if (env === undefined) throw new BoxError("unreachable", `${PRODUCT} could not work out the access of box ${box.name}, so it wrote no access file there.`);
     const os = box.capabilities.os;
     const digest = createHash("sha256").update(env).digest("hex");
     const check = os === "windows" ? ":" : `[ "$(sha256sum < "$HOME/${envFile(os)}" | cut -d' ' -f1)" = ${digest} ]`;
     const transport = (await this.#backend(box).transports(box.guest!, box.kind)).command;
-    if (!transport) throw new BoxError("unsupported", `bb-box cannot run commands in box ${box.name}: its kind has no command transport.`);
+    if (!transport) throw new BoxError("unsupported", `${PRODUCT} cannot run commands in box ${box.name}: its kind has no command transport.`);
     const result = await transport.run(command(os, check, { env }), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) throw new BoxError("unreachable", `Writing the access file of box ${box.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
   }
@@ -4239,7 +4240,7 @@ export class Boxes {
    * their thread lives.
    */
   async sweep(signal?: AbortSignal): Promise<SweepReport> {
-    const own: ThreadAnswer = { state: "live", said: "bb-box's own" };
+    const own: ThreadAnswer = { state: "live", said: `${PRODUCT}'s own` };
     const liveness = new Map<string, Promise<ThreadAnswer>>([
       [SPARES, Promise.resolve(own)],
       [OPERATOR, Promise.resolve(own)],
@@ -4533,8 +4534,8 @@ export class Boxes {
   /** Cancels acquires in progress, which a restart then resumes, and waits for running tasks. */
   async dispose(): Promise<void> {
     this.#disposed = true;
-    for (const controller of this.#acquiring.values()) controller.abort(new BoxError("released", "bb-box is stopping."));
-    for (const controller of this.#updating.values()) controller.abort(new BoxError("restarting", "bb-box is stopping."));
+    for (const controller of this.#acquiring.values()) controller.abort(new BoxError("released", `${PRODUCT} is stopping.`));
+    for (const controller of this.#updating.values()) controller.abort(new BoxError("restarting", `${PRODUCT} is stopping.`));
     await this.idle();
   }
 }

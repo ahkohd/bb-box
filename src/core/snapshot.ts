@@ -1,3 +1,4 @@
+import { PRODUCT } from "../brand.ts";
 import type { Guest, Holds, Price, SnapshotGuest, SnapshotScope, SnapshotSize, TaskRef } from "../backends/types.ts";
 import { snapshotGpuWordsFor, type SnapshotGpu } from "./gpu.ts";
 import type { Actor } from "./box-log.ts";
@@ -303,12 +304,12 @@ function whereWords(snapshot: Pick<SnapshotRecord, "host" | "backend">): string 
 }
 
 function notTakenByAnAgent(snapshot: SnapshotRecord): Verdict {
-  return snapshot.by.is === "agent" ? YES : no(`${quoted(snapshot)} was not taken by an agent, so bb-box never deletes it by itself.`);
+  return snapshot.by.is === "agent" ? YES : no(`${quoted(snapshot)} was not taken by an agent, so ${PRODUCT} never deletes it by itself.`);
 }
 
 function automaticDeletion(snapshot: SnapshotRecord, byAuthor = false): Verdict {
-  if (isKept(snapshot)) return no(`${quoted(snapshot)} is kept, so bb-box never deletes it by itself.`);
-  if (snapshot.owner === "person" && !(byAuthor && snapshot.by.is === "agent")) return no(`${quoted(snapshot)} is the person's, so bb-box never deletes it by itself.`);
+  if (isKept(snapshot)) return no(`${quoted(snapshot)} is kept, so ${PRODUCT} never deletes it by itself.`);
+  if (snapshot.owner === "person" && !(byAuthor && snapshot.by.is === "agent")) return no(`${quoted(snapshot)} is the person's, so ${PRODUCT} never deletes it by itself.`);
   if (snapshot.undoOf !== null) return no(`${quoted(snapshot)} is an undo, which only a newer undo replaces.`);
   if (snapshot.state !== "ready") return no(`${quoted(snapshot)} is ${snapshot.state}.`);
   return notTakenByAnAgent(snapshot);
@@ -320,7 +321,7 @@ export function eligible(snapshot: SnapshotRecord, change: Change, context: Chan
     case "delete":
       if (snapshot.state === "taking") return no(`${quoted(snapshot)} is still being taken.`);
       if (snapshot.state === "deleting") return no(`${quoted(snapshot)} is being deleted already.`);
-      if (snapshot.state === "unavailable") return no(`bb-box cannot reach ${whereWords(snapshot)} now, so it cannot delete ${quoted(snapshot)}. Try again once it answers.`);
+      if (snapshot.state === "unavailable") return no(`${PRODUCT} cannot reach ${whereWords(snapshot)} now, so it cannot delete ${quoted(snapshot)}. Try again once it answers.`);
       return YES;
     case "expire":
       if (snapshot.keptUntil === null || snapshot.keptUntil > context.now) return no(`${quoted(snapshot)} is not past its keep date.`);
@@ -396,7 +397,7 @@ export interface Standing {
 
 export const NOT_THE_AGENTS = "That is the person's to do: ask them, in the thread.";
 export const MACHINE_RESTORES_SHIP = false;
-export const MACHINE_RESTORES_OFF = "bb-box does not restore a box threads run on yet: that stays off until bb-box can hold every turn on it while it restores.";
+export const MACHINE_RESTORES_OFF = `${PRODUCT} does not restore a box threads run on yet: that stays off until ${PRODUCT} can hold every turn on it while it restores.`;
 export const MACHINES_RESTORE_DISK_ONLY = "A box threads run on is restored from disk snapshots only: a snapshot with its memory would bring back BB's daemon in the middle of its work.";
 
 function tookIt(snapshot: SnapshotRecord | null, threadId: string): boolean {
@@ -475,11 +476,11 @@ export function byWords(by: Actor): string {
     case "command":
       return "by a bb box command";
     case "bb-box":
-      return `by bb-box: ${by.why}`;
+      return `by ${PRODUCT}: ${by.why}`;
     case "outside":
-      return "outside bb-box";
+      return `outside ${PRODUCT}`;
     case "unknown":
-      return "by someone bb-box has no record of";
+      return `by someone ${PRODUCT} has no record of`;
   }
 }
 
@@ -516,14 +517,14 @@ export function stateWords(snapshot: Pick<SnapshotRecord, "state" | "error" | "h
     case "deleting":
       return "being deleted";
     case "unavailable":
-      return `unavailable: bb-box cannot reach ${whereWords(snapshot)}${snapshot.error ? ` (${snapshot.error.replace(/\.$/, "")})` : ""}`;
+      return `unavailable: ${PRODUCT} cannot reach ${whereWords(snapshot)}${snapshot.error ? ` (${snapshot.error.replace(/\.$/, "")})` : ""}`;
     case "lost":
       return `lost: ${whereWords(snapshot)} no longer has it`;
   }
 }
 
 export function unflushedWords(why: string): string {
-  return `bb-box could not flush the box's writes to its disk before it (${why.replace(/\.$/, "").slice(0, 300)}), so it may miss what was written in the last seconds before it`;
+  return `${PRODUCT} could not flush the box's writes to its disk before it (${why.replace(/\.$/, "").slice(0, 300)}), so it may miss what was written in the last seconds before it`;
 }
 
 const FORKING_SYSTEMS: readonly string[] = ["linux", "macos"];
@@ -532,7 +533,7 @@ export function forksOn(system: string): boolean {
   return FORKING_SYSTEMS.includes(system);
 }
 
-export const FORKS_ONLY = "bb-box forks Linux and macOS boxes only, as only they reset their identity at a fork's first boot";
+export const FORKS_ONLY = `${PRODUCT} forks Linux and macOS boxes only, as only they reset their identity at a fork's first boot`;
 
 export function notForkSafe(snapshot: SnapshotRecord): boolean {
   return snapshot.forkSafe === null && forksOn(snapshot.box.system) && snapshot.scope === "box";
@@ -553,7 +554,7 @@ export function snapshotLine(snapshot: SnapshotRecord): string {
     sizeWords(snapshot.size),
     ...(snapshot.price ? [priceWords(snapshot.price)] : []),
     ...(snapshot.keptUntil !== null ? [`kept until ${utcDay(snapshot.keptUntil)}`] : []),
-    ...(snapshot.foundAt !== null ? [`found on ${whereWords(snapshot)}, not in bb-box's records`] : []),
+    ...(snapshot.foundAt !== null ? [`found on ${whereWords(snapshot)}, not in ${PRODUCT}'s records`] : []),
     ...(snapshot.undoOf !== null ? ["an undo"] : []),
     ...(snapshot.dependsOn.length ? [`taken after ${snapshot.dependsOn.join(" and ")}`] : []),
     ...(snapshot.boxGone ? [goneWords(snapshot.boxGone)] : []),

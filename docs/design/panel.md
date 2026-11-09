@@ -461,7 +461,7 @@ make sense, and sat too far from the badges before it). There is no
 heading and no card of its own (the operator, the same day: "This thread
 runs on it" read oddly above an empty state saying the thread had no
 boxes). The row offers
-no Release, Stop, Start or "New thread on this box": a line under its
+no Release, Stop, Start or "New thread": a line under its
 status says where those are, "Remove or stop it on the Boxes page, under
 Machines." (a link to that tab), or names the thread that holds it, "Held by
 <title>", which opens that thread. Open desktop, Open terminal, Copy
@@ -707,7 +707,7 @@ box is the Box panel's row (`BoxRow`): its quick actions and its menu, Stop
 or Start, Check now and "Release…", which asks first, and asks "Release …
 anyway?" when another thread is working on the box, as the panel does; the
 page acts as the box's thread, through the same RPCs and their in-use guard.
-"New thread on this box…" is left out there, since "this thread" names
+"New thread…" is left out there, since "this thread" names
 none. The row keeps "Open thread" beside its menu, and its status line ends
 with who has control of a desktop and the thread's title. Your machines
 (036) come first, under "Machines" (the operator, 4 October 2026), as

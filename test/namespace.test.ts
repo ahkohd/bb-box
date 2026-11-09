@@ -77,7 +77,7 @@ test("a box that does not start destroys its machine, and the most machines at o
   await backend.acquire(box("b2"), null, hooks().hooks, new AbortController().signal);
   const full = await backend.capacity("macos", { cores: 4, memoryMiB: 8192, diskGiB: null }, []);
   assert.equal(full.ok, false);
-  assert.match(full.message ?? "", /1 of the 1 machines bb-box may have at once/);
+  assert.match(full.message ?? "", /1 of the 1 machines BB Box may have at once/);
 });
 
 test("a workspace's largest Mac, set or learned from Namespace's refusal, is refused up front with what to ask for instead", async () => {
@@ -117,7 +117,7 @@ test("with the usage grant, capacity reads the workspace's Mac limits from Names
   assert.equal(full.message, "Namespace's workspace has 4 of its 6 Mac cores and 14 of its 14 GB of Mac memory in use, and this box needs a 4x14 Mac. Release a Mac box, or wait for one to end.");
   assert.equal(workspace.calls.filter((call) => call.method === "CreateInstance").length, 1, "the second Mac was never asked for");
   const doctor = await limited.doctor();
-  assert.equal(doctor.checks.find((check) => check.id === "namespace.limits")?.detail, "The workspace allows 6 Mac cores and 14 GB of Mac memory at once, 4 cores in use now; the largest Mac bb-box asks for is 6x14.");
+  assert.equal(doctor.checks.find((check) => check.id === "namespace.limits")?.detail, "The workspace allows 6 Mac cores and 14 GB of Mac memory at once, 4 cores in use now; the largest Mac BB Box asks for is 6x14.");
 
   fake.usageGranted = false;
   assert.equal((await backend.capacity("macos", small, [])).ok, true, "without the grant, capacity goes on as before");
@@ -262,7 +262,7 @@ test("with a tailnet, each Mac joins it with a single-use key of its own, given 
   const recorded = hooks();
   const guest = await backend.acquire(box("b1"), null, recorded.hooks, new AbortController().signal);
   assert.deepEqual(recorded.steps, ["create", "ready", "ssh", "tailnet"]);
-  assert.deepEqual(minted, ["bb-box Namespace box-b1"]);
+  assert.deepEqual(minted, ["BB Box Namespace box-b1"]);
   const calls = tools.calls();
   assert.ok(!calls.some((call) => call.startsWith("brew")), "a Mac with Tailscale installs nothing");
   assert.ok(calls.some((call) => /^tailscale up --auth-key=file:\S+ --hostname=bb-box-ns-inst1-box-b1 --accept-dns=false --timeout=60s$/.test(call)), calls.join("; "));
@@ -274,7 +274,7 @@ test("with a tailnet, each Mac joins it with a single-use key of its own, given 
   assert.equal(tools.calls().at(-1), "tailscale logout");
 });
 
-test("a macos-desktop box gets its desktop ready as it starts: the video helper built from bb-box's source, Screen Recording, Accessibility and event posting for the processes that need them, no screen-capture notice for those that capture, and a display that stays awake; and shows it over Screen Sharing and as video", async () => {
+test("a macos-desktop box gets its desktop ready as it starts: the video helper built from BB Box's source, Screen Recording, Accessibility and event posting for the processes that need them, no screen-capture notice for those that capture, and a display that stays awake; and shows it over Screen Sharing and as video", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ns-desktop-"));
   const log = join(dir, "calls");
   writeFileSync(log, "");
@@ -373,7 +373,7 @@ test("a macos-desktop box gets Cua Driver for computer use: the pinned release c
   const { backend } = setup();
   assert.deepEqual(backend.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.computerUse, { driver: "cua", version: CUA_VERSION, socket: "/Users/runner/Library/Caches/cua-driver/cua-driver.sock" });
   assert.equal(backend.kinds().find((kind) => kind.id === "macos")!.capabilities.computerUse, null);
-  assert.equal(backend.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.displays[0]!.clipboard, "commands", "Screen Sharing sends a viewer none of the box's clipboard, so bb-box moves it with pbcopy and pbpaste");
+  assert.equal(backend.kinds().find((kind) => kind.id === "macos-desktop")!.capabilities.displays[0]!.clipboard, "commands", "Screen Sharing sends a viewer none of the box's clipboard, so BB Box moves it with pbcopy and pbpaste");
 });
 
 test("Namespace offers ios as slots on a shared host once it has measured a Mac that runs the iOS Simulator, and not while its setting is off (065, unit 7)", async () => {
@@ -465,7 +465,7 @@ async function measuredAfresh(backend: NamespaceBackend): Promise<void> {
   while (backend.measuringAfreshUntil() !== null) await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
-test("a Namespace report from an older probe that cannot make an offer is measured again on a Mac bb-box starts for a few minutes, logged, at most once a day, only while shared iOS hosts are on (065 C follow-up)", async () => {
+test("a Namespace report from an older probe that cannot make an offer is measured again on a Mac BB Box starts for a few minutes, logged, at most once a day, only while shared iOS hosts are on (065 C follow-up)", async () => {
   let now = Date.parse("2030-01-01T00:00:00Z");
   fakeSsh();
   const storage = new MemoryStorage();
@@ -495,7 +495,7 @@ test("a Namespace report from an older probe that cannot make an offer is measur
   await measuredAfresh(backend);
   const measuring = [...fake.instances.values()].find((instance) => instance.labels[LABELS.role] === MEASURE_ROLE);
   assert.ok(measuring, "a Mac is started to measure");
-  assert.equal(measuring.deadline, now + MEASURE_LIFE_MS, "Namespace ends it itself should bb-box lose it");
+  assert.equal(measuring.deadline, now + MEASURE_LIFE_MS, "Namespace ends it itself should BB Box lose it");
   assert.equal(measuring.status, "DESTROYED", "it is destroyed once measured");
   assert.ok(backend.macCapabilities().some((report) => report.probe === PROBE_VERSION), "a report from the current probe is kept");
   const logged = context.logs.join("\n");

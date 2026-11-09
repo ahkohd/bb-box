@@ -1,4 +1,4 @@
-// Building bb-box's images on a BB machine that hosts Docker boxes (src/plugin/docker-images.ts, 042).
+// Building BB Box's images on a BB machine that hosts Docker boxes (src/plugin/docker-images.ts, 042).
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -145,7 +145,7 @@ test("BB's app digest comes from the header of a HEAD request, as build.sh reads
   }
 });
 
-test("a build that fails says why from its last lines, an install with no build.sh says so, and an image bb-box does not build is named", async () => {
+test("a build that fails says why from its last lines, an install with no build.sh says so, and an image BB Box does not build is named", async () => {
   const failing = world({ staleImages: ["bbbox/linux:1", "bbbox/linux-desktop:1"], exit: 1, lines: ["#7 ERROR: failed to fetch snapshot.ubuntu.com", "ERROR: failed to solve"] });
   failing.release();
   const failed = await failing.images.ensure("host_a");
@@ -155,12 +155,12 @@ test("a build that fails says why from its last lines, an install with no build.
 
   const scriptless = world({ staleImages: ["bbbox/linux:1"], script: null });
   scriptless.release();
-  assert.equal((await scriptless.images.ensure("host_a")).detail, "This install of bb-box has no setup/docker/build.sh to build the images with.");
+  assert.equal((await scriptless.images.ensure("host_a")).detail, "This install of BB Box has no setup/docker/build.sh to build the images with.");
 
   const own = world({ images: () => ["example/linux:custom"] });
   own.release();
   const named = await own.images.ensure("host_a");
-  assert.deepEqual([named.state, named.detail], ["built", "bb-box does not build example/linux:custom; load it on the machine."]);
+  assert.deepEqual([named.state, named.detail], ["built", "BB Box does not build example/linux:custom; load it on the machine."]);
   assert.deepEqual(own.runs, []);
 });
 

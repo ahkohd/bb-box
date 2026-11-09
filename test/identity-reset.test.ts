@@ -235,7 +235,7 @@ test("a box made before the change, with the reset in its image but no marker, k
   assert.deepEqual(status(root), { version: "9", enabled: "yes", boot: "unarmed", marker: "missing", armed: "no", pending: "no", box: "", source: "" });
 });
 
-test("in an image where the reset is off, a boot does nothing and bb-box can write no marker", () => {
+test("in an image where the reset is off, a boot does nothing and BB Box can write no marker", () => {
   const root = guest([LOOP, LXC_ETH0], { on: false });
   const before = identityOf(root);
   assert.match(boot(root).out, /the identity reset is off in this image/);
@@ -417,7 +417,7 @@ test("a reset records what it removes, with the original host IDs, before it rem
   assert.equal(read(root, `${BB_FOLDER}/host-id`), null, "BB's credentials went before the step that failed");
   assert.equal(read(root, "var/lib/bb-box/identity-resets"), null, "not done, so no receipt");
   assert.equal(status(root).pending, "yes");
-  assert.equal(identity(root, ["write", "--box", "bxsource1", "--source", "eth"]).code, 3, "bb-box writes no marker while a reset is unfinished");
+  assert.equal(identity(root, ["write", "--box", "bxsource1", "--source", "eth"]).code, 3, "BB Box writes no marker while a reset is unfinished");
   const resumed = boot(root);
   assert.equal(resumed.code, 0, resumed.err);
   assert.match(resumed.out, /resuming the reset that began at /);
@@ -459,7 +459,7 @@ test("a reset removes root's BB machines and daemon units too, set aside or not"
   assert.match(read(root, "var/lib/bb-box/identity-resets") ?? "", /BB machines removed: host_root host_source\n$/);
 });
 
-test("a box of Docker's image compares the value bb-box set on its guest, which its start passes, not its interfaces", () => {
+test("a box of Docker's image compares the value BB Box set on its guest, which its start passes, not its interfaces", () => {
   const root = guest([LOOP, { name: "eth0", mac: "02:42:ac:11:00:02" }]);
   assert.match(boot(root, "bxdock1").out, /no identity marker/);
   assert.equal(written(root, "bxdock1", "value"), "bb-box identity 1\nbox bxdock1\nsource value\nvalue bxdock1\n");
@@ -471,7 +471,7 @@ test("a box of Docker's image compares the value bb-box set on its guest, which 
   assert.match(read(root, "etc/bb-box/identity") ?? "", /^bb-box identity 1\nsource value\nvalue bxdock2\nreset /);
   assert.match(boot(root, "bxdock2").out, /kept/);
   const none = boot(root, "");
-  assert.match(none.out, /resets its identity: the value bb-box set on this guest is not the marker's/, "a guest bb-box set no value on is a copy too");
+  assert.match(none.out, /resets its identity: the value bb-box set on this guest is not the marker's/, "a guest BB Box set no value on is a copy too");
   assert.match(none.out, /unarms this box/);
   assert.match(boot(root, "").out, /kept: bb-box has written no identity marker here/, "unarmed, it does not reset again");
 });
@@ -515,7 +515,7 @@ test("forkSafe is the reset's version only when it is on, this boot's check ran,
   const status = (lines: string) => forkSafeVersion(parseIdentityStatus(lines));
   const on = "version=2\nenabled=yes\npending=no\n";
   assert.equal(status(`${on}boot=kept\nmarker=matches\narmed=yes\nbox=bx1\nsource=eth\n`), 2);
-  assert.equal(status(`${on}boot=unarmed\nmarker=matches\narmed=yes\nbox=bx1\nsource=eth\n`), 2, "written by bb-box after this boot's check");
+  assert.equal(status(`${on}boot=unarmed\nmarker=matches\narmed=yes\nbox=bx1\nsource=eth\n`), 2, "written by BB Box after this boot's check");
   assert.equal(status(`${on}boot=reset\nmarker=matches\narmed=yes\nbox=\nsource=device\n`), 2);
   assert.equal(status(`${on}boot=unknown\nmarker=matches\narmed=yes\n`), null, "a boot that could not tell");
   assert.equal(status(`${on}boot=none\nmarker=matches\narmed=yes\n`), null, "the boot check did not run: the unit is not wired");
@@ -845,7 +845,7 @@ test("wait lets BB's daemon start once the identity is known, unless its machine
   setNics(root, [LOOP, { name: "eth0", mac: "bc:24:11:5e:77:01" }]);
   boot(root);
   assert.equal((await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_source.service"))).code, 1, "the copied machine");
-  assert.equal((await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_new.service"))).code, 0, "the machine bb-box enrols it as next");
+  assert.equal((await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_new.service"))).code, 0, "the machine BB Box enrols it as next");
   assert.equal((await ended(waitFor(root, "bb-host-daemon-bb-example-com-host_sour.service"))).code, 0, "another machine whose ID begins the same");
 });
 
@@ -1071,7 +1071,7 @@ test("version 8, boat: a value missing from the file never counts the box as a c
   assert.match(boot(root).out, /resets its identity: the value bb-box set on this guest is not the marker's/, "only a value that differs is a copy");
 });
 
-test("version 8, boat: a box that reset with no value to write unarms itself in words that name the value, so bb-box writes its marker again at its next start", () => {
+test("version 8, boat: a box that reset with no value to write unarms itself in words that name the value, so BB Box writes its marker again at its next start", () => {
   const root = boatGuest();
   boatValue(root, "bxsource1");
   boot(root);

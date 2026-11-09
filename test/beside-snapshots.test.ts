@@ -53,7 +53,7 @@ test("snapshots beside the guest: a release deletes the unkept ones, keeps a kep
   const plain = (await state.snapshots.take(COMMAND, box, standing(box), { name: "plain" })).snapshot!;
   const check = await state.snapshots.checkKeep(COMMAND, standing(box), kept.id);
   assert.equal(check.way, "as-is");
-  assert.match(keepCostWords(check), /^If \S+ is released, it stays where it is until 2026-11-29; nothing is copied then, and from then on it takes its whole size, up to 17 GB on fake's fast, as its box no longer shares its blocks\.$/);
+  assert.match(keepCostWords(check), /^If \S+ is released, it stays where it is until Sun 29 Nov; nothing is copied then, and from then on it takes its whole size, up to 17 GB on fake's fast, as its box no longer shares its blocks\.$/);
   await state.snapshots.keep(COMMAND, standing(box), kept.id, { days: 30 });
   await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
   assert.equal(await state.backend.power(box.guest!), null, "the guest went: its kept snapshot lives beside it");
@@ -75,7 +75,7 @@ test("a kept snapshot beside a released box is renewed with Keep and forks as on
   await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
   const gone = state.snapshots.findGone(box.name, "kept one");
   const again = await state.snapshots.checkKeepGone(gone, { days: 60 });
-  assert.match(keepCostWords(again), /^Its box was released, and it stays where it is on fake until bb-box deletes it after 2026-12-29\.$/);
+  assert.match(keepCostWords(again), /^Its box was released, and it stays where it is on fake until BB Box deletes it after Tue 29 Dec\.$/);
   const renewed = await state.snapshots.keepGone(gone, BY_COMMAND, { days: 60 });
   assert.equal(renewed.snapshot.keptUntil, keptUntilAfter(START, 60));
   const fork = await state.snapshots.checkForkGone(gone, {});
@@ -96,7 +96,7 @@ test("a take whose box did not resume after it leaves the box stopped, says so i
   assert.match(takenText(taken, box.name, 5), /did not resume after it/);
 });
 
-test("070 close-out: bb-box's own stop of a box whose snapshots are taken stopped, as on Tart, reads its identity reset just before, so a snapshot of it stopped is fork-safe and keeps; a start forgets the reading, and a box stopped another way takes snapshots that neither fork nor keep, with words to stop it with bb-box", async () => {
+test("070 close-out: BB Box's own stop of a box whose snapshots are taken stopped, as on Tart, reads its identity reset just before, so a snapshot of it stopped is fork-safe and keeps; a start forgets the reading, and a box stopped another way takes snapshots that neither fork nor keep, with words to stop it with bb-box", async () => {
   const state = beside(armedWorld());
   const box = await readyBox(state);
   await state.boxes.stop(THREAD, box.id, undefined, BY_COMMAND);
@@ -123,7 +123,7 @@ test("070 close-out: bb-box's own stop of a box whose snapshots are taken stoppe
   assert.match(fork.message, new RegExp(`could act as \\S+\\. ${escaped(STOPPED_ANOTHER_WAY)}\\.$`));
 });
 
-test("070 close-out: where snapshots are taken from a running box, bb-box's stop reads nothing, and a stopped box's snapshots stay as they were", async () => {
+test("070 close-out: where snapshots are taken from a running box, BB Box's stop reads nothing, and a stopped box's snapshots stay as they were", async () => {
   const state = armedWorld();
   const box = await readyBox(state);
   await state.boxes.stop(THREAD, box.id, undefined, BY_COMMAND);
@@ -134,7 +134,7 @@ function escaped(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-test("070 close-out review (Astra's high, Opus 2): a box bb-box stopped that then ran outside bb-box, started and stopped before any sweep, takes a snapshot that is not fork-safe: the reading holds only while the guest's mark is the one bb-box saw at its stop", async () => {
+test("070 close-out review (Astra's high, Opus 2): a box BB Box stopped that then ran outside bb-box, started and stopped before any sweep, takes a snapshot that is not fork-safe: the reading holds only while the guest's mark is the one BB Box saw at its stop", async () => {
   const state = beside(armedWorld());
   const box = await readyBox(state);
   await state.boxes.stop(THREAD, box.id, undefined, BY_COMMAND);
@@ -167,7 +167,7 @@ test("070 close-out review (Astra's high): a stop that failed, though the guest 
   assert.deepEqual([state.store.record(taken.id)?.forkSafe, state.store.record(taken.id)?.forkSafeWhy], [null, "unread"]);
 });
 
-test("070 close-out review (Opus 1, Astra's low): a box whose reset was off when bb-box stopped it takes a snapshot whose fork and Keep refusals say to refresh the Linux image and make the box again, never to stop it with bb-box", async () => {
+test("070 close-out review (Opus 1, Astra's low): a box whose reset was off when BB Box stopped it takes a snapshot whose fork and Keep refusals say to refresh the Linux image and make the box again, never to stop it with bb-box", async () => {
   const guest = identityGuest();
   const state = beside(world({ identityTool: guest.tool, identityRoot: guest.root }));
   withIdentitySource(state, "eth");

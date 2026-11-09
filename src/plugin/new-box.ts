@@ -10,6 +10,7 @@ import { z } from "zod";
 import { describeError, isActive, type BoxRecord, type Boxes } from "../core/boxes.ts";
 import { PRESETS } from "../core/sizes.ts";
 import { executor } from "./enrol.ts";
+import { PRODUCT } from "../brand.ts";
 
 export const NEW_BOX_PROVIDER_ID = "bb-box-new";
 
@@ -67,13 +68,13 @@ export function newBoxProvider(deps: NewBoxDeps): PluginMachineProviderDeclarati
   return {
     id: NEW_BOX_PROVIDER_ID,
     displayName: "New box",
-    description: "A new bb-box box for this thread alone, released when the thread is archived.",
+    description: `A new ${PRODUCT} box for this thread alone, released when the thread is archived.`,
     icon: "Box",
     ephemeral: true,
     inputs: newBoxInputs,
     validate({ inputs }) {
       const kind = boxes.kinds().find((candidate) => candidate.id === inputs.kind);
-      if (!kind) return { action: "refuse", message: `bb-box has no ${inputs.kind} boxes on offer now.` };
+      if (!kind) return { action: "refuse", message: `${PRODUCT} has no ${inputs.kind} boxes on offer now.` };
       // BB adds a new box's machine through bb-box's provider, with its installer for Linux and macOS only. A Windows box joins
       // BB as a machine of BB's manual provider, which BB does not make for a thread's new box (#539).
       if (kind.capabilities.os === "windows") {
@@ -84,7 +85,7 @@ export function newBoxProvider(deps: NewBoxDeps): PluginMachineProviderDeclarati
     },
     async create({ inputs, key, checkpoint, report, signal }) {
       const thread = await deps.thread(key);
-      if (!thread) return { status: "failed", message: `bb-box makes a new box for the thread that starts on it, and BB named none (key ${key}).` };
+      if (!thread) return { status: "failed", message: `${PRODUCT} makes a new box for the thread that starts on it, and BB named none (key ${key}).` };
       try {
         let box = await machineOf(boxes, thread.id);
         if (!box) {
@@ -98,7 +99,7 @@ export function newBoxProvider(deps: NewBoxDeps): PluginMachineProviderDeclarati
         if (box.state !== "ready") return { status: "failed", message: `Box ${box.name} did not start: ${box.error ?? box.state}.` };
         report.step(`Installing BB in box ${box.name}`);
         const { command } = await boxes.transports(box);
-        if (!command) return { status: "failed", message: `bb-box cannot run commands in box ${box.name}.` };
+        if (!command) return { status: "failed", message: `${PRODUCT} cannot run commands in box ${box.name}.` };
         const { hostId } = await deps.bootstrap({ key, executor: executor(command), report, signal });
         await boxes.update(box, () => ({ enrol: { state: "enrolled", hostId, error: null } }));
         return { status: "created", name: box.name, resource: { boxId: box.id } };
@@ -127,7 +128,7 @@ export function registerNewBox(bb: BbPluginApi, deps: NewBoxDeps): void {
   bb.experimental_environments.register({
     id: NEW_BOX_PROVIDER_ID,
     displayName: "New box",
-    description: "A new bb-box box for this thread, with the project cloned onto it.",
+    description: `A new ${PRODUCT} box for this thread, with the project cloned onto it.`,
     icon: "Box",
     machineProviderId: NEW_BOX_PROVIDER_ID,
     environmentProviderId: "project-checkout",

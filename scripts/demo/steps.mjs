@@ -77,7 +77,7 @@ export default {
     const serverBox = (await serverMenu.getAttribute("aria-label")).replace(/ actions$/, "");
     await click(serverMenu);
     await pause(250);
-    await click(page.getByRole("menuitem", { name: "Open on the Boxes page" }));
+    await click(page.getByRole("menuitem", { name: "Details" }));
     mark("box page");
     await page.getByText(/^Read at /).first().waitFor({ timeout: 30000 });
     await pause(1500);

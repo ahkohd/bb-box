@@ -116,7 +116,7 @@ test("an acquire claims the box before boat makes anything, forks the kind's tem
   assert.equal((await transports.command!.run("echo hi", { timeoutMs: 10_000 })).stdout.trim(), "hi");
 });
 
-test("a desktop box waits for its display and offers bb-box's VNC and Selkies through SSH", async () => {
+test("a desktop box waits for its display and offers BB Box's VNC and Selkies through SSH", async () => {
   const { backend } = setup();
   const recorded = hooks();
   const guest = await backend.acquire(box("d1", "linux-desktop-cpu", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, recorded.hooks, signal());
@@ -163,7 +163,7 @@ test("boat's busy answers are tried again, then refused as no capacity so anothe
   assert.deepEqual(fake.running(), [], "a box that did not start leaves no sandbox");
 });
 
-test("capacity says when bb-box's most boxes, the plan's sandboxes, the starts a minute or the trial's compute are used up, and refuses a size the plan does not allow before asking boat", async () => {
+test("capacity says when BB Box's most boxes, the plan's sandboxes, the starts a minute or the trial's compute are used up, and refuses a size the plan does not allow before asking boat", async () => {
   const { fake, backend } = setup({ config: { mostBoxes: 1 } });
   assert.equal((await backend.capacity("linux", SMALL, [])).ok, true);
   await backend.acquire(box("b1"), null, hooks().hooks, signal());
@@ -227,7 +227,7 @@ test("stop is boat's stop, and start resumes the sandbox and pins its new host k
   assert.match(made.hostKey, /x$/);
 });
 
-test("the upkeep renews the auto-stop of the running boxes bb-box holds, once it is near, and lets a sandbox no record names run out", async () => {
+test("the upkeep renews the auto-stop of the running boxes BB Box holds, once it is near, and lets a sandbox no record names run out", async () => {
   let now = Date.parse("2030-01-01T00:00:00Z");
   const { fake, backend } = setup({ now: () => now });
   const guest = await backend.acquire(box("b1"), null, hooks().hooks, signal());
@@ -360,7 +360,7 @@ test("with no template, the first box waits for its build and says so; the build
   }
 });
 
-test("a bb-box that starts while the template's guest scripts run follows that build: no second sandbox and one customize, and the bb-box that stopped leaves it running and records no failure", { skip: GUEST_SKIP }, async () => {
+test("a BB Box that starts while the template's guest scripts run follows that build: no second sandbox and one customize, and the BB Box that stopped leaves it running and records no failure", { skip: GUEST_SKIP }, async () => {
   const world = templateWorld({ holdSteps: true });
   try {
     const first = new BoatTemplates(world.deps());
@@ -395,7 +395,7 @@ test("a bb-box that starts while the template's guest scripts run follows that b
   }
 });
 
-test("a box that stops waiting for its template, as bb-box stops and aborts its acquires before its backends, leaves the build going, so the stop is not held up for the build's minutes", { skip: GUEST_SKIP }, async () => {
+test("a box that stops waiting for its template, as BB Box stops and aborts its acquires before its backends, leaves the build going, so the stop is not held up for the build's minutes", { skip: GUEST_SKIP }, async () => {
   const world = templateWorld({ holdSteps: true });
   try {
     const templates = new BoatTemplates(world.deps());
@@ -406,9 +406,9 @@ test("a box that stops waiting for its template, as bb-box stops and aborts its 
 
     let ended = false;
     waiting.catch(() => undefined).finally(() => (ended = true));
-    acquire.abort(new Error("bb-box is stopping."));
+    acquire.abort(new Error("BB Box is stopping."));
     await until("the box stops waiting", () => ended, 2_000);
-    await assert.rejects(waiting, /bb-box is stopping\./);
+    await assert.rejects(waiting, /BB Box is stopping\./);
     assert.equal(templates.building("linux"), true, "the build goes on");
     assert.equal(made.state, "ready");
 
@@ -421,7 +421,7 @@ test("a box that stops waiting for its template, as bb-box stops and aborts its 
   }
 });
 
-test("a reload during the staging: the follower waits on the build's lock rather than stage again, so the one customize is the first bb-box's", { skip: GUEST_SKIP }, async () => {
+test("a reload during the staging: the follower waits on the build's lock rather than stage again, so the one customize is the first BB Box's", { skip: GUEST_SKIP }, async () => {
   let releaseUpload: (() => void) | null = null;
   let uploadsHeld = 0;
   const world = templateWorld({ holdSteps: true, guestReady: (guest) => guest.holdStdin(async (script, stdin) => {
@@ -435,7 +435,7 @@ test("a reload during the staging: the follower waits on the build's lock rather
     await until("the build's sandbox is made", () => world.templateSandboxes().length === 1);
     const made = world.templateSandboxes()[0]!;
     const guest = world.guestOf(made.id);
-    await until("the first bb-box is mid-upload, holding the lock, its log made", () => releaseUpload !== null && existsSync(join(guest.buildDir, "log")));
+    await until("the first BB Box is mid-upload, holding the lock, its log made", () => releaseUpload !== null && existsSync(join(guest.buildDir, "log")));
 
     first.dispose();
     const second = new BoatTemplates(world.deps());
@@ -452,14 +452,14 @@ test("a reload during the staging: the follower waits on the build's lock rather
 
     assert.equal(record.sandbox, made.id);
     assert.equal(guest.runs("customize").length, 1, "one customize in the sandbox");
-    assert.deepEqual(guest.stagings().map((run) => run.exitCode), [0], "one staging, the first bb-box's");
+    assert.deepEqual(guest.stagings().map((run) => run.exitCode), [0], "one staging, the first BB Box's");
     assert.equal(world.creates(), 1);
   } finally {
     world.dispose();
   }
 });
 
-test("an upload cut off by the reload leaves the build to the next bb-box, which stages it again in the same sandbox, and a stopped bb-box starts no staging of its own", { skip: GUEST_SKIP }, async () => {
+test("an upload cut off by the reload leaves the build to the next bb-box, which stages it again in the same sandbox, and a stopped BB Box starts no staging of its own", { skip: GUEST_SKIP }, async () => {
   let releaseUpload: (() => void) | null = null;
   let releaseArchive: (() => void) | null = null;
   let uploadsHeld = 0;
@@ -474,11 +474,11 @@ test("an upload cut off by the reload leaves the build to the next bb-box, which
     await until("the build's sandbox is made", () => world.templateSandboxes().length === 1);
     const made = world.templateSandboxes()[0]!;
     const guest = world.guestOf(made.id);
-    await until("the first bb-box is mid-upload", () => releaseUpload !== null);
+    await until("the first BB Box is mid-upload", () => releaseUpload !== null);
     first.dispose();
     releaseUpload!();
-    await assert.rejects(building, (error: unknown) => error instanceof BuildLeftRunning && /could not unpack bb-box's template scripts/.test(error.message));
-    assert.equal(made.state, "ready", "a step that failed as bb-box stopped is not the build failing");
+    await assert.rejects(building, (error: unknown) => error instanceof BuildLeftRunning && /could not unpack BB Box's template scripts/.test(error.message));
+    assert.equal(made.state, "ready", "a step that failed as BB Box stopped is not the build failing");
     assert.equal(await first.failedBuild("linux"), null);
 
     const late = new BoatTemplates(world.deps({ publicKey: async () => "ssh-ed25519 AAAAlate", setupArchive: async () => {
@@ -486,18 +486,18 @@ test("an upload cut off by the reload leaves the build to the next bb-box, which
       return guestScriptsArchive();
     } }));
     const lateBuild = late.build("linux", LEFT_BUILD_WHY);
-    await until("a second bb-box reads the archive to stage again", () => releaseArchive !== null);
+    await until("a second BB Box reads the archive to stage again", () => releaseArchive !== null);
     late.dispose();
     releaseArchive!();
     await assert.rejects(lateBuild, BuildLeftRunning);
-    assert.equal(guest.stagings().length, 1, "a bb-box stopped while it read the archive did not stage");
+    assert.equal(guest.stagings().length, 1, "a BB Box stopped while it read the archive did not stage");
 
     const second = new BoatTemplates(world.deps({ publicKey: async () => "ssh-ed25519 AAAAsecond" }));
     const record = await second.build("linux", LEFT_BUILD_WHY);
     assert.equal(record.sandbox, made.id);
     assert.equal(world.creates(), 1);
     assert.equal(guest.runs("customize").length, 1);
-    assert.equal(guest.controlFile("plugin-key.pub"), "ssh-ed25519 AAAAsecond\n", "the bb-box that ran on staged it");
+    assert.equal(guest.controlFile("plugin-key.pub"), "ssh-ed25519 AAAAsecond\n", "the BB Box that ran on staged it");
   } finally {
     world.dispose();
   }
@@ -650,7 +650,7 @@ test("a follower that stops hearing the build leaves the sandbox when the build 
     await assert.rejects(building, /stopped answering: ssh closed/);
     assert.equal(refused, 31, "thirty misses, then one more read before deleting");
     assert.match(guest.ran.at(-1)?.stdout ?? "", /^running=yes/, "that read shows the lock still held");
-    assert.equal(made.state, "ready", "the sandbox stays while another bb-box's build holds the lock");
+    assert.equal(made.state, "ready", "the sandbox stays while another BB Box's build holds the lock");
   } finally {
     world.dispose();
   }
@@ -761,7 +761,7 @@ test("the Android template's build stages the licence's acceptance with the gues
   }
 });
 
-test("a template build that fails writes the last lines of its log to bb-box's log before its sandbox is deleted, so the cause is not only the last 600 characters", { skip: GUEST_SKIP }, async () => {
+test("a template build that fails writes the last lines of its log to BB Box's log before its sandbox is deleted, so the cause is not only the last 600 characters", { skip: GUEST_SKIP }, async () => {
   const world = templateWorld({ guestReady: (guest) => {
     writeFileSync(join(guest.control, "customize-says"), "the line that says why\nthe end of the log\n");
     guest.finish("customize", 1);
@@ -776,7 +776,7 @@ test("a template build that fails writes the last lines of its log to bb-box's l
   }
 });
 
-test("the upkeep keeps a build and a trial the next bb-box follows, and deletes a build of other scripts, an unfinished one boat stopped, and trials of other templates", async () => {
+test("the upkeep keeps a build and a trial the next BB Box follows, and deletes a build of other scripts, an unfinished one boat stopped, and trials of other templates", async () => {
   const fake = new FakeBoat();
   const long = Date.now() - 11 * 60_000;
   const template = (name: string, state: string, key = "fp1", createdAt = long) => fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: key }, name, state, createdAt });
@@ -823,7 +823,7 @@ test("the guest's answers read as the build's step: a code wins, then a process 
   assert.equal(step({ staged: "yes", state: "yes" }), "unstaged", "a staging that ended before customize started");
   assert.equal(step({ running: "yes", started: "yes", staged: "yes", state: "yes" }), "running");
   assert.equal(step({ started: "yes", staged: "yes", state: "yes" }), "died");
-  assert.equal(step({ staged: "yes" }), "died", "a log without the build's state: an older bb-box's build, or a restarted sandbox");
+  assert.equal(step({ staged: "yes" }), "died", "a log without the build's state: an older BB Box's build, or a restarted sandbox");
   assert.equal(step({ started: "yes", state: "yes", customized: "0" }), "died", "it died between customize and finalize");
   assert.equal(step({ running: "yes", started: "yes", state: "yes", customized: "2" }), "customize-failed");
   assert.equal(step({ started: "yes", state: "yes", customized: "0", finalized: "1" }), "finalize-failed");
@@ -832,7 +832,7 @@ test("the guest's answers read as the build's step: a code wins, then a process 
   assert.deepEqual(guestBuildFrom(answer({}))?.tail, ["12:00:00  customize-base.sh"]);
 });
 
-test("boat offers linux and the CPU desktop, both VMs with KVM, the desktop with bb-box's own VNC, Selkies and Cua Driver", () => {
+test("boat offers linux and the CPU desktop, both VMs with KVM, the desktop with BB Box's own VNC, Selkies and Cua Driver", () => {
   fakeSsh();
   const backend = disposed(new BoatBackend(CONFIG, testContext(new MemoryStorage(), "inst1"), { fetch: new FakeBoat().fetch, sshBinary: FAKE_SSH_BINARY, templates: { setupArchive: NO_BUILDS } }));
   assert.deepEqual(backend.kinds().map((kind) => kind.id), ["linux", "linux-desktop-cpu"]);
@@ -881,26 +881,26 @@ test("BB's URL on a private network, with no tailnet, is said plainly with its f
   assert.match(guest.facts?.find((fact) => fact.label === "BB machine")?.value ?? "", /^No\. boat's sandboxes cannot reach BB's server/);
 });
 
-test("on the trial's 2 sandboxes at once, a box whose template must be built first, or one beside sandboxes that are not bb-box's, is refused with why", async () => {
+test("on the trial's 2 sandboxes at once, a box whose template must be built first, or one beside sandboxes that are not BB Box's, is refused with why", async () => {
   const none = setup({ templates: false });
   none.fake.add({ labels: { other: "x" } });
   const refused = await none.backend.capacity("linux", SMALL, []);
   assert.equal(refused.ok, false);
-  assert.match(refused.message!, /boat's free trial allows 2 sandboxes at once, and 1 is running or starting, 1 of them not bb-box's. This box's template must be built first, in a sandbox of its own: building boat's Linux template first/);
+  assert.match(refused.message!, /boat's free trial allows 2 sandboxes at once, and 1 is running or starting, 1 of them not BB Box's. This box's template must be built first, in a sandbox of its own: building boat's Linux template first/);
   const adoptable = setup({ templates: false });
   adoptable.fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, name: templateName("linux", "ready"), state: "archived" });
   adoptable.fake.add({ labels: { other: "x" } });
   assert.equal((await adoptable.backend.capacity("linux", SMALL, [])).ok, true, "a template another install built counts as built");
   const left = setup({ templates: false });
   left.fake.add({ labels: { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, name: templateName("linux", "building"), state: "ready" });
-  assert.equal((await left.backend.capacity("linux", SMALL, [])).ok, true, "a build an earlier bb-box left running is the template's sandbox, not one more");
+  assert.equal((await left.backend.capacity("linux", SMALL, [])).ok, true, "a build an earlier BB Box left running is the template's sandbox, not one more");
   const built = setup();
   built.fake.add({ labels: { other: "x" } });
   built.fake.add({ labels: { other: "y" } });
-  assert.match((await built.backend.capacity("linux", SMALL, [])).message!, /allows 2 sandboxes at once, and 2 are running or starting, 2 of them not bb-box's\. Release or stop a boat box/);
+  assert.match((await built.backend.capacity("linux", SMALL, [])).message!, /allows 2 sandboxes at once, and 2 are running or starting, 2 of them not BB Box's\. Release or stop a boat box/);
 });
 
-test("with no record of its template, as after lost storage or for another install on the account, bb-box forks the newest stopped template its labels match, and gives the box only its own key", async () => {
+test("with no record of its template, as after lost storage or for another install on the account, BB Box forks the newest stopped template its labels match, and gives the box only its own key", async () => {
   const { fake, backend } = setup({ templates: false });
   fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "old" }, state: "archived" });
   const matching = fake.add({ labels: { [LABELS.install]: "other", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" }, name: templateName("linux", "ready"), state: "archived" });

@@ -843,7 +843,7 @@ test("the helper refuses to run as anyone but root, and its usage names its comm
   assert.doesNotMatch(text, /^\s*#(?!!)/m, "no comments: names carry intent");
 });
 
-test("bb-box reads the helper's status whole: settings, promises, every slot, a second device, and each sweep", async () => {
+test("BB Box reads the helper's status whole: settings, promises, every slot, a second device, and each sweep", async () => {
   const host = quiet("most=4\n");
   made(host);
   made(host);

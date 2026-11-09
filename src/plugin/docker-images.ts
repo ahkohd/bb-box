@@ -17,6 +17,7 @@ import { noteDockerImageBuild } from "../backends/docker/building.ts";
 import { LABELS } from "../backends/docker/cli.ts";
 import { IMAGE_VERSION } from "../backends/docker/config.ts";
 import { IMAGE_CONTRACT, recordFromJson } from "../backends/images.ts";
+import { PRODUCT } from "../brand.ts";
 
 function imageRefs(images: readonly string[], targets: readonly string[]): string[] {
   return images.filter((image) => {
@@ -117,7 +118,7 @@ function run(script: string, args: readonly string[], env: NodeJS.ProcessEnv, on
     child.stdout.on("data", read);
     child.stderr.on("data", read);
     child.on("error", (error) => {
-      onLine(`bb-box could not run build.sh: ${error.message}`);
+      onLine(`${PRODUCT} could not run build.sh: ${error.message}`);
       resolve(null);
     });
     child.on("close", (code) => {
@@ -193,11 +194,11 @@ export class DockerImages {
       for (const image of images.filter((each) => BUILT_IMAGES[each])) if (await this.#deps.stale(hostId, image, app)) stale.push(image);
       const targets = [...new Set(stale.map((image) => BUILT_IMAGES[image]!))];
       if (!targets.length) {
-        return set({ state: "built", detail: unknown.length ? `bb-box does not build ${unknown.join(", ")}; load it on the machine.` : null, endedAt: now() });
+        return set({ state: "built", detail: unknown.length ? `${PRODUCT} does not build ${unknown.join(", ")}; load it on the machine.` : null, endedAt: now() });
       }
       noteDockerImageBuild(hostId, imageRefs(this.#deps.images(hostId), targets), true);
       if (!this.#deps.script) {
-        return set({ state: "failed", targets, detail: "This install of bb-box has no setup/docker/build.sh to build the images with.", endedAt: now() });
+        return set({ state: "failed", targets, detail: `This install of ${PRODUCT} has no setup/docker/build.sh to build the images with.`, endedAt: now() });
       }
       const host = await this.#deps.host(hostId);
       set({ state: "building", targets, detail: `Building ${targets.join(" and ")}` });

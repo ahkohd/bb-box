@@ -28,7 +28,7 @@ function deadPid(): number {
   return Number(done.stdout.trim());
 }
 
-test("a folder bb-box makes says which process owns it, so a later run can tell whether that process is gone", async () => {
+test("a folder BB Box makes says which process owns it, so a later run can tell whether that process is gone", async () => {
   const base = tempDir("temp-owner");
   const dir = await makeTempFolder("bb-box-ssh-", base);
   const view = linuxProcessView();
@@ -39,7 +39,7 @@ test("a folder bb-box makes says which process owns it, so a later run can tell 
   assert.deepEqual(sweepStaleTempFolders({ bases: [base] }).removed, [], "this process's own folders stay");
 });
 
-test("at start, bb-box removes its folders whose process is gone, or whose process ID another process has taken, and keeps a live one's", async () => {
+test("at start, BB Box removes its folders whose process is gone, or whose process ID another process has taken, and keeps a live one's", async () => {
   const base = tempDir("temp-sweep");
   const view = linuxProcessView();
   const gone = folder(base, "bb-box-ssh-gone", `${deadPid()} 12345\n`);
@@ -57,15 +57,15 @@ test("at start, bb-box removes its folders whose process is gone, or whose proce
   }
 });
 
-test("a folder an earlier bb-box left with no owner goes once it is a day old and nothing uses it", async () => {
+test("a folder an earlier BB Box left with no owner goes once it is a day old and nothing uses it", async () => {
   const base = tempDir("temp-unmarked");
   const young = folder(base, "bb-box-ssh-young");
   const old = folder(base, "bb-box-ssh-old", undefined, 2 * DAY_MS);
   const other = folder(base, "someone-else-old", undefined, 2 * DAY_MS);
   const result = sweepStaleTempFolders({ bases: [base] });
   assert.deepEqual(result.removed, [old]);
-  assert.ok(existsSync(young), "younger than a day: maybe a running older bb-box's");
-  assert.ok(existsSync(other), "only bb-box's folders");
+  assert.ok(existsSync(young), "younger than a day: maybe a running older BB Box's");
+  assert.ok(existsSync(other), "only BB Box's folders");
 });
 
 test("an old folder with no owner stays while a socket is bound in it or a process holds a file in it", async () => {

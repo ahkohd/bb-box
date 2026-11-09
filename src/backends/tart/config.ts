@@ -16,6 +16,7 @@ import { MOST_SLOTS, type SlotsSizedBy } from "../../core/slot-sizing.ts";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
 import { hostKeysFor } from "../ssh-pool/config.ts";
 import { fieldLabel, isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const TART_KINDS = ["macos", "macos-desktop", "linux-arm64", "linux-arm64-desktop-cpu", "windows-arm64-desktop"] as const;
 export type TartKind = (typeof TART_KINDS)[number];
@@ -136,7 +137,7 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "Tart: Macs",
     description:
-      "One line per Mac: a short name, a space, and the user bb-box logs in as, as user@address, with :port when SSH is not on 22. For example mac1 bbbox-admin@192.0.2.20.",
+      `One line per Mac: a short name, a space, and the user ${PRODUCT} logs in as, as user@address, with :port when SSH is not on 22. For example mac1 bbbox-admin@192.0.2.20.`,
     experimental_multiline: true,
     default: "",
   },
@@ -144,7 +145,7 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "Tart: Mac host keys",
     description:
-      "The Macs' SSH host keys as known_hosts lines, one per line. ssh-keyscan -t ed25519 <address> prints one. bb-box checks them on every connection.",
+      `The Macs' SSH host keys as known_hosts lines, one per line. ssh-keyscan -t ed25519 <address> prints one. ${PRODUCT} checks them on every connection.`,
     experimental_multiline: true,
     default: "",
   },
@@ -152,13 +153,13 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "Tart: SSH private key",
     description:
-      "The SSH key bb-box logs in to each Mac and each VM with. Paste an unencrypted OpenSSH private key that each Mac's user and each image's VM user accept. Leave it empty and bb-box makes one and shows its public key.",
+      `The SSH key ${PRODUCT} logs in to each Mac and each VM with. Paste an unencrypted OpenSSH private key that each Mac's user and each image's VM user accept. Leave it empty and ${PRODUCT} makes one and shows its public key.`,
     secret: true,
   },
   [TART_KEYS.vmUser]: {
     type: "string",
     label: "Tart: VM user",
-    description: "The user in the macOS images that bb-box and BB work as. It is logged in to the desktop automatically. Linux boxes work as box.",
+    description: `The user in the macOS images that ${PRODUCT} and BB work as. It is logged in to the desktop automatically. Linux boxes work as box.`,
     default: TART_DEFAULTS.vmUser,
   },
   [TART_KEYS.macosImage]: {
@@ -198,7 +199,7 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "Tart: iOS image",
     description:
-      "The Tart VM on each Mac that iOS Simulator boxes are cloned from. setup/tart/prepare-ios-image.sh builds it on the macOS image, as bb-box-ios, with idb_companion and a booted-once, slimmed iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5). bb-box checks and refreshes it with the macOS image. Empty turns iOS boxes off.",
+      `The Tart VM on each Mac that iOS Simulator boxes are cloned from. setup/tart/prepare-ios-image.sh builds it on the macOS image, as bb-box-ios, with idb_companion and a booted-once, slimmed iPhone 18 Pro, iPhone 17 and iPad Pro 13-inch (M5). ${PRODUCT} checks and refreshes it with the macOS image. Empty turns iOS boxes off.`,
     default: "",
   },
   [TART_KEYS.windowsEnrol]: {
@@ -218,7 +219,7 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "number",
     label: "Tart: VMs per Mac",
     description:
-      "The most macOS VMs each Mac runs at once, counting every Tart VM there, not only bb-box's. At most 2, which Apple's licence and the Virtualization framework allow.",
+      `The most macOS VMs each Mac runs at once, counting every Tart VM there, not only ${PRODUCT}'s. At most 2, which Apple's licence and the Virtualization framework allow.`,
     default: MACOS_VMS_PER_MAC,
   },
   [TART_KEYS.reserveMemoryMiB]: {
@@ -250,7 +251,7 @@ export const TART_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "number",
     label: "Tart: slots per shared iOS host",
     description:
-      "The most slots each shared iOS host has at once, making, ready or held. Empty, bb-box estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows. A Mac's own value wins.",
+      `The most slots each shared iOS host has at once, making, ready or held. Empty, ${PRODUCT} estimates it for each Mac: the fewest of the host's cores over 1.3, its memory over 1.5 GiB after 8 GiB for the host, and what the Mac's video encoder allows. A Mac's own value wins.`,
   },
   [TART_KEYS.iosHostsAhead]: {
     type: "number",
@@ -371,12 +372,12 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
   const kinds = {} as Record<TartKind, TartKindConfig>;
   for (const kind of TART_KINDS) {
     const image = text(values, IMAGE_KEYS[kind], IMAGE_DEFAULTS[kind]);
-    if (image && !VM_NAME.test(image)) problem(IMAGE_KEYS[kind], `Tart: the ${kind} image "${image}" is not ${kind.startsWith("windows") ? "an image" : "a Tart VM"} name bb-box can use.`);
+    if (image && !VM_NAME.test(image)) problem(IMAGE_KEYS[kind], `Tart: the ${kind} image "${image}" is not ${kind.startsWith("windows") ? "an image" : "a Tart VM"} name ${PRODUCT} can use.`);
     kinds[kind] = { image: image || null };
   }
   if (TART_KINDS.every((kind) => !kinds[kind].image)) problem(TART_KEYS.macosImage, "Tart: give an image for macOS, Linux or Windows boxes.");
   const iosImage = text(values, TART_KEYS.iosImage);
-  if (iosImage && !VM_NAME.test(iosImage)) problem(TART_KEYS.iosImage, `Tart: the iOS image "${iosImage}" is not a Tart VM name bb-box can use.`);
+  if (iosImage && !VM_NAME.test(iosImage)) problem(TART_KEYS.iosImage, `Tart: the iOS image "${iosImage}" is not a Tart VM name ${PRODUCT} can use.`);
   if (iosImage && !kinds.macos.image && !kinds["macos-desktop"].image) problem(TART_KEYS.iosImage, "Tart: the iOS image is built on the macOS image, so give a macOS image too.");
   if (iosImage && TART_KINDS.some((kind) => kinds[kind].image === iosImage)) problem(TART_KEYS.iosImage, `Tart: "${iosImage}" is another kind's image; the iOS image is a VM of its own.`);
 
@@ -400,7 +401,7 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
   if (!USER.test(vmUser)) problem(TART_KEYS.vmUser, `Tart: "${vmUser}" is not a user name.`);
   const keyText = text(values, TART_KEYS.sshPrivateKey);
   const privateKey = keyText ? normalisePrivateKey(keyText) : null;
-  if (keyText && !privateKey) problem(TART_KEYS.sshPrivateKey, "Tart: use an unencrypted OpenSSH private key, or leave it empty for bb-box to make one.");
+  if (keyText && !privateKey) problem(TART_KEYS.sshPrivateKey, `Tart: use an unencrypted OpenSSH private key, or leave it empty for ${PRODUCT} to make one.`);
 
   return {
     hosts,
@@ -457,7 +458,7 @@ function macIosHostsSizedBy(name: string, fields: Readonly<Record<string, unknow
     if (value === undefined || value === null || value === "") continue;
     const whole = typeof value === "number" ? value : Number(value);
     if (!Number.isInteger(whole) || whole < least || whole > most) {
-      problem(field, `Mac ${name}: ${words} must be a whole number from ${least} to ${most}, or empty for bb-box's estimate.`);
+      problem(field, `Mac ${name}: ${words} must be a whole number from ${least} to ${most}, or empty for ${PRODUCT}'s estimate.`);
       continue;
     }
     sized[size] = whole;
@@ -511,11 +512,11 @@ export const TART_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fro
 /** Each Mac's fields. A Mac's name and switch are the host's own. */
 export const TART_HOST_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   address: { type: "string", label: "Address", description: "The Mac's address, with :port when SSH is not on 22. For example 192.0.2.20.", group: "connection", default: "" },
-  user: { type: "string", label: "User", description: "The user bb-box logs in to the Mac as, which runs tart.", group: "connection", default: "" },
+  user: { type: "string", label: "User", description: `The user ${PRODUCT} logs in to the Mac as, which runs tart.`, group: "connection", default: "" },
   "host-keys": {
     type: "string",
     label: "Host keys",
-    description: "The Mac's SSH host keys as known_hosts lines. ssh-keyscan -t ed25519 <address> prints one. bb-box checks them on every connection.",
+    description: `The Mac's SSH host keys as known_hosts lines. ssh-keyscan -t ed25519 <address> prints one. ${PRODUCT} checks them on every connection.`,
     experimental_multiline: true,
     group: "connection",
     default: "",
@@ -523,7 +524,7 @@ export const TART_HOST_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [MAC_IOS_HOST_FIELDS.most.field]: {
     type: "number",
     label: "Slots per shared iOS host",
-    description: "The most slots a shared iOS host on this Mac has, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate for the Mac.",
+    description: `The most slots a shared iOS host on this Mac has, in place of the backend's setting. Empty uses the backend's setting, or else ${PRODUCT}'s estimate for the Mac.`,
     group: "ios-hosts",
   },
   [MAC_IOS_HOST_FIELDS.cores.field]: {
@@ -535,7 +536,7 @@ export const TART_HOST_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [MAC_IOS_HOST_FIELDS.memoryGiB.field]: {
     type: "number",
     label: "Memory of a shared iOS host (GiB)",
-    description: "The memory of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else bb-box's estimate.",
+    description: `The memory of a shared iOS host's VM on this Mac, in place of the backend's setting. Empty uses the backend's setting, or else ${PRODUCT}'s estimate.`,
     group: "ios-hosts",
   },
 };
@@ -551,7 +552,7 @@ export function parseTartPart(part: BackendPart): ParsedBackend<TartConfig> {
     const address = String(host.fields.address ?? "").trim();
     const match = /^(\[[0-9a-fA-F:.]+\]|[^:@\s]+)(?::(\d+))?$/.exec(address);
     const port = match?.[2] ? Number(match[2]) : 22;
-    if (!user || !USER.test(user)) at("user")(`Give the user bb-box logs in to Mac ${host.name} as.`);
+    if (!user || !USER.test(user)) at("user")(`Give the user ${PRODUCT} logs in to Mac ${host.name} as.`);
     if (!match || !Number.isInteger(port) || port < 1 || port > 65535) at("address")(`Give Mac ${host.name}'s address, such as 192.0.2.20, with :port when SSH is not on 22.`);
     const keys = keyLines(String(host.fields["host-keys"] ?? ""), at("host-keys"));
     if (!keys.length) at("host-keys")(`Give Mac ${host.name}'s SSH host key, as ssh-keyscan -t ed25519 <address> prints it.`);

@@ -2,6 +2,9 @@ import type { Actor, EndedBox, LastFailed, Observation } from "../core/box-log.t
 import type { BoxView } from "../plugin/views.ts";
 import type { Busy } from "../monitor/busy.ts";
 import type { Tone } from "./common.tsx";
+import { PRODUCT } from "./product.ts";
+import { whenInSentence } from "./snapshot-words.ts";
+import { threadInSentence } from "./thread-title.ts";
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -37,7 +40,7 @@ export function ago(at: number, now: number): string {
 }
 
 export function clock(at: number): string {
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(at);
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(at);
 }
 
 function sameDay(a: number, b: number): boolean {
@@ -45,9 +48,10 @@ function sameDay(a: number, b: number): boolean {
 }
 
 export function dayAndClock(at: number, now: number): string {
-  if (sameDay(at, now)) return `today at ${clock(at)}`;
-  if (sameDay(at, now - DAY)) return `yesterday at ${clock(at)}`;
-  return `${new Intl.DateTimeFormat(undefined, { weekday: "short", day: "numeric", month: "short" }).format(at)} at ${clock(at)}`;
+  const time = clock(at);
+  if (sameDay(at, now)) return `Today ${time}`;
+  if (sameDay(at, now - DAY)) return `Yesterday ${time}`;
+  return `${new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short" }).format(at)} ${time}`;
 }
 
 export function stepTime(ms: number): string {
@@ -56,21 +60,24 @@ export function stepTime(ms: number): string {
   return `${(ms / SECOND).toFixed(1)} s`;
 }
 
-export type ThreadTitles = Readonly<Record<string, string>>;
+export type ThreadTitles = Readonly<Record<string, string | null>>;
 
 export function actorWords(actor: Actor | null | undefined, titles: ThreadTitles): string | null {
   if (!actor) return null;
   switch (actor.is) {
     case "person":
       return "by you";
-    case "agent":
-      return `by the agent in ${titles[actor.threadId] ?? "its thread"}`;
+    case "agent": {
+      const title = titles[actor.threadId];
+      if (title === undefined) return "by the agent in its thread";
+      return `by the agent in ${threadInSentence(title)}`;
+    }
     case "command":
       return "by a bb box command";
     case "bb-box":
-      return `by bb-box: ${actor.why}`;
+      return `by ${PRODUCT}: ${actor.why}`;
     case "outside":
-      return "outside bb-box";
+      return `outside ${PRODUCT}`;
     case "unknown":
       return null;
   }
@@ -196,7 +203,7 @@ export function headline(box: BoxView, now: number, titles: ThreadTitles): Headl
       return { tone: "bad", words: "Failed", detail: failedAt !== null ? [ago(failedAt, now)] : [] };
     }
     case "gone":
-      return { tone: "bad", words: "Gone", detail: ["deleted outside bb-box"] };
+      return { tone: "bad", words: "Gone", detail: [`deleted outside ${PRODUCT}`] };
     case "ready":
       return { tone: "ok", words: "Ready", detail: [`up ${span(now - upSince(box))}`, ...(box.enrol.state === "failed" ? ["Could not join BB"] : [])] };
   }
@@ -205,7 +212,7 @@ export function headline(box: BoxView, now: number, titles: ThreadTitles): Headl
 const OPERATION_TITLES: Readonly<Record<LastFailed["operation"], string>> = { stop: "Stop failed", start: "Start failed", resize: "Resize failed", release: "Release did not finish" };
 
 export function observedWords(observed: Observation | null, operation: LastFailed["operation"] = "stop"): string {
-  if (!observed || observed.state === "unknown") return "bb-box could not confirm its state.";
+  if (!observed || observed.state === "unknown") return `${PRODUCT} could not confirm its state.`;
   const checked = `(checked ${clock(observed.at)})`;
   switch (observed.state) {
     case "running":
@@ -264,7 +271,7 @@ export function failedNotice(box: BoxView, now: number): FailedNotice | null {
       heading: OPERATION_TITLES.release,
       title: release.at !== null ? `${OPERATION_TITLES.release} ${ago(release.at, now)}` : OPERATION_TITLES.release,
       words: asSentence(release.words),
-      then: `The box may still run${host ? ` on ${host}` : ""}; bb-box keeps its record until a release is confirmed.`,
+      then: `The box may still run${host ? ` on ${host}` : ""}; ${PRODUCT} keeps its record until a release is confirmed.`,
     };
   }
   const failed = box.log?.lastFailed;
@@ -287,10 +294,10 @@ export function reachNotice(box: BoxView, now: number): ReachNotice | null {
     title: `${box.name} does not answer`,
     words: [
       asSentence(silent.error),
-      `Since ${clock(silent.since)}, bb-box cannot reach it${where}, so it cannot read it or run commands in it.`,
+      `Since ${clock(silent.since)}, ${PRODUCT} cannot reach it${where}, so it cannot read it or run commands in it.`,
       `You can still stop, start or release it: those go through ${box.backendLabel}.`,
     ].join(" "),
-    next: silent.checking ? "bb-box is checking it now." : silent.nextCheckAt !== null ? `bb-box checks again in ${span(Math.max(0, silent.nextCheckAt - now))}.` : "",
+    next: silent.checking ? `${PRODUCT} is checking it now.` : silent.nextCheckAt !== null ? `${PRODUCT} checks again in ${span(Math.max(0, silent.nextCheckAt - now))}.` : "",
   };
 }
 
@@ -299,23 +306,23 @@ export function backendNotice(box: BoxView): ReachNotice | null {
   if (!silent) return null;
   return {
     title: `${silent.backend} does not answer`,
-    words: `${asSentence(silent.error)} Since ${clock(silent.since)}, bb-box cannot check, stop, start or resize ${box.name} through it, and the box may still be running.`,
-    next: "bb-box asks it again every 3 minutes.",
+    words: `${asSentence(silent.error)} Since ${clock(silent.since)}, ${PRODUCT} cannot check, stop, start or resize ${box.name} through it, and the box may still be running.`,
+    next: `${PRODUCT} asks it again every 3 minutes.`,
   };
 }
 
 export function settingsNotice(box: BoxView): string | null {
   if (box.reach?.is !== "not-in-settings") return null;
   const host = hostOf(box.backendLabel);
-  return `${box.reach.backend} was removed from bb-box's settings, so bb-box cannot check, stop or release ${box.name}, which may still be running${host ? ` on ${host}` : " there"}. Add the backend back to manage it, or forget it here.`;
+  return `${box.reach.backend} was removed from ${PRODUCT}'s settings, so ${PRODUCT} cannot check, stop or release ${box.name}, which may still be running${host ? ` on ${host}` : " there"}. Add the backend back to manage it, or forget it here.`;
 }
 
 export function endedWords(ended: EndedBox, now: number, titles: ThreadTitles): { readonly title: string; readonly words: string } {
   const by = actorWords(ended.by, titles);
-  const when = `${ended.how === "released" ? "Released" : "Forgotten"} ${ago(ended.at, now)}, ${dayAndClock(ended.at, now)}${by ? `, ${by}` : ""}.`;
-  if (ended.how === "released") return { title: `${ended.name} was released`, words: `${when} bb-box remembers a released box for 24 hours.` };
+  const when = `${ended.how === "released" ? "Released" : "Forgotten"} ${ago(ended.at, now)}, ${whenInSentence(ended.at, now)}${by ? `, ${by}` : ""}.`;
+  if (ended.how === "released") return { title: `${ended.name} was released`, words: `${when} ${PRODUCT} remembers a released box for 24 hours.` };
   const host = ended.backend ? hostOf(ended.backend) ?? ended.backend : null;
-  return { title: `${ended.name} was forgotten`, words: `bb-box removed its record. Its box was not deleted and may still run${host ? ` on ${host}` : ""}. ${when}` };
+  return { title: `${ended.name} was forgotten`, words: `${PRODUCT} removed its record. Its box was not deleted and may still run${host ? ` on ${host}` : ""}. ${when}` };
 }
 
 export const NOT_HERE_TITLE = "This box is not here";

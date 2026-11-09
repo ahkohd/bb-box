@@ -82,10 +82,10 @@ test("three ios boxes acquired at once make one host, not three: the first start
   assert.deepEqual(slots.map((slot) => (slot.on === "slot" ? `${slot.carried ? "i" : ""}${slot.generation}` : "vm")).sort(), ["1", "i1", "i2"]);
   assert.equal(new Set(results.map((guest) => guest.ref)).size, 3);
   assert.ok(results.every((guest) => guest.address === "192.168.64.2"));
-  assert.equal(readFileSync(join(ssh.home("192.168.64.2"), "installed-helper"), "utf8"), readFileSync(join(setupDir(), "tart/ios/device-host.sh"), "utf8"), "the host runs this bb-box's helper");
+  assert.equal(readFileSync(join(ssh.home("192.168.64.2"), "installed-helper"), "utf8"), readFileSync(join(setupDir(), "tart/ios/device-host.sh"), "utf8"), "the host runs this BB Box's helper");
   assert.match(readFileSync(join(ssh.home("192.168.64.2"), "helper.log"), "utf8"), /^init\n/);
   const targets = ssh.log().map((entry) => entry.target);
-  for (const user of ["bbd-i1", "bbd-i2", "bbd-1"]) assert.ok(targets.includes(`${user}@192.168.64.2`), `bb-box reached ${user} as itself`);
+  for (const user of ["bbd-i1", "bbd-i2", "bbd-1"]) assert.ok(targets.includes(`${user}@192.168.64.2`), `BB Box reached ${user} as itself`);
 });
 
 test("a box on a serving host claims a ready slot in its take; releases leave the host for the others, and the last deletes it and frees the Mac's VM slot (064)", async () => {
@@ -280,7 +280,7 @@ test("the doctor bounds each shared host's check, and says what it waited on for
     assert.ok(Date.now() - began < 10_000, `${Date.now() - began} ms`);
     const check = doctor.checks.find((each) => each.id === "ios-hosts.mac1");
     assert.equal(check?.status, "warn");
-    assert.match(check?.detail ?? "", /^The shared iOS host bb-box-host-[0-9a-f]+ on mac1 did not answer within 1 s: bb-box waited on its helper's status over SSH at 192\.168\.64\.2, through mac1\. A new host here has 4 slots \(the backend's setting\), 12 cores \(estimated: mac1's performance cores\), 14 GiB \(estimated: 8 GiB for the host and 1\.5 GiB for each of its 4 slots\)\.$/);
+    assert.match(check?.detail ?? "", /^The shared iOS host bb-box-host-[0-9a-f]+ on mac1 did not answer within 1 s: BB Box waited on its helper's status over SSH at 192\.168\.64\.2, through mac1\. A new host here has 4 slots \(the backend's setting\), 12 cores \(estimated: mac1's performance cores\), 14 GiB \(estimated: 8 GiB for the host and 1\.5 GiB for each of its 4 slots\)\.$/);
   } finally {
     rmSync(hold);
   }
@@ -311,7 +311,7 @@ test("a box waiting for a host that one instance was starting as it stopped, as 
   assert.deepEqual(hosts(), []);
 });
 
-test("a host's start names its bb-box instance and when it last said so in the host's owner file, so another instance never runs a start that is still under way, however old (F-8)", async () => {
+test("a host's start names its BB Box instance and when it last said so in the host's owner file, so another instance never runs a start that is still under way, however old (F-8)", async () => {
   const { backend, hosts, clones, ssh, mac } = setup();
   const otherContext = testContext(new MemoryStorage());
   const other = new TartBackend(tartConfig(IOS_HOST_SETTINGS), otherContext, IOS_HOST_FAKES);
@@ -337,7 +337,7 @@ test("a host's start names its bb-box instance and when it last said so in the h
   await new Promise((resolve) => setTimeout(resolve, 300));
   const inits = () => readFileSync(join(ssh.home("192.168.64.2"), "helper.log"), "utf8").split("\n").filter((line) => line === "init").length;
   const doctor = (await other.doctor(signal())).checks.find((check) => check.id === "ios-hosts.mac1");
-  assert.match(doctor?.detail ?? "", /starting, made \d+ s ago, started by bb-box instance [0-9a-f]{8}, last heard from \d+ s ago, 2 boxes promised\./);
+  assert.match(doctor?.detail ?? "", /starting, made \d+ s ago, started by BB Box instance [0-9a-f]{8}, last heard from \d+ s ago, 2 boxes promised\./);
 
   rmSync(hold);
   const [one, two] = await Promise.all([first, waiting]);
@@ -437,7 +437,7 @@ test("a new shared host goes to the Mac whose video encoder streams least; a VM'
   assert.equal(backend.encoderOf({ ref: "elsewhere", host: "mac9", address: null, size: null, data: {} }), null);
 });
 
-test("bb-box stopping while a shared host starts closes every shared SSH connection it opened before it removes their folder (F-14)", async () => {
+test("BB Box stopping while a shared host starts closes every shared SSH connection it opened before it removes their folder (F-14)", async () => {
   const { backend, ssh, hosts } = setup();
   const tier = await backend.slots!.offer("ios", null, signal());
   const taking = backend.slots!.take(tier, identity(), signal()).catch(() => null);

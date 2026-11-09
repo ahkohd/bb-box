@@ -4,6 +4,7 @@ import { billedWords, moneyWords } from "../core/snapshot-cost.ts";
 import { freedWords, standingOfRecord, type KeepInput, type Snapshots } from "../core/snapshots.ts";
 import { PERSON, rowOf, type SnapshotRowView } from "./snapshot-card.ts";
 import { keepCostWords } from "./snapshot-words.ts";
+import { PRODUCT } from "../brand.ts";
 
 export interface TabBox {
   readonly id: string;
@@ -58,7 +59,7 @@ function knownThread(threadId: string): string | null {
 function restoreWhyOf(record: SnapshotRecord, box: BoxRecord | null, restores: boolean, unsettled: boolean): string | null {
   if (!box) return record.guest === "held-copy" ? "its box was released: fork it into a new box instead" : "its box is gone";
   if (box.restoring) return `${box.name} is being restored`;
-  if (unsettled) return "bb-box could not confirm its last restore";
+  if (unsettled) return `${PRODUCT} could not confirm its last restore`;
   if (!restores) return "its backend restores none";
   if (record.guest === "earlier") return "it is on the earlier guest: fork only";
   if (record.guest === "held-copy") return "it is a held copy";
@@ -138,7 +139,7 @@ function lineOf(snapshots: Snapshots, records: readonly SnapshotRecord[], now: n
     if (count) attention.push(`${count} ${state}`);
   }
   const found = records.filter((record) => record.foundAt !== null).length;
-  if (found) attention.push(`${found} found, not in bb-box's records`);
+  if (found) attention.push(`${found} found, not in ${PRODUCT}'s records`);
   return {
     count: held.length - undos,
     undos,
@@ -184,7 +185,7 @@ export async function bulkCheck(snapshots: Snapshots, ids: readonly string[], ch
   for (const id of [...new Set(ids)]) {
     const record = snapshots.ledger.record(id);
     if (!record) {
-      skipped.push({ id, name: id, box: "", words: "bb-box has no such snapshot now." });
+      skipped.push({ id, name: id, box: "", words: `${PRODUCT} has no such snapshot now.` });
       continue;
     }
     if (change === "delete") {
@@ -212,7 +213,7 @@ export async function bulkApply(snapshots: Snapshots, ids: readonly string[], ch
   for (const id of [...new Set(ids)]) {
     const record = snapshots.ledger.record(id);
     if (!record) {
-      refused.push({ id, name: id, box: "", words: "bb-box has no such snapshot now." });
+      refused.push({ id, name: id, box: "", words: `${PRODUCT} has no such snapshot now.` });
       continue;
     }
     try {

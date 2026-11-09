@@ -10,6 +10,7 @@ import type { BoxRecord, Boxes } from "../core/boxes.ts";
 import type { BoxFile } from "../core/box-files.ts";
 import type { DoctorCheck } from "../backends/types.ts";
 import { createHash } from "node:crypto";
+import { PRODUCT } from "../brand.ts";
 
 export interface BoxFilesDeps {
   readonly boxes: Boxes;
@@ -103,7 +104,7 @@ export class BoxFiles {
     if (!count && !this.#last) return [];
     const files = `${count} file${count === 1 ? "" : "s"} set`;
     if (!this.#last) {
-      return [{ id: "box-files", name: "Files for every box", status: "ok", detail: `${files}; none written yet. bb-box writes them into each Linux and macOS box as it joins BB.`, fix: null }];
+      return [{ id: "box-files", name: "Files for every box", status: "ok", detail: `${files}; none written yet. ${PRODUCT} writes them into each Linux and macOS box as it joins BB.`, fix: null }];
     }
     const when = new Date(this.#last.at).toISOString().slice(0, 16).replace("T", " ");
     return this.#last.error
@@ -113,7 +114,7 @@ export class BoxFiles {
             name: "Files for every box",
             status: "warn",
             detail: `${files}; the last write, into box ${this.#last.box} at ${when} UTC, failed: ${this.#last.error}`,
-            fix: "Check that the box answers and that its user can write its home; bb-box writes the files again when the box next starts, and into every running box when the settings change.",
+            fix: `Check that the box answers and that its user can write its home; ${PRODUCT} writes the files again when the box next starts, and into every running box when the settings change.`,
           },
         ]
       : [{ id: "box-files", name: "Files for every box", status: "ok", detail: `${files}; the last write, into box ${this.#last.box} at ${when} UTC, worked.`, fix: null }];

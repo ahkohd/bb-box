@@ -1,5 +1,6 @@
 import type { GapKind, HistoryGap, HistoryRange, MetricPoint, MonitorSnapshot } from "../plugin/contract.ts";
-import { clock, dayAndClock, span } from "./box-words.ts";
+import { clock, span } from "./box-words.ts";
+import { whenInSentence } from "./snapshot-words.ts";
 import type { ChartSeries, Tick } from "./history-chart.tsx";
 
 export const LIVE_POINTS = 72;
@@ -257,13 +258,13 @@ export function repeatsLocally(at: number, zone?: string): boolean {
 }
 
 export function historyClock(at: number, zone?: string): string {
-  return formatOf(zone, { hour: "numeric", minute: "2-digit", ...(repeatsLocally(at, zone) ? { timeZoneName: "short" } : {}) }).format(at);
+  return formatOf(zone, { hour: "2-digit", minute: "2-digit", hourCycle: "h23", ...(repeatsLocally(at, zone) ? { timeZoneName: "short" } : {}) }, "en-GB").format(at);
 }
 
 export function historyTimeWords(range: HistoryRange, now: number, zone?: string): (at: number) => string {
   if (range === "1h") return (at) => historyClock(at, zone);
   return (at) => {
-    const words = dayAndClock(at, now);
+    const words = whenInSentence(at, now);
     return repeatsLocally(at, zone) ? words.replace(clock(at), historyClock(at, zone)) : words;
   };
 }

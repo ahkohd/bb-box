@@ -23,6 +23,7 @@ import {
   type VmidRange,
 } from "../proxmox/settings.ts";
 import type { BackendDriver, BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const QEMU_KINDS = ["windows-desktop", "linux", "linux-desktop-cpu", "android"] as const;
 
@@ -107,7 +108,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "TLS fingerprint",
     description:
-      "Pins the Proxmox API's certificate, so bb-box trusts that certificate alone. Paste its SHA-256 fingerprint from the setup guide's token file. Leave it empty to check the certificate against its CA instead.",
+      `Pins the Proxmox API's certificate, so ${PRODUCT} trusts that certificate alone. Paste its SHA-256 fingerprint from the setup guide's token file. Leave it empty to check the certificate against its CA instead.`,
     group: "connection",
     default: "",
   },
@@ -122,7 +123,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [QEMU_KEYS.tokenId]: {
     type: "string",
     label: "API token ID",
-    description: "The Proxmox API token bb-box signs in with, such as bbbox@pve!plugin. The setup guide lists the privileges it needs.",
+    description: `The Proxmox API token ${PRODUCT} signs in with, such as bbbox@pve!plugin. The setup guide lists the privileges it needs.`,
     group: "credentials",
     default: "",
   },
@@ -131,7 +132,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "SSH private key",
     description:
-      "The SSH key bb-box reaches boxes with. Paste BBBOX_SSH_KEY, the private key build.sh put in the template, or leave it empty to use Proxmox LXC's. With neither, bb-box makes a key, which the template does not accept until you add its public key.",
+      `The SSH key ${PRODUCT} reaches boxes with. Paste BBBOX_SSH_KEY, the private key build.sh put in the template, or leave it empty to use Proxmox LXC's. With neither, ${PRODUCT} makes a key, which the template does not accept until you add its public key.`,
     secret: true,
     group: "credentials",
   },
@@ -170,7 +171,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "Android templates",
     description:
-      "The templates Android emulator boxes are linked clones of. Each is the Linux template with the Android SDK, the emulator and a booted device for each model. List their VMIDs, separated by spaces or commas. setup/proxmox-qemu/build.sh android builds one, on a host with nested virtualization, and the nightly job refreshes it monthly. bb-box offers Android boxes while KVM in Linux VM boxes is on and the template's record lists its devices.",
+      `The templates Android emulator boxes are linked clones of. Each is the Linux template with the Android SDK, the emulator and a booted device for each model. List their VMIDs, separated by spaces or commas. setup/proxmox-qemu/build.sh android builds one, on a host with nested virtualization, and the nightly job refreshes it monthly. ${PRODUCT} offers Android boxes while KVM in Linux VM boxes is on and the template's record lists its devices.`,
     group: "boxes",
     default: "",
   },
@@ -229,7 +230,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [QEMU_KEYS.sshUser]: {
     type: "string",
     label: "SSH user",
-    description: "The user in the template that bb-box and BB work as.",
+    description: `The user in the template that ${PRODUCT} and BB work as.`,
     group: "advanced",
     default: QEMU_DEFAULTS.sshUser,
   },

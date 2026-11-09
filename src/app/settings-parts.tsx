@@ -3,6 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { CloudIcon } from "@hugeicons/core-free-icons";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { SideLabelField } from "./field-shell.tsx";
 import { cn } from "@/lib/utils";
 import type { BackendConfig } from "../core/document.ts";
 import type { ConfigState } from "../plugin/configuration.ts";
@@ -180,22 +181,11 @@ export function NavRow({ icon, title, chips, value, tone, onClick, outward = fal
   );
 }
 
-export function SettingRow({ label, description, problem, children, htmlFor, path }: { label: string; description?: ReactNode; problem?: string | null; children: ReactNode; htmlFor?: string; path?: string }) {
+export function SettingRow({ label, description, problem, problemId, children, htmlFor, path }: { label: string; description?: ReactNode; problem?: string | null; problemId?: string; children: ReactNode; htmlFor?: string; path?: string }) {
   return (
-    <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-5" data-setting-row={path}>
-      <div className="min-w-0 flex-1">
-        <label htmlFor={htmlFor} className="text-sm text-foreground">
-          {label}
-        </label>
-        {description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">{description}</p> : null}
-        {problem ? (
-          <p role="alert" className="mt-0.5 text-xs text-destructive-text">
-            {problem}
-          </p>
-        ) : null}
-      </div>
-      <div className="flex shrink-0 items-center gap-2">{children}</div>
-    </div>
+    <SideLabelField label={label} htmlFor={htmlFor} path={path} help={description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">{description}</p> : null} problem={problem} problemId={problemId} controlClassName="items-start sm:items-end">
+      <div className="flex items-center gap-2">{children}</div>
+    </SideLabelField>
   );
 }
 

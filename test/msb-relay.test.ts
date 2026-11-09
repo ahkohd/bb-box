@@ -1,6 +1,6 @@
-// The msb relay (053): bb-box's msb client on BB's server (src/relay/msb-client.mjs),
+// The msb relay (053): BB Box's msb client on BB's server (src/relay/msb-client.mjs),
 // the server's hub (src/relay/hub.ts) and the machine's worker
-// (src/host/msb.ts), joined by a WebSocket stand-in, with a fake bb-box msb
+// (src/host/msb.ts), joined by a WebSocket stand-in, with a fake BB Box msb
 // on the machine.
 
 import assert from "node:assert/strict";
@@ -15,7 +15,7 @@ import { MSB_ROUTE, msbClientArgv, refuseMsb } from "../src/relay/msb.ts";
 import { openTerminal } from "../src/transports/terminal.ts";
 import { joined, tempDir } from "./helpers.ts";
 
-/** A bb-box msb folder with a fake bin/msb, which acts on its first argument. */
+/** A BB Box msb folder with a fake bin/msb, which acts on its first argument. */
 function fakeMsbDir(): string {
   const dir = tempDir("msb-dir");
   mkdirSync(join(dir, "bin"), { recursive: true });
@@ -136,7 +136,7 @@ test("a terminal's msb runs on a PTY on the machine, at the terminal's size, and
   await until(/hello\r\ngot hello\r\n40 120\r\n/);
 });
 
-test("the host entry runs bb-box's msb scripts, and no other", async (t) => {
+test("the host entry runs BB Box's msb scripts, and no other", async (t) => {
   const dir = fakeMsbDir();
   const { worker } = setUp(t, dir);
   const status = await worker.experimental_call("microsandbox", { script: "status", args: [] });
@@ -153,7 +153,7 @@ test("the host entry runs bb-box's msb scripts, and no other", async (t) => {
   assert.equal(extra.exitCode, 2);
 });
 
-test("the install script refuses an archive whose SHA-256 is not the one bb-box was tested with, and leaves no msb", async () => {
+test("the install script refuses an archive whose SHA-256 is not the one BB Box was tested with, and leaves no msb", async () => {
   const { msbScript } = await import("../src/backends/microsandbox/release.ts");
   const dir = tempDir("msb-install");
   const tools = tempDir("msb-tools");
@@ -167,7 +167,7 @@ test("the install script refuses an archive whose SHA-256 is not the one bb-box 
     child.once("close", (code) => resolve({ code, stderr }));
   });
   assert.equal(result.code, 3);
-  assert.match(result.stderr, /archive's SHA-256 is [0-9a-f]{64}, not [0-9a-f]{64} as bb-box was tested with, so bb-box did not install it/);
+  assert.match(result.stderr, /archive's SHA-256 is [0-9a-f]{64}, not [0-9a-f]{64} as BB Box was tested with, so BB Box did not install it/);
   const { existsSync, readdirSync } = await import("node:fs");
   assert.equal(existsSync(join(dir, "bin", "msb")), false);
   assert.deepEqual(readdirSync(dir), [], "the download is gone too");

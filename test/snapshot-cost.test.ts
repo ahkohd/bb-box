@@ -26,17 +26,17 @@ test("the ceiling admits take, undo and held copy only if the rate after them is
     assert.equal(verdict(change, 5).ok, true, `${change} at the ceiling adds nothing`);
     const past = verdict(change, 5.04, 3);
     assert.equal(past.ok, false);
-    assert.match(past.ok ? "" : past.why, /^Snapshots held on boat\.dev cost about \$5\.04 a month, past your ceiling of \$3\.00, so bb-box does not (keep|renew) a paid snapshot there\. Delete one, or raise/);
+    assert.match(past.ok ? "" : past.why, /^Snapshots held on boat\.dev cost about \$5\.04 a month, past your ceiling of \$3\.00, so BB Box does not (keep|renew) a paid snapshot there\. Delete one, or raise/);
   }
   assert.deepEqual([...CEILING_CHANGES], ["take", "undo", "keep", "renew", "held-copy"]);
   for (const change of CEILING_CHANGES) assert.equal(verdict(change, 999, 0, null).ok, true, "a free snapshot is never refused by a ceiling");
   assert.equal(verdict("take", 0, 0).ok, false, "a ceiling of 0 refuses every paid take");
 });
 
-test("a price bb-box does not know is admitted only for the person; per-GB prices need the size", () => {
+test("a price BB Box does not know is admitted only for the person; per-GB prices need the size", () => {
   const unknown: Price = { amount: 0, currency: "USD", per: "day", known: false };
   assert.equal(verdict("take", 0, 5, unknown, true).ok, true);
-  assert.deepEqual(verdict("undo", 0, 5, unknown, false), { ok: false, why: "bb-box does not know what a snapshot on boat.dev costs, so only you can take an undo there." });
+  assert.deepEqual(verdict("undo", 0, 5, unknown, false), { ok: false, why: "BB Box does not know what a snapshot on boat.dev costs, so only you can take an undo there." });
   const perGb: Price = { amount: 0.05, currency: "EUR", per: "GB-month", known: true };
   assert.equal(monthlyRate(perGb, 20e9), 1);
   assert.equal(monthlyRate(perGb, null), null);

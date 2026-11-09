@@ -9,6 +9,7 @@ import { runsWayland } from "./boxes-filter.ts";
 import { effectiveKind, PRESET_NAMES, warmShortWords } from "./config.ts";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { describedBy, DraftNumberRow, unplacedProblems } from "./settings-draft-fields.tsx";
+import { reasonAfterColon } from "./settings-drafts.ts";
 import { KindSwitch, kindPart, MAKES_TONES, MAKES_WORDS, NO_WARM_WORDS, runsOn, sparesWords, useKindSwitch, type RunsOn } from "./settings-kinds.tsx";
 import { Card, FOCUS_RING, Group, NotHere, PageHeader, ProviderGlyph, RowControl, RowNote, Rows, SavedTick, StateLine, TextLink } from "./settings-parts.tsx";
 import { backendFieldPath, kindPath, plain, sizeName, sizePath, sizeRowPath, SIZE_PARTS, storedProblemPath, warmPath, type Path, type PlainValue, type SizeName, type SizePart } from "./settings-paths.ts";
@@ -16,6 +17,7 @@ import { ChangedChip, ConflictNote, focusAfterRender, RestoredNote, SAVING_RULE,
 import { kindAvailability, kindName } from "./settings-status.ts";
 import { KindGpuCard } from "./settings-gpus.tsx";
 import { kindHasGpuDefault } from "./gpu-settings-words.ts";
+import { INVALID_BORDER } from "./size-field.ts";
 
 const PART_LABELS: Readonly<Record<SizePart, string>> = { cores: "Cores", memoryGiB: "Memory, GiB", diskGiB: "Disk, GiB" };
 const PART_NAMES: Readonly<Record<SizePart, string>> = { cores: "cores", memoryGiB: "memory, in GiB", diskGiB: "disk, in GiB" };
@@ -43,8 +45,7 @@ function shownSize(part: SizePart) {
 }
 
 function withName(name: string, message: string): string {
-  const lowered = /^[A-Z][a-z]/.test(message) ? message[0]!.toLowerCase() + message.slice(1) : message;
-  return `${name}: ${lowered}`;
+  return `${name}: ${reasonAfterColon(message)}`;
 }
 
 function ConflictsAt({ draft, paths, label }: { draft: Draft; paths: readonly Path[]; label: (path: Path) => string }) {
@@ -87,7 +88,7 @@ function SizeCell({ draft, id, size, part, describe, invalid }: { draft: Draft; 
         aria-label={`${name} size: ${PART_NAMES[part]}`}
         aria-describedby={describe}
         aria-invalid={invalid || undefined}
-        className={cn("h-8 w-full min-w-0 text-right text-xs tabular-nums", draft.changed(path) && "border-warning/60")}
+        className={cn("h-8 w-full min-w-0 text-right text-xs tabular-nums", invalid && INVALID_BORDER)}
         inputMode="decimal"
         autoComplete="off"
         placeholder={part === "diskGiB" && size !== "largest" ? "Image's own" : undefined}
@@ -194,7 +195,7 @@ function WarmField({ draft, row, kind, problem, describe }: { draft: Draft; row:
         aria-label={`Warm boxes on ${row.label}`}
         aria-describedby={describe}
         aria-invalid={problem ? true : undefined}
-        className={cn("h-8 w-16 text-right text-xs tabular-nums", draft.changed(path) && "border-warning/60")}
+        className={cn("h-8 w-16 text-right text-xs tabular-nums", problem && INVALID_BORDER)}
         inputMode="numeric"
         autoComplete="off"
         placeholder="0"

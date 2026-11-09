@@ -24,19 +24,6 @@ export function seconds(ms: number): string {
   return ms < 100 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
-/** "just now", "3 minutes ago", "2 hours ago", "yesterday", "4 days ago". */
-export function relativeTime(at: number, now: number): string {
-  const seconds = Math.max(0, Math.round((now - at) / 1000));
-  if (seconds < 45) return "just now";
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
-  const days = Math.round(hours / 24);
-  if (days === 1) return "yesterday";
-  return `${days} days ago`;
-}
-
 /** The time now, ticking every `everyMs` while `active`; still otherwise. */
 export function useNow(active: boolean, everyMs = 100): number {
   const [now, setNow] = useState(() => Date.now());

@@ -1,4 +1,6 @@
 import type { GpuPart, GpuResizing, GpuRoom, CardRoom } from "../backends/types.ts";
+import { ago } from "./box-words.ts";
+import { PRODUCT } from "./product.ts";
 
 export const GPU_LINE_CLASS = "h-[3lh] overflow-hidden text-xs leading-snug @sm:h-[2lh]";
 
@@ -65,7 +67,7 @@ export function gpuFormLine(offers: readonly GpuFormOffer[], gpu: GpuPart, now: 
     const reach = gpu === "whole" && offer.reachesEveryCard ? ` ${DOCKER_REACH}` : "";
     if (gpu === "whole") {
       const outside = outsideMiB(card);
-      const words = outside ? `${cardTitle(card)} on ${host}, to itself. ${gibWords(outside)} of it is in use outside bb-box's boxes.${reach}` : `${cardTitle(card)} on ${host}, to itself: bb-box places no other box on it.${reach}`;
+      const words = outside ? `${cardTitle(card)} on ${host}, to itself. ${gibWords(outside)} of it is in use outside ${PRODUCT}'s boxes.${reach}` : `${cardTitle(card)} on ${host}, to itself: ${PRODUCT} places no other box on it.${reach}`;
       return { words, blocked: false, state: "whole" };
     }
     const company = card.boxes === 0 ? "no other box" : card.boxes === 1 ? "1 box" : `${card.boxes} boxes`;
@@ -90,12 +92,18 @@ export function gpuRowReason(offer: GpuFormOffer, gpu: GpuPart): string | null {
   return shortBlocks(offer, gpu);
 }
 
-export function gpuWaysLine(gpu: GpuResizing, form: string | null): string {
+export function cardReachLine(gpuChosen: boolean, hosts: readonly { readonly cardReach?: string | null }[]): string {
+  if (!gpuChosen || hosts.length !== 1) return "";
+  return hosts[0]?.cardReach || "";
+}
+
+export function gpuWaysLine(gpu: GpuResizing, form: string | null, part: GpuPart | null = null): string {
   const share = gpu.share === "live" ? "Shared and whole card switch at once where the card allows it." : gpu.share === "no" ? "Shared and whole card cannot switch here." : "Shared and whole card switch with a restart.";
   const fixed = gpu.add === "no" && gpu.move === "no";
+  const reach = form === "Docker" && part !== null && part !== "none" ? ", and every box with Docker in it can open every card. None and Whole card are what BB Box places, not what a box can reach" : "";
   const rest = fixed
     ? form === "Docker"
-      ? " On Docker a GPU cannot be added, removed or moved, and every box with Docker in it can open every card."
+      ? ` On Docker a GPU cannot be added, removed or moved${reach}.`
       : " A GPU cannot be added, removed or moved."
     : " Adding, removing or moving a card restarts the box; a stopped box stays stopped.";
   return `${share}${rest}`;
@@ -215,13 +223,4 @@ function listed(items: readonly string[]): string {
 function gibWords(mib: number): string {
   const text = (mib / 1024).toFixed(1);
   return `${text.endsWith(".0") ? text.slice(0, -2) : text} GiB`;
-}
-
-function ago(at: number, now: number): string {
-  const seconds = Math.max(0, Math.round((now - at) / 1000));
-  if (seconds < 60) return `${seconds} s ago`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return minutes === 1 ? "1 min ago" : `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  return hours === 1 ? "1 h ago" : `${hours} h ago`;
 }

@@ -5,6 +5,7 @@ import type { BoxView } from "../plugin/views.ts";
 import { seconds, type Tone } from "./common.tsx";
 import { releaseUnfinished } from "./box-words.ts";
 import { joiningWords, tryWords } from "../core/join-tries.ts";
+import { PRODUCT } from "./product.ts";
 
 export interface StatusItem {
   readonly text: string;
@@ -92,7 +93,7 @@ export function statusOf(box: BoxView, now: number, myViewers: ReadonlySet<strin
     case "failed":
       return { tone: "bad", items: [{ text: "Failed", tone: "danger" }] };
     case "gone":
-      return { tone: "bad", items: [{ text: "Gone" }, { text: "deleted outside bb-box" }] };
+      return { tone: "bad", items: [{ text: "Gone" }, { text: `deleted outside ${PRODUCT}` }] };
     case "ready": {
       const state: StatusItem = { text: box.timings.total !== undefined ? `Ready in ${seconds(box.timings.total)}` : "Ready" };
       switch (box.enrol.state) {

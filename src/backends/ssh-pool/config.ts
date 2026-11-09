@@ -24,6 +24,7 @@ import { kindRequest } from "../kinds.ts";
 import { MOST_SLOTS } from "../../core/slot-sizing.ts";
 import { normalisePrivateKey } from "../../transports/ssh.ts";
 import { fieldLabel, isSecret, type BackendPart, type EarlierBackend, type FieldDescriptor, type FieldProblem, type FieldValue, type ParsedBackend, type ParsedSettings } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const SSH_POOL_KINDS = ["linux", "macos", "macos-desktop", "ios"] as const;
 export type SshPoolKind = (typeof SSH_POOL_KINDS)[number];
@@ -95,14 +96,14 @@ export const SSH_POOL_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "SSH host pool: machines",
     description:
-      'Your machines, one line each, with the kinds of box each serves. A line is a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>, such as "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine. The kind ios on a Mac lends iOS slots there, each a macOS user with its own device, for iOS boxes asked for with shared: true; ios:<slots> sets how many, where bb-box would estimate them from the Mac.',
+      `Your machines, one line each, with the kinds of box each serves. A line is a name, [user@]host[:port], its kinds, and optionally via=<jump host>, reset=machine and labels=<words>, such as "build-1 192.0.2.21 linux" or "mac-mini 192.0.2.30 macos,macos-desktop". setup/ssh-pool/setup.sh, or setup-mac.sh on a Mac, prints the line for each machine. The kind ios on a Mac lends iOS slots there, each a macOS user with its own device, for iOS boxes asked for with shared: true; ios:<slots> sets how many, where ${PRODUCT} would estimate them from the Mac.`,
     experimental_multiline: true,
     default: "",
   },
   [SSH_POOL_KEYS.knownHosts]: {
     type: "string",
     label: "SSH host pool: host keys",
-    description: "The SSH host keys of every machine and jump host. bb-box connects only to a machine whose key is here. Paste the known_hosts lines setup.sh and setup-mac.sh print.",
+    description: `The SSH host keys of every machine and jump host. ${PRODUCT} connects only to a machine whose key is here. Paste the known_hosts lines setup.sh and setup-mac.sh print.`,
     experimental_multiline: true,
     default: "",
   },
@@ -110,14 +111,14 @@ export const SSH_POOL_SETTINGS: Record<string, PluginSettingDescriptor> = {
     type: "string",
     label: "SSH host pool: SSH private key",
     description:
-      "The SSH key bb-box logs in to the machines with. Paste an unencrypted OpenSSH private key that their admin user accepts. Leave it empty and bb-box makes one and shows its public key, which you then give setup.sh.",
+      `The SSH key ${PRODUCT} logs in to the machines with. Paste an unencrypted OpenSSH private key that their admin user accepts. Leave it empty and ${PRODUCT} makes one and shows its public key, which you then give setup.sh.`,
     secret: true,
   },
   [SSH_POOL_KEYS.iosHostsMost]: {
     type: "number",
     label: "SSH host pool: slots per shared iOS host",
     description:
-      "The most slots each shared iOS host has at once, making, ready or held. Here a shared iOS host is a Mac whose line lists ios, and it is lent whole only while it lends no slot. Empty, bb-box estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:<slots> on a Mac's line wins.",
+      `The most slots each shared iOS host has at once, making, ready or held. Here a shared iOS host is a Mac whose line lists ios, and it is lent whole only while it lends no slot. Empty, ${PRODUCT} estimates it for each Mac: the fewest of its cores over 1.3, its memory over 1.5 GiB after 8 GiB for the Mac, and what its video encoder allows. ios:<slots> on a Mac's line wins.`,
   },
   [SSH_POOL_KEYS.iosHostsAhead]: {
     type: "number",
@@ -218,7 +219,7 @@ function parseMachine(line: string, problems: { push(message: string): void }): 
     const slots = /^ios:(.*)$/.exec(listed);
     if (slots) {
       const most = Number(slots[1]);
-      if (!/^\d+$/.test(slots[1]!) || most < 1 || most > MOST_SLOTS) return bad(`Give machine ${name}'s iOS slots as ios:<slots>, a whole number from 1 to ${MOST_SLOTS}, or ios for bb-box's estimate.`);
+      if (!/^\d+$/.test(slots[1]!) || most < 1 || most > MOST_SLOTS) return bad(`Give machine ${name}'s iOS slots as ios:<slots>, a whole number from 1 to ${MOST_SLOTS}, or ios for ${PRODUCT}'s estimate.`);
       slotsMost = most;
     }
     const word = slots ? "ios" : listed;
@@ -354,7 +355,7 @@ function checkSshPool(values: Readonly<Record<string, unknown>>): { config: SshP
 
   const keyText = text(values, SSH_POOL_KEYS.sshPrivateKey);
   const privateKey = keyText ? normalisePrivateKey(keyText) : null;
-  if (keyText && !privateKey) at(SSH_POOL_KEYS.sshPrivateKey).push("Paste the whole SSH private key in OpenSSH form, or clear it so bb-box makes one.");
+  if (keyText && !privateKey) at(SSH_POOL_KEYS.sshPrivateKey).push(`Paste the whole SSH private key in OpenSSH form, or clear it so ${PRODUCT} makes one.`);
 
   const slots = checkSlots(values, (key, message) => at(key).push(message));
 

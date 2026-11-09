@@ -18,6 +18,7 @@ import {
   type VideoSize,
 } from "./device.ts";
 import { changesShowAtStart } from "./device-settings.ts";
+import { PRODUCT } from "../brand.ts";
 
 export const DEVICE_WINDOW = 1;
 export const DEVICE_SETTLE = { quietMs: 300, mostMs: 2_000, fromNow: true } as const;
@@ -34,7 +35,7 @@ export const TYPED_WAIT_MS = 5_000;
 const TYPED_STILL_READS = 3;
 export const APP_WAIT = { everyMs: 250, mostMs: 5_000 } as const;
 export const KEYBOARD_WAIT = { everyMs: 250, mostMs: 5_000 } as const;
-export const KEYBOARD_NEVER_CAME_WORDS = `No text field had the focus with its keyboard shown within ${KEYBOARD_WAIT.mostMs / 1000} s of the tap, so bb-box typed anyway, and the first keys may be lost: check what the field reads.`;
+export const KEYBOARD_NEVER_CAME_WORDS = `No text field had the focus with its keyboard shown within ${KEYBOARD_WAIT.mostMs / 1000} s of the tap, so ${PRODUCT} typed anyway, and the first keys may be lost: check what the field reads.`;
 const STATUS_BAR_FRACTION = 0.08;
 const SETTINGS_APP = "Settings";
 const SWITCH_REF = /^[+-] \[(e\d+)\] switch /;
@@ -232,7 +233,7 @@ function failure(answer: Extract<DeviceAnswer, { ok: false }>, what: string): Co
     busy: ["driver", "Call box_status, and try again once it says the device has booted."],
     "bad-value": ["input", "Change what you gave, as the words say."],
     unsupported: ["unsupported", "Use box_run in the box instead."],
-    superseded: ["driver", "Try again in a few seconds: another bb-box instance holds the box's device server."],
+    superseded: ["driver", `Try again in a few seconds: another ${PRODUCT} instance holds the box's device server.`],
     "held-elsewhere": ["refused", "Use computer_screenshot until it ends, then read the elements again."],
   };
   const [code, hint] = hints[answer.error.code] ?? (["driver", "Call box_status to see the device's state, then try again."] as const);
@@ -317,7 +318,7 @@ export class DeviceComputer {
   }
 
   async #readOnce(box: BoxRecord, state: BoxState): Promise<Snapshot> {
-    const answer = await this.#ok(this.#deps.read(box, { type: "tree" }), "bb-box could not read the device's elements");
+    const answer = await this.#ok(this.#deps.read(box, { type: "tree" }), `${PRODUCT} could not read the device's elements`);
     if (answer.result.type !== "tree") throw new ComputerError("driver", "The device server answered a read of its elements with something else.", "Try again.");
     const { screen, orientation } = this.#screen(answer.state);
     const snapshot = this.#snapshot(state, answer.state.model, answer.state.platform, answer.result.generation, screen, orientation, answer.result.elements);
@@ -389,7 +390,7 @@ export class DeviceComputer {
     if (found.is === "found") return snapshot.shown[found.index]!;
     if (found.is === "ambiguous") {
       const named = found.indices.map((index) => snapshot.shown[index]!).map((shown) => `${shown.ref} at ${centre(shown.element.frame).x},${centre(shown.element.frame).y}`);
-      throw new ComputerError("refused", `${ref}, ${remembered.words}, is ambiguous now: ${named.length} elements match it (${named.join(", ")}), and bb-box cannot tell which was yours.`, `Act on one of them by its new reference, or call computer_observe with window ${DEVICE_WINDOW}.`);
+      throw new ComputerError("refused", `${ref}, ${remembered.words}, is ambiguous now: ${named.length} elements match it (${named.join(", ")}), and ${PRODUCT} cannot tell which was yours.`, `Act on one of them by its new reference, or call computer_observe with window ${DEVICE_WINDOW}.`);
     }
     throw new ComputerError("stale", `${ref}, ${remembered.words}, is no longer on the device's screen.`, `Call computer_observe with window ${DEVICE_WINDOW} to see what is there now.`);
   }
@@ -443,7 +444,7 @@ export class DeviceComputer {
   }
 
   async #image(box: BoxRecord, state: BoxState): Promise<{ readonly words: string; readonly image: { readonly data: string; readonly mimeType: string } }> {
-    const answer = await this.#ok(this.#deps.read(box, { type: "screenshot", longestEdge: IMAGE_MAX_EDGE }), "bb-box could not take the device's screenshot");
+    const answer = await this.#ok(this.#deps.read(box, { type: "screenshot", longestEdge: IMAGE_MAX_EDGE }), `${PRODUCT} could not take the device's screenshot`);
     if (answer.result.type !== "screenshot") throw new ComputerError("driver", "The device server answered a screenshot with something else.", "Try again.");
     const size = pngSize(answer.result.png);
     if (!size) throw new ComputerError("driver", "The device server's screenshot is not a PNG.", "Try again.");
@@ -512,12 +513,12 @@ export class DeviceComputer {
   }
 
   async #frames(box: BoxRecord): Promise<number> {
-    const answer = await this.#ok(this.#deps.read(box, { type: "settle", quietMs: 0, mostMs: 0, fromNow: false }), "bb-box could not read the device's frames");
+    const answer = await this.#ok(this.#deps.read(box, { type: "settle", quietMs: 0, mostMs: 0, fromNow: false }), `${PRODUCT} could not read the device's frames`);
     return answer.result.type === "settled" ? answer.result.frames : 0;
   }
 
   async #settled(box: BoxRecord, settle: { readonly quietMs: number; readonly mostMs: number; readonly fromNow: boolean } = DEVICE_SETTLE): Promise<{ readonly frames: number; readonly quiet: boolean }> {
-    const answer = await this.#ok(this.#deps.read(box, { type: "settle", ...settle }), "bb-box could not wait for the device's screen");
+    const answer = await this.#ok(this.#deps.read(box, { type: "settle", ...settle }), `${PRODUCT} could not wait for the device's screen`);
     return answer.result.type === "settled" ? answer.result : { frames: 0, quiet: true };
   }
 
@@ -683,7 +684,7 @@ export class DeviceComputer {
         const seen = await this.#after(box, state, before, frames);
         throw new ComputerError(
           "input",
-          `Typed ${quoted(input.text)} into ${words}, but ${landed.field} reads ${quoted(landed.reads)}: the device has not taken all of the keys, so bb-box did not press ${input.keys}.${seen.parts.length ? `\n\n${seen.parts.join("\n\n")}` : ""}`,
+          `Typed ${quoted(input.text)} into ${words}, but ${landed.field} reads ${quoted(landed.reads)}: the device has not taken all of the keys, so ${PRODUCT} did not press ${input.keys}.${seen.parts.length ? `\n\n${seen.parts.join("\n\n")}` : ""}`,
           `Clear the field, such as with keys ${selectAllModifier(before.platform) === "control" ? "ctrl" : "cmd"}+a then Backspace, and type the text again.`,
         );
       }
@@ -741,10 +742,10 @@ export class DeviceComputer {
       let front: (snapshot: Snapshot) => boolean = drawn;
       if (input.url !== undefined) {
         front = (snapshot) => !!snapshot.app && !snapshot.starting;
-        await this.#ok(this.#deps.agentRequest(box, { type: "open", url: input.url }), `bb-box could not open ${input.url}`);
+        await this.#ok(this.#deps.agentRequest(box, { type: "open", url: input.url }), `${PRODUCT} could not open ${input.url}`);
         done = `Opened ${input.url}.`;
       } else {
-        const answer = await this.#ok(this.#deps.agentRequest(box, { type: "launch", app: input.app! }), `bb-box could not launch ${input.app}`);
+        const answer = await this.#ok(this.#deps.agentRequest(box, { type: "launch", app: input.app! }), `${PRODUCT} could not launch ${input.app}`);
         const launched = answer.result.type === "launched" ? answer.result.app : null;
         done = launched ? `Launched ${launched.name} (${launched.id}).` : `Launched ${input.app}.`;
         if (launched) front = (snapshot) => !snapshot.starting && snapshot.app.toLowerCase() === launched.name.toLowerCase();

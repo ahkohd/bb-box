@@ -13,7 +13,7 @@ import { setKind } from "../src/plugin/config-edits.ts";
 import { fieldLine } from "../src/plugin/config-cli.ts";
 import { settingsCards } from "../src/plugin/gpu-settings.ts";
 import { candidateOf, plain } from "../src/app/settings-paths.ts";
-import { draftLimit, kindGpuChoices, kindGpuWords, limitAfterSave, loweredLimitWords, readAgo, wholeCardsNow, wholeKeptWords } from "../src/app/gpu-settings-words.ts";
+import { cardsReadWords, draftLimit, kindGpuChoices, kindGpuWords, limitAfterSave, loweredLimitWords, wholeCardsNow, wholeKeptWords } from "../src/app/gpu-settings-words.ts";
 import type { ConfigState } from "../src/plugin/configuration.ts";
 import { ClaimsBridge, CARD_A, CARD_B, SECOND_INSTALL, SECOND_POOL } from "./gpu-helper/claims-bridge.ts";
 import { marker } from "./gpu-helper/node.ts";
@@ -45,7 +45,7 @@ test("071 unit 15: Proxmox LXC's boxes per card is 4 where never set, and an exp
   assert.ok(refused.problems.some((problem) => problem.path === "boxes-per-card"), JSON.stringify(refused.problems));
 });
 
-test("071 unit 15: through the driver, as bb-box builds a backend, an old key that is set is read though the new key has a default, and the new key wins once set", () => {
+test("071 unit 15: through the driver, as BB Box builds a backend, an old key that is set is read though the new key has a default, and the new key wins once set", () => {
   const lxcFields = { url: "https://pve.example.com:8006", "token-id": "bb-box@pve!plugin", "linux-templates": "9000" };
   const lxc = (fields: Record<string, unknown>) => {
     const parsed = proxmoxLxcDriver.parse(backendPart({ id: "proxmox-lxc", type: "proxmox-lxc", enabled: true, fields: { ...lxcFields, ...fields } as never }, proxmoxLxcDriver, { "proxmox-lxc": { "token-secret": "s3cret" } }));
@@ -142,7 +142,7 @@ function stateOf(document: ConfigDocument): ConfigState {
   return { document, revision: document.revision, defaults: { general: {}, monitor: {}, kinds: { linux: { enabled: true, presets: { small: size, medium: size, large: size }, default: "small", largest: { cores: 16, memoryMiB: 32768, diskGiB: 256 } } } }, kinds: [], drivers: [], backends: [], problems: [], migrated: null, receipts: [], setupDone: null } as unknown as ConfigState;
 }
 
-test("071 unit 15: a kind's page that saves its sizes keeps the kind's GPU, and choosing bb-box's own default stores none", () => {
+test("071 unit 15: a kind's page that saves its sizes keeps the kind's GPU, and choosing BB Box's own default stores none", () => {
   const state = stateOf(documentWith([], {}, { linux: { gpu: "shared" } }));
   const sized = candidateOf(state, [{ path: "kinds/linux/presets/small/cores", value: plain(3), base: { kind: "value", value: 2 } }]);
   assert.equal(sized.document.kinds.linux?.gpu, "shared");
@@ -161,7 +161,7 @@ test("071 unit 15: the kind's menu lists Whole card only where a backend has who
   assert.deepEqual(kindGpuChoices(off, "whole"), ["none", "shared", "whole"]);
   assert.match(kindGpuWords("linux", "whole", false), /Whole cards are off on every backend, so a box that leaves gpu out is refused/);
   assert.match(kindGpuWords("linux", "whole", true), /Spare boxes of the kind are made shared/);
-  assert.match(kindGpuWords("linux-desktop", "shared", true), /Shared is bb-box's own default for linux-desktop\./);
+  assert.match(kindGpuWords("linux-desktop", "shared", true), /Shared is BB Box's own default for linux-desktop\./);
 });
 
 const IN_USE: CardsInUse = {
@@ -198,8 +198,8 @@ test("071 unit 15 gate: a lowered limit names the boxes over it, which keep runn
   assert.deepEqual(view.cards.map((card) => card.over), [0, 1, 0]);
   assert.equal(view.cards[1]!.overWords, "Card 1 has 3 of this install's boxes running, 1 over the limit of 2: amber-fox, lone-pine and calm-reef. They keep running; no new box goes on card 1 until it has room.", "another install's guest is on the card but not in this install's count");
   assert.deepEqual(view.cards[1]!.holders.map((holder) => holder.box), ["bxamber", null, null, null], "a box links to its page only where it is this backend's");
-  assert.equal(view.cards[2]!.outsideMiB, 21_096, "memory in use on a card that holds no box of bb-box's is outside bb-box's boxes");
-  assert.equal(view.cards[0]!.outsideMiB, null, "where bb-box's boxes are on the card, one reading cannot split it");
+  assert.equal(view.cards[2]!.outsideMiB, 21_096, "memory in use on a card that holds no box of BB Box's is outside BB Box's boxes");
+  assert.equal(view.cards[0]!.outsideMiB, null, "where BB Box's boxes are on the card, one reading cannot split it");
   assert.equal(overLimitWords({ index: 0, counted: 2, holders: [] }, 1, "every-install"), "Card 0 has 2 boxes, 1 over the limit of 1. They keep running; no new box goes on card 0 until it has room.");
   const unlimited = settingsCards({ ...IN_USE, limit: null }, "proxmox-lxc", []);
   assert.deepEqual(unlimited.is === "read" ? unlimited.cards.map((card) => [card.over, card.overWords]) : null, [[0, null], [0, null], [0, null]], "no limit: no card is over it");
@@ -216,7 +216,10 @@ test("071 unit 15: a limit typed lower than a card's boxes names them before Sav
   assert.equal(loweredLimitWords(view.cards, 0, 4, "this-install-running"), null, "0 is no limit");
   assert.equal(loweredLimitWords(view.cards, 1, null, "this-install-running")?.startsWith("With 1, card 1 has 3 of this install's boxes running, 2 over"), true, "from no limit, any limit is lower");
   assert.deepEqual([draftLimit("3"), draftLimit(" 2 "), draftLimit(""), draftLimit("x"), draftLimit(-1)], [3, 2, null, null, null]);
-  assert.deepEqual([readAgo(1_000, 6_000), readAgo(0, 120_000)], ["5 s ago", "2 minutes ago"]);
+  const now = 1_700_000_000_000;
+  assert.equal(cardsReadWords("pve-1", "helper", now - 5_000, now), "The cards on pve-1, as its GPU helper reported them just now.");
+  assert.equal(cardsReadWords("pve-1", "docker", now - 30 * 60 * 60_000, now), "The cards on pve-1, as Docker lists them 1 d 6 h ago.");
+  assert.equal(cardsReadWords("pve-1", "helper", null, now), "The cards on pve-1, as its GPU helper reported them.");
 });
 
 test("071 unit 15: Whole cards shows its value with where it comes from, and off lists the boxes that keep their whole card", () => {

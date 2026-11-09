@@ -89,7 +89,7 @@ test("the doctor warns of each short pool", () => {
       name: "Warm pool of windows-desktop",
       status: "warn",
       detail: "It has 0 of its 1 box, and no room for another: No VMID is free.",
-      fix: "Make room there, or lower the warm count in bb-box's settings.",
+      fix: "Make room there, or lower the warm count in BB Box's settings.",
     },
   ]);
 });

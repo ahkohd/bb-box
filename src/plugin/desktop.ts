@@ -25,6 +25,7 @@ import { argbToRgba, rgbaPng } from "../core/png.ts";
 import { POINTER_NONE, POINTER_VERB } from "../core/pointer.ts";
 import { LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
 import type { MacKeys, PersonInput } from "../core/record-input.ts";
+import { PRODUCT } from "../brand.ts";
 
 export const DESKTOP_ROUTE = "/desktop";
 const VIEWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -181,7 +182,7 @@ const SELKIES_SCREEN: Screen = { id: 0, flags: 0 };
 
 async function readyBox(boxes: Boxes, boxId: string, what: string): Promise<BoxRecord> {
   const box = await boxes.find(boxId);
-  if (!box) throw new Error("bb-box has no such box. It may have been released.");
+  if (!box) throw new Error(`${PRODUCT} has no such box. It may have been released.`);
   if (box.state !== "ready") throw new Error(`Box ${box.name} is not running, so its ${what} cannot show.`);
   return box;
 }
@@ -309,8 +310,8 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       const name = box?.name ?? boxId;
       bb.log.warn(
         kept
-          ? `bb-box is stopping, as for an update or a reload. The viewer with control of box ${name}'s desktop keeps it if it connects again within ${staleMs / 1000} s.`
-          : `bb-box is stopping, as for an update or a reload, so control of box ${name}'s desktop goes back to the agent.`,
+          ? `${PRODUCT} is stopping, as for an update or a reload. The viewer with control of box ${name}'s desktop keeps it if it connects again within ${staleMs / 1000} s.`
+          : `${PRODUCT} is stopping, as for an update or a reload, so control of box ${name}'s desktop goes back to the agent.`,
       );
     },
     async restore(boxId, size, screen) {
@@ -386,7 +387,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   const deviceBoxes = new Map<string, { box: SelkiesBox; viewers: number; relays: Set<SelkiesRelay> }>();
   const deviceStream = (boxId: string): OpenStream => async () => {
     const box = await deviceBoxRecord(boxes, boxId);
-    if (!deps.openDevice) throw new Error(`bb-box cannot reach box ${box.name}'s device server.`);
+    if (!deps.openDevice) throw new Error(`${PRODUCT} cannot reach box ${box.name}'s device server.`);
     return deps.openDevice(box);
   };
   const deviceBox = (boxId: string): SelkiesBox => {
@@ -796,7 +797,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       // A box that stopped or went while bb-box was away has a new desktop, or none.
       if (box?.state !== "ready") continue;
       resumed.push(entry);
-      bb.log.info(`The viewer with control of box ${box.name}'s desktop as bb-box restarted keeps it if it connects again within ${staleMs / 1000} s.`);
+      bb.log.info(`The viewer with control of box ${box.name}'s desktop as ${PRODUCT} restarted keeps it if it connects again within ${staleMs / 1000} s.`);
     }
     control.resume(resumed);
   })().catch((error) => deps.logError("resume desktop control", error));
@@ -936,7 +937,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                   .find(boxId)
                   .then((box) =>
                     bb.log.warn(
-                      `Box ${box?.name ?? boxId}'s desktop VNC server ${why}, so bb-box ${error ? `could not restart it: ${error.message}` : "restarted it, and the viewer connects again"}.`,
+                      `Box ${box?.name ?? boxId}'s desktop VNC server ${why}, so ${PRODUCT} ${error ? `could not restart it: ${error.message}` : "restarted it, and the viewer connects again"}.`,
                     ),
                   )
                   .catch((caught) => deps.logError("log a desktop server's restart", caught));
@@ -1157,7 +1158,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
         throw new Error("Only the tab with control of the desktop can paste into it. Take control, then paste again.");
       }
       const box = await byCommands(boxId);
-      if (!box) throw new Error("This desktop takes a viewer's clipboard through its own server, so bb-box does not paste into it.");
+      if (!box) throw new Error(`This desktop takes a viewer's clipboard through its own server, so ${PRODUCT} does not paste into it.`);
       pastes.set(boxId, (pastes.get(boxId) ?? 0) + 1);
       const written = await boxes.runOwn(box, clipboardCommands(box.capabilities.os)!.write, { session: "desktop", stdin: text, timeoutMs: CLIPBOARD_TIMEOUT_MS, maxOutputBytes: 64 * 1024 });
       if (written.exitCode !== 0) {

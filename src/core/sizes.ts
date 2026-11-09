@@ -8,6 +8,7 @@ import { currentKindId, isEarlierKindId, kindInfo } from "../backends/kinds.ts";
 import type { BoxSize, MachineSize, DoctorCheck } from "../backends/types.ts";
 import type { AndroidModelName } from "./device-models.ts";
 import { raiseLargestWords, type LargestPart } from "./largest-words.ts";
+import { PRODUCT } from "../brand.ts";
 
 export const PRESETS = ["small", "medium", "large"] as const;
 export type Preset = (typeof PRESETS)[number];
@@ -284,7 +285,7 @@ export function presetMemoryChecks(changes: SizeChanges): DoctorCheck[] {
       detail:
         `The ${preset} ${kind} preset, ${describeSize(sizes.presets[preset])}, has less than ${LINUX_LEAST_MEMORY_GIB} GiB memory, ` +
         "so its boxes can run out of memory as they become BB machines.",
-      fix: `Give it at least ${LINUX_LEAST_MEMORY_GIB} GiB memory in bb-box's settings, under Kinds.`,
+      fix: `Give it at least ${LINUX_LEAST_MEMORY_GIB} GiB memory in ${PRODUCT}'s settings, under Kinds.`,
     }));
   });
 }

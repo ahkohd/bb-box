@@ -1,5 +1,6 @@
 import type { GpuPart } from "../backends/types.ts";
 import type { BoxState } from "../core/boxes.ts";
+import { PRODUCT } from "../brand.ts";
 import type { BoxView } from "./views.ts";
 
 export interface GpuMate {
@@ -40,7 +41,9 @@ export interface UserspaceGap {
 
 export const HOLDS_NO_CARD = "holds no card while stopped";
 
-export const USERSPACE_UPDATE_REFUSAL = "Not updated: updating NVIDIA's userspace is not offered from this page yet. Nothing changed.";
+export function userspaceUpdateCommand(name: string, threadId: string | null): string {
+  return threadId ? `bb box gpu update ${name} --thread ${threadId}` : `bb box gpu update ${name} --machine`;
+}
 
 const USERSPACE_GAP = /its NVIDIA userspace is (\S+) and the host's driver (\S+)/;
 
@@ -196,7 +199,7 @@ export function gpuFooter(box: CardBox, host: string | null): string {
   if (box.state === "stopped" && part === "shared" && dockerGpuBox(box)) return "Stopped: on Docker a box keeps its card while stopped, as its devices are fixed.";
   if (box.state === "stopped") return "Stopped: it holds no place on the card. When it starts it goes back to this card if there is room, or to another card.";
   if (part === "shared") return "Boxes on a card share its memory and its time: one box can take all of its memory. The figures are the whole card's, from the Monitor.";
-  if (dockerGpuBox(box)) return "No other box is placed on this card. On Docker every box with Docker in it can still open it: a whole card here is where bb-box places boxes, not a fence.";
+  if (dockerGpuBox(box)) return "No other box is placed on this card. On Docker every box with Docker in it can still open it: a whole card here is where BB Box places boxes, not a fence.";
   if (lxcGpuBox(box)) return `No other guest on ${where} can open this card: on Proxmox LXC a whole card is fenced. Programs on the host itself can still use it.`;
   return "No other box is placed on this card.";
 }
@@ -240,7 +243,7 @@ export function wrongCardNotice(box: NoticeBox, seen: SeenCard = []): string | n
     if (!dockerGpuBox(box)) return null;
     return `${box.name}'s last start found it on the wrong card: ${said} A start checks again; its devices do not change.`;
   }
-  return `${box.name} is on the wrong card: ${said} Restart it to place it on its card again. bb-box does not stop it.`;
+  return `${box.name} is on the wrong card: ${said} Restart it to place it on its card again. ${PRODUCT} does not stop it.`;
 }
 
 export function otherCheckNotice(box: NoticeBox, seen: SeenCard = []): string | null {

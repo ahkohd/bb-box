@@ -56,7 +56,7 @@ test("init makes the first box user, hidden and in _developer, from the home tem
   assert.deepEqual([user.UniqueID, user.RealName, user.IsHidden, user.NFSHomeDirectory], ["70000", "bb-box bbx-0", "1", "/Users/bbx-0"]);
   assert.deepEqual(mac.members("_developer"), ["bbx-0"]);
   assert.match(mac.file("/Users/bbx-0/.zshenv")!, /path_helper/);
-  // bb-box's pinned CLIs in /usr/local/bin come before Homebrew's, prepended last.
+  // BB Box's pinned CLIs in /usr/local/bin come before Homebrew's, prepended last.
   const zshenv = mac.file("/Users/bbx-0/.zshenv")!;
   assert.ok(zshenv.indexOf('PATH="/usr/local/bin:$PATH"') > zshenv.lastIndexOf("/opt/homebrew"), "after Homebrew's and Node's");
   assert.match(mac.file("/Users/bbx-0/Library/LaunchAgents/com.trycua.cua-driver.plist")!, /<string>serve<\/string>/);
@@ -391,7 +391,7 @@ test("a release leaves what macOS 27 keeps of the old user's /private/var/folder
     assert.equal(status.get("leftovers"), "1");
     assert.match(status.get("leftovers_kib") ?? "", /^\d+$/);
     assert.equal(fields(mac.helper(["status"]).stdout).get("leftovers"), undefined, "not in an ordinary status");
-    // bb-box reads them, and the doctor's state check says so.
+    // BB Box reads them, and the doctor's state check says so.
     const parsed = parseStatus(mac.helper(["status", "xcode"]).stdout).mac?.leftovers;
     assert.equal(parsed?.count, 1);
     assert.equal(parseStatus(mac.helper(["status"]).stdout).mac?.leftovers, null);
@@ -840,7 +840,7 @@ test("the doctor's status names the people whose homes box users can enter, as m
   assert.equal(fields(mac.helper(["status"]).stdout).get("openhomes"), undefined, "not in an ordinary status");
   chmodSync(home, 0o700);
   assert.equal(fields(mac.helper(["status", "xcode"]).stdout).get("openhomes"), "", "closed to others");
-  // A hidden user, as bb-box's admin, is not a person's, though macOS names the flag dsAttrTypeNative:IsHidden.
+  // A hidden user, as BB Box's admin, is not a person's, though macOS names the flag dsAttrTypeNative:IsHidden.
   for (const [name, value] of Object.entries({ UniqueID: "502", UserShell: "/bin/zsh", IsHidden: "1", NFSHomeDirectory: "/private/var/hidden" })) {
     mkdirSync(join(mac.state, "users", "hidden"), { recursive: true });
     writeFileSync(join(mac.state, "users", "hidden", name), `${value}\n`);

@@ -54,7 +54,7 @@ test("the host entry says what machine it runs on: a Windows PC's BB daemon unde
   );
 });
 
-test("the list holds persistent machines bb-box did not make, and any the configuration already uses", () => {
+test("the list holds persistent machines BB Box did not make, and any the configuration already uses", () => {
   const document: ConfigDocument = { ...emptyDocument(1), backends: [{ id: "docker:gone", type: "docker", enabled: true, fields: { host: "bb:host_gone" } }] };
   const listed = machineHosts(
     [
@@ -71,7 +71,7 @@ test("the list holds persistent machines bb-box did not make, and any the config
   assert.deepEqual(listed.map((each) => each.name), ["devpc", "used"]);
 });
 
-test("a machine that holds one of bb-box's own boxes is left out, though it joined BB through manual setup, as a spare or a kept machine does, unless the configuration uses it", async () => {
+test("a machine that holds one of BB Box's own boxes is left out, though it joined BB through manual setup, as a spare or a kept machine does, unless the configuration uses it", async () => {
   const document: ConfigDocument = { ...emptyDocument(1), backends: [{ id: "docker:kept", type: "docker", enabled: true, fields: { host: "bb:host_kept" } }] };
   const manual = { machineProviderId: "manual" };
   const hosts = new DockerHosts({
@@ -277,7 +277,7 @@ test("a BB machine's OS is kept in storage at the host entry's answer, so a rest
   assert.equal(restarted.get("host_m2"), null);
 });
 
-test("a BB machine's name is kept in storage as BB gives it, so a restart names its providers before bb-box reaches it again (#916)", async () => {
+test("a BB machine's name is kept in storage as BB gives it, so a restart names its providers before BB Box reaches it again (#916)", async () => {
   const kv = new MemoryStorage();
   const names = new MachineNames(kv);
   await names.load();

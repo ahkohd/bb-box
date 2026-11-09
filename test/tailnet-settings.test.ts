@@ -14,7 +14,7 @@ function draft(tailnet: unknown) {
   return readDraft({ schema: 1, revision: 0, backends: [], kinds: {}, general: { tailnet } }, DRIVERS);
 }
 
-test("the tailnet's OAuth client is two general secrets, kept only while bb-box uses it, shown only as set, and stored apart", () => {
+test("the tailnet's OAuth client is two general secrets, kept only while BB Box uses it, shown only as set, and stored apart", () => {
   const read = draft({ mode: "oauth", tags: ["tag:bb-box", "tag:bb-box-mac"], clientId: "kCLIENT", clientSecret: SECRET });
   assert.deepEqual(read.problems, []);
   assert.deepEqual(read.document.general.tailnet, { mode: "oauth", tags: ["tag:bb-box", "tag:bb-box-mac"] });
@@ -53,7 +53,7 @@ function fakeTailscale(options: { devicesStatus?: number } = {}): TailnetFetch {
   };
 }
 
-test("backends get the tailnet as the settings have it now, and the doctor checks the client and lists only this install's bb-box devices, counting the others with the tag", async () => {
+test("backends get the tailnet as the settings have it now, and the doctor checks the client and lists only this install's BB Box devices, counting the others with the tag", async () => {
   const backends = new Backends({ storage: new MemoryStorage(), installId: "i1", logError: () => {}, tailnetFetch: fakeTailscale() });
   const on = draft({ mode: "oauth", clientId: "kCLIENT", clientSecret: SECRET });
   await backends.configure(on.document, withSecretChanges({}, on.secrets, on.document));
@@ -63,7 +63,7 @@ test("backends get the tailnet as the settings have it now, and the doctor check
   const report = await tailnetDoctor(tailnet, "i1");
   assert.equal(report.ok, true);
   assert.deepEqual(report.checks.map((check) => `${check.id} ${check.status}`), ["tailnet.client ok", "tailnet.devices ok"]);
-  assert.equal(report.checks[1]!.detail, "1 of bb-box's on the tailnet: bb-box-ns-i1-mac-one. 2 other devices have the tags tag:bb-box; bb-box leaves them alone.");
+  assert.equal(report.checks[1]!.detail, "1 of BB Box's on the tailnet: bb-box-ns-i1-mac-one. 2 other devices have the tags tag:bb-box; BB Box leaves them alone.");
 
   const off = draft({ mode: "off" });
   await backends.configure(off.document, {});

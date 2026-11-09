@@ -135,7 +135,7 @@ test("each page's Markdown copy is served at its address with .md and with index
   assert.deepEqual(pages.filter((page) => !full.includes(`\n# ${page.title}\n\nSource: /${page.id}/\n`)).map((page) => page.id), [], "pages missing from llms-full.txt");
 });
 
-test("the home page's setup prompt installs bb-box as the quick start does, with only bb box commands the CLI has, its setup skill and the quick start's numbers", () => {
+test("the home page's setup prompt installs BB Box as the quick start does, with only bb box commands the CLI has, its setup skill and the quick start's numbers", () => {
   const command = installCommand(pages);
   const quickStart = pages.find((page) => page.id === "start/quick-start")!.markdown.replace(/\s+/g, " ");
   assert.match(command, /^bb plugin install git:\S+$/);

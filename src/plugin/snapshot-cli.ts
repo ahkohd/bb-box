@@ -7,6 +7,7 @@ import { isKept, type Caller, type SnapshotRecord, type Standing } from "../core
 import { HOLD_STEPS, HOLD_WORDS, LIVE_CHECKS_VARIABLE, type HoldStepName } from "./live-checks.ts";
 import { deletedText, forkCheckText, forkedText, keepCheckText, keptText, listText, restoreCheckText, restoredText, takenText } from "./snapshot-words.ts";
 import type { BbBox } from "./setup.ts";
+import { PRODUCT } from "../brand.ts";
 
 const COMMAND: Caller = { is: "command" };
 const jsonOption = { json: { type: "boolean", description: "Print JSON." } } as const;
@@ -106,13 +107,13 @@ export function snapshotCommands(app: BbBox) {
         }),
     }),
     "snapshot list": cliCommand({
-      summary: "List the snapshots of a box, of a thread's boxes, of your machines with --machine, or with --all every snapshot bb-box records, those of released boxes too.",
+      summary: `List the snapshots of a box, of a thread's boxes, of your machines with --machine, or with --all every snapshot ${PRODUCT} records, those of released boxes too.`,
       positionals: [{ name: "box", description: "The box's name or ID. Every box of the thread, or of your machines, when left out.", required: false }],
       options: {
         ...threadOption,
         ...machineOption,
         ...jsonOption,
-        all: { type: "boolean", description: "Every snapshot bb-box records, of every thread's boxes and of boxes that are gone." },
+        all: { type: "boolean", description: `Every snapshot ${PRODUCT} records, of every thread's boxes and of boxes that are gone.` },
         kept: { type: "boolean", description: "Only kept snapshots." },
       },
       run: ({ positionals, options }, ctx) =>
@@ -153,7 +154,7 @@ export function snapshotCommands(app: BbBox) {
     }),
     "snapshot restore": cliCommand({
       summary:
-        "Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. bb-box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force. It refuses a box threads run on, as restores of such boxes stay off until bb-box can hold every turn on them. Asks for --replace.",
+        `Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. ${PRODUCT} takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force. It refuses a box threads run on, as restores of such boxes stay off until ${PRODUCT} can hold every turn on them. Asks for --replace.`,
       positionals: [
         { name: "box", description: "The box's name or ID.", required: true },
         { name: "snapshot", description: "The snapshot's name or ID.", required: true },
@@ -165,7 +166,7 @@ export function snapshotCommands(app: BbBox) {
         replace: { type: "boolean", description: "Replace the box's disk with the snapshot's." },
         "no-undo": { type: "boolean", description: "Take no undo first, so this cannot be undone." },
         force: { type: "boolean", description: "Restore anyway while a person holds the box's desktop or a BB terminal is open on it, ending them." },
-        unflushed: { type: "boolean", description: "Restore anyway when bb-box cannot flush the box's writes to its disk before stopping it, so its undo may miss the last seconds' writes." },
+        unflushed: { type: "boolean", description: `Restore anyway when ${PRODUCT} cannot flush the box's writes to its disk before stopping it, so its undo may miss the last seconds' writes.` },
         check: { type: "boolean", description: "Say what the restore would do, and refuse what it would refuse, changing nothing." },
         request: { type: "string", description: "An ID you make, so a repeat of this command is the same restore." },
       },
@@ -198,7 +199,7 @@ export function snapshotCommands(app: BbBox) {
     }),
     "snapshot fork": cliCommand({
       summary:
-        "Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and bb-box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks, from its held copy on Proxmox and from the snapshot itself on Tart, as one of your machines; name its box as bb box snapshot list --all does.",
+        `Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and ${PRODUCT} checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks, from its held copy on Proxmox and from the snapshot itself on Tart, as one of your machines; name its box as bb box snapshot list --all does.`,
       positionals: [
         { name: "box", description: "The box's name or ID.", required: true },
         { name: "snapshot", description: "The snapshot's name or ID.", required: true },
@@ -224,7 +225,7 @@ export function snapshotCommands(app: BbBox) {
         guard("Forking the snapshot", async () => {
           const box = await boxOrGone(app, ownerOrNone(options, ctx), positionals.box);
           const asked = options.gpu === undefined ? undefined : String(options.gpu);
-          if (asked !== undefined && asked !== "none" && asked !== "shared" && asked !== "whole") throw new BoxError("invalid_value", `gpu is ${wholeCardsOn(app) ? "none, shared or whole" : "none or shared"}. bb-box copied nothing.`);
+          if (asked !== undefined && asked !== "none" && asked !== "shared" && asked !== "whole") throw new BoxError("invalid_value", `gpu is ${wholeCardsOn(app) ? "none, shared or whole" : "none or shared"}. ${PRODUCT} copied nothing.`);
           const gpu: GpuPart | undefined = asked === "shared" || asked === "whole" || asked === "none" ? asked : undefined;
           const input = { ...(options.name !== undefined ? { name: String(options.name) } : {}), ...(options["as-machine"] ? { asMachine: true } : {}), ...(gpu ? { gpu } : {}) };
           const gone = box ? null : snapshots.findGone(positionals.box, positionals.snapshot);
@@ -241,7 +242,7 @@ export function snapshotCommands(app: BbBox) {
     }),
     "snapshot keep": cliCommand({
       summary:
-        "Keep a snapshot of a thread's box, or with --machine one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart. bb-box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list --all names it.",
+        `Keep a snapshot of a thread's box, or with --machine one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart. ${PRODUCT} deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list --all names it.`,
       positionals: [
         { name: "box", description: "The box's name or ID.", required: true },
         { name: "snapshot", description: "The snapshot's name or ID.", required: true },
@@ -291,18 +292,18 @@ export function snapshotCommands(app: BbBox) {
     }),
     "snapshot forget": cliCommand({
       summary:
-        "Forget every snapshot bb-box records on a backend, so the backend can be removed from bb-box's settings. bb-box deletes nothing: they may still exist there, and be billed. Asks for --yes.",
+        `Forget every snapshot ${PRODUCT} records on a backend, so the backend can be removed from ${PRODUCT}'s settings. ${PRODUCT} deletes nothing: they may still exist there, and be billed. Asks for --yes.`,
       positionals: [{ name: "backend", description: "The backend's ID, from bb box backend list.", required: true }],
       options: { yes: { type: "boolean", description: "Forget them." } },
       run: ({ positionals, options }) =>
         guard("Forgetting the snapshots", async () => {
           const held = snapshots.heldOn(positionals.backend);
           const records = snapshots.ledger.records({ backend: positionals.backend });
-          if (!records.length) return out(`bb-box records no snapshots on backend ${positionals.backend}.`);
+          if (!records.length) return out(`${PRODUCT} records no snapshots on backend ${positionals.backend}.`);
           if (!options.yes) {
             return {
               exitCode: 1,
-              stderr: `This forgets ${held?.words ?? `${records.length} records of snapshots`}. bb-box deletes none of them: they may still exist on that backend, and be billed. Run it again with --yes to forget them.\n`,
+              stderr: `This forgets ${held?.words ?? `${records.length} records of snapshots`}. ${PRODUCT} deletes none of them: they may still exist on that backend, and be billed. Run it again with --yes to forget them.\n`,
             };
           }
           const forgotten = snapshots.forgetBackend(positionals.backend);
@@ -312,7 +313,7 @@ export function snapshotCommands(app: BbBox) {
     ...(holds
       ? {
           "snapshot hold-next": cliCommand({
-            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: the next snapshot operation to reach the step named stops there, as if bb-box stopped there, until bb-box restarts.`,
+            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: the next snapshot operation to reach the step named stops there, as if ${PRODUCT} stopped there, until ${PRODUCT} restarts.`,
             options: {
               at: {
                 type: "enum",
@@ -320,14 +321,14 @@ export function snapshotCommands(app: BbBox) {
                 description:
                   "planned: once recorded, before the backend is asked; task: once a provider's task has begun; checked: once a restore's last check for running turns is done, before its stop; stopped, undo, rolled-back, started: once a restore's stop, undo, rollback or start is done; claim-kept: once a restore has written the box's GPU claim back after its rollback; claim-cleared: once a swap has set its old guest's GPU claim to none; adopted: once a swap's new guest is made, before it has the claim; claim-given: once a swap's new guest has the claim; forked: once a fork's copy is made, given its own addresses and disarmed, before its links come up and its first start.",
               },
-              seconds: { type: "integer", min: 1, max: 3600, description: "Hold for this many seconds, then go on. Without it, the hold lasts until bb-box restarts." },
+              seconds: { type: "integer", min: 1, max: 3600, description: `Hold for this many seconds, then go on. Without it, the hold lasts until ${PRODUCT} restarts.` },
               off: { type: "boolean", description: "Hold nothing." },
             },
             async run({ options }) {
               const step = options.off ? null : ((options.at as HoldStepName | undefined) ?? "task");
               const seconds = typeof options.seconds === "number" && options.seconds > 0 ? options.seconds : null;
               holds.arm(step, seconds === null ? null : seconds * 1000);
-              return out(step ? `The next snapshot operation to reach it stops after ${HOLD_WORDS[step]}, ${seconds === null ? "until bb-box restarts" : `for ${seconds} s`}.` : "No snapshot operation is held.");
+              return out(step ? `The next snapshot operation to reach it stops after ${HOLD_WORDS[step]}, ${seconds === null ? `until ${PRODUCT} restarts` : `for ${seconds} s`}.` : "No snapshot operation is held.");
             },
           }),
         }
@@ -335,15 +336,15 @@ export function snapshotCommands(app: BbBox) {
     ...(app.machineRestores
       ? {
           "snapshot machine-restores": cliCommand({
-            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: turns restores of boxes threads run on, by the person and by an agent through the form, on or off until bb-box restarts.`,
+            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: turns restores of boxes threads run on, by the person and by an agent through the form, on or off until ${PRODUCT} restarts.`,
             positionals: [{ name: "switch", description: "on or off.", required: true }],
             async run({ positionals }) {
               if (positionals.switch !== "on" && positionals.switch !== "off") throw new PluginCliError(`Give on or off, not "${positionals.switch}".`, { code: "invalid_value" });
               app.machineRestores!.set(positionals.switch === "on");
               return out(
                 positionals.switch === "on"
-                  ? "Restores of boxes threads run on are on until bb-box restarts: always with an undo, from disk snapshots only, holding every turn on the box while they run."
-                  : "Restores of boxes threads run on are off, for live checks, until bb-box restarts.",
+                  ? `Restores of boxes threads run on are on until ${PRODUCT} restarts: always with an undo, from disk snapshots only, holding every turn on the box while they run.`
+                  : `Restores of boxes threads run on are off, for live checks, until ${PRODUCT} restarts.`,
               );
             },
           }),
@@ -352,7 +353,7 @@ export function snapshotCommands(app: BbBox) {
     ...(app.zfsOrder
       ? {
           "snapshot zfs-order": cliCommand({
-            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: restores on a backend from now on run ZFS's order where its storage is not ZFS, until bb-box restarts. Such a restore takes a held copy of the stopped box as its undo and restores only the newest snapshot, and undoing it swaps the box to a new guest made from the copy.`,
+            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: restores on a backend from now on run ZFS's order where its storage is not ZFS, until ${PRODUCT} restarts. Such a restore takes a held copy of the stopped box as its undo and restores only the newest snapshot, and undoing it swaps the box to a new guest made from the copy.`,
             positionals: [
               { name: "backend", description: "The backend's ID, as bb box config show lists it.", required: true },
               { name: "switch", description: "on or off.", required: true },
@@ -362,7 +363,7 @@ export function snapshotCommands(app: BbBox) {
               if (!app.backends.get(backend)) throw new PluginCliError(`There is no backend "${backend}".`, { code: "not_found", hint: "bb box config show lists the backends' IDs." });
               if (positionals.switch !== "on" && positionals.switch !== "off") throw new PluginCliError(`Give on or off, not "${positionals.switch}".`, { code: "invalid_value" });
               app.zfsOrder!.set(backend, positionals.switch === "on");
-              return out(positionals.switch === "on" ? `Restores on ${backend} run ZFS's order from now on, for live checks, until bb-box restarts.` : `Restores on ${backend} run in its storage's own order again.`);
+              return out(positionals.switch === "on" ? `Restores on ${backend} run ZFS's order from now on, for live checks, until ${PRODUCT} restarts.` : `Restores on ${backend} run in its storage's own order again.`);
             },
           }),
         }
@@ -370,7 +371,7 @@ export function snapshotCommands(app: BbBox) {
     ...(prices
       ? {
           "snapshot fake-price": cliCommand({
-            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: snapshots taken on a backend from now on carry a made-up price in US dollars a day, so the ceiling on paid snapshots can be checked where no backend charges. Until bb-box restarts.`,
+            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: snapshots taken on a backend from now on carry a made-up price in US dollars a day, so the ceiling on paid snapshots can be checked where no backend charges. Until ${PRODUCT} restarts.`,
             positionals: [
               { name: "backend", description: "The backend's ID, as bb box config show lists it.", required: true },
               { name: "amount", description: "Dollars a day for each snapshot, such as 0.056; or off.", required: true },
@@ -385,11 +386,11 @@ export function snapshotCommands(app: BbBox) {
               const daily = Number(positionals.amount);
               if (!Number.isFinite(daily) || daily <= 0) throw new PluginCliError(`Give an amount a day above 0, such as 0.056, or off; not "${positionals.amount}".`, { code: "invalid_value" });
               prices.set(backend, daily);
-              return out(`Snapshots taken on ${backend} from now on carry a made-up price of $${daily} a day, for live checks, until bb-box restarts.`);
+              return out(`Snapshots taken on ${backend} from now on carry a made-up price of $${daily} a day, for live checks, until ${PRODUCT} restarts.`);
             },
           }),
           "snapshot fake-included": cliCommand({
-            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: bb-box counts a backend's plan as including fewer snapshots than its provider says, so the ceiling can be checked without holding many. Until bb-box restarts.`,
+            summary: `For live checks, with ${LIVE_CHECKS_VARIABLE}=1 on BB's server: ${PRODUCT} counts a backend's plan as including fewer snapshots than its provider says, so the ceiling can be checked without holding many. Until ${PRODUCT} restarts.`,
             positionals: [
               { name: "backend", description: "The backend's ID, as bb box config show lists it.", required: true },
               { name: "count", description: "How many snapshots to count as included, such as 1; or off.", required: true },
@@ -399,12 +400,12 @@ export function snapshotCommands(app: BbBox) {
               if (!app.backends.get(backend)) throw new PluginCliError(`There is no backend "${backend}".`, { code: "not_found", hint: "bb box config show lists the backends' IDs." });
               if (positionals.count === "off") {
                 prices.setIncluded(backend, null);
-                return out(`bb-box counts the snapshots ${backend}'s plan includes as its provider says again.`);
+                return out(`${PRODUCT} counts the snapshots ${backend}'s plan includes as its provider says again.`);
               }
               const included = Number(positionals.count);
               if (!Number.isInteger(included) || included < 0) throw new PluginCliError(`Give a whole number of snapshots, 0 or more, or off; not "${positionals.count}".`, { code: "invalid_value" });
               prices.setIncluded(backend, included);
-              return out(`bb-box counts ${backend}'s plan as including ${included} snapshot${included === 1 ? "" : "s"}, at most what its provider says, for live checks, until bb-box restarts.`);
+              return out(`${PRODUCT} counts ${backend}'s plan as including ${included} snapshot${included === 1 ? "" : "s"}, at most what its provider says, for live checks, until ${PRODUCT} restarts.`);
             },
           }),
         }

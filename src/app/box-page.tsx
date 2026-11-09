@@ -6,7 +6,7 @@ import type { BoxPageState, Contract, ThreadOnBox } from "../plugin/contract.ts"
 import type { BoxView } from "../plugin/views.ts";
 import { Badge, boxTitleBadges, deviceModelOf, EmptyPanel, OPERATOR, osName, SETTINGS_PATH, StatusDot, systemName, useLive, useNow } from "./common.tsx";
 import { BoxGlyph } from "./glyphs.tsx";
-import { ThreadChips, threadTitle, WorkingMark } from "./thread-chips.tsx";
+import { ThreadChips, threadName, threadTitle, WorkingMark } from "./thread-chips.tsx";
 import { JoinHelp, joinAdvice } from "./first-run.tsx";
 import { tryWords } from "../core/join-tries.ts";
 import { BoxMenu, type MenuAsk } from "./box-menu.tsx";
@@ -22,12 +22,13 @@ import { useThreadTitles } from "./desktop.tsx";
 import { busyNow, busyUntil, type ShownBusy } from "./row-line.ts";
 import { useWakeAt } from "./row-status.tsx";
 import { Activity } from "./activity.tsx";
-import { GpuCard, GpuNotices, UpdateUserspaceDialog } from "./gpu-card.tsx";
+import { GpuCard, GpuNotices } from "./gpu-card.tsx";
 import { PageNotice } from "./page-notice.tsx";
 import { gpuFactLines } from "../plugin/gpu-page.ts";
 import { SnapshotNotices, SnapshotsCard, TakeSnapshotDialog, useSnapshotTitles } from "./snapshots-card.tsx";
-import { snapshotWhen } from "./snapshot-words.ts";
+import { whenInSentence } from "./snapshot-words.ts";
 import { boxViews, viewGlyph, type ViewChoice } from "./view-bar.tsx";
+import { PRODUCT } from "./product.ts";
 import {
   acquireSteps,
   actorWords,
@@ -625,7 +626,7 @@ function Facts({ box, mates, now }: { box: BoxView; mates: BoxPageState["gpuMate
           second={
             <>
               {dayAndClock(box.createdAt, now)}
-              {box.forkedFrom ? <span className="block">Forked from {box.forkedFrom.name}, "{box.forkedFrom.snapshot}" ({snapshotWhen(box.forkedFrom.takenAt, now).replace(/^[TY]/, (first) => first.toLowerCase())})</span> : null}
+              {box.forkedFrom ? <span className="block">Forked from {box.forkedFrom.name}, "{box.forkedFrom.snapshot}" ({whenInSentence(box.forkedFrom.takenAt, now)})</span> : null}
             </>
           }
         >
@@ -679,7 +680,7 @@ function HowItStarted({ box, now, titles }: { box: BoxView; now: number; titles:
   const restartSteps = startSteps(box.timings).filter(([step]) => step !== "start.total");
   const by = restart ? actorWords(restart.by, titles) : null;
   const quicker = steps.length - longest.size;
-  const summary = [quicker > 0 ? `And ${quicker} quicker ${quicker === 1 ? "step" : "steps"}.` : null, afterwards !== null ? `Once it was ready, bb-box named it for its thread in ${stepTime(afterwards)}.` : null, joined !== null ? `It joined BB ${stepTime(joined)} later.` : null, `Made ${dayAndClock(box.createdAt, now)}.`].filter(Boolean).join(" ");
+  const summary = [quicker > 0 ? `And ${quicker} quicker ${quicker === 1 ? "step" : "steps"}.` : null, afterwards !== null ? `Once it was ready, ${PRODUCT} named it for its thread in ${stepTime(afterwards)}.` : null, joined !== null ? `It joined BB ${stepTime(joined)} later.` : null, `Made ${whenInSentence(box.createdAt, now)}.`].filter(Boolean).join(" ");
   return (
     <section aria-labelledby="started-heading" className="rounded-lg border border-border bg-card px-4 py-3">
       <div className="flex items-baseline justify-between gap-2">
@@ -710,7 +711,7 @@ function HowItStarted({ box, now, titles }: { box: BoxView; now: number; titles:
       <p className="mt-2 text-xs text-subtle-foreground">{summary}</p>
       {restart && restart.readyAt !== null ? (
         <p className="mt-2 border-t border-border pt-2 text-xs text-muted-foreground">
-          Last started {dayAndClock(restart.askedAt, now)}
+          Last started {whenInSentence(restart.askedAt, now)}
           {by ? `, ${by}` : ""}: ready in {stepTime(restart.readyAt - restart.askedAt)}
           {restartSteps.length ? ` (${restartSteps.map(([step, ms]) => `${stepName(step).toLowerCase()} ${stepTime(ms)}`).join(", ")})` : ""}.
         </p>
@@ -778,7 +779,6 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
   const [asking, setAsking] = useState<MenuAsk>(null);
   const [resizing, setResizing] = useState(false);
   const [resizeAt, setResizeAt] = useState<"size" | "gpu">("size");
-  const [updatingUserspace, setUpdatingUserspace] = useState(false);
   const [announced, setAnnounced] = useState("");
   const [takingSnapshot, setTakingSnapshot] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
@@ -790,7 +790,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
   const threadId = page.threadId ?? OPERATOR;
   const busyOf = (busy: string | null): PageActions["busy"] => (busy === `stop:${box.id}` ? "stop" : busy === `start:${box.id}` ? "start" : busy === `enrol:${box.id}` ? "enrol" : null);
   const act = (method: "stop" | "start" | "release" | "refresh" | "forget" | "enrol", options: { readonly deleteKept?: boolean } = {}) =>
-    void (yours ? machineActions.act(method === "release" ? "remove" : method, box, false, options.deleteKept === true) : threadActions.act(threadId, method, box, false, options.deleteKept === true));
+    yours ? machineActions.act(method === "release" ? "remove" : method, box, false, options.deleteKept === true) : threadActions.act(threadId, method, box, false, options.deleteKept === true);
   const actions: PageActions = {
     act,
     busy: busyOf(yours ? machineActions.busy : threadActions.busy),
@@ -834,7 +834,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       <Header page={page} box={box} route={route} now={now} titles={titles} actions={actions} menu={menu} />
       <ProblemLine problem={problem} onDismiss={() => (yours ? machineActions.setProblem(null) : threadActions.setProblem(null))} />
       <Notices page={page} box={box} now={now} actions={actions} announce={setAnnounced} />
-      <GpuNotices box={box} monitor={page.monitor} onUpdate={() => setUpdatingUserspace(true)} />
+      <GpuNotices box={box} monitor={page.monitor} threadId={yours ? null : threadId} />
       {snapshotsShown ? <SnapshotNotices box={box} view={snapshots} now={now} titles={snapshotTitles} onChanged={refreshAll} /> : null}
       <p aria-live="polite" data-announcer className="sr-only">
         {announced}
@@ -865,14 +865,13 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       )}
       {yours ? machineActions.dialogs : threadActions.dialogs}
       {takingSnapshot && snapshots?.offer ? <TakeSnapshotDialog box={box} view={snapshots} now={now} returnTo={menuTrigger} onClose={() => setTakingSnapshot(false)} onChanged={refreshAll} /> : null}
-      {updatingUserspace ? <UpdateUserspaceDialog box={box} titles={titles} threads={page.threads} monitor={page.monitor} onClose={() => setUpdatingUserspace(false)} /> : null}
     </PageFrame>
   );
 }
 
 function useActorTitles(threadIds: readonly string[], holder: ThreadOnBox | null): ThreadTitles {
   const fetched = useThreadTitles(threadIds.filter((id) => id !== holder?.id));
-  return holder ? { ...fetched, [holder.id]: threadTitle(holder) } : fetched;
+  return holder ? { ...fetched, [holder.id]: threadName(holder) } : fetched;
 }
 
 function actorThreads(box: BoxView | null): string[] {

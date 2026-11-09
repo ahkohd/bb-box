@@ -88,7 +88,7 @@ test("pins end with their operation: done, failed, and settled after a restart",
     assert.ok(eligible(target, "delete", { pin: pinsOf(ended).get(target.id) ?? null, now: NOW }).ok, state);
   }
   const unknown = operation("restore", [target.id], { state: "unknown" });
-  assert.equal(pinsOf(unknown).get(target.id), unknown, "an operation bb-box could not confirm still pins");
+  assert.equal(pinsOf(unknown).get(target.id), unknown, "an operation BB Box could not confirm still pins");
 });
 
 test("automatic deletions never take a kept snapshot, the person's, an undo, or one an agent did not take; the limit goes by who took it, so an agent's on the person's machine may go", () => {
@@ -340,7 +340,7 @@ test("restoreRoute: an agent restores its own box at once, through the form when
   for (const caller of [AGENT, PERSON, COMMAND]) {
     const off = restoreRoute(caller, { ...on, machineRestores: false }, onMachine);
     assert.equal(off.ok, false);
-    assert.match((off as { why: string }).why, /does not restore a box threads run on yet: that stays off until bb-box can hold every turn on it/);
+    assert.match((off as { why: string }).why, /does not restore a box threads run on yet: that stays off until BB Box can hold every turn on it/);
     assert.match((restoreRoute(caller, on, { onAMachine: true, memory: true }) as { why: string }).why, /restored from disk snapshots only/);
   }
   assert.deepEqual(restoreRoute(PERSON, on, onMachine), { ok: true, through: "restore" });

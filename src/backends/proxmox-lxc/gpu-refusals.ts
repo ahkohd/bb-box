@@ -1,6 +1,7 @@
 import { OPERATOR, SPARES } from "../../core/boxes.ts";
 import { cardName, type HelperCard, type HelperHolder } from "./gpu-marking.ts";
 import type { Refusal } from "./gpu-servers.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export interface BoxMaking {
   readonly name: string;
@@ -69,7 +70,7 @@ export function holderWords(holder: Holder, namer: CardNamer, audience: Audience
   if (holder.is === "box") return boxWords(holder.name, holder.threadId, namer, audience, inBrackets);
   if (holder.is === "warm") return "a warm desktop";
   if (holder.is === "other-install") return `CT ${holder.vmid} of another install`;
-  return `CT ${holder.vmid}, which is not bb-box's`;
+  return `CT ${holder.vmid}, which is not ${PRODUCT}'s`;
 }
 
 function makingWords(making: BoxMaking | null, namer: CardNamer, audience: Audience, inBrackets = false): string {
@@ -98,7 +99,7 @@ export function blockWords(block: CardBlock, namer: CardNamer, audience: Audienc
       return `${card} is ${holder.name}'s whole card${audience.to === "person" ? threadWords(holder.threadId, namer) : ""}`;
     }
     case "reserved-whole":
-      return `${card} is kept whole for ${makingWords(block.making, namer, audience)}, which bb-box is ${doingWords(block.making)}`;
+      return `${card} is kept whole for ${makingWords(block.making, namer, audience)}, which ${PRODUCT} is ${doingWords(block.making)}`;
     case "unsettled":
       return `${card} waits for ${inWords(block.vmids.map((vmid) => `CT ${vmid}`))} to ask again, as the GPU helper's ledger was lost and ${block.vmids.length === 1 ? "it" : "each"} may hold the card`;
     case "limit": {
@@ -115,9 +116,9 @@ export function blockWords(block: CardBlock, namer: CardNamer, audience: Audienc
       const starting = block.making.filter((making) => making?.starting && !making.resizing);
       const placing = block.making.filter((making) => !making?.starting && !making?.resizing);
       const said = [
-        ...(placing.length ? [`bb-box is placing ${inWords(placing.map((making) => makingWords(making, namer, audience)))} on ${card}`] : []),
-        ...(starting.length ? [`bb-box is starting ${inWords(starting.map((making) => makingWords(making, namer, audience)))} on ${card}`] : []),
-        ...(resizing.length ? [`bb-box is changing the GPU of ${inWords(resizing.map((making) => makingWords(making, namer, audience)))} to ${card}`] : []),
+        ...(placing.length ? [`${PRODUCT} is placing ${inWords(placing.map((making) => makingWords(making, namer, audience)))} on ${card}`] : []),
+        ...(starting.length ? [`${PRODUCT} is starting ${inWords(starting.map((making) => makingWords(making, namer, audience)))} on ${card}`] : []),
+        ...(resizing.length ? [`${PRODUCT} is changing the GPU of ${inWords(resizing.map((making) => makingWords(making, namer, audience)))} to ${card}`] : []),
       ];
       return said.join(", and ");
     }
@@ -209,7 +210,7 @@ export function placementRefusal(input: {
   const { node, part, blocks, namer, threadId } = input;
   return {
     person: `${reasonSentence(node, part, blocks, namer, PERSON)} ${input.personFix}`,
-    agent: `Not made: ${lead(node, part)}${blocks.length ? `: ${blocksWords(blocks, namer, { to: "agent", threadId })}` : ""}. ${agentChoices(blocks, namer, threadId, input.agentInstead)} bb-box changed nothing.`,
+    agent: `Not made: ${lead(node, part)}${blocks.length ? `: ${blocksWords(blocks, namer, { to: "agent", threadId })}` : ""}. ${agentChoices(blocks, namer, threadId, input.agentInstead)} ${PRODUCT} changed nothing.`,
   };
 }
 

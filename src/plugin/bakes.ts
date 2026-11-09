@@ -16,6 +16,7 @@ import { BoxError, LOAD_ENVIRONMENT, type BoxRecord } from "../core/boxes.ts";
 import type { ImageConfig } from "../core/document.ts";
 import { trialCheck } from "../core/refresh.ts";
 import { quote } from "../transports/process.ts";
+import { PRODUCT } from "../brand.ts";
 
 const DAY_MS = 24 * 60 * 60_000;
 /** Boxes started within these days that make an image baked on a backend (049). */
@@ -502,7 +503,7 @@ export class ImageBakes {
     } catch (error) {
       return { box: null, detail: `The build box could not be kept: ${message(error)}` };
     }
-    if (!this.#deps.keep) return { box: null, detail: "This bb-box keeps no box of a try." };
+    if (!this.#deps.keep) return { box: null, detail: `This ${PRODUCT} keeps no box of a try.` };
     try {
       const box = await this.#deps.keep({ ...input.keep!, kind: input.kind, backend: backend.id, name: input.name, build: build.build, ref: build.ref });
       made.splice(made.indexOf(build.ref), 1);
@@ -752,7 +753,7 @@ export class ImageBakes {
   }
 
   stop(): void {
-    this.#stop.abort(new Error("bb-box is stopping."));
+    this.#stop.abort(new Error(`${PRODUCT} is stopping.`));
   }
 }
 

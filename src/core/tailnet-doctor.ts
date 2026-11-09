@@ -1,5 +1,6 @@
 import type { DoctorCheck, DoctorReport } from "../backends/types.ts";
 import { isInstallDevice, type Tailnet } from "./tailnet.ts";
+import { PRODUCT } from "../brand.ts";
 
 export async function tailnetDoctor(tailnet: Tailnet, installId: string, signal?: AbortSignal): Promise<DoctorReport> {
   const signedIn = await tailnet.check(signal);
@@ -13,8 +14,8 @@ export async function tailnetDoctor(tailnet: Tailnet, installId: string, signal?
       const devices = await tailnet.devices(signal);
       const own = devices.filter((device) => isInstallDevice(device.hostname, installId));
       const others = devices.length - own.length;
-      const ownWords = own.length ? `${own.length} of bb-box's on the tailnet: ${own.map((device) => device.hostname).join(", ")}.` : "None of bb-box's on the tailnet.";
-      const otherWords = others ? ` ${others} other ${others === 1 ? "device has" : "devices have"} the tags ${tailnet.tags.join(", ")}; bb-box leaves ${others === 1 ? "it" : "them"} alone.` : "";
+      const ownWords = own.length ? `${own.length} of ${PRODUCT}'s on the tailnet: ${own.map((device) => device.hostname).join(", ")}.` : `None of ${PRODUCT}'s on the tailnet.`;
+      const otherWords = others ? ` ${others} other ${others === 1 ? "device has" : "devices have"} the tags ${tailnet.tags.join(", ")}; ${PRODUCT} leaves ${others === 1 ? "it" : "them"} alone.` : "";
       checks.push({ id: "tailnet.devices", name: "Devices", status: "ok", detail: ownWords + otherWords, fix: null });
     } catch (error) {
       checks.push({
@@ -22,10 +23,10 @@ export async function tailnetDoctor(tailnet: Tailnet, installId: string, signal?
         name: "Devices",
         status: "warn",
         detail: error instanceof Error ? error.message : String(error),
-        fix: "Give the OAuth client the devices:core scope too, so bb-box can find and remove the devices of machines that went without logging out.",
+        fix: `Give the OAuth client the devices:core scope too, so ${PRODUCT} can find and remove the devices of machines that went without logging out.`,
       });
     }
   }
   const ok = checks.every((check) => check.status !== "fail");
-  return { ok, summary: ok ? "bb-box's machines join the tailnet with single-use keys." : "bb-box cannot make keys for the tailnet.", checks, notes: [] };
+  return { ok, summary: ok ? `${PRODUCT}'s machines join the tailnet with single-use keys.` : `${PRODUCT} cannot make keys for the tailnet.`, checks, notes: [] };
 }

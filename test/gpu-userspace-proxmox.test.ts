@@ -34,7 +34,7 @@ test("071 unit 12: Proxmox LXC says why it cannot tell the host's driver: a help
   const plain = none.backend();
   assert.deepEqual(await plain.nvidiaHost("linux"), {
     driver: null,
-    refused: { why: "bb-box cannot tell the NVIDIA driver on pve: it has no GPU helper, and no running box of this install there showed the driver.", fix: "Set up the helper with host/setup-gpu.sh, as root on pve, or start a box there." },
+    refused: { why: "BB Box cannot tell the NVIDIA driver on pve: it has no GPU helper, and no running box of this install there showed the driver.", fix: "Set up the helper with host/setup-gpu.sh, as root on pve, or start a box there." },
   });
 });
 

@@ -11,6 +11,7 @@ import type { BackendStorage } from "../types.ts";
 import { HetznerError, type FirewallRule, type Hetzner, type Labels } from "./api.ts";
 import type { HostRecord } from "./hosts.ts";
 import { storedKeyPair } from "../ssh-key.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const TAILSCALE_DIRECT_PORT = "41641";
 const SSH_KEY = "ssh-key";
@@ -122,7 +123,7 @@ export class HostReach {
     } catch (error) {
       if (!(error instanceof HetznerError && error.taken)) throw error;
       const made = (await this.#options.api.sshKeys(this.labels, signal)).find((each) => each.name === this.resourceName);
-      if (!made) throw new Error(`Hetzner Cloud has an SSH key named ${this.resourceName} or with bb-box's public key that is not this install's. Delete it in the Console.`);
+      if (!made) throw new Error(`Hetzner Cloud has an SSH key named ${this.resourceName} or with ${PRODUCT}'s public key that is not this install's. Delete it in the Console.`);
       return made.id;
     }
   }
@@ -147,7 +148,7 @@ export class HostReach {
   canReach(): string | null {
     if (this.#options.tailnet()) return null;
     if (this.#options.sshFrom.length) return null;
-    return "bb-box reaches a host over the tailnet, which is off, or over the internet from the addresses in SSH from, which is empty. Turn the tailnet on in BB Box's General settings, or set SSH from to BB's server's public address";
+    return `${PRODUCT} reaches a host over the tailnet, which is off, or over the internet from the addresses in SSH from, which is empty. Turn the tailnet on in BB Box's General settings, or set SSH from to BB's server's public address`;
   }
 
   async address(record: HostRecord, signal?: AbortSignal): Promise<HostAddress> {
@@ -233,11 +234,11 @@ export class HostReach {
     this.#forwards.set(record.hostId, forward);
     const sleep = this.#options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
     for (let waited = 0; waited < FORWARD_UP_WITHIN_MS; waited += FORWARD_POLL_MS) {
-      if (forward.exited !== null) throw new Error(`bb-box could not reach ${record.serverName} at ${address} over SSH: ${forward.exited}`);
+      if (forward.exited !== null) throw new Error(`${PRODUCT} could not reach ${record.serverName} at ${address} over SSH: ${forward.exited}`);
       if (existsSync(socket)) return;
       await sleep(FORWARD_POLL_MS);
     }
     child.kill();
-    throw new Error(`bb-box's SSH forward to ${record.serverName} at ${address} did not come up within ${FORWARD_UP_WITHIN_MS / 1000} s.`);
+    throw new Error(`${PRODUCT}'s SSH forward to ${record.serverName} at ${address} did not come up within ${FORWARD_UP_WITHIN_MS / 1000} s.`);
   }
 }

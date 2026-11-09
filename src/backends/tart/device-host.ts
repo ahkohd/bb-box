@@ -211,7 +211,7 @@ want=${quote(app.digest)}
 d="$HOME/.bb-machines/"${quote(bbServerFolder(app.url))}
 if [ "$(cat "$d/host-artifact.sha256" 2>/dev/null)" != "$want" ] || [ ! -d "$d/npm/lib/node_modules/bb-app" ]; then
   PATH=$PATH:/opt/homebrew/opt/node@24/bin:/opt/homebrew/opt/node/bin:/opt/homebrew/bin:/usr/local/bin
-  command -v npm >/dev/null 2>&1 || { echo "There is no npm for $(id -un), so bb-box cannot install BB's app for the slots." >&2; exit 3; }
+  command -v npm >/dev/null 2>&1 || { echo "There is no npm for $(id -un), so BB Box cannot install BB's app for the slots." >&2; exit 3; }
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT
   curl -fsS --max-time 120 -o "$work/bb-app.tgz" ${quote(`${app.url.replace(/\/+$/, "")}/install/bb-app.tgz`)}

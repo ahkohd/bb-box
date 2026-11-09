@@ -1,4 +1,4 @@
-// bb-box's configuration document (029): the move from BB's settings, each
+// BB Box's configuration document (029): the move from BB's settings, each
 // start cut short after each of its steps, the settings RPC and the
 // `bb box config` commands. Values are made up; addresses come from
 // 192.0.2.0/24, which is reserved for documentation.
@@ -285,7 +285,7 @@ test("an off backend moves in off, and a value that is not valid moves as it is"
   assert.equal(document.backends[0]!.fields.subnet, "not a subnet");
 });
 
-test("a fresh install declares none of BB's earlier settings, on its first start or after, so BB's settings page shows bb-box's own sections alone", async () => {
+test("a fresh install declares none of BB's earlier settings, on its first start or after, so BB's settings page shows BB Box's own sections alone", async () => {
   const { harness, latest, world, restart } = await start({}, { freshInstall: true });
   assert.deepEqual(Object.keys(harness.inspection.registrations.settingsDescriptors), []);
   assert.equal(world.handles.length, 0);
@@ -352,7 +352,7 @@ test("a start cut short before clearing BB's settings keeps its boxes working, a
   const kv = kvOf(world);
   assert.ok(await kv.get(DOCUMENT_KEY));
   assert.equal(await kv.get(CLEARED_KEY), undefined);
-  assert.ok(harness.inspection.logEntries.some((entry) => /clear the settings bb-box moved: cut short before clearing/.test(entry.message)));
+  assert.ok(harness.inspection.logEntries.some((entry) => /clear the settings BB Box moved: cut short before clearing/.test(entry.message)));
 
   const box = await app().boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" });
   await app().boxes.settled(box);
@@ -388,7 +388,7 @@ test("a document lost after the move starts empty, and keeps the secrets", async
 });
 
 test("a key a backend generated survives the move and the restarts unchanged, for Tart and the SSH host pool", async () => {
-  // bb-box made these keys, so BB's settings have none; each is in its backend's own storage.
+  // BB Box made these keys, so BB's settings have none; each is in its backend's own storage.
   const tartKey = { privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nTART\n-----END OPENSSH PRIVATE KEY-----\n", publicKey: "ssh-ed25519 AAAATART bb-box" };
   const poolKey = { privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nPOOL\n-----END OPENSSH PRIVATE KEY-----\n", publicKey: "ssh-ed25519 AAAAPOOL bb-box" };
   const seed = { "backend/tart/ssh-key": tartKey, "backend/ssh-pool/ssh-key": poolKey, "backend/ssh-pool/machine/build-1": { generation: 3 } };
@@ -427,7 +427,7 @@ test("a key a backend generated survives the move and the restarts unchanged, fo
 test("a warm count out of range moves into range and is noted, and a moved document saves as it is (review F3)", async () => {
   const { document, notes } = fromSettings({ ...SAVED, "proxmox-lxc-linux-warm": 25 }, DRIVERS, true);
   assert.deepEqual(document.backends[0]!.warm, { linux: 20, "linux-desktop": 1 });
-  assert.deepEqual(notes, ["Proxmox LXC kept 25 warm linux boxes; bb-box keeps 0 to 20, so it is 20."]);
+  assert.deepEqual(notes, ["Proxmox LXC kept 25 warm linux boxes; BB Box keeps 0 to 20, so it is 20."]);
   const moved = fromSettings(SAVED, DRIVERS, false);
   const again = readDraft(exported(moved.document, moved.secrets, DRIVERS), DRIVERS);
   assert.deepEqual(again.problems, [], "the export of a moved document reads back with no problem");
@@ -509,7 +509,7 @@ test("apply tops the warm pools up at once, and a pool short of room is in the l
     name: "Warm pool of linux",
     status: "warn",
     detail: "It has 1 of its 2 boxes, and no room for another: pve has 3.5 GiB of memory free, and a warm box needs 4 GiB",
-    fix: "Make room there, or lower the warm count in bb-box's settings.",
+    fix: "Make room there, or lower the warm count in BB Box's settings.",
   });
 
   // Another sweep with other figures but the same reason says nothing more.
@@ -919,10 +919,10 @@ test("bb box config show prints the configuration, and --json the export, with n
   const { harness } = await start({ "fake-enabled": true, "fake-token": "t0ken", "enrol-boxes": false, "boxes-per-thread": 3 });
   const shown = await harness.behavior.runCli(["config", "show"]);
   assert.equal(shown.exitCode, 0, shown.stderr);
-  assert.match(shown.stdout ?? "", /^bb-box's configuration, revision 1\./);
+  assert.match(shown.stdout ?? "", /^BB Box's configuration, revision 1\./);
   assert.match(shown.stdout ?? "", /- fake \(Fake host\): on, ready, offers linux, linux-desktop\.\n {4}token: set/);
   assert.match(shown.stdout ?? "", /Boxes per thread: 3\. Enrol boxes as BB machines: no\. Default kind: linux\./);
-  assert.match(shown.stdout ?? "", /bb-box keeps a copy of the BB settings it moved .* bb box config migrated shows it, and --remove removes it\./);
+  assert.match(shown.stdout ?? "", /BB Box keeps a copy of the BB settings it moved .* bb box config migrated shows it, and --remove removes it\./);
   const json = await harness.behavior.runCli(["config", "show", "--json"]);
   const exportedDocument = JSON.parse(json.stdout ?? "") as ConfigDocument;
   assert.deepEqual(exportedDocument.backends[0]!.fields, { token: { set: true } });
@@ -967,7 +967,7 @@ test("bb box config check and apply read a file from where bb runs, and migrated
   assert.equal(app().configuration.general().perThreadLimit, 5);
 
   const migrated = await harness.behavior.runCli(["config", "migrated"]);
-  assert.match(migrated.stdout ?? "", /^bb-box 0\.2\.0 moved these BB settings into its configuration on /);
+  assert.match(migrated.stdout ?? "", /^BB Box 0\.2\.0 moved these BB settings into its configuration on /);
   assert.match(migrated.stdout ?? "", /\nfake-enabled: true\n/);
   assert.match((await harness.behavior.runCli(["config", "migrated", "--remove"])).stdout ?? "", /Removed the copy/);
   assert.match((await harness.behavior.runCli(["config", "migrated"])).stdout ?? "", /There is no copy/);
@@ -1025,7 +1025,7 @@ test("the configuration takes several Docker backends, one per host, and still o
   ]);
   assert.match(problems([docker("docker"), docker("docker:local", "")])[0]?.message ?? "", /both Docker on the default host/);
   const lxc = { id: "proxmox-lxc", type: "proxmox-lxc", enabled: false, fields: {} };
-  assert.match(problems([lxc, { ...lxc, id: "proxmox-lxc:two" }])[0]?.message ?? "", /bb-box runs one Proxmox LXC backend for now/);
+  assert.match(problems([lxc, { ...lxc, id: "proxmox-lxc:two" }])[0]?.message ?? "", /BB Box runs one Proxmox LXC backend for now/);
 });
 
 test("files for every box: paths checked, contents kept as secrets only, and never in a problem, an export or the stored document (#455)", () => {
@@ -1098,7 +1098,7 @@ async function endsWithin(pid: number): Promise<boolean> {
   return false;
 }
 
-test("a disposed bb-box leaves no spawn helper, nor any child the helper started", async () => {
+test("a disposed BB Box leaves no spawn helper, nor any child the helper started", async () => {
   const { latest } = await start({});
   const sleeper = startChild("sleep", ["30"], { site: "test" });
   await new Promise((resolve) => sleeper.once("spawn", resolve));
@@ -1113,14 +1113,14 @@ test("a disposed bb-box leaves no spawn helper, nor any child the helper started
   assert.ok(await endsWithin(child), "the helper's child still runs");
 });
 
-test("bb-box logs how long it took to stop, and to start by phase, and which came first", async () => {
+test("BB Box logs how long it took to stop, and to start by phase, and which came first", async () => {
   const { harness, latest, restart } = await start({});
   // BB's test host loads the new version, then disposes the old.
   await restart();
   await new Promise((resolve) => setImmediate(resolve));
   const messages = (one: typeof harness) => one.inspection.logEntries.map((entry) => entry.message);
-  assert.ok(messages(latest()).some((line) => /^bb-box started in \d+\.\d\d s: storage \d+\.\d\d s, configuration and backends \d+\.\d\d s, the rest \d+\.\d\d s\.$/.test(line)));
-  assert.ok(messages(harness).some((line) => /^bb-box stopped in \d+\.\d\d s, -?\d+\.\d\d s after BB began the next version\.$/.test(line)));
+  assert.ok(messages(latest()).some((line) => /^BB Box started in \d+\.\d\d s: storage \d+\.\d\d s, configuration and backends \d+\.\d\d s, the rest \d+\.\d\d s\.$/.test(line)));
+  assert.ok(messages(harness).some((line) => /^BB Box stopped in \d+\.\d\d s, -?\d+\.\d\d s after BB began the next version\.$/.test(line)));
 });
 
 test("a start after the last version stopped tells how long BB took between the two", async () => {
@@ -1137,10 +1137,10 @@ test("a start after the last version stopped tells how long BB took between the 
   now += 1_500;
   fresh.phase("storage");
   await fresh.started();
-  assert.deepEqual(lines, ["bb-box stopped in 2.50 s.", "bb-box started in 1.50 s: storage 1.50 s; BB began it 4.00 s after the last version stopped."]);
+  assert.deepEqual(lines, ["BB Box stopped in 2.50 s.", "BB Box started in 1.50 s: storage 1.50 s; BB began it 4.00 s after the last version stopped."]);
 });
 
-test("070 unit 11b review, Opus 1: a backend whose snapshots live on its provider cannot be removed while the provider holds any of this install's, kept or not; bb-box asks the provider only when a save would remove it", async () => {
+test("070 unit 11b review, Opus 1: a backend whose snapshots live on its provider cannot be removed while the provider holds any of this install's, kept or not; BB Box asks the provider only when a save would remove it", async () => {
   const { rpc, app, world } = await start({ "fake-enabled": true, "enrol-boxes": false });
   const base = app().configuration.exported();
   const backend = world.backend! as unknown as Record<string, unknown>;
@@ -1161,12 +1161,12 @@ test("070 unit 11b review, Opus 1: a backend whose snapshots live on its provide
   assert.ok(!removed.ok && removed.reason === "problems");
   assert.equal(
     removed.problems[0]!.message,
-    "Backend fake has 1 snapshot on its provider's account, kept or not, which would go on costing after it is removed, with nothing to delete it: earlier01-bxaaaaaaaaaaaa-snaaaaaaaaaaaa, kept until 2026-11-30. Delete it first: bb box snapshot delete <box> <snapshot> deletes each one bb-box records, as bb box snapshot list --all names them; delete any other in the provider's own dashboard.",
+    "Backend fake has 1 snapshot on its provider's account, kept or not, which would go on costing after it is removed, with nothing to delete it: earlier01-bxaaaaaaaaaaaa-snaaaaaaaaaaaa, kept until 2026-11-30. Delete it first: bb box snapshot delete <box> <snapshot> deletes each one BB Box records, as bb box snapshot list --all names them; delete any other in the provider's own dashboard.",
   );
   held = null as unknown as unknown[];
   const unread = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [] }, revision: 2 });
   assert.ok(!unread.ok && unread.reason === "problems");
-  assert.match(unread.problems[0]!.message, /^bb-box could not list the snapshots backend fake holds on its provider's account \(the provider did not answer\), so it does not remove it/);
+  assert.match(unread.problems[0]!.message, /^BB Box could not list the snapshots backend fake holds on its provider's account \(the provider did not answer\), so it does not remove it/);
   held = [];
   const gone = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [] }, revision: 2 });
   assert.ok(gone.ok, JSON.stringify(gone));

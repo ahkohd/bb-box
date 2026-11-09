@@ -32,6 +32,12 @@ import {
   type Stored,
 } from "./settings-paths.ts";
 
+const LEADING_COMMON_WORD = /^(The|Its|It|This|There|An|A|Nothing)\b/;
+
+export function reasonAfterColon(text: string): string {
+  return text.replace(LEADING_COMMON_WORD, (word) => word.toLowerCase());
+}
+
 export const MOST_TRIES = 3;
 export const SAVED_SHOWN_MS = 1600;
 export const BOXES_PART = "option/boxes";
@@ -784,10 +790,10 @@ export class DraftRegistry {
         set({ pending: null, saved: false, note: { text: `${write.what} was not ${undone}: it was changed elsewhere while you chose. It is ${write.say(finish.state)} now.`, tone: "bad" }, operation: null });
         return { kind: "conflicts" };
       case "problems":
-        set({ pending: null, saved: false, note: { text: `${write.what} was not ${undone}: ${finish.problems.map((problem) => problem.message).join(" ") || "BB Box gave no reason."}`, tone: "bad" }, operation: null });
+        set({ pending: null, saved: false, note: { text: `${write.what} was not ${undone}: ${reasonAfterColon(finish.problems.map((problem) => problem.message).join(" ") || "BB Box gave no reason.")}`, tone: "bad" }, operation: null });
         return { kind: "refused" };
       case "refused":
-        set({ pending: null, saved: false, note: { text: `${write.what} was not ${undone}: ${finish.reason}`, tone: "bad" }, operation: null });
+        set({ pending: null, saved: false, note: { text: `${write.what} was not ${undone}: ${reasonAfterColon(finish.reason)}`, tone: "bad" }, operation: null });
         return { kind: "refused" };
       case "exhausted":
         set({ pending: null, saved: false, note: { text: `${write.what} was not ${undone}: the configuration changed ${MOST_TRIES} times while saving. It is ${write.say(finish.state)}; try again.`, tone: "bad" }, operation: null });

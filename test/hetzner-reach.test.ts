@@ -110,7 +110,7 @@ test("the firewall lets in only Tailscale's direct connections and ping, and SSH
   assert.equal(firewallRules(false, []).some((rule) => rule.port === "22"), false);
 });
 
-test("the forward is one SSH connection that carries Docker's socket, with bb-box's key, the host's key pinned at first sight, and no shell", () => {
+test("the forward is one SSH connection that carries Docker's socket, with BB Box's key, the host's key pinned at first sight, and no shell", () => {
   const args = forwardArgs({ keyPath: "/k/id", knownHostsPath: "/k/known_hosts-h1", socket: "/tmp/bb-box-hz-x/h1.sock", address: "192.0.2.9" });
   assert.deepEqual(args.slice(-4), ["-N", "-L", "/tmp/bb-box-hz-x/h1.sock:/var/run/docker.sock", "root@192.0.2.9"]);
   for (const option of ["IdentitiesOnly=yes", "BatchMode=yes", "StrictHostKeyChecking=accept-new", "UserKnownHostsFile=/k/known_hosts-h1", "ExitOnForwardFailure=yes", "StreamLocalBindUnlink=yes"]) assert.ok(args.includes(option), option);
@@ -156,7 +156,7 @@ test("without the tailnet, a host is reached at its public IPv4 when SSH from is
   await closed.dispose();
 });
 
-test("bb-box makes its SSH key and firewall once, labelled for the install, and changes the firewall's rules when the tailnet goes off", async () => {
+test("BB Box makes its SSH key and firewall once, labelled for the install, and changes the firewall's rules when the tailnet goes off", async () => {
   const fake = new FakeHetzner();
   const api = new Hetzner({ token: FAKE_HETZNER_TOKEN, fetch: fake.fetch, sleep: async () => {} });
   const storage = new MemoryStorage();
@@ -177,7 +177,7 @@ test("bb-box makes its SSH key and firewall once, labelled for the install, and 
   await reach.dispose();
 });
 
-test("with the tailnet on, a new host gets bb-box's key, its firewall and a first boot with a fresh key; its tailnet device goes with it", async () => {
+test("with the tailnet on, a new host gets BB Box's key, its firewall and a first boot with a fresh key; its tailnet device goes with it", async () => {
   const fake = new FakeHetzner();
   const docker = fakeDockerHost({ name: "cloud-host", cpus: 8, memoryMiB: 16_384 });
   const ssh = fakeSsh("forwards");
@@ -207,7 +207,7 @@ test("with the tailnet on, a new host gets bb-box's key, its firewall and a firs
     assert.equal(server!.firewalls.length, 1);
     assert.match(server!.userData!, new RegExp(TAILNET_KEY));
     assert.match(server!.userData!, /DOCKER-USER/);
-    assert.deepEqual(minted, [`bb-box host ${server!.name}`]);
+    assert.deepEqual(minted, [`BB Box host ${server!.name}`]);
     assert.ok(logs.every((line) => !line.includes(TAILNET_KEY)));
     assert.equal((await backend.doctor(signal())).checks.find((each) => each.id === "hetzner.reach")!.status, "ok");
     await backend.release(guest, releasing, signal());

@@ -136,7 +136,7 @@ test("boat's recorded answers: the paid plan allows saved snapshots at $0.056 a 
   const trial = limitsFrom(RECORDED_TRIAL_LIMITS);
   assert.equal(trial.savedSnapshots, false);
   assert.equal(limitsFrom({ ...RECORDED_PAID_LIMITS, accessTier: "standard", sandboxPlanKey: "trial" }).savedSnapshots, false, "the plan key says trial");
-  assert.equal(limitsFrom({ sandboxPlanKey: "box_20" }).savedSnapshots, false, "no access tier: bb-box does not assume a plan");
+  assert.equal(limitsFrom({ sandboxPlanKey: "box_20" }).savedSnapshots, false, "no access tier: BB Box does not assume a plan");
   assert.equal(limitsFrom({ accessTier: "standard" }).savedSnapshots, false, "Astra 8: no plan key");
   assert.equal(limitsFrom({ accessTier: "trial_2", sandboxPlanKey: "box_20" }).savedSnapshots, false, "Astra 8: an unfamiliar tier");
   assert.equal(limitsFrom({ accessTier: "standard", sandboxPlanKey: "starter" }).savedSnapshots, false, "Astra 8: an unfamiliar plan");
@@ -154,7 +154,7 @@ test("a saved snapshot's name carries the install, the box and the snapshot only
   assert.equal(parseSavedName("my-template"), null);
 });
 
-test("on the trial, bb-box offers no restore and no Keep, and refuses a take in plain words before it asks boat to save", async () => {
+test("on the trial, BB Box offers no restore and no Keep, and refuses a take in plain words before it asks boat to save", async () => {
   const { fake, backend } = setup({ paid: false });
   const guest = await boxOn(backend);
   const plan = await backend.planSnapshots(guest, "linux", null);
@@ -323,7 +323,7 @@ test("boat's offer: a paid plan restores by a new guest, forks from version 8 of
   assert.equal(backend.snapshotting("android"), null);
 });
 
-test("a release of a new guest cut short deletes the sandbox it deployed, and only one that is bb-box's by its name and lack of labels", async () => {
+test("a release of a new guest cut short deletes the sandbox it deployed, and only one that is BB Box's by its name and lack of labels", async () => {
   const { fake, backend } = setup();
   const old = await boxOn(backend);
   const taken = await backend.snapshot(old, { id: SNAP, box: BOX, memory: false }, snapshotHooks());
@@ -339,7 +339,7 @@ test("a release of a new guest cut short deletes the sandbox it deployed, and on
   assert.equal(await backend.power(old), "stopped", "the box's own sandbox is left alone");
   const other = fake.add({ labels: {}, name: "someone's sandbox", state: "archived" });
   await backend.release({ ...cut, data: { ...cut.data, staging: other.id } }, { resetting: async () => {}, timing: () => {} });
-  assert.equal(fake.sandboxes.get(other.id)!.state, "archived", "a sandbox that is not bb-box's by its name is left, and the release goes on");
+  assert.equal(fake.sandboxes.get(other.id)!.state, "archived", "a sandbox that is not BB Box's by its name is left, and the release goes on");
 });
 
 test("Astra 7: a failed save whose clean-up fails is incomplete, not failed, and a delete by its ID alone finishes it", async () => {
@@ -349,7 +349,7 @@ test("Astra 7: a failed save whose clean-up fails is incomplete, not failed, and
   fake.savesFailWith = "disk capture failed";
   fake.failNext(`DELETE /saved-snapshots/${name}`, 503, "out_of_capacity", 50);
   await assert.rejects(backend.snapshot(guest, { id: SNAP, box: BOX, memory: false }, snapshotHooks()), (error: unknown) => error instanceof SnapshotIncomplete && /could not delete what it left/.test(error.message));
-  assert.equal(fake.saved.has(name), true, "boat still holds it, so bb-box keeps counting it");
+  assert.equal(fake.saved.has(name), true, "boat still holds it, so BB Box keeps counting it");
   fake.failures.clear();
   await backend.deleteSnapshot({ id: SNAP, ref: "", guest }, snapshotHooks());
   assert.equal(fake.saved.has(name), false);
@@ -365,13 +365,13 @@ test("Opus 1 and Astra 3: a deployed sandbox whose create answer was lost is fou
   await assert.rejects(backend.adoptSnapshot({ id: SNAP, ref: taken.ref, guest: old }, box(), { macs: {}, smbios: null }, { claimed: async (made) => void claims.push(made), submitting: async () => {}, task: async () => {} }));
   const staging = [...fake.sandboxes.values()].find((sandbox) => sandbox.name.startsWith("bb-box:restoring:"))!;
   assert.ok(staging, "boat made it though its answer was lost");
-  assert.equal((claims[0]!.data as { staging?: string }).staging, undefined, "bb-box never learnt its ID");
+  assert.equal((claims[0]!.data as { staging?: string }).staging, undefined, "BB Box never learnt its ID");
   await backend.release(claims[0]!, { resetting: async () => {}, timing: () => {} });
   assert.equal(fake.sandboxes.get(staging.id)!.state, "deleted");
   assert.equal(await backend.power(old), "stopped");
 });
 
-test("Opus 2: a deployed sandbox that cannot be deleted once its copy runs the box leaves the restore whole, and bb-box's upkeep deletes it", async () => {
+test("Opus 2: a deployed sandbox that cannot be deleted once its copy runs the box leaves the restore whole, and BB Box's upkeep deletes it", async () => {
   const { fake, backend } = setup();
   const old = await boxOn(backend);
   const taken = await backend.snapshot(old, { id: SNAP, box: BOX, memory: false }, snapshotHooks());
@@ -419,7 +419,7 @@ function forkBox(): BoxIdentity {
   return { boxId: FORK, threadId: "thr_2", name: "fork-of-box", kind: "linux", createdAt: START + 60_000, size: { ...SMALL, gpu: "none" } };
 }
 
-test("11b: every sandbox bb-box makes for a box carries the box's ID as BBBOX_IDENTITY, from the template's fork on, and a stop and start keeps it", async () => {
+test("11b: every sandbox BB Box makes for a box carries the box's ID as BBBOX_IDENTITY, from the template's fork on, and a stop and start keeps it", async () => {
   const { fake, backend } = setup();
   const guest = await boxOn(backend);
   const fork = fake.calls.find((call) => call.method === "POST" && call.path.endsWith("/fork"))!;
@@ -528,7 +528,7 @@ test("11b review, Astra 4 and Opus 2: Keep dates go through one queue, so two at
   await backend.heldSnapshots();
   assert.equal((await storage.get<Record<string, { kept: string | null }>>(SAVED_FACTS_KEY))![second.ref]!.kept, "2026-12-01", "missing from one list, but boat still has it: the date stays");
   fake.savedListBroken = true;
-  await assert.rejects(backend.heldSnapshots(), /held no list, so bb-box changes nothing by it/);
+  await assert.rejects(backend.heldSnapshots(), /held no list, so BB Box changes nothing by it/);
   fake.savedListBroken = false;
   assert.equal(Object.keys((await storage.get<Record<string, unknown>>(SAVED_FACTS_KEY))!).length, 2);
   fake.unlisted.clear();
@@ -592,7 +592,7 @@ test("11b review, Astra 2 and Opus 5: a fork starts only as far as its identity 
   await assert.rejects(unarmed.backend.startForForkCheck(fork, new AbortController().signal), /a fork, says its identity check is unarmed, with no marker, so it has not shown that it gave up its source's identity/);
 });
 
-test("11b: the identity check runs as boat's user before bb-box lets the box user in, is started by bb-box if boat has not started it 10 s on, and a failed one stops the start", async () => {
+test("11b: the identity check runs as boat's user before BB Box lets the box user in, is started by BB Box if boat has not started it 10 s on, and a failed one stops the start", async () => {
   const script = 'n=$(cat identity-reads 2>/dev/null || echo 0); echo $((n + 1)) > identity-reads; if [ -e identity-failed ]; then echo boot=failed; elif [ "$n" -ge 60 ]; then echo boot=kept; else echo boot=none; fi';
   const { fake, backend } = setup({ identityBootScript: script });
   const guest = await boxOn(backend);
@@ -602,10 +602,10 @@ test("11b: the identity check runs as boat's user before bb-box lets the box use
   const firstBox = log.findIndex((entry) => entry.target === `box@${host}`);
   assert.ok(checks.length > 40, "it waited while the check had not run");
   assert.ok(firstBox > checks.at(-1)!.at, "the box user is let in only once the check has decided");
-  assert.ok(log.some((entry) => entry.target === `user@${host}` && entry.command.includes("start --no-block bb-box-identity-settle.service")), "bb-box started the check itself after 10 s");
+  assert.ok(log.some((entry) => entry.target === `user@${host}` && entry.command.includes("start --no-block bb-box-identity-settle.service")), "BB Box started the check itself after 10 s");
   writeFileSync(join(process.env.FAKE_SSH_DIR!, "home", host, "identity-failed"), "");
   await backend.stop(guest);
-  await assert.rejects(backend.start(guest), /could not finish its identity reset, so bb-box does not let its box user in/);
+  await assert.rejects(backend.start(guest), /could not finish its identity reset, so BB Box does not let its box user in/);
   assert.ok(fake.calls.length > 0);
 });
 

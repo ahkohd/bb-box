@@ -97,6 +97,7 @@ import { byBbBox, type Actor } from "../core/box-log.ts";
 import { RecordingInputs } from "../core/record-input.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
+import { PRODUCT } from "../brand.ts";
 export const CHANGED = "changed";
 
 /** In a box that is a BB machine, the program of the process whose workers carry BB's variables. */
@@ -450,28 +451,28 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   if (!(await kv.get<ConfigDocument>(DOCUMENT_KEY))) {
     if (settings) {
       const { notes } = await moveSettings({ kv, drivers, values: await settings.get(), settings: earlier, version: VERSION });
-      bb.log.info("Moved bb-box's settings into its configuration. bb box config migrated shows what they were.");
-      for (const note of notes) bb.log.warn(`Moving bb-box's settings: ${note}`);
+      bb.log.info(`Moved ${PRODUCT}'s settings into its configuration. bb box config migrated shows what they were.`);
+      for (const note of notes) bb.log.warn(`Moving ${PRODUCT}'s settings: ${note}`);
     } else {
       // BB's settings were moved and cleared before, so there is nothing to move: start empty, keeping the secrets.
       await kv.set(DOCUMENT_KEY, emptyDocument(1));
     }
   }
-  if (settings) await clearSettings(kv, settings, earlier).catch((error) => logError("clear the settings bb-box moved", error));
+  if (settings) await clearSettings(kv, settings, earlier).catch((error) => logError(`clear the settings ${PRODUCT} moved`, error));
 
   const storedFiles = (() => {
     try {
       return openBoxFiles(bb.storage, { log: BOX_LOG_MIGRATIONS, history: BOX_HISTORY_MIGRATIONS, snapshots: SNAPSHOT_MIGRATIONS });
     } catch (error) {
-      logError("open bb-box's box log and box history", error);
+      logError(`open ${PRODUCT}'s box log and box history`, error);
       return unopenedFiles(error);
     }
   })();
-  if (storedFiles.shared) bb.log.warn(`bb-box keeps its box log and box history in its own database, as BB's handle refused to attach their files: ${storedFiles.log.refusal}`);
-  if (storedFiles.snapshotsMoved) bb.log.info(`Moved ${storedFiles.snapshotsMoved} snapshot records and operations from bb-box's database into snapshots.db, which BB's handle now attaches.`);
+  if (storedFiles.shared) bb.log.warn(`${PRODUCT} keeps its box log and box history in its own database, as BB's handle refused to attach their files: ${storedFiles.log.refusal}`);
+  if (storedFiles.snapshotsMoved) bb.log.info(`Moved ${storedFiles.snapshotsMoved} snapshot records and operations from ${PRODUCT}'s database into snapshots.db, which BB's handle now attaches.`);
   for (const file of [storedFiles.log, storedFiles.history, storedFiles.snapshots]) {
-    if (file.problem) bb.log.warn(`bb-box could not set up ${file.spec.file}: ${file.problem}`);
-    else bb.log.info(`Opened ${file.attached ? `${file.spec.file}, attached to bb-box's database` : `${file.spec.file}'s tables in bb-box's database`}: ${file.migrationsRun === 0 ? "no migration to run" : `ran ${file.migrationsRun} ${file.migrationsRun === 1 ? "migration" : "migrations"}`}.`);
+    if (file.problem) bb.log.warn(`${PRODUCT} could not set up ${file.spec.file}: ${file.problem}`);
+    else bb.log.info(`Opened ${file.attached ? `${file.spec.file}, attached to ${PRODUCT}'s database` : `${file.spec.file}'s tables in ${PRODUCT}'s database`}: ${file.migrationsRun === 0 ? "no migration to run" : `ran ${file.migrationsRun} ${file.migrationsRun === 1 ? "migration" : "migrations"}`}.`);
   }
   const boxLog = new BoxLogStore({
     file: storedFiles.log,
@@ -589,7 +590,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const want = dockerOnMachine(hostId) ?? "";
       const had = relayTargets.get(hostId);
       if (had !== undefined && had !== want) {
-        await relay.drop(hostId, "bb-box's machine-docker-host for this machine changed");
+        await relay.drop(hostId, `${PRODUCT}'s machine-docker-host for this machine changed`);
         relayTargets.delete(hostId);
       }
       await relay.endpoint(hostId);
@@ -899,7 +900,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (typeof host !== "string" || !host.startsWith("bb:")) return null;
       const hostId = host.slice("bb:".length);
       if (!relay.reopening(hostId)) return null;
-      return `bb-box is reconnecting to ${machineNames.get(hostId) ?? `BB machine ${hostId}`}, which runs its Docker, as after an update.`;
+      return `${PRODUCT} is reconnecting to ${machineNames.get(hostId) ?? `BB machine ${hostId}`}, which runs its Docker, as after an update.`;
     },
     access: async (box) => {
       const { names: listed, gitToken, variablesSet } = await access(box);
@@ -1133,7 +1134,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   bb.onDispose(() => loopWatch.dispose());
   setTimeout(() => {
     const swept = sweepStaleTempFolders();
-    if (swept.removed.length) bb.log.info(`Removed ${swept.removed.length} of bb-box's temporary folders that earlier runs of bb-box left: ${swept.removed.join(", ")}.`);
+    if (swept.removed.length) bb.log.info(`Removed ${swept.removed.length} of ${PRODUCT}'s temporary folders that earlier runs of ${PRODUCT} left: ${swept.removed.join(", ")}.`);
   }, 0).unref();
   bb.onDispose(() => stopForker());
   bb.onDispose(() => imageJobs.stop());
@@ -1436,7 +1437,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     },
     async setDockerHost(hostId, enabled, linuxOnly = false, operation) {
       const machine = (await dockerHosts.list()).find((candidate) => candidate.hostId === hostId);
-      if (!machine) throw new BoxError("not_found", `BB machine ${hostId} cannot host boxes: it is not a connected, persistent machine of BB's that bb-box did not make.`);
+      if (!machine) throw new BoxError("not_found", `BB machine ${hostId} cannot host boxes: it is not a connected, persistent machine of BB's that ${PRODUCT} did not make.`);
       if (enabled && !machine.docker) throw new BoxError("unsupported", `${machine.name} cannot host boxes yet. ${machine.problem ?? ""}`.trim());
       const document = configuration.document;
       dockerHosts.forget(hostId);
@@ -1655,7 +1656,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
               name: "Settings",
               status: "warn" as const,
               detail: problem.message,
-              fix: "Fix it in bb-box's settings.",
+              fix: `Fix it in ${PRODUCT}'s settings.`,
             })),
             notes: [],
           },
@@ -1673,7 +1674,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
               name: "Settings",
               status: "fail" as const,
               detail: problem.message,
-              fix: "Fix it in bb-box's settings.",
+              fix: `Fix it in ${PRODUCT}'s settings.`,
             })),
             notes: [],
           },
@@ -1703,14 +1704,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (resetChecks.length) {
         sections.push({
           title: "Identity resets",
-          report: { ok: resetChecks.every((check) => check.status !== "fail"), summary: "Boxes of bb-box's whose identity reset at a boot, which bb-box keeps and enrols again as new BB machines.", checks: resetChecks, notes: [] },
+          report: { ok: resetChecks.every((check) => check.status !== "fail"), summary: `Boxes of ${PRODUCT}'s whose identity reset at a boot, which ${PRODUCT} keeps and enrols again as new BB machines.`, checks: resetChecks, notes: [] },
         });
       }
       const joins = joinChecks(await boxes.all(), Date.now());
       if (joins.length) {
         sections.push({
           title: "Joining BB",
-          report: { ok: joins.every((check) => check.status !== "fail"), summary: "Boxes that did not join BB at their first try, and what bb-box does about them.", checks: joins, notes: [] },
+          report: { ok: joins.every((check) => check.status !== "fail"), summary: `Boxes that did not join BB at their first try, and what ${PRODUCT} does about them.`, checks: joins, notes: [] },
         });
       }
       const userspaceChecks = await boxes.userspaceChecks(signal).catch((error: unknown) => {
@@ -1720,7 +1721,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (userspaceChecks.length) {
         sections.push({
           title: "NVIDIA userspace",
-          report: { ok: true, summary: "NVIDIA's userspace in each box with a GPU, against its host's driver. bb-box never updates it by itself: bb box gpu update does, when a person asks.", checks: userspaceChecks, notes: [] },
+          report: { ok: true, summary: `NVIDIA's userspace in each box with a GPU, against its host's driver. ${PRODUCT} never updates it by itself: bb box gpu update does, when a person asks.`, checks: userspaceChecks, notes: [] },
         });
       }
       const spareChecks = await boxes.spareChecks();
@@ -1741,14 +1742,14 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       if (fileChecks.length) {
         sections.push({
           title: "Files for every box",
-          report: { ok: true, summary: "bb-box writes them into each Linux and macOS box as it joins BB or starts, and into running boxes when they change.", checks: fileChecks, notes: [] },
+          report: { ok: true, summary: `${PRODUCT} writes them into each Linux and macOS box as it joins BB or starts, and into running boxes when they change.`, checks: fileChecks, notes: [] },
         });
       }
       const deviceChecks = (await deviceServers?.checks()) ?? [];
       if (deviceChecks.length) {
         sections.push({
           title: "Device servers",
-          report: { ok: deviceChecks.every((check) => check.status !== "fail"), summary: `The device server each device box runs, against version ${deviceServers?.version} that this bb-box delivers.`, checks: deviceChecks, notes: [] },
+          report: { ok: deviceChecks.every((check) => check.status !== "fail"), summary: `The device server each device box runs, against version ${deviceServers?.version} that this ${PRODUCT} delivers.`, checks: deviceChecks, notes: [] },
         });
       }
       const small = presetMemoryChecks((await general()).sizes);
@@ -1763,9 +1764,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         logError("check restores and locked guests", error);
         return [];
       }))];
-      sections.push({ title: "Snapshots", report: { ok: snapshotChecks.every((check) => check.status !== "fail"), summary: "bb-box's records of snapshots and the operations that take, delete and restore them, and boxes whose guests are locked.", checks: snapshotChecks, notes: [] } });
+      sections.push({ title: "Snapshots", report: { ok: snapshotChecks.every((check) => check.status !== "fail"), summary: `${PRODUCT}'s records of snapshots and the operations that take, delete and restore them, and boxes whose guests are locked.`, checks: snapshotChecks, notes: [] } });
       const logChecks = [...boxLog.checks(), ...history.checks()];
-      sections.push({ title: "Box log", report: { ok: logChecks.every((check) => check.status !== "fail"), summary: "Who stopped, started, resized and released each box, and what bb-box saw after an operation failed.", checks: logChecks, notes: [] } });
+      sections.push({ title: "Box log", report: { ok: logChecks.every((check) => check.status !== "fail"), summary: `Who stopped, started, resized and released each box, and what ${PRODUCT} saw after an operation failed.`, checks: logChecks, notes: [] } });
       const overlaps = overlapChecks(backends.on());
       if (overlaps.length) {
         sections.push({
@@ -1890,13 +1891,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const working = (await api.threadsOn(box).catch(() => [])).filter((thread) => thread.running);
       if (working.length) {
         const one = working.length === 1;
-        return kept(`. bb-box does not restart it while ${threadsWords(working)} ${one ? "works" : "work"} on the machine, as that would end ${one ? "its" : "their"} turn`);
+        return kept(`. ${PRODUCT} does not restart it while ${threadsWords(working)} ${one ? "works" : "work"} on the machine, as that would end ${one ? "its" : "their"} turn`);
       }
       // BB's terminals there are the daemon's too, and a restart would end them.
       const terminals = await openTerminals(box.enrol.hostId!).catch(() => null);
-      if (terminals === null) return kept(". bb-box could not tell whether a BB terminal is open there, so it did not restart it");
+      if (terminals === null) return kept(`. ${PRODUCT} could not tell whether a BB terminal is open there, so it did not restart it`);
       if (terminals > 0) {
-        return kept(`. bb-box does not restart it while ${terminals === 1 ? "a BB terminal is" : `${terminals} BB terminals are`} open on the machine, as that would end ${terminals === 1 ? "it" : "them"}`);
+        return kept(`. ${PRODUCT} does not restart it while ${terminals === 1 ? "a BB terminal is" : `${terminals} BB terminals are`} open on the machine, as that would end ${terminals === 1 ? "it" : "them"}`);
       }
       const result = await boxes.runOwn(box, restartDaemon(to.cores), { timeoutMs: 30_000, maxOutputBytes: 1024 }).catch(() => null);
       if (!result || result.exitCode !== 0) return kept("");
@@ -1923,7 +1924,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
               : box.capabilities.enrol && (await general()).enrol
                 ? // Made before its kind's boxes joined BB, as a Windows box made before #539: it stays a box only, and is not enrolled in place.
                   `it was made before ${box.kindLabel} boxes joined BB, and stays a box only until it is released. Acquire another ${box.kind} box, which joins BB, for the thread`
-                : "it is not a BB machine. Its kind does not enrol, or enrolment is off in bb-box's settings";
+                : `it is not a BB machine. Its kind does not enrol, or enrolment is off in ${PRODUCT}'s settings`;
         throw new BoxError("unsupported", `A thread cannot run on box ${box.name}: ${why}.`);
       }
       const projectId = box.projectId ?? (await projectOf(threadId));

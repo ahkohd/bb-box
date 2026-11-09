@@ -1006,7 +1006,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
     simulator.calls.length = 0;
     await again.driver.attach(setup.target, AbortSignal.timeout(20_000));
     const kept = await again.driver.readBack();
-    assert.ok(kept.platform === "ios" && kept.settings.location.set?.latitude === 51.5, "the location bb-box set is kept across a restart");
+    assert.ok(kept.platform === "ios" && kept.settings.location.set?.latitude === 51.5, "the location BB Box set is kept across a restart");
     assert.ok(simulator.calls.includes(`location ${UDID} set 51.5,-0.12`), "and set again on the device");
     again.driver.close();
   });
@@ -1219,7 +1219,7 @@ describe("the iOS driver, against a fake simctl and a fake idb_companion", () =>
   });
 });
 
-describe("an ios box in bb-box's words", () => {
+describe("an ios box in BB Box's words", () => {
   const offer = {
     platform: "ios",
     devices: [

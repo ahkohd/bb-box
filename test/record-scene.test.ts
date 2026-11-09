@@ -363,7 +363,7 @@ test("a key pill lasts its own time even where a caption's hold freezes the clip
   assert.ok(pill.to - pill.from <= 1.2 + 0.001, `${pill.to - pill.from} s`);
 });
 
-test("where Cua draws the agent's own pointer, as on macOS, bb-box draws only the real pointer, from when it first moves, and still rings each click (073)", () => {
+test("where Cua draws the agent's own pointer, as on macOS, BB Box draws only the real pointer, from when it first moves, and still rings each click (073)", () => {
   const clicks = [{ at: 3, x: 700, y: 400, button: "left" as const, count: 1 as const, area: null }];
   const parked = planPointer(scene({ clicks, samples: [{ at: 0, x: 0, y: 0, buttons: 0 }], agentCursor: true }));
   assert.equal(parked.visibleFrom, null, "a pointer parked in the corner all along is not drawn");
@@ -395,7 +395,7 @@ function pressed(events: readonly InputEvent[], style: "mac" | "pc" = "pc"): str
   return events.map((event) => (event.type === "keys" ? chordWords(event.chord, style) : event.type));
 }
 
-test("typing whose field bb-box cannot tell, a person's or a single key's, is kept secret: no Typing pill and no zoom (073)", () => {
+test("typing whose field BB Box cannot tell, a person's or a single key's, is kept secret: no Typing pill and no zoom (073)", () => {
   const inputs = new RecordingInputs(() => 1_003_000);
   inputs.begin("box", 0, "linux");
   for (const keysym of [0x31, 0x32, 0x33, 0x34]) {
@@ -533,7 +533,7 @@ function pixelAt(png: Buffer, x: number, y: number): readonly number[] {
 const POINTER_HEIGHT = 36;
 const POINTER_SCALE = POINTER_HEIGHT / 20;
 
-test("the pointer is a rounded arrow of bb-box's own, dark with a light edge or light with a dark edge, with soft edges and its tip where it points (073)", () => {
+test("the pointer is a rounded arrow of BB Box's own, dark with a light edge or light with a dark edge, with soft edges and its tip where it points (073)", () => {
   for (const [variant, fill, edge] of [
     ["dark", 24, 250],
     ["light", 250, 24],
@@ -609,7 +609,7 @@ test("the stop reads the brightness grid, a line a second of each cell's brightn
 test("where the driver's agent cursor was hidden for the whole recording, the clip draws the agent's pointer as on Linux, gliding to its clicks (073)", () => {
   assert.deepEqual((["linux", "macos", "windows"] as const).map(driverDrawsAgentCursor), [false, true, true]);
   const prepared: Prepared = { ended: "stopped", recorded: 10, width: 1920, height: 1080, start: 1000, cuts: [], events: [], scene: facts({ agentCursor: true, samples: [{ at: 1000, x: 100, y: 100, buttons: 0 }], inputs: [click(4, 900, 600)] }) };
-  assert.equal(withAgentCursorHidden(prepared, false).scene?.agentCursor, true, "the driver's cursor stayed, so bb-box draws only the real pointer");
+  assert.equal(withAgentCursorHidden(prepared, false).scene?.agentCursor, true, "the driver's cursor stayed, so BB Box draws only the real pointer");
   const hidden = withAgentCursorHidden(prepared, true);
   assert.equal(hidden.scene?.agentCursor, false);
   assert.ok(planClip(hidden, 1).scene!.pointer.glides.length > 0, "the pointer glides to the agent's click");

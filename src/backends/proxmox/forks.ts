@@ -3,6 +3,7 @@ import { ProxmoxError, type Proxmox } from "./api.ts";
 import { netKeys, netWith } from "./copies.ts";
 import { describe, installFromDescription, ownerFromDescription } from "./owner.ts";
 import { cloneWaitMs, storageOfVolume } from "./snapshotting.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export interface ForkWrites {
   config(vmid: number, signal?: AbortSignal): Promise<Record<string, unknown>>;
@@ -50,7 +51,7 @@ async function dropHalfMadeFork(guests: ForkGuests, api: Proxmox, previous: Gues
   if (!Number.isInteger(vmid)) return;
   if (!madeFor(await configOrNull(api, vmid, signal), box.boxId, guests.installId)) return;
   await guests.forget(vmid);
-  const cannot = (why: string) => new Error(`bb-box could not delete guest ${vmid}, the copy a fork of box ${box.name} had begun before bb-box restarted, so it makes no other: ${why}`);
+  const cannot = (why: string) => new Error(`${PRODUCT} could not delete guest ${vmid}, the copy a fork of box ${box.name} had begun before ${PRODUCT} restarted, so it makes no other: ${why}`);
   const writes = guests.writes(api, box.boxId, true);
   const { lockOutlasted } = await disarmBeforeDelete(guests, writes, vmid, "a fork cut short by a restart", signal);
   if (lockOutlasted) throw cannot("Proxmox still holds its lock.");

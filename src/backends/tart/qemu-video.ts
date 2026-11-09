@@ -109,7 +109,7 @@ fi
 export function qemuVideoOpenScript(vm: string, port: number, build: string): string {
   return qemuScript(String.raw`${BIN}vm=${quote(vm)}; v="$q/vms/$vm"; b="$bin/"${quote(build)}; s="$v/video.sock"
 [ -d "$v" ] || { echo "The VM $vm is not on the Mac." >&2; exit 1; }
-vok "$b" || { echo "bb-box's build of bb-box-stream on the Mac is not whole: $b." >&2; exit 3; }
+vok "$b" || { echo "BB Box's build of bb-box-stream on the Mac is not whole: $b." >&2; exit 3; }
 if ! qvideo "$vm"; then
   i=0; until mkdir "$v/video.lock" 2>/dev/null; do i=$((i + 1)); [ "$i" -lt 50 ] || rm -rf "$v/video.lock"; sleep 0.1; done
   if ! qvideo "$vm"; then

@@ -1,5 +1,6 @@
 import type { DoctorCheck } from "../types.ts";
 import type { GuestType, Proxmox } from "./api.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const SNAPSHOT_PRIVILEGES = ["VM.Snapshot", "VM.Snapshot.Rollback"] as const;
 
@@ -53,10 +54,10 @@ export function storageSnapshots(storage: GuestDiskStorage, guest: GuestType): S
   if (storage.type === "lvm") {
     return guest === "lxc"
       ? { restore: "none", words: `${named(type)} takes no snapshots of containers.` }
-      : { restore: "none", words: `${named(type)} takes snapshots of VMs only as a preview in Proxmox VE 9, so bb-box restores none.` };
+      : { restore: "none", words: `${named(type)} takes snapshots of VMs only as a preview in Proxmox VE 9, so ${PRODUCT} restores none.` };
   }
   if (TAKES_NO_SNAPSHOTS.has(storage.type)) return { restore: "none", words: `${named(type)} takes no snapshots.` };
-  return { restore: "unknown", words: `bb-box does not know whether ${named(type || "of no type Proxmox names")} takes snapshots.` };
+  return { restore: "unknown", words: `${PRODUCT} does not know whether ${named(type || "of no type Proxmox names")} takes snapshots.` };
 }
 
 export interface SnapshotsCheckInput {
@@ -94,13 +95,13 @@ export function snapshotsCheck(input: SnapshotsCheckInput): Pick<DoctorCheck, "s
   const fixes: string[] = [];
   let rights: string;
   if (input.privileges instanceof Error) {
-    rights = `bb-box cannot read the token's rights on ${path}: ${input.privileges.message.replace(/\.$/, "")}.`;
+    rights = `${PRODUCT} cannot read the token's rights on ${path}: ${input.privileges.message.replace(/\.$/, "")}.`;
     fixes.push("Check that BB's server reaches the Proxmox API, then run the checks again.");
   } else {
     const held = input.privileges;
     const missing = SNAPSHOT_PRIVILEGES.filter((privilege) => !held.has(privilege));
     if (missing.length) {
-      rights = `The token lacks ${joinedWithAnd(missing)} on ${path}, so bb-box cannot ${whatTheTokenCannotDo(missing)}.`;
+      rights = `The token lacks ${joinedWithAnd(missing)} on ${path}, so ${PRODUCT} cannot ${whatTheTokenCannotDo(missing)}.`;
       fixes.push(
         `Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${input.node}. ` +
           "It keeps the token and its secret, and adds the missing rights to the token's role.",
@@ -113,7 +114,7 @@ export function snapshotsCheck(input: SnapshotsCheckInput): Pick<DoctorCheck, "s
     fixes.push(`For snapshots, put the templates on storage that takes them: ${storagesThatTakeSnapshots(input.guest)}.`);
   }
   const unread = (input.metadata ?? []).filter((each) => each.unread !== null);
-  for (const each of unread) storageWords.push(`bb-box cannot read ${each.storage}'s thin metadata (${each.unread!.replace(/\.$/, "")}), so a take checks the pool's data use but not that its metadata is under 80% full.`);
+  for (const each of unread) storageWords.push(`${PRODUCT} cannot read ${each.storage}'s thin metadata (${each.unread!.replace(/\.$/, "")}), so a take checks the pool's data use but not that its metadata is under 80% full.`);
   if (unread.length) fixes.push("Reading a thin pool's metadata takes Sys.Audit on /, a read of the whole cluster, which host/setup-token.sh does not give. Watch the pool's metadata on the host, or give that right.");
   return {
     status: fixes.length ? "warn" : "ok",

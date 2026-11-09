@@ -1,4 +1,5 @@
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const BOAT_TEMPLATE_KINDS = ["linux", "linux-desktop-cpu", "android"] as const;
 export type BoatKind = (typeof BOAT_TEMPLATE_KINDS)[number];
@@ -30,7 +31,7 @@ export const BOAT_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "API key",
     description:
-      "The boat.dev API key bb-box makes and deletes sandboxes with. Make one in boat's dashboard, or with boat api-key create, starting boat_. A key that expires stops bb-box's boxes there when it does. It is kept as a secret and never shown.",
+      `The boat.dev API key ${PRODUCT} makes and deletes sandboxes with. Make one in boat's dashboard, or with boat api-key create, starting boat_. A key that expires stops ${PRODUCT}'s boxes there when it does. It is kept as a secret and never shown.`,
     secret: true,
     group: "credentials",
   },
@@ -38,7 +39,7 @@ export const BOAT_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "number",
     label: "Most boxes",
     description:
-      "The most boat sandboxes bb-box runs at once, a template being built included. Each box is one sandbox, billed by the second while it runs: $0.018 an hour for 2 cores and 4 GB, $0.036 for 4 and 8, $0.072 for 8 and 16. A stopped box costs nothing. The free trial allows 2 at once.",
+      `The most boat sandboxes ${PRODUCT} runs at once, a template being built included. Each box is one sandbox, billed by the second while it runs: $0.018 an hour for 2 cores and 4 GB, $0.036 for 4 and 8, $0.072 for 8 and 16. A stopped box costs nothing. The free trial allows 2 at once.`,
     group: "boxes",
     default: BOAT_DEFAULTS.mostBoxes,
   },
@@ -46,7 +47,7 @@ export const BOAT_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "boolean",
     label: "Android SDK licence",
     description:
-      "Whether you accept the Android SDK's licence, which Android boxes on boat.dev need. Google's terms cover the SDK, the emulator and the system image that bb-box installs, as setup/android/pins.json pins them; read them with setup/android/accept-sdk-licence.sh, or at developer.android.com/studio/terms. Turning this on is your acceptance. While it is off, boat.dev offers no Android boxes.",
+      `Whether you accept the Android SDK's licence, which Android boxes on boat.dev need. Google's terms cover the SDK, the emulator and the system image that ${PRODUCT} installs, as setup/android/pins.json pins them; read them with setup/android/accept-sdk-licence.sh, or at developer.android.com/studio/terms. Turning this on is your acceptance. While it is off, boat.dev offers no Android boxes.`,
     group: "boxes",
     default: false,
   },
@@ -54,7 +55,7 @@ export const BOAT_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "number",
     label: "Auto-stop (minutes)",
     description:
-      "How long a box runs on after bb-box last renewed it. bb-box renews each box it holds every few minutes, so a box stops this long after bb-box stops for good, and keeps its disk. From 10 to 120: the free trial allows at most 120.",
+      `How long a box runs on after ${PRODUCT} last renewed it. ${PRODUCT} renews each box it holds every few minutes, so a box stops this long after ${PRODUCT} stops for good, and keeps its disk. From 10 to 120: the free trial allows at most 120.`,
     group: "advanced",
     default: BOAT_DEFAULTS.leaseMinutes,
   },

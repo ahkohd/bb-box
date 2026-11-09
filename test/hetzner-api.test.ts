@@ -218,7 +218,7 @@ test("the token shows in no error: a refused token, a failed fetch that names it
 test("a snapshot is taken, waited for, labelled, listed and deleted", async () => {
   const { hetzner } = setup();
   const { server } = await hetzner.createServer(host("bb-box-inst1-build"));
-  const made = await hetzner.createSnapshot(server.id, { description: "bb-box host b1", labels: { ...INSTALL, "bbbox-build": "b1" } });
+  const made = await hetzner.createSnapshot(server.id, { description: "BB Box host b1", labels: { ...INSTALL, "bbbox-build": "b1" } });
   assert.equal(made.status, "available");
   assert.equal(made.compressedSizeGB, 4.2);
   assert.deepEqual((await hetzner.snapshots(INSTALL)).map((each) => each.id), [made.id]);

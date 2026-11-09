@@ -1,4 +1,5 @@
 import type { GpuPart } from "../backends/types.ts";
+import { PRODUCT } from "../brand.ts";
 
 export function capacityReason(words: string): string {
   const reason = words.replace(/(?:^|\s)(?:Release|Use|Ask|Free|Lower|Raise|Widen|Change)\b[\s\S]*$/, "").trim();
@@ -12,7 +13,7 @@ function forkInstead(gpu: GpuPart): string {
 
 export function forkRefusalWords(reason: string, gpu: GpuPart): string {
   const sentence = reason.trim();
-  return `Not forked: ${/[.!?]$/.test(sentence) ? sentence : `${sentence}.`} ${forkInstead(gpu)} bb-box copied nothing.`;
+  return `Not forked: ${/[.!?]$/.test(sentence) ? sentence : `${sentence}.`} ${forkInstead(gpu)} ${PRODUCT} copied nothing.`;
 }
 
 export function forkCapacityWords(words: string, gpu: GpuPart): string {

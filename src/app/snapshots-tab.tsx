@@ -1,13 +1,14 @@
 import { experimental_Icon as Icon, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertDialogCancel, AlertDialogDescription } from "@/components/ui/alert-dialog";
+import { AlertDialogDescription } from "@/components/ui/alert-dialog";
+import { DialogButton, DialogCancel } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { BulkCheck, BulkDone, BulkItem, Contract, SnapshotRowView, SnapshotsTabView, TabGroup, TabRow } from "../plugin/contract.ts";
 import { Badge, EmptyPanel, message, StatusDot } from "./common.tsx";
-import { useThreadTitles } from "./desktop.tsx";
+import { threadGroupHeading, useThreadTitles } from "./desktop.tsx";
 import { useBoxesNav } from "./box-nav.tsx";
 import { Refused, Shell, SnapshotRow, type RowPlace } from "./snapshots-card.tsx";
 import { gbWords, holdsWords, keepDay, snapshotDay, utcDate } from "./snapshot-words.ts";
@@ -46,9 +47,10 @@ function valuesOf(row: SnapshotRowView, group: TabGroup, now: number): Record<Fi
   };
 }
 
-export function matches(row: SnapshotRowView, group: TabGroup, search: string, filters: SnapshotFilters, title: string | null, now: number): boolean {
+export function matches(row: SnapshotRowView, group: TabGroup, search: string, filters: SnapshotFilters, title: string | null | undefined, now: number): boolean {
   const words = search.trim().toLowerCase();
-  if (words && ![row.name, row.note ?? "", group.box.name, title ?? ""].some((text) => text.toLowerCase().includes(words))) return false;
+  const heading = group.box.yours || !group.box.threadId ? "" : threadGroupHeading(title);
+  if (words && ![row.name, row.note ?? "", group.box.name, heading].some((text) => text.toLowerCase().includes(words))) return false;
   const values = valuesOf(row, group, now);
   return FILTER_GROUPS.every((key) => !filters[key].length || filters[key].some((value) => values[key].includes(value)));
 }
@@ -126,11 +128,16 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
   const [problem, setProblem] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<BulkDone | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const describedBy = useId();
   const dated = /^\d{4}-\d{2}-\d{2}$/.test(until);
   useEffect(() => {
-    if (change === "keep" && !dated) return;
+    if (change === "keep" && !dated) {
+      setProblem("Choose a date.");
+      return;
+    }
     let cancelled = false;
+    setProblem(null);
     void rpc
       .call("snapshots.bulkCheck", { snapshots: [...ids], change, ...(change === "keep" && edited ? { until } : {}) })
       .then((answer) => {
@@ -142,11 +149,11 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
     return () => {
       cancelled = true;
     };
-  }, [rpc, ids, change, until, dated, edited]);
+  }, [rpc, ids, change, until, dated, edited, attempt]);
   const current = check && check.until === until ? check : null;
   const count = current?.allowed.length ?? 0;
   const apply = async () => {
-    if (!current) return;
+    if (!current || !count) return;
     setSending(true);
     try {
       const done = await rpc.call("snapshots.bulk", { snapshots: current.allowed.map((each) => each.id), change, ...(change === "keep" && edited ? { until } : {}) });
@@ -171,22 +178,44 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
       ))}
     </ul>
   );
-  const title = change === "keep" ? `Keep ${ids.length === 1 ? "1 snapshot" : `${ids.length} snapshots`}` : `Delete ${ids.length === 1 ? "1 snapshot" : `${ids.length} snapshots`}?`;
+  const stalled = !current && (problem !== null || (change === "keep" && !dated));
+  const nothing = current !== null && count === 0;
+  const title = result
+    ? `${result.refused.length === 1 ? "1 snapshot" : `${result.refused.length} snapshots`} not ${change === "delete" ? "deleted" : "kept"}`
+    : nothing
+      ? change === "delete"
+        ? "Nothing to delete"
+        : "Nothing to keep"
+      : stalled && problem && problem !== "Choose a date."
+        ? "Could not check these snapshots"
+        : change === "keep"
+          ? `Keep ${ids.length === 1 ? "1 snapshot" : `${ids.length} snapshots`}`
+          : `Delete ${ids.length === 1 ? "1 snapshot" : `${ids.length} snapshots`}?`;
+  const onlyClose = result !== null || nothing;
   return (
     <Shell
       title={title}
       onClose={onClose}
+      busy={sending}
+      onSubmit={onlyClose ? undefined : () => void apply()}
       footer={
-        result ? (
-          <AlertDialogCancel autoFocus>Close</AlertDialogCancel>
+        onlyClose ? (
+          <DialogCancel autoFocus>Close</DialogCancel>
+        ) : stalled && problem && problem !== "Choose a date." ? (
+          <>
+            <DialogCancel>Close</DialogCancel>
+            <DialogButton type="button" onClick={() => setAttempt((value) => value + 1)}>
+              Try again
+            </DialogButton>
+          </>
         ) : (
           <>
-            <AlertDialogCancel autoFocus={change === "delete"} disabled={sending}>
+            <DialogCancel autoFocus={change === "delete"} disabled={sending}>
               Cancel
-            </AlertDialogCancel>
-            <Button type="button" variant={change === "delete" ? "destructive" : "default"} disabled={sending || !count} onClick={() => void apply()}>
+            </DialogCancel>
+            <DialogButton type="submit" variant={change === "delete" ? "destructive" : "default"} disabled={sending || !count}>
               {sending ? (change === "keep" ? "Keeping…" : "Deleting…") : change === "keep" ? (edited ? `Keep ${count} until ${dated ? keepDay(Date.parse(`${until}T12:00:00Z`)) : "…"}` : `Keep ${count}`) : `Delete ${count}`}
-            </Button>
+            </DialogButton>
           </>
         )
       }
@@ -231,6 +260,8 @@ function BulkDialog({ ids: chosen, change, keepDays, now, onClose, onDone }: { i
               ) : null}
               {change === "delete" && current.allowed.length ? <p>It cannot be undone.</p> : null}
             </>
+          ) : problem ? null : change === "keep" && !dated ? (
+            <p role="status">Choose a date.</p>
           ) : (
             <p role="status">Checking each snapshot…</p>
           )}
@@ -245,7 +276,7 @@ function systemWords(system: string): string {
   return system === "linux" ? "Linux" : system === "windows" ? "Windows" : system === "macos" ? "macOS" : system;
 }
 
-function GroupHead({ group, title, onThread }: { group: TabGroup; title: string | null; onThread: (threadId: string) => void }) {
+function GroupHead({ group, title, onThread }: { group: TabGroup; title: string | null | undefined; onThread: (threadId: string) => void }) {
   const nav = useBoxesNav();
   const box = group.box;
   const where = `${box.backend}`;
@@ -271,7 +302,7 @@ function GroupHead({ group, title, onThread }: { group: TabGroup; title: string 
           <span className="text-xs text-muted-foreground">Found again on its host; its thread is not known</span>
         ) : (
           <button type="button" className="inline-flex max-w-56 items-center gap-1 truncate rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => onThread(box.threadId!)}>
-            <span className="truncate">{title ?? box.threadId}</span>
+            <span className="truncate">{threadGroupHeading(title)}</span>
             <Icon name="ArrowUpRight" className="size-3" aria-hidden />
           </button>
         )}
@@ -298,7 +329,7 @@ export function SnapshotsTabPanel({ view, now, onChanged, scroller }: { view: Sn
   const titles = useThreadTitles(threadIds);
   const agentThreads = useThreadTitles([...new Set(view.groups.flatMap((group) => group.rows.flatMap((row) => (row.by.is === "agent" ? [row.by.threadId] : []))))]);
   const all = useMemo(() => view.groups.flatMap((group) => group.rows.map((row) => ({ row, group }))), [view]);
-  const titleOf = (group: TabGroup) => (group.box.yours || !group.box.threadId ? null : (titles[group.box.threadId] ?? null));
+  const titleOf = (group: TabGroup): string | null | undefined => (group.box.yours || !group.box.threadId ? null : group.box.threadId in titles ? titles[group.box.threadId] : undefined);
   const offered = useMemo(() => {
     const seen: Record<FilterGroup, Set<string>> = { where: new Set(), holds: new Set(), by: new Set(), kept: new Set(), undos: new Set(), soon: new Set() };
     for (const { row, group } of all) for (const key of FILTER_GROUPS) for (const value of valuesOf(row, group, now)[key]) seen[key].add(value);

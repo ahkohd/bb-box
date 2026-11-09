@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { setupDir } from "../backends/setup-dir.ts";
 import { judgeCardCheck } from "../backends/card-check.ts";
 import type { NvidiaUserspace } from "./gpu.ts";
+import { PRODUCT } from "../brand.ts";
 
 export type UserspaceVersion = Exclude<NvidiaUserspace, "unknown">;
 
@@ -79,7 +80,7 @@ export function updateRunning(output: string): boolean {
 }
 
 export function stillRunningWords(box: string): string {
-  return `An earlier update of NVIDIA's userspace is still running in box ${box}: bb-box reads its userspace once it ends, and starts no other update until then`;
+  return `An earlier update of NVIDIA's userspace is still running in box ${box}: ${PRODUCT} reads its userspace once it ends, and starts no other update until then`;
 }
 
 export function userspaceOfReading(reading: UserspaceReading): UserspaceVersion {
@@ -119,7 +120,7 @@ export function processesWords(processes: readonly GpuProcess[]): string {
 }
 
 export function planWords(box: string, reading: UserspaceReading, driver: string, processes: readonly GpuProcess[]): string {
-  return `bb-box installs NVIDIA's userspace ${driver} in ${box}, ${fromWords(reading)}, then restarts it. ${processesWords(processes)}`;
+  return `${PRODUCT} installs NVIDIA's userspace ${driver} in ${box}, ${fromWords(reading)}, then restarts it. ${processesWords(processes)}`;
 }
 
 function base64Of(path: string): string {
@@ -156,22 +157,22 @@ export function installCommand(): string {
 
 export function judgeUpdateCheck(output: string, driver: string): UpdateCheck {
   const lines = output.split("\n").map((line) => line.trim()).filter(Boolean);
-  if (lines.includes(UPDATE_RUNNING)) return { ok: false, why: "is still running an earlier update of NVIDIA's userspace, which must end before bb-box starts another", transient: true };
+  if (lines.includes(UPDATE_RUNNING)) return { ok: false, why: `is still running an earlier update of NVIDIA's userspace, which must end before ${PRODUCT} starts another`, transient: true };
   if (!lines.includes(CHECK_DONE)) {
     const said = lines.find((line) => /sudo|password|not permitted|denied/i.test(line));
-    return said ? { ok: false, why: `lets bb-box run nothing as root (${said.replace(/\.$/, "")})` } : { ok: false, why: "did not finish bb-box's check", transient: true };
+    return said ? { ok: false, why: `lets ${PRODUCT} run nothing as root (${said.replace(/\.$/, "")})` } : { ok: false, why: `did not finish ${PRODUCT}'s check`, transient: true };
   }
   const arch = valueAfter(lines, "arch");
   if (arch !== "x86_64") return { ok: false, why: `runs on ${arch || "an unknown architecture"}, and NVIDIA's userspace is for x86_64 boxes only` };
   if (valueAfter(lines, "os") !== "ubuntu 24.04" || valueAfter(lines, "image") !== "bb-box") {
-    return { ok: false, why: "is not on bb-box's own Linux image (Ubuntu 24.04 on x86_64), where bb-box knows NVIDIA's installer works" };
+    return { ok: false, why: `is not on ${PRODUCT}'s own Linux image (Ubuntu 24.04 on x86_64), where ${PRODUCT} knows NVIDIA's installer works` };
   }
   const free = Number(valueAfter(lines, "free-mib"));
   if (!Number.isFinite(free) || free < UPDATE_FREE_MIB) {
     return { ok: false, why: `has ${Number.isFinite(free) ? `${free} MiB` : "an unknown amount"} free in /var/tmp, and NVIDIA's installer and its files need ${UPDATE_FREE_MIB / 1024} GiB` };
   }
   const apt = valueAfter(lines, "apt") ?? "unreadable";
-  if (apt === "unreadable") return { ok: false, why: "did not let bb-box list its packages from apt, so bb-box cannot tell whether NVIDIA's installer would conflict with them" };
+  if (apt === "unreadable") return { ok: false, why: `did not let ${PRODUCT} list its packages from apt, so ${PRODUCT} cannot tell whether NVIDIA's installer would conflict with them` };
   const packages = apt.split(/\s+/).filter((name) => name && name !== "none");
   if (packages.length) {
     const named = packages.map((entry) => {
@@ -190,18 +191,18 @@ export function judgeUpdateCheck(output: string, driver: string): UpdateCheck {
 }
 
 export function cannotInstallWords(box: string, why: string, transient = false): { readonly person: string; readonly agent: string } {
-  if (transient) return { person: `Not changed: ${box} ${why}. Try again in a minute.`, agent: `Not resized: ${box} ${why}. Try again in a minute, or ask the user. bb-box changed nothing.` };
+  if (transient) return { person: `Not changed: ${box} ${why}. Try again in a minute.`, agent: `Not resized: ${box} ${why}. Try again in a minute, or ask the user. ${PRODUCT} changed nothing.` };
   const toldWhatToDo = /\. [A-Z]/.test(why);
   return {
     person: `Not changed: ${box} ${why}.${toldWhatToDo ? "" : " Make a new box with the GPU it needs."}`,
-    agent: `Not resized: ${box} ${why}.${toldWhatToDo ? "" : " Acquire a new box with the GPU it needs, or ask the user."} bb-box changed nothing.`,
+    agent: `Not resized: ${box} ${why}.${toldWhatToDo ? "" : " Acquire a new box with the GPU it needs, or ask the user."} ${PRODUCT} changed nothing.`,
   };
 }
 
 export function startFirstWords(box: string, driver: string): { readonly person: string; readonly agent: string } {
   return {
     person: `Start ${box} first: NVIDIA's userspace ${driver}, which a card needs, is installed in a running box. Nothing changes.`,
-    agent: `Not resized: ${box} is stopped, and a card needs NVIDIA's userspace ${driver} in it, which bb-box installs only in a running box. Start it with box_start, then resize it again, or ask the user. bb-box changed nothing.`,
+    agent: `Not resized: ${box} is stopped, and a card needs NVIDIA's userspace ${driver} in it, which ${PRODUCT} installs only in a running box. Start it with box_start, then resize it again, or ask the user. ${PRODUCT} changed nothing.`,
   };
 }
 
@@ -216,7 +217,7 @@ export function lastLines(text: string, count = 6): string {
 
 export function updateLeftWords(box: string, update: UserspaceUpdate): string {
   const step = update.step === "fetch" ? "downloading NVIDIA's installer" : update.step === "install" ? "installing it" : update.step === "restart" ? "restarting the box" : "checking the box after its restart";
-  if (update.state === "unknown") return `An update of NVIDIA's userspace in ${box} to ${update.to} was cut short while ${step}, and bb-box has not read its userspace since.`;
+  if (update.state === "unknown") return `An update of NVIDIA's userspace in ${box} to ${update.to} was cut short while ${step}, and ${PRODUCT} has not read its userspace since.`;
   return `The last update of NVIDIA's userspace in ${box} to ${update.to} did not finish: it stopped while ${step}${update.error ? `: ${update.error.replace(/\.$/, "")}` : ""}.`;
 }
 
@@ -267,7 +268,7 @@ export function settledUpdate(update: UserspaceUpdate | null | undefined, readin
   if (driver && matchesDriver(reading, driver) && (update.restartedSince || update.step === "fetch")) return { userspaceUpdate: { ...update, state: "done", ms: null } };
   if (update.state !== "unknown") return {};
   const step = matchesDriver(reading, update.to) && !installedBeforeItFailed(update) ? "restart" : update.step;
-  return { userspaceUpdate: { ...update, state: "failed", step, error: `${update.error ?? "It was cut short."} When bb-box read the box again, it had ${readingWords(reading)}.` } };
+  return { userspaceUpdate: { ...update, state: "failed", step, error: `${update.error ?? "It was cut short."} When ${PRODUCT} read the box again, it had ${readingWords(reading)}.` } };
 }
 
 export function judgeAnyCard(output: string): { readonly ok: true } | { readonly ok: false; readonly why: string } {
@@ -312,11 +313,11 @@ export function judgeDesktopCheck(output: string): string | null {
   const http = valueAfter(lines, "selkies-http");
   if (http !== "200") return `its desktop's video was not ready ${waited} s after its start: Selkies on 127.0.0.1:5980 ${!http || http === "000" ? "did not answer" : `answered HTTP ${http}`}`;
   const video = valueAfter(lines, "video") ?? "";
-  if (!/"frames":[1-9]/.test(video)) return `its desktop's video sent no frames ${waited} s after its start: Selkies answered on 127.0.0.1:5980, but its stream sent bb-box's probe no video${video ? ` (${video})` : ""}`;
+  if (!/"frames":[1-9]/.test(video)) return `its desktop's video sent no frames ${waited} s after its start: Selkies answered on 127.0.0.1:5980, but its stream sent ${PRODUCT}'s probe no video${video ? ` (${video})` : ""}`;
   if (valueAfter(lines, "nvenc") !== "yes") return "its desktop's video is not encoded with NVENC";
   const [before, during] = (valueAfter(lines, "nvenc-sessions") ?? "").split(" ").map((count) => (/^\d+$/.test(count) ? Number(count) : null));
-  if (before === null || during === null || before === undefined || during === undefined) return "bb-box could not read its card's encoder sessions in the box, so it cannot tell that its video is encoded with NVENC";
-  if (during <= before) return `its desktop's video is not encoded with NVENC: its card's encoder sessions did not rise while bb-box's probe watched it (${before} before, ${during} during)`;
+  if (before === null || during === null || before === undefined || during === undefined) return `${PRODUCT} could not read its card's encoder sessions in the box, so it cannot tell that its video is encoded with NVENC`;
+  if (during <= before) return `its desktop's video is not encoded with NVENC: its card's encoder sessions did not rise while ${PRODUCT}'s probe watched it (${before} before, ${during} during)`;
   return null;
 }
 

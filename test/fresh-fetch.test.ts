@@ -42,7 +42,7 @@ function silentAfterFirstAnswer(answer: (path: string) => { status: number; body
   );
 }
 
-test("a pooled connection that has gone silent hangs a long-lived fetch until its timeout, as bb-box's calls to Tailscale did", async () => {
+test("a pooled connection that has gone silent hangs a long-lived fetch until its timeout, as BB Box's calls to Tailscale did", async () => {
   const site = await silentAfterFirstAnswer();
   const pool = new Agent({ keepAliveTimeout: 600_000, keepAliveMaxTimeout: 600_000 });
   try {

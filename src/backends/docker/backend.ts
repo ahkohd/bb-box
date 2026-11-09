@@ -130,6 +130,7 @@ import {
 } from "./gpus.ts";
 
 /** The images start a box in about a second; a desktop takes a few more. This leaves room for a busy host. */
+import { PRODUCT } from "../../brand.ts";
 const READY_TIMEOUT_MS = 60_000;
 /** setup/docker/start writes it once the box is up. /run is a tmpfs, so it is new at each start. */
 const READY_FILE = "/run/bb-box/ready";
@@ -644,7 +645,7 @@ export class DockerBackend implements Backend {
     const machines = context.machines;
     this.#cli = options.cliReachingAHostAnotherBackendMade ?? (machine
       ? new DockerCli(machines?.dockerHost(machine) ?? null, options.binary, async () => {
-          if (!machines) throw new Error(`bb-box reaches BB machine ${machine} only when it runs in BB.`);
+          if (!machines) throw new Error(`${PRODUCT} reaches BB machine ${machine} only when it runs in BB.`);
           await machines.ready(machine);
         })
       : new DockerCli(config.host, options.binary));
@@ -791,7 +792,7 @@ export class DockerBackend implements Backend {
     if (!machine) return otherwise;
     // By its name in BB, which the command takes, else by its ID.
     const named = this.#context.machines?.name(machine) ?? machine;
-    return `Run bb box docker-build ${/^[A-Za-z0-9_.-]+$/.test(named) ? named : machine}, or turn Docker on ${this.#host} off and on in bb-box's settings, to build it there.`;
+    return `Run bb box docker-build ${/^[A-Za-z0-9_.-]+$/.test(named) ? named : machine}, or turn Docker on ${this.#host} off and on in ${PRODUCT}'s settings, to build it there.`;
   }
 
   /** The host's name for people: a BB machine's as BB has it, else as the daemon gives it once it has answered. */
@@ -839,12 +840,12 @@ export class DockerBackend implements Backend {
   }
 
   #partRefusal(kind: string, part: GpuPart): GpuRefusal | null {
-    if (part === "none") return kind === "linux-desktop" ? { person: `${this.label} gives linux-desktop boxes a GPU. Ask for a linux-desktop-cpu box for a desktop drawn by the CPU.`, agent: "Not made: a linux-desktop on Docker always has a GPU. Ask for a linux-desktop-cpu box, or ask the user. bb-box changed nothing." } : null;
+    if (part === "none") return kind === "linux-desktop" ? { person: `${this.label} gives linux-desktop boxes a GPU. Ask for a linux-desktop-cpu box for a desktop drawn by the CPU.`, agent: `Not made: a linux-desktop on Docker always has a GPU. Ask for a linux-desktop-cpu box, or ask the user. ${PRODUCT} changed nothing.` } : null;
     if (!this.#gpuParts(kind)?.includes(part)) {
       if (part === "whole" && this.#gpuParts(kind)?.includes("shared")) return wholeCardsOff(this);
       return {
         person: `${this.label} gives ${kind} boxes no GPU${this.#config.gpus ? "" : ": GPU boxes are off in its settings"}. Ask for gpu none.`,
-        agent: `Not made: ${this.label} gives ${kind} boxes no GPU. Ask for gpu none, or ask the user. bb-box changed nothing.`,
+        agent: `Not made: ${this.label} gives ${kind} boxes no GPU. Ask for gpu none, or ask the user. ${PRODUCT} changed nothing.`,
       };
     }
     return null;
@@ -999,19 +1000,19 @@ export class DockerBackend implements Backend {
     const what = boxWhat(kind);
     const cards = await this.#cardsOn(state.info, signal, freshMs);
     if (!cards.cards.length) {
-      const why = cards.unread ? `bb-box could not read its cards: ${cards.unread}` : "it lists no NVIDIA card as a CDI device";
+      const why = cards.unread ? `${PRODUCT} could not read its cards: ${cards.unread}` : "it lists no NVIDIA card as a CDI device";
       return { is: "refused", refusal: noCardsRefusal(host, why, what), limits: [] };
     }
     const holders = await this.#holders(state, cards);
     const lost = wholeHoldersOnNoCard(holders, cards.cards);
     if (lost.length) {
       const names = listOf(lost.map((holder) => holderName(holder, new Map(), { to: "agent", threadId: null })));
-      const why = `${names} ${lost.length === 1 ? "holds" : "hold"} a card whole that bb-box cannot match to a card it reads now${cards.unread ? `, as it could not read the cards: ${cards.unread}` : ""}`;
+      const why = `${names} ${lost.length === 1 ? "holds" : "hold"} a card whole that ${PRODUCT} cannot match to a card it reads now${cards.unread ? `, as it could not read the cards: ${cards.unread}` : ""}`;
       return {
         is: "refused",
         refusal: {
           person: `${capitalise(host)} cannot give a box a GPU now: ${why}. Run bb box doctor.`,
-          agent: `Not made: ${host} cannot give a box a GPU now: ${why}. Ask for gpu none, or ask the user. bb-box changed nothing.`,
+          agent: `Not made: ${host} cannot give a box a GPU now: ${why}. Ask for gpu none, or ask the user. ${PRODUCT} changed nothing.`,
         },
         limits: [],
       };
@@ -1117,8 +1118,8 @@ export class DockerBackend implements Backend {
     const other = this.#otherBackendOnDaemon();
     if (other === null) return null;
     return {
-      person: `${this.label} reaches the same Docker daemon as the backend ${other}, so bb-box places no GPU box through it: two backends on one daemon would each count only their own boxes on its cards. Ask for gpu none here, or remove one of them in BB Box's settings.`,
-      agent: `Not made: ${this.label} reaches the same Docker daemon as another backend, so bb-box places no GPU box through it. Ask for gpu none, or for another provider, or ask the user. bb-box changed nothing.`,
+      person: `${this.label} reaches the same Docker daemon as the backend ${other}, so ${PRODUCT} places no GPU box through it: two backends on one daemon would each count only their own boxes on its cards. Ask for gpu none here, or remove one of them in BB Box's settings.`,
+      agent: `Not made: ${this.label} reaches the same Docker daemon as another backend, so ${PRODUCT} places no GPU box through it. Ask for gpu none, or for another provider, or ask the user. ${PRODUCT} changed nothing.`,
     };
   }
 
@@ -1151,13 +1152,13 @@ export class DockerBackend implements Backend {
 
     let why: string | null = null;
     if (size.diskGiB !== null) {
-      why = `a Docker box shares the host's disk, so bb-box cannot give it a ${size.diskGiB} GiB disk of its own. Ask for the base disk`;
+      why = `a Docker box shares the host's disk, so ${PRODUCT} cannot give it a ${size.diskGiB} GiB disk of its own. Ask for the base disk`;
     } else if (info.cpus && size.cores > info.cpus) {
       why = `${host} has ${info.cpus} cores, fewer than the ${size.cores} asked for. Ask for at most ${info.cpus} cores`;
     } else if (guests >= this.#config.boxes) {
       why =
-        `${host} has ${guests} of the ${this.#config.boxes} bb-box containers it may have, counting stopped boxes and other installs' boxes. ` +
-        "Release a box, or raise the most boxes in bb-box's settings";
+        `${host} has ${guests} of the ${this.#config.boxes} ${PRODUCT} containers it may have, counting stopped boxes and other installs' boxes. ` +
+        `Release a box, or raise the most boxes in ${PRODUCT}'s settings`;
     } else if (memoryFree - size.memoryMiB < reserve) {
       // Leads with what binds: the box when it needs more than is free, otherwise the memory kept free.
       const box = `a box with ${formatMiB(size.memoryMiB)}`;
@@ -1166,8 +1167,8 @@ export class DockerBackend implements Backend {
           ? `${host} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${box} needs. Ask for less memory or release a box`
           : `${host} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve)} free, so ${box} does not fit. ` +
             (memoryFree > reserve
-              ? "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings"
-              : "Release a box, or lower the memory kept free in bb-box's settings");
+              ? `Ask for less memory, release a box, or lower the memory kept free in ${PRODUCT}'s settings`
+              : `Release a box, or lower the memory kept free in ${PRODUCT}'s settings`);
     }
     return { capacity: { host, ok: why === null, limits }, why };
   }
@@ -1425,9 +1426,9 @@ export class DockerBackend implements Backend {
   #missedCards(box: BoxIdentity, host: string, missed: readonly WrongCard[], refusal: GpuRefusal | null): BackendError {
     const said = missed.map((wrong, at) => `${at ? "then " : ""}${wrong.named}: ${wrong.why}`).join("; ");
     const cards = listOf(missed.map((wrong) => wrong.named));
-    const person = `${box.name} did not get its card on ${host}: ${said}. bb-box removed what it made, and new boxes leave ${cards} out for 10 minutes.${refusal ? ` No other card could take it: ${refusal.person}` : " Run bb box doctor."}`;
-    const agentRefusal = refusal?.agent.replace(/^Not made: /, "").replace(/ bb-box changed nothing\.$/, "");
-    const agent = `Not made: ${box.name} did not get its card: ${said}. bb-box removed what it made.${agentRefusal ? ` No other card could take it: ${agentRefusal}` : " Ask the user."}`;
+    const person = `${box.name} did not get its card on ${host}: ${said}. ${PRODUCT} removed what it made, and new boxes leave ${cards} out for 10 minutes.${refusal ? ` No other card could take it: ${refusal.person}` : " Run bb box doctor."}`;
+    const agentRefusal = refusal?.agent.replace(/^Not made: /, "").replace(new RegExp(` ${PRODUCT} changed nothing\\.$`), "");
+    const agent = `Not made: ${box.name} did not get its card: ${said}. ${PRODUCT} removed what it made.${agentRefusal ? ` No other card could take it: ${agentRefusal}` : " Ask the user."}`;
     return new BackendError("no_capacity", person, agent);
   }
 
@@ -1450,7 +1451,7 @@ export class DockerBackend implements Backend {
 
   async #writeEnvironment(ref: string, card: string, signal?: AbortSignal): Promise<void> {
     const result = await this.#cli.run(["exec", "--user", "0", ref, "/bin/sh", "-c", environmentScript(card)], { timeoutMs: 30_000, signal });
-    if (result.exitCode !== 0) throw new Error(`bb-box could not point CUDA at ${cudaVisible(card)} in /etc/environment of ${ref}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
+    if (result.exitCode !== 0) throw new Error(`${PRODUCT} could not point CUDA at ${cudaVisible(card)} in /etc/environment of ${ref}: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
   }
 
   async #checkCard(ref: string, card: string, signal?: AbortSignal): Promise<CardCheck> {
@@ -1545,7 +1546,7 @@ export class DockerBackend implements Backend {
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     if (!found) throw this.#gone(guest);
     const from = sizeOf(found) ?? guest.size;
-    if (!from) throw new Error(`Container ${found.name} has no CPU or memory limit, so bb-box cannot resize it.`);
+    if (!from) throw new Error(`Container ${found.name} has no CPU or memory limit, so ${PRODUCT} cannot resize it.`);
     const parts: ResizePlan["parts"][number][] = [];
     if (to.cores !== from.cores) parts.push({ part: "cores", from: from.cores, to: to.cores, way: "live" });
     if (to.memoryMiB !== from.memoryMiB) parts.push({ part: "memory", from: from.memoryMiB, to: to.memoryMiB, way: "live" });
@@ -1584,7 +1585,7 @@ export class DockerBackend implements Backend {
       const words = `GPU: ${from} → ${to} · Cannot change on Docker. A container's devices are fixed when it is made, so ${name} cannot ${fixed}. Make a new box with the GPU it needs.`;
       const refusal: GpuRefusal = {
         person: `${capitalise(name)} cannot ${fixed} on Docker: a container's devices are fixed when it is made. Make a new box with the GPU it needs.`,
-        agent: `Not resized: ${name} cannot ${fixed} on Docker: a container's devices are fixed when it is made. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`,
+        agent: `Not resized: ${name} cannot ${fixed} on Docker: a container's devices are fixed when it is made. Acquire a new box with the GPU it needs, or ask the user. ${PRODUCT} changed nothing.`,
       };
       return change("no", words, refusal);
     }
@@ -1596,8 +1597,8 @@ export class DockerBackend implements Backend {
     }
     if (to === "whole" && known && !known.uuidKnown) {
       const refusal: GpuRefusal = {
-        person: `No card is free for ${name} alone: bb-box could not read ${named}, so it cannot tell what uses it. Keep the GPU shared, or run bb box doctor.`,
-        agent: `Not resized: no card is free for ${name} alone: bb-box could not read ${named}. Keep the GPU shared, or ask the user. bb-box changed nothing.`,
+        person: `No card is free for ${name} alone: ${PRODUCT} could not read ${named}, so it cannot tell what uses it. Keep the GPU shared, or run bb box doctor.`,
+        agent: `Not resized: no card is free for ${name} alone: ${PRODUCT} could not read ${named}. Keep the GPU shared, or ask the user. ${PRODUCT} changed nothing.`,
       };
       return change("live", refusal.person, refusal);
     }
@@ -1615,7 +1616,7 @@ export class DockerBackend implements Backend {
       const on = (audience: "person" | "agent") => `${capitalise(named!)} has ${listOf(list(audience))} on it, and on Docker a box cannot move to another card`;
       const refusal: GpuRefusal = {
         person: `No card is free for ${name} alone. ${on("person")}. Release ${holders.length === 1 ? "it" : "one of them"}, or keep the GPU shared.`,
-        agent: `Not resized: no card is free for ${name} alone. ${on("agent")}. Keep the GPU shared, or ask the user. bb-box changed nothing.`,
+        agent: `Not resized: no card is free for ${name} alone. ${on("agent")}. Keep the GPU shared, or ask the user. ${PRODUCT} changed nothing.`,
       };
       return change("live", refusal.person, refusal, others);
     }
@@ -1695,7 +1696,7 @@ export class DockerBackend implements Backend {
         grow > memoryFree
           ? `${host} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(grow)} more the box needs. Ask for less memory or release a box.`
           : `${host} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve)} free, so the ${formatMiB(grow)} more the box needs does not fit. ` +
-            "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings.";
+            `Ask for less memory, release a box, or lower the memory kept free in ${PRODUCT}'s settings.`;
     }
     return { ok: why === null, message: why, warm: null, hosts: [{ host, ok: why === null, limits }] };
   }
@@ -1712,7 +1713,7 @@ export class DockerBackend implements Backend {
     const host = state.info.name || this.#host;
     const cards = await this.#cardsOn(state.info, undefined, READING_KEPT_MS);
     if (!cards.cards.length) {
-      const why = cards.unread ? `bb-box could not read its cards: ${cards.unread}` : "it lists no NVIDIA card as a CDI device";
+      const why = cards.unread ? `${PRODUCT} could not read its cards: ${cards.unread}` : "it lists no NVIDIA card as a CDI device";
       return { readings: [], fullUntil: null, parts: kind === "linux" ? ["none"] : [], withheld: `${host}: ${why}` };
     }
     const holders = await this.#holders(state, cards);
@@ -1735,7 +1736,7 @@ export class DockerBackend implements Backend {
   }
 
   async cardsInUse(signal?: AbortSignal): Promise<CardsInUse> {
-    if (!this.#config.gpus) return { is: "unread", host: this.#host, why: "GPU boxes are off, so bb-box does not read the cards.", setup: DOCKER_GPU_GUIDE };
+    if (!this.#config.gpus) return { is: "unread", host: this.#host, why: `GPU boxes are off, so ${PRODUCT} does not read the cards.`, setup: DOCKER_GPU_GUIDE };
     let state: HostState;
     try {
       state = await this.#state();
@@ -1745,7 +1746,7 @@ export class DockerBackend implements Backend {
     const host = state.info.name || this.#host;
     const cards = await this.#cardsOn(state.info, signal, READING_KEPT_MS);
     if (!cards.cards.length) {
-      const why = cards.unread ? `bb-box could not read the cards on ${host}: ${cards.unread}` : `${host} lists no NVIDIA card as a CDI device.`;
+      const why = cards.unread ? `${PRODUCT} could not read the cards on ${host}: ${cards.unread}` : `${host} lists no NVIDIA card as a CDI device.`;
       return { is: "unread", host, why, setup: DOCKER_GPU_GUIDE };
     }
     const holders = (await this.#holders(state, cards)).filter((holder) => holder.state !== "making");
@@ -1866,9 +1867,9 @@ export class DockerBackend implements Backend {
       } catch (error) {
         if (signal?.aborted) throw error;
         const fix = this.#config.machine
-          ? `Check that ${this.#host} is connected in BB and that Docker runs there. bb box docker-check ${this.#config.machine} reaches it through bb-box's relay.`
+          ? `Check that ${this.#host} is connected in BB and that Docker runs there. bb box docker-check ${this.#config.machine} reaches it through ${PRODUCT}'s relay.`
           : !this.#config.host
-          ? "Start Docker on BB's server, and let the user BB runs as use it (on Linux, add it to the docker group), or set the Docker host in bb-box's settings."
+          ? `Start Docker on BB's server, and let the user BB runs as use it (on Linux, add it to the docker group), or set the Docker host in ${PRODUCT}'s settings.`
           : this.#config.host.startsWith("ssh://")
             ? `Check that the user BB runs as logs in to ${hostWords(this.#config.host)} over SSH without a prompt, and that the user it logs in as may use Docker there.`
             : this.#config.host.startsWith("wsl://")
@@ -1966,7 +1967,7 @@ export class DockerBackend implements Backend {
         const name = `Image ${image}`;
         const result = await this.#cli.run(["image", "inspect", "--format", IMAGE_FORMAT, image], { timeoutMs: 30_000, signal });
         if (result.exitCode !== 0) {
-          push(id, name, "fail", `${info.name} has no image ${image}, which ${kinds} boxes run. bb-box never pulls images.`, this.#buildFix("Build it with setup/docker/build.sh, or pull or load it on the Docker host."));
+          push(id, name, "fail", `${info.name} has no image ${image}, which ${kinds} boxes run. ${PRODUCT} never pulls images.`, this.#buildFix("Build it with setup/docker/build.sh, or pull or load it on the Docker host."));
           continue;
         }
         const { labels, sizeBytes } = imageFacts(result.stdout.trim());
@@ -1980,7 +1981,7 @@ export class DockerBackend implements Backend {
             name,
             "warn",
             "Built before GPU desktops could have Docker, so they have none: its start cannot point Xorg at the GPU placed in a privileged container (#283).",
-            this.#buildFix("Build it again with this bb-box's setup/docker/build.sh to give GPU desktops Docker."),
+            this.#buildFix(`Build it again with this ${PRODUCT}'s setup/docker/build.sh to give GPU desktops Docker.`),
           );
         } else if (record || built === IMAGE_VERSION) {
           // Its record's contract replaces the layout version (049).
@@ -1988,7 +1989,7 @@ export class DockerBackend implements Backend {
           const judged = judgeImage(
             record,
             { os: "linux", pins: serves.includes("linux") ? linuxPins : desktopPins, bbApp: app, pinChrome: record?.arch === "arm64" ? chromeArm : chromeAmd },
-            this.#buildFix("Build it again with this bb-box's setup/docker/build.sh --bb-url <BB's server URL>."),
+            this.#buildFix(`Build it again with this ${PRODUCT}'s setup/docker/build.sh --bb-url <BB's server URL>.`),
           );
           push(id, name, judged.status, `For ${kinds} boxes. ${judged.detail}`, judged.fix);
         } else {
@@ -1996,24 +1997,24 @@ export class DockerBackend implements Backend {
             id,
             name,
             "warn",
-            built ? `Built for layout ${String(built)}; this bb-box expects layout ${IMAGE_VERSION}.` : `Not built by setup/docker/build.sh, so boxes may not start.`,
-            this.#buildFix("Build it again with this bb-box's setup/docker/build.sh."),
+            built ? `Built for layout ${String(built)}; this ${PRODUCT} expects layout ${IMAGE_VERSION}.` : `Not built by setup/docker/build.sh, so boxes may not start.`,
+            this.#buildFix(`Build it again with this ${PRODUCT}'s setup/docker/build.sh.`),
           );
         }
       }
 
       const network = await this.#cli.run(["network", "inspect", "--format", "{{json .Labels}}", this.#config.network], { timeoutMs: 30_000, signal });
       if (network.exitCode !== 0) {
-        push("docker.network", `Network ${this.#config.network}`, "ok", "bb-box makes it with the first box.");
+        push("docker.network", `Network ${this.#config.network}`, "ok", `${PRODUCT} makes it with the first box.`);
       } else if (network.stdout.includes(`"${LABELS.backend}":"docker"`)) {
-        push("docker.network", `Network ${this.#config.network}`, "ok", "Made by bb-box. Its boxes cannot reach each other on it.");
+        push("docker.network", `Network ${this.#config.network}`, "ok", `Made by ${PRODUCT}. Its boxes cannot reach each other on it.`);
       } else {
         push(
           "docker.network",
           `Network ${this.#config.network}`,
           "warn",
-          `bb-box did not make the network ${this.#config.network}, so boxes on it may reach the host's other containers and each other.`,
-          "Give bb-box a network name not in use in its settings.",
+          `${PRODUCT} did not make the network ${this.#config.network}, so boxes on it may reach the host's other containers and each other.`,
+          `Give ${PRODUCT} a network name not in use in its settings.`,
         );
       }
 
@@ -2046,7 +2047,7 @@ export class DockerBackend implements Backend {
         room.why === null ? "ok" : "warn",
         room.why ??
           room.capacity.limits.map((limit) => `${limit.resource} ${limit.unit === "MiB" ? `${formatMiB(limit.used)} of ${formatMiB(limit.total ?? 0)}` : `${limit.used} of ${limit.total}`}`).join(", "),
-        room.why === null ? null : "Release a box, or change the most boxes or the memory kept free in bb-box's settings.",
+        room.why === null ? null : `Release a box, or change the most boxes or the memory kept free in ${PRODUCT}'s settings.`,
       );
       const sizes = sizesCheck({
         id: "docker.sizes",
@@ -2070,7 +2071,7 @@ export class DockerBackend implements Backend {
       }
       if (others.size) {
         notes.push(
-          `bb-box leaves alone the containers of other installs on ${info.name}: ${[...others].map(([install, count]) => `${count} of install ${install}`).join(", ")}. They still count against its room.`,
+          `${PRODUCT} leaves alone the containers of other installs on ${info.name}: ${[...others].map(([install, count]) => `${count} of install ${install}`).join(", ")}. They still count against its room.`,
         );
       }
     } else {
@@ -2093,10 +2094,10 @@ export class DockerBackend implements Backend {
     const refused = this.#otherBackendOnDaemon();
     const fix = "Remove the other backend in BB Box's settings, or point it at another Docker host.";
     if (refused) {
-      push("docker.one-backend", "One backend for this daemon", "warn", `${this.label} reaches the same Docker daemon as the backend ${refused}, so bb-box places no GPU box through it, as two backends on one daemon would each count only their own boxes on its cards. Boxes with no GPU are made as usual.`, fix);
+      push("docker.one-backend", "One backend for this daemon", "warn", `${this.label} reaches the same Docker daemon as the backend ${refused}, so ${PRODUCT} places no GPU box through it, as two backends on one daemon would each count only their own boxes on its cards. Boxes with no GPU are made as usual.`, fix);
       return;
     }
-    push("docker.one-backend", "One backend for this daemon", "warn", `The ${sharing.length === 1 ? "backend" : "backends"} ${listOf(sharing)} ${sharing.length === 1 ? "reaches" : "reach"} the same Docker daemon as this one, so bb-box places GPU boxes there through this one alone.`, fix);
+    push("docker.one-backend", "One backend for this daemon", "warn", `The ${sharing.length === 1 ? "backend" : "backends"} ${listOf(sharing)} ${sharing.length === 1 ? "reaches" : "reach"} the same Docker daemon as this one, so ${PRODUCT} places GPU boxes there through this one alone.`, fix);
   }
 
   async #checkCards(state: HostState, push: (id: CheckId, name: string, status: DoctorCheck["status"], detail: string, fix?: string | null) => void, signal?: AbortSignal): Promise<void> {
@@ -2104,7 +2105,7 @@ export class DockerBackend implements Backend {
     const fix = "Install the NVIDIA Container Toolkit and generate its CDI spec (setup/docker/README.md), or turn off GPU boxes.";
     const cards = await this.#cardsOn(info, signal, 0);
     if (!cards.cards.length) {
-      const why = cards.unread ? `lists cards as CDI devices, but bb-box could not read them: ${cards.unread}` : "lists no NVIDIA card as a CDI device";
+      const why = cards.unread ? `lists cards as CDI devices, but ${PRODUCT} could not read them: ${cards.unread}` : "lists no NVIDIA card as a CDI device";
       push("docker.gpus", "GPUs", "fail", `${info.name} ${why}, so no box there can have a GPU.`, fix);
       return;
     }
@@ -2112,7 +2113,7 @@ export class DockerBackend implements Backend {
     const listed = cards.cards.map((card) => `${cardName(card)}${card.model ? `, ${card.model}` : ""}${card.totalMiB !== null ? `, ${Math.round(card.totalMiB / 1024)} GiB` : ""}${card.freeMiB !== null ? `, ${card.freeMiB} MiB free when read` : ""}`).join("; ");
     const one = cards.oneDeviceForEveryCard ? ` Docker gives them as one device, ${ALL_CARDS_DEVICE}, as in WSL.` : "";
     const reach = reachWords(info.name, this.#config.docker && !info.rootless, cards.oneDeviceForEveryCard);
-    const unread = cards.unread ? ` bb-box could not read them just now (${cards.unread}), so it names them as last read and their free memory is not known: no box gets a whole card until it can read them.` : "";
+    const unread = cards.unread ? ` ${PRODUCT} could not read them just now (${cards.unread}), so it names them as last read and their free memory is not known: no box gets a whole card until it can read them.` : "";
     const facts = `${cards.cards.length} NVIDIA card${cards.cards.length === 1 ? "" : "s"} as CDI devices (${listed}), up to ${this.#config.boxesPerCard} boxes each.${one}${reach ? ` ${reach}` : ""}${unread}`;
     const others = holders.filter((holder) => holder.otherInstall);
     const lost = wholeHoldersOnNoCard(holders, cards.cards);
@@ -2123,8 +2124,8 @@ export class DockerBackend implements Backend {
       unread ? `Check that nvidia-smi answers in a container given the cards on ${info.name}: docker run --rm --device ${info.allGpus ? ALL_CARDS_DEVICE : (info.gpus[0] ?? ALL_CARDS_DEVICE)} <a box image> nvidia-smi -L.` : null,
     ].filter((fix): fix is string => fix !== null);
     if (fixes.length) {
-      const otherWords = others.length ? ` Another install's GPU boxes are on ${info.name}: ${listOf(others.map((holder) => holder.name))}. bb-box counts them on their cards, but sees the GPU part they were made with, not a later switch, and they see this install's boxes the same way.` : "";
-      const lostWords = lost.length ? ` ${lostNames} ${lost.length === 1 ? "holds" : "hold"} a card whole that bb-box cannot match to a card it reads now, so it places no GPU box on ${info.name} until it can.` : "";
+      const otherWords = others.length ? ` Another install's GPU boxes are on ${info.name}: ${listOf(others.map((holder) => holder.name))}. ${PRODUCT} counts them on their cards, but sees the GPU part they were made with, not a later switch, and they see this install's boxes the same way.` : "";
+      const lostWords = lost.length ? ` ${lostNames} ${lost.length === 1 ? "holds" : "hold"} a card whole that ${PRODUCT} cannot match to a card it reads now, so it places no GPU box on ${info.name} until it can.` : "";
       push("docker.gpus", "GPUs", lost.length ? "fail" : "warn", `${facts}${otherWords}${lostWords}`, fixes.join(" "));
     } else {
       push("docker.gpus", "GPUs", "ok", facts);
@@ -2149,7 +2150,7 @@ export class DockerBackend implements Backend {
           `GPU ${label} boxes`,
           "warn",
           `${capitalise(cardName(card))} has ${audit.holders.length} boxes, ${audit.over} over the limit of ${this.#config.boxesPerCard}: ${named(audit.holders)}. They keep running; no new box goes on ${cardName(card)} until it has room.`,
-          "Release boxes on the card, or raise the boxes per card in bb-box's Docker settings.",
+          `Release boxes on the card, or raise the boxes per card in ${PRODUCT}'s Docker settings.`,
         );
       }
     }
@@ -2165,7 +2166,7 @@ export class DockerBackend implements Backend {
     }
     const image = this.#probeImage();
     if (!image) {
-      push("docker.apparmor", name, "skipped", "Skipped until a box image is on the host, as bb-box tries a setgid program in a container of it.");
+      push("docker.apparmor", name, "skipped", `Skipped until a box image is on the host, as ${PRODUCT} tries a setgid program in a container of it.`);
       return;
     }
     const probe = await this.#cli.run(
@@ -2194,7 +2195,7 @@ export class DockerBackend implements Backend {
     const name = "Memory and CPUs a box sees";
     const lxcfs = await this.#lxcfsOnHost(signal, true);
     if (lxcfs === null) {
-      push("docker.lxcfs", name, "skipped", "Skipped until a box image is on the host, as bb-box looks for LXCFS from a container of it.");
+      push("docker.lxcfs", name, "skipped", `Skipped until a box image is on the host, as ${PRODUCT} looks for LXCFS from a container of it.`);
       return;
     }
     if (!lxcfs.serves) {
@@ -2207,7 +2208,7 @@ export class DockerBackend implements Backend {
           (desktop ? " Docker Desktop's VM cannot have LXCFS." : ""),
         desktop
           ? null
-          : `Install LXCFS on ${info.name}, as root: apt install lxcfs, or the distribution's package, then systemctl enable --now lxcfs. Boxes made after see their own memory and CPUs; boxes made before keep the host's until they are made again. Reload LXCFS (systemctl reload lxcfs) rather than restart it, as a restart breaks the files of the boxes running. If ${info.name} is itself a container, LXCFS cannot run in it: it runs on the machine that runs the container, as Proxmox VE's does for its LXC containers, and bb-box then uses the files it gives the container.`,
+          : `Install LXCFS on ${info.name}, as root: apt install lxcfs, or the distribution's package, then systemctl enable --now lxcfs. Boxes made after see their own memory and CPUs; boxes made before keep the host's until they are made again. Reload LXCFS (systemctl reload lxcfs) rather than restart it, as a restart breaks the files of the boxes running. If ${info.name} is itself a container, LXCFS cannot run in it: it runs on the machine that runs the container, as Proxmox VE's does for its LXC containers, and ${PRODUCT} then uses the files it gives the container.`,
       );
       return;
     }
@@ -2344,7 +2345,7 @@ export class DockerBackend implements Backend {
     if (result.exitCode === 0) return made;
     if (/Conflict|already in use/i.test(result.stderr)) {
       const found = await this.#owned(name, box.boxId, signal);
-      if (!found) throw new Error(`The container ${name} on ${this.#host} belongs to another box, so bb-box left it alone.`);
+      if (!found) throw new Error(`The container ${name} on ${this.#host} belongs to another box, so ${PRODUCT} left it alone.`);
       const foundGpu = found.labels[LABELS.gpu] ?? null;
       const foundCard = foundGpu ? (found.labels[LABELS.gpuCard] ?? deviceCard(foundGpu)) : null;
       return { gpu: foundGpu, card: foundCard, part: foundCard ? partOfLabel(found.labels[LABELS.gpuPart]) : "none" };
@@ -2353,8 +2354,8 @@ export class DockerBackend implements Backend {
       const building = dockerImageBuilding(this.#config.machine, image);
       throw new Error(
         building
-          ? `${this.#host} has no image ${image} yet. bb-box is still building it.`
-          : `${this.#host} has no image ${image}, and bb-box never pulls one. Build it with setup/docker/build.sh (setup/docker/README.md).`,
+          ? `${this.#host} has no image ${image} yet. ${PRODUCT} is still building it.`
+          : `${this.#host} has no image ${image}, and ${PRODUCT} never pulls one. Build it with setup/docker/build.sh (setup/docker/README.md).`,
       );
     }
     throw this.#cli.error("docker container create", result);
@@ -2493,7 +2494,7 @@ export class DockerBackend implements Backend {
     const install = this.#context.installId;
     const [container] = await this.#cli.inspect([ref], signal);
     if (container) {
-      if (container.labels[LABELS.imageBox] !== install) throw new Error(`The container ${ref} is not an image box of this install's, so bb-box leaves it.`);
+      if (container.labels[LABELS.imageBox] !== install) throw new Error(`The container ${ref} is not an image box of this install's, so ${PRODUCT} leaves it.`);
       await this.#cli.run(["container", "rm", "--force", "--volumes", container.id], { timeoutMs: 120_000, signal });
       return;
     }
@@ -2502,7 +2503,7 @@ export class DockerBackend implements Backend {
     const configured = DOCKER_KINDS.some((kind) => this.#config.images[kind] === ref);
     const captured = labels[LABELS.install] === install && !!labels[LABELS.image];
     const refreshing = DOCKER_KINDS.some((kind) => this.#config.images[kind] && ref.startsWith(`${this.#config.images[kind]!.replace(/:[^:/]*$/, "")}:refresh-`));
-    if (configured || !(captured || refreshing)) throw new Error(`The image ${ref} is not an image build of this install's, so bb-box leaves it.`);
+    if (configured || !(captured || refreshing)) throw new Error(`The image ${ref} is not an image build of this install's, so ${PRODUCT} leaves it.`);
     await this.#cli.run(["image", "rm", ref], { timeoutMs: 120_000, signal });
   }
 

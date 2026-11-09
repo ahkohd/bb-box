@@ -115,7 +115,7 @@ test("a shared card: the whole card's numbers, never busy; a desktop alone on it
   assert.equal(cardFoot(card, bytes), "This box: 0 MiB of 13250 MiB");
   assert.equal(cardFoot(card, bytes, false), "13250 of 97887 MiB · 285 W");
   assert.equal(cardFoot({ ...card, ownMemoryBytes: null, ownProcesses: null }, bytes), "Whole card: 13250 MiB used");
-  assert.equal(sharedCardWords(card, 1, bytes), "This box shares its GPU with other boxes or the host. Its numbers are the whole card's, every user's together. None of this box's processes use it now. bb-box cannot tell how much of the card's use is this box's, so a shared card never makes this box busy.");
+  assert.equal(sharedCardWords(card, 1, bytes), "This box shares its GPU with other boxes or the host. Its numbers are the whole card's, every user's together. None of this box's processes use it now. BB Box cannot tell how much of the card's use is this box's, so a shared card never makes this box busy.");
   assert.match(sharedCardWords(idleContext.cards[0]!, 2, bytes), /^This box shares GPU 0 with .* This box's own process uses 180 MiB of its memory\./);
   assert.equal(cardFoot(gpuReadingOf(cards, [], false)!.cards[0]!, bytes), "13250 of 97887 MiB · 285 W");
 });

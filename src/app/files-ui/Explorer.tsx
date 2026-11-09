@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { DialogButton } from "../box-dialog.tsx";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import {
@@ -397,7 +398,7 @@ export function Explorer({
           }}
         />
       )}
-      <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
+      <AlertDialog open={removing !== null} onOpenChange={(open) => { if (!open && !busy) setRemoving(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {removing === null ? "this" : basename(removing.path)}?</AlertDialogTitle>
@@ -406,10 +407,10 @@ export function Explorer({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => void confirmDelete()}>
-              Delete
-            </AlertDialogAction>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <DialogButton danger disabled={busy} onClick={() => void confirmDelete()}>
+              {busy ? "Deleting…" : "Delete"}
+            </DialogButton>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -1,6 +1,6 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useState, type ReactNode } from "react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { BoxDialog, DialogButton, useDialogAction } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
@@ -9,13 +9,15 @@ import type { ConfigState } from "../plugin/configuration.ts";
 import type { Contract, ImageFailure, ImagesStatus } from "../plugin/contract.ts";
 import type { RunProgress } from "../plugin/images.ts";
 import type { ImageOptionView } from "../plugin/views.ts";
-import { Badge, message, relativeTime, StatusDot, useLive, type Tone } from "./common.tsx";
+import { ago } from "./box-words.ts";
+import { Badge, message, StatusDot, useLive, type Tone } from "./common.tsx";
 import { ImageRowsSkeleton, LoadFailed, WhileLoading } from "./loading-states.tsx";
 import { RebuildNow, RUN_TONE, isRunning, stateWords, type RunImage } from "./rebuild-now.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { Card, FOCUS_RING, Group, RowNote, Rows, SavedTick, StateLine } from "./settings-parts.tsx";
 import { imageBakePath, standardImagePath, type PlainValue } from "./settings-paths.ts";
 import { backendLabel, hostChip, kindName, plural, type StatusItem } from "./settings-status.ts";
+import { refusedInstant } from "./settings-saving.tsx";
 
 export type StandardImage = ImagesStatus["images"][number];
 type ImagesProgress = Pick<ImagesStatus, "progress" | "running" | "failures">;
@@ -65,7 +67,7 @@ function bakeWords(value: PlainValue): string {
 function failureItem(state: ConfigState, failure: ImageFailure, now: number): StatusItem {
   const kind = kindWords(state, failure.kind);
   const backend = backendWords(state, failure.backend);
-  const when = relativeTime(failure.at, now);
+  const when = ago(failure.at, now);
   if (failure.of === "project") {
     return {
       key: `image-build-${failure.name}-${failure.backend}-${failure.kind}`,
@@ -116,11 +118,11 @@ function rowState(row: StandardRow, now: number): { readonly tone: Tone; readonl
   if (row.run) return { tone: RUN_TONE[row.run.state], words: stateWords(row.run), saysWhyDue: false };
   const image = row.image;
   const outcome = image?.outcome ?? null;
-  if (outcome?.state === "failed") return { tone: "bad", words: `Its last rebuild failed ${relativeTime(outcome.at, now)}: ${outcome.reason ?? "no reason given"}`, saysWhyDue: false };
-  if (outcome?.state === "waiting") return { tone: "warn", words: `Its last rebuild waited ${relativeTime(outcome.at, now)}: ${outcome.reason ?? "no room"}`, saysWhyDue: false };
+  if (outcome?.state === "failed") return { tone: "bad", words: `Its last rebuild failed ${ago(outcome.at, now)}: ${outcome.reason ?? "no reason given"}`, saysWhyDue: false };
+  if (outcome?.state === "waiting") return { tone: "warn", words: `Its last rebuild waited ${ago(outcome.at, now)}: ${outcome.reason ?? "no room"}`, saysWhyDue: false };
   if (image?.due) return { tone: "warn", words: `Due: ${image.due}`, saysWhyDue: true };
   const ageUnknown = !image || image.built === "no record";
-  return { tone: "ok", words: outcome?.state === "refreshed" && ageUnknown ? `Up to date, rebuilt ${relativeTime(outcome.at, now)}` : "Up to date", saysWhyDue: false };
+  return { tone: "ok", words: outcome?.state === "refreshed" && ageUnknown ? `Up to date, rebuilt ${ago(outcome.at, now)}` : "Up to date", saysWhyDue: false };
 }
 
 const RUN_STATES_NEEDING_ATTENTION: ReadonlySet<RunImage["state"]> = new Set(["next", "refreshing", "failed", "waiting", "not started"]);
@@ -206,7 +208,7 @@ function lastRunWords(progress: RunProgress | null, now: number): string | null 
   const counts = new Map<RunImage["state"], number>();
   for (const image of progress.images) counts.set(image.state, (counts.get(image.state) ?? 0) + 1);
   const parts = (["refreshed", "waiting", "failed", "skipped", "not started"] as const).filter((each) => counts.get(each)).map((each) => `${counts.get(each)} ${RUN_COUNT_WORDS[each]}`);
-  const ended = `The last rebuild ended ${relativeTime(progress.ended ?? now, now)}`;
+  const ended = `The last rebuild ended ${ago(progress.ended ?? now, now)}`;
   return parts.length ? `${ended}: ${parts.join(", ")}.` : `${ended}, with nothing to rebuild.`;
 }
 
@@ -357,7 +359,7 @@ function rowId(name: string): string {
 
 const READING_BUILDS = "Reading its builds…";
 
-function ProjectImageRow({ name, image, view, loaded, open, onToggle, onRemove }: { name: string; image: ImageConfig; view: ImageOptionView | null; loaded: boolean; open: boolean; onToggle: () => void; onRemove: () => void }) {
+function ProjectImageRow({ name, image, view, loaded, open, onToggle, onRemove, quietRemoval = false }: { name: string; image: ImageConfig; view: ImageOptionView | null; loaded: boolean; open: boolean; onToggle: () => void; onRemove: () => void; quietRemoval?: boolean }) {
   const { state, instant, writes } = useSettings();
   const now = Date.now();
   const id = rowId(name);
@@ -404,7 +406,7 @@ function ProjectImageRow({ name, image, view, loaded, open, onToggle, onRemove }
           <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-4 text-subtle-foreground" aria-hidden />
         </span>
       </div>
-      <RowNote note={instant.note(bakeKey) ?? instant.note(switchKey.removeImage(name))} className="px-4 pb-2" />
+      <RowNote note={instant.note(bakeKey) ?? (quietRemoval ? null : instant.note(switchKey.removeImage(name)))} className="px-4 pb-2" />
       {open ? <ProjectImageDetails id={`${id}-details`} name={name} image={image} view={view} loaded={loaded} now={now} onRemove={onRemove} /> : null}
     </div>
   );
@@ -425,7 +427,7 @@ function sourceWords(image: ImageConfig, now: number): string {
   const files = [image.source?.script, image.source?.check].filter((file): file is string => !!file);
   const from = files.length ? `From ${files.join(" and ")} in the project's repository` : "Set by hand";
   const updated = image.updated ? Date.parse(image.updated) : NaN;
-  return Number.isFinite(updated) ? `${from}, set ${relativeTime(updated, now)}.` : `${from}.`;
+  return Number.isFinite(updated) ? `${from}, set ${ago(updated, now)}.` : `${from}.`;
 }
 
 function ProjectImageDetails({ id, name, image, view, loaded, now, onRemove }: { id: string; name: string; image: ImageConfig; view: ImageOptionView | null; loaded: boolean; now: number; onRemove: () => void }) {
@@ -439,12 +441,12 @@ function ProjectImageDetails({ id, name, image, view, loaded, now, onRemove }: {
         <ul className="space-y-1 text-xs leading-snug">
           {builds.map((build) => (
             <li key={`${build.backend}-${build.kind}`} className="text-muted-foreground">
-              <StateLine tone="ok" words={`Built for ${kindWords(state, build.kind)} on ${backendWords(state, build.backend)}`} items={[`${build.build ?? "a build"}, ${relativeTime(Date.parse(build.built), now)}`]} />
+              <StateLine tone="ok" words={`Built for ${kindWords(state, build.kind)} on ${backendWords(state, build.backend)}`} items={[`${build.build ?? "a build"}, ${ago(Date.parse(build.built), now)}`]} />
             </li>
           ))}
           {failed.map((failure) => (
             <li key={`failed-${failure.backend}-${failure.kind}`}>
-              <StateLine tone="warn" words={`Its build for ${kindWords(state, failure.kind)} on ${backendWords(state, failure.backend)} failed ${relativeTime(failure.at, now)}: ${failure.reason}`} />
+              <StateLine tone="warn" words={`Its build for ${kindWords(state, failure.kind)} on ${backendWords(state, failure.backend)} failed ${ago(failure.at, now)}: ${failure.reason}`} />
             </li>
           ))}
         </ul>
@@ -476,42 +478,53 @@ function inWords(names: readonly string[]): string {
   return names.length < 3 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
-function RemoveImageDialog({ name, image, view, onCancel, onConfirm }: { name: string | null; image: ImageConfig | null; view: ImageOptionView | null; onCancel: () => void; onConfirm: (name: string) => void }) {
+function RemoveImageDialog({ name, image, view, onCancel, onConfirm }: { name: string | null; image: ImageConfig | null; view: ImageOptionView | null; onCancel: () => void; onConfirm: (name: string) => Promise<string | null> }) {
   const { state } = useSettings();
+  const action = useDialogAction(onCancel);
   const [shown, setShown] = useState<{ name: string; image: ImageConfig; projects: readonly string[] } | null>(null);
   const projectNames = image ? image.projects.map((id) => view?.projects.find((project) => project.id === id)?.name ?? id) : [];
   if (name !== null && image && (shown?.name !== name || shown.projects.join("\n") !== projectNames.join("\n"))) setShown({ name, image, projects: projectNames });
   const kinds = shown ? inWords(shown.image.kinds.map((kind) => kindWords(state, kind) ?? kind)) : "";
   const projects = shown ? inWords(shown.projects) : "";
   return (
-    <AlertDialog open={name !== null} onOpenChange={(open) => !open && onCancel()}>
-      <AlertDialogContent
-        onCloseAutoFocus={(event) => {
-          const row = shown ? document.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(`image-${shown.name}`)}"]`) : null;
-          if (!row) return;
-          event.preventDefault();
-          row.focus();
-        }}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle>Remove the image {shown?.name}?</AlertDialogTitle>
-          <AlertDialogDescription asChild>
-            <div className="space-y-2">
-              <p>
-                New {kinds} boxes in {projects} start from the standard images again, without its script. Its builds are deleted.
-              </p>
-              <p>Boxes already made keep what they have. An agent can set it again from the project's files with bb box image set.</p>
-            </div>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => shown && onConfirm(shown.name)}>
-            Remove image
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <BoxDialog
+      open={name !== null}
+      title={shown ? `Remove the image ${shown.name}?` : "Nothing to remove"}
+      busy={action.busy}
+      refused={action.refused}
+      onClose={action.close}
+      onCloseAutoFocus={(event) => {
+        const row = shown ? document.querySelector<HTMLElement>(`[data-row-key="${CSS.escape(`image-${shown.name}`)}"]`) : null;
+        if (!row) return;
+        event.preventDefault();
+        row.focus();
+      }}
+      footer={
+        shown ? (
+          <>
+            <DialogButton variant="outline" onClick={action.close}>
+              Cancel
+            </DialogButton>
+            <DialogButton danger busyWords="Removing…" onClick={() => void action.run(() => onConfirm(shown.name))}>
+              Remove image
+            </DialogButton>
+          </>
+        ) : (
+          <DialogButton variant="outline" onClick={action.close}>
+            Close
+          </DialogButton>
+        )
+      }
+    >
+      <div className="space-y-2">
+        <p>
+          New {kinds} boxes in {projects} start from the standard images again, without its script. Its builds are deleted.
+        </p>
+        <p>
+          Boxes already made keep what they have. An agent can set it again from the project's files with <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-xs text-foreground">bb box image set</code>.
+        </p>
+      </div>
+    </BoxDialog>
   );
 }
 
@@ -526,15 +539,16 @@ function ProjectImages() {
   const images = state.document.images ?? {};
   const names = Object.keys(images).sort((a, b) => a.localeCompare(b));
   const toggle = (name: string) => setOpen((current) => (current.has(name) ? new Set([...current].filter((each) => each !== name)) : new Set([...current, name])));
-  const remove = (name: string) => {
-    setRemoving(null);
+  const remove = async (name: string): Promise<string | null> => {
     setRemovedNote(null);
     const before = names;
-    void instant.run(writes.removeImage(state, name)).then((outcome) => {
-      if (outcome?.kind !== "saved" && outcome?.kind !== "already") return;
+    const outcome = await instant.run(writes.removeImage(state, name));
+    if (outcome?.kind === "saved" || outcome?.kind === "already") {
       setRemovedNote(`Removed the image ${name}.`);
       focusAfterRemoval(before, name);
-    });
+      return null;
+    }
+    return refusedInstant(outcome, instant.note(switchKey.removeImage(name)));
   };
   const removedElsewhere = removing !== null && !images[removing];
   return (
@@ -549,7 +563,7 @@ function ProjectImages() {
         <Card>
           <Rows>
             {names.map((name) => (
-              <ProjectImageRow key={name} name={name} image={images[name]!} view={views?.find((view) => view.name === name) ?? null} loaded={loaded} open={open.has(name)} onToggle={() => toggle(name)} onRemove={() => setRemoving(name)} />
+              <ProjectImageRow key={name} name={name} image={images[name]!} view={views?.find((view) => view.name === name) ?? null} loaded={loaded} open={open.has(name)} onToggle={() => toggle(name)} onRemove={() => setRemoving(name)} quietRemoval={removing === name} />
             ))}
           </Rows>
         </Card>

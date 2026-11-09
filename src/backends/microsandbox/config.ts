@@ -8,6 +8,7 @@
 import type { BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 import { BB_MACHINE } from "../docker/config.ts";
 import { IMAGE_REF } from "./release.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const MSB_KINDS = ["linux", "linux-desktop-cpu", "linux-arm64", "linux-arm64-desktop-cpu"] as const;
 export type MsbKind = (typeof MSB_KINDS)[number];
@@ -80,21 +81,21 @@ export const MSB_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "Host",
     description:
-      "The host that runs the boxes: a Linux host with KVM, or a Mac. Give ssh://user@host, or bb:<machine ID> for a BB machine, which bb-box reaches through BB. Empty uses BB's server. bb-box installs its own msb there.",
+      `The host that runs the boxes: a Linux host with KVM, or a Mac. Give ssh://user@host, or bb:<machine ID> for a BB machine, which ${PRODUCT} reaches through BB. Empty uses BB's server. ${PRODUCT} installs its own msb there.`,
     group: "connection",
     default: "",
   },
   [MSB_KEYS.linuxImage]: {
     type: "string",
     label: "Linux image",
-    description: "The image Linux boxes run. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off.",
+    description: `The image Linux boxes run. ${PRODUCT} imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off.`,
     group: "boxes",
     default: MSB_DEFAULTS.linuxImage,
   },
   [MSB_KEYS.desktopImage]: {
     type: "string",
     label: "Desktop image",
-    description: "The image Linux desktops run, drawn by the CPU. bb-box imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off.",
+    description: `The image Linux desktops run, drawn by the CPU. ${PRODUCT} imports it from Docker on the host, where setup/docker/build.sh builds it. Empty turns them off.`,
     group: "boxes",
     default: MSB_DEFAULTS.desktopImage,
   },
@@ -102,7 +103,7 @@ export const MSB_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "Linux image (arm64)",
     description:
-      "The image Linux boxes on arm64 run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there with setup/docker/build.sh --arch arm64 in a microVM of its own. Empty turns them off.",
+      `The image Linux boxes on arm64 run, on an arm64 host such as a Mac. ${PRODUCT} imports it from Docker on the host, or builds it there with setup/docker/build.sh --arch arm64 in a microVM of its own. Empty turns them off.`,
     group: "boxes",
     default: MSB_DEFAULTS.arm64Image,
   },
@@ -110,7 +111,7 @@ export const MSB_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "string",
     label: "Desktop image (arm64)",
     description:
-      "The image Linux desktops on arm64 run, on an arm64 host such as a Mac. bb-box imports it from Docker on the host, or builds it there in a microVM of its own. Empty turns them off.",
+      `The image Linux desktops on arm64 run, on an arm64 host such as a Mac. ${PRODUCT} imports it from Docker on the host, or builds it there in a microVM of its own. Empty turns them off.`,
     group: "boxes",
     default: MSB_DEFAULTS.arm64DesktopImage,
   },
@@ -145,7 +146,7 @@ export const MSB_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
   [MSB_KEYS.boxes]: {
     type: "number",
     label: "Most boxes",
-    description: "The most bb-box microVMs on the host at once, running or stopped. This counts those of every bb-box install that uses the host.",
+    description: `The most ${PRODUCT} microVMs on the host at once, running or stopped. This counts those of every ${PRODUCT} install that uses the host.`,
     group: "advanced",
     default: MSB_DEFAULTS.boxes,
   },
@@ -201,7 +202,7 @@ export function parseMsbPart(part: BackendPart): ParsedBackend<MsbConfig> {
     [MSB_KEYS.arm64Image, "arm64 linux", arm64],
     [MSB_KEYS.arm64DesktopImage, "arm64 desktop", arm64Desktop],
   ] as const) {
-    if (image && !IMAGE_REF.test(image)) problem(key, `microsandbox: the ${what} image "${image}" is not an image reference bb-box can use.`);
+    if (image && !IMAGE_REF.test(image)) problem(key, `microsandbox: the ${what} image "${image}" is not an image reference ${PRODUCT} can use.`);
   }
   if (!linux && !desktop && !arm64 && !arm64Desktop) problem(MSB_KEYS.linuxImage, "microsandbox: give a linux or a desktop image.");
   const docker = values[MSB_KEYS.docker] !== false;

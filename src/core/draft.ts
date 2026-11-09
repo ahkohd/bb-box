@@ -13,6 +13,7 @@
  */
 
 /** A file of the project's, by its path in the repository. */
+import { PRODUCT } from "../brand.ts";
 export interface DraftFile {
   readonly path: string;
   readonly text: string;
@@ -222,7 +223,7 @@ export function draftImage(files: readonly DraftFile[], box?: { readonly name: s
         b.gap(file.path, `its Dockerfile, ${path}, was not given: pass it to box_image_draft too.`);
       }
     } else if (typeof config.image === "string") {
-      b.gap(file.path, `its image, ${config.image}, is not the box's: the draft adds to bb-box's Ubuntu 24.04 standard image what the features and settings ask for.`);
+      b.gap(file.path, `its image, ${config.image}, is not the box's: the draft adds to ${PRODUCT}'s Ubuntu 24.04 standard image what the features and settings ask for.`);
     }
     devcontainer(b, file.path, config);
   }
@@ -483,7 +484,7 @@ function render(b: Builder): { script: string; check: string } {
   if (b.after.some((line) => line.startsWith("path_first"))) b.helpers.add("path");
   const script: string[] = [
     "#!/bin/bash",
-    "# A project image's script (049): bb-box runs it as root on its standard Ubuntu 24.04",
+    `# A project image's script (049): ${PRODUCT} runs it as root on its standard Ubuntu 24.04`,
     "# image, with BB_BOX_IMAGE, BB_BOX_KIND, BB_BOX_BACKEND and BB_BOX_ARCH. There is no",
     "# checkout of the repository: what needs one stays in the thread.",
     "# Drafted by box_image_draft; try it with box_image_try.",
@@ -527,7 +528,7 @@ function render(b: Builder): { script: string; check: string } {
   const checks = [...new Set(b.checks)];
   const check = [
     "#!/bin/bash",
-    "# A project image's check (049): bb-box runs it as the box user after the script, and",
+    `# A project image's check (049): ${PRODUCT} runs it as the box user after the script, and`,
     "# on a box of the image's build. It fails when the script did not do its work.",
     "set -euo pipefail",
     ...(checks.length ? checks : ["# What the project needs, for example: cargo --version", "true"]),

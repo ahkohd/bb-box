@@ -4,6 +4,7 @@
 // secret appears only in the Authorization header, never in errors.
 
 import type { MachineSize } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export interface FetchResponse {
   readonly ok: boolean;
@@ -791,7 +792,7 @@ export class Proxmox {
       response = await this.#fetch(url, { method, headers, body, signal: combined });
     } catch (error) {
       if (signal?.aborted) throw signal.reason;
-      if (clientClosed(error)) throw new ProxmoxError(method, path, 0, "bb-box stopped this Proxmox backend, or rebuilt it, as when Settings are saved.");
+      if (clientClosed(error)) throw new ProxmoxError(method, path, 0, `${PRODUCT} stopped this Proxmox backend, or rebuilt it, as when Settings are saved.`);
       const reason = timeout.aborted ? "timed out" : fetchFailure(error);
       throw new ProxmoxError(method, path, 0, `cannot reach the Proxmox API: ${reason}`);
     }

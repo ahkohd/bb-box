@@ -8,6 +8,7 @@ import type { DoctorCheck, WarmShortfall } from "./types.ts";
  * more after it, as the configuration or the pool may have changed since
  * the run read them (#355).
  */
+import { PRODUCT } from "../brand.ts";
 export class Upkeep {
   readonly #work: (signal: AbortSignal) => Promise<void>;
   #running: Promise<void> | null = null;
@@ -87,7 +88,7 @@ export function warmChecks(short: readonly WarmShortfall[]): DoctorCheck[] {
     name: `Warm pool of ${kindWords(pool.kinds)}`,
     status: "warn" as const,
     detail: `It ${shortWords(pool)}`,
-    fix: "Make room there, or lower the warm count in bb-box's settings.",
+    fix: `Make room there, or lower the warm count in ${PRODUCT}'s settings.`,
   }));
 }
 

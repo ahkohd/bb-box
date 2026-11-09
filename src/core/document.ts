@@ -12,6 +12,7 @@ import { GPU_PARTS, isSecret, type BackendDriver, type BackendPart, type Machine
 import { TAILNET_CLIENT_ID, TAILNET_CLIENT_SECRET, exportedTailnet, keptTailnetSecrets, readTailnet, tailnetProblems, type TailnetSetting } from "./tailnet-settings.ts";
 import { GENERAL_SECRETS, MAX_BOX_FILES, MAX_BOX_FILE_BYTES, contentKey, pathProblem, type BoxFileSetting } from "./box-files.ts";
 import { PRESETS, belowLeast, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
+import { PRODUCT } from "../brand.ts";
 
 export const SCHEMA = 1;
 
@@ -509,7 +510,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
   }
   const known = new Set(["schema", "revision", "backends", "kinds", "general", "images", "monitor"]);
   for (const key of Object.keys(input)) if (!known.has(key)) problem(key, `There is no "${key}" in the configuration. It has backends, kinds, general, images and monitor.`);
-  if (input.schema !== undefined && input.schema !== SCHEMA) problem("schema", `This bb-box reads schema ${SCHEMA}, not ${String(input.schema)}.`);
+  if (input.schema !== undefined && input.schema !== SCHEMA) problem("schema", `This ${PRODUCT} reads schema ${SCHEMA}, not ${String(input.schema)}.`);
   const revision = isWhole(input.revision, 0) ? input.revision : 0;
 
   const general: Record<string, unknown> = {};
@@ -1108,7 +1109,7 @@ export function checkDocument(
     }
     seen.add(backend.id);
     if (!driver) {
-      problem(path, `This version of bb-box has no ${backend.type} backend, so ${backend.id} does not run. Its boxes wait for a version that has it.`);
+      problem(path, `This version of ${PRODUCT} has no ${backend.type} backend, so ${backend.id} does not run. Its boxes wait for a version that has it.`);
       continue;
     }
     for (const [kind, count] of Object.entries(backend.warm ?? {})) {
@@ -1122,7 +1123,7 @@ export function checkDocument(
       const other = hosts.get(host);
       if (other !== undefined) problem(path, `${backend.id} and ${other} are both ${driver.label} on ${driver.several(backend.fields ?? {}) || "the default host"}. Give each its own host, or remove one.`);
       else hosts.set(host, backend.id);
-    } else if (types.has(backend.type)) problem(path, `bb-box runs one ${driver.label} backend for now. Remove ${backend.id}.`);
+    } else if (types.has(backend.type)) problem(path, `${PRODUCT} runs one ${driver.label} backend for now. Remove ${backend.id}.`);
     types.add(backend.type);
     const names = new Set<string>();
     for (const [n, host] of (backend.hosts ?? []).entries()) {
@@ -1140,7 +1141,7 @@ export function checkDocument(
     if (held.count > 0 && !seen.has(id)) {
       problem(
         `backends.${id}`,
-        `Backend ${id} holds ${held.words}, so it cannot be removed or renamed. Delete them first, or forget them with bb box snapshot forget ${id}: bb-box then drops its records of them, and they may still exist there and be billed.`,
+        `Backend ${id} holds ${held.words}, so it cannot be removed or renamed. Delete them first, or forget them with bb box snapshot forget ${id}: ${PRODUCT} then drops its records of them, and they may still exist there and be billed.`,
       );
     }
   }
@@ -1148,11 +1149,11 @@ export function checkDocument(
   for (const [id, held] of inUse.onProvider ?? []) {
     if (seen.has(id)) continue;
     if ("unread" in held) {
-      problem(`backends.${id}`, `bb-box could not list the snapshots backend ${id} holds on its provider's account (${held.unread.replace(/\.$/, "")}), so it does not remove it: one left there would go on costing, with nothing to delete it. Try again once it answers.`);
+      problem(`backends.${id}`, `${PRODUCT} could not list the snapshots backend ${id} holds on its provider's account (${held.unread.replace(/\.$/, "")}), so it does not remove it: one left there would go on costing, with nothing to delete it. Try again once it answers.`);
     } else if (held.count > 0) {
       problem(
         `backends.${id}`,
-        `Backend ${id} has ${plural(held.count, "snapshot")} on its provider's account, kept or not, which would go on costing after it is removed, with nothing to delete ${held.count === 1 ? "it" : "them"}: ${held.words}. Delete ${held.count === 1 ? "it" : "them"} first: bb box snapshot delete <box> <snapshot> deletes each one bb-box records, as bb box snapshot list --all names them; delete any other in the provider's own dashboard.`,
+        `Backend ${id} has ${plural(held.count, "snapshot")} on its provider's account, kept or not, which would go on costing after it is removed, with nothing to delete ${held.count === 1 ? "it" : "them"}: ${held.words}. Delete ${held.count === 1 ? "it" : "them"} first: bb box snapshot delete <box> <snapshot> deletes each one ${PRODUCT} records, as bb box snapshot list --all names them; delete any other in the provider's own dashboard.`,
       );
     }
   }
@@ -1168,7 +1169,7 @@ export function checkDocument(
     }
     for (const [key, text] of [["script", image.script], ["check", image.check ?? ""]] as const) {
       const bytes = new TextEncoder().encode(text).length;
-      if (bytes > IMAGE_SCRIPT_BYTES) problem(`${path}.${key}`, `The ${key} is ${Math.ceil(bytes / 1024)} KiB; bb-box keeps up to ${IMAGE_SCRIPT_BYTES / 1024} KiB.`);
+      if (bytes > IMAGE_SCRIPT_BYTES) problem(`${path}.${key}`, `The ${key} is ${Math.ceil(bytes / 1024)} KiB; ${PRODUCT} keeps up to ${IMAGE_SCRIPT_BYTES / 1024} KiB.`);
     }
     for (const project of image.projects) {
       for (const kind of image.kinds) {

@@ -1,4 +1,4 @@
-// A fake msb host for the microsandbox backend's tests: bb-box's msb folder
+// A fake msb host for the microsandbox backend's tests: BB Box's msb folder
 // with the fake msb (fake-msb.mjs) as bin/msb, and the scripts of
 // release.ts answered as such a host would: its facts, Docker's images, and
 // imports from Docker into msb.
@@ -14,9 +14,9 @@ import { fakeGroup, tempDir } from "./helpers.ts";
 
 export interface FakeMsbHost {
   readonly root: string;
-  /** bb-box's msb folder, whose bin/msb is the fake. */
+  /** BB Box's msb folder, whose bin/msb is the fake. */
   readonly dir: string;
-  /** Answers bb-box's scripts, as the backend's `script` option. */
+  /** Answers BB Box's scripts, as the backend's `script` option. */
   readonly script: (name: MsbScript, args: readonly string[]) => Promise<ScriptResult>;
   /** Changes the fake msb's switches: neverReady, ghost. */
   set(values: Record<string, unknown>): void;

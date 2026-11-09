@@ -1,5 +1,6 @@
 import { displayShows, type BoxIdentity, type Guest, type KindCapabilities } from "../backends/types.ts";
 import { deviceModels, listWords, type DeviceOffer, type IosModelName, type IosRuntime } from "./device.ts";
+import { PRODUCT } from "../brand.ts";
 
 export const HOST_KINDS = ["pool-mac", "tart", "namespace"] as const;
 export type HostKind = (typeof HOST_KINDS)[number];
@@ -155,7 +156,7 @@ export function waitWords(answers: readonly LenderAnswer<unknown>[]): string {
 }
 
 export function lostWords(kind: string, lost: readonly string[]): string {
-  return `Every shared iOS host bb-box asked had its room taken first, ${TAKE_TRIES} times, so this ${kind} box has no slot: ${lost.join(" ")} Ask again.`;
+  return `Every shared iOS host ${PRODUCT} asked had its room taken first, ${TAKE_TRIES} times, so this ${kind} box has no slot: ${lost.join(" ")} Ask again.`;
 }
 
 export interface LendableSlot {

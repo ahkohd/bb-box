@@ -158,7 +158,7 @@ test("the image's additions install device-host and its carried slots, and leave
   const host = read("host-ios.sh");
   assert.match(host, /"\$helper" install/);
   assert.match(host, /"\$helper" carry/);
-  assert.doesNotMatch(host, /bb-machines|bb-app/, "the image keeps no BB app for the slots, as it is stale after BB's next update; bb-box keeps the server's on each host (F-8)");
+  assert.doesNotMatch(host, /bb-machines|bb-app/, "the image keeps no BB app for the slots, as it is stale after BB's next update; BB Box keeps the server's on each host (F-8)");
   assert.doesNotMatch(host, /"\$helper" init/, "settings are a snapshot taken when a host is made, so the image writes none");
   assert.match(read("build-ios.sh"), /sudo -n \/bin\/sh "\$here\/host-ios\.sh" "\$here" "\$\(id -un\)"/);
   assert.match(readFileSync(join(SETUP, "tart", "prepare-ios-image.sh"), "utf8"), /-C "\$here\/\.\.\/ssh-pool" mac-home\/\.zshenv/, "the slots' home is the pool's");

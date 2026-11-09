@@ -178,7 +178,7 @@ test("capacity keeps the memory and disk reserves", async () => {
   const pending = await backend.capacity("linux", sized("linux"), waiting("linux"), signal());
   assert.equal(pending.ok, false);
   assert.match(pending.message!, /pve has 6 GiB of memory free and keeps 4 GiB free, so a linux box with 4 GiB memory does not fit/);
-  assert.match(pending.message!, /ask for less memory, or lower the memory kept free in bb-box's settings/);
+  assert.match(pending.message!, /ask for less memory, or lower the memory kept free in BB Box's settings/);
 
   proxmox.memory = { total: 64 * GiB, available: 48 * GiB };
   proxmox.storage.set("local-lvm", { total: 900 * GiB, avail: 20 * GiB });
@@ -195,7 +195,7 @@ test("a refusal for memory leads with what binds: the room kept free, or the box
   assert.equal(
     kept.message,
     "pve has 10 GiB of memory free and keeps 16 GiB free, so a linux box with 4 GiB memory does not fit. " +
-      "Release a box, or lower the memory kept free in bb-box's settings.",
+      "Release a box, or lower the memory kept free in BB Box's settings.",
   );
   const box = await backend.capacity("linux", { cores: 2, memoryMiB: 12 * 1024, diskGiB: null }, waiting(), signal());
   assert.equal(box.message, "pve has 10 GiB of memory free, less than a linux box with 12 GiB memory needs. Release a box or ask for less memory.");
@@ -251,7 +251,7 @@ test("capacity counts desktops on each GPU against the limit per GPU", async () 
 
   const full = await backend.capacity("linux-desktop", sized("linux-desktop"), waiting("linux-desktop", "linux"), signal());
   assert.equal(full.ok, false);
-  assert.match(full.message!, /Every GPU on pve runs 2 desktop boxes, the most bb-box's settings allow\. Release a desktop box, or raise the desktops per GPU/);
+  assert.match(full.message!, /Every GPU on pve runs 2 desktop boxes, the most BB Box's settings allow\. Release a desktop box, or raise the desktops per GPU/);
 
   const unlimited = await setup({ "proxmox-lxc-desktops-per-gpu": 0 }).backend.capacity("linux-desktop", sized("linux-desktop"), waiting(), signal());
   assert.deepEqual(unlimited.hosts[0]!.limits.at(-1), { resource: "gpu-desktops", used: 0, total: null, reserve: 0, unit: "count" });
@@ -323,7 +323,7 @@ test("a desktop with no GPU left to try is refused, naming CPU desktops", async 
   await assert.rejects(backend.acquire(identity("linux-desktop"), null, hooks().value, signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
     assert.equal(error.code, "no_capacity");
-    assert.match(error.message, /started without a GPU, so bb-box released it \(GPU gpu-a: no render node\)/);
+    assert.match(error.message, /started without a GPU, so BB Box released it \(GPU gpu-a: no render node\)/);
     assert.match(error.message, /No other GPU on pve has a linux-desktop template/);
     assert.match(error.message, /linux-desktop-cpu box/);
     return true;
@@ -388,7 +388,7 @@ test("a desktop whose display never records its mode is deleted with a clear rea
 test("a warm desktop that starts without its GPU is deleted, and its GPU avoided", async () => {
   const { backend, proxmox, ssh } = setup({ "proxmox-lxc-desktop-templates": "9001 gpu-a\n9002 gpu-b", "proxmox-lxc-desktop-warm": 1 });
   displayAt(ssh.dir, "192.0.2.100", "cpu", "no render node");
-  await assert.rejects(backend.maintain(), /A warm linux-desktop box started without GPU gpu-a \(no render node\), so bb-box released it/);
+  await assert.rejects(backend.maintain(), /A warm linux-desktop box started without GPU gpu-a \(no render node\), so BB Box released it/);
   assert.equal(proxmox.guests.has(7000), false);
   await backend.maintain();
   assert.equal(proxmox.guests.get(7001)?.config.tags?.includes("template.9002"), true, "the next warm desktop goes to gpu-b");
@@ -413,7 +413,7 @@ test("a GPU's memory is read as a desktop on it starts and each minute while one
       id: "gpu.gpu-a",
       name: "GPU gpu-a",
       status: "skipped",
-      detail: "No desktop has read its memory yet. A GPU desktop reads it as it starts, and bb-box reads it every few minutes while one runs.",
+      detail: "No desktop has read its memory yet. A GPU desktop reads it as it starts, and BB Box reads it every few minutes while one runs.",
       fix: null,
     },
   );
@@ -566,7 +566,7 @@ test("a GPU the host reports has room again as soon as the host says so, and rea
     fullUntil: now + 60_000,
   });
 
-  // Other work frees the second GPU; bb-box reads the report again within 10 s.
+  // Other work frees the second GPU; BB Box reads the report again within 10 s.
   reportVm(proxmox, reportNotes(now, [
     [UUID_A, "00000000:01:00.0", 103],
     [UUID_B, "00000000:02:00.0", 7000],
@@ -589,7 +589,7 @@ test("a GPU the host reports has room again as soon as the host says so, and rea
     [["0000:02:00.0", 7800, "desktop"]],
   );
   const stale = (await backend.doctor()).checks.find((candidate) => candidate.id === "proxmox.gpu-report");
-  assert.deepEqual([stale?.status, stale?.detail], ["warn", "The host's report in VM 9190 is from 10 minutes ago, so bb-box reads GPU memory in desktops."]);
+  assert.deepEqual([stale?.status, stale?.detail], ["warn", "The host's report in VM 9190 is from 10 minutes ago, so BB Box reads GPU memory in desktops."]);
   assert.equal(stale?.fix, "Run systemctl status bb-box-gpu-memory.timer as root on pve, and check the host's clock.");
 });
 
@@ -636,7 +636,7 @@ function gpuReporter(vm = true) {
 
 const smi = (a: number, b: number) => `${UUID_A}, 00000000:01:00.0, 0, ${a}, 8192\n${UUID_B}, 00000000:02:00.0, 1, ${b}, 8192\n`;
 
-test("the host's reporter writes each GPU's memory in the VM's notes as bb-box reads them, when a GPU's memory moves a step, and every 4 minutes (#603)", () => {
+test("the host's reporter writes each GPU's memory in the VM's notes as BB Box reads them, when a GPU's memory moves a step, and every 4 minutes (#603)", () => {
   const reporter = gpuReporter();
   const at = 1_790_000_000;
   assert.equal(reporter.run(at, smi(103, 6100)).status, 0);
@@ -685,8 +685,8 @@ test("the doctor says when the host's report has no report yet, or does not name
   const unnamed = await report();
   assert.deepEqual([unnamed?.status, unnamed?.detail, unnamed?.fix], [
     "warn",
-    "The host's report has no GPU gpu-b, so bb-box reads its memory in desktops.",
-    "Name each GPU in bb-box's settings by the UUID nvidia-smi -L shows on the host.",
+    "The host's report has no GPU gpu-b, so BB Box reads its memory in desktops.",
+    "Name each GPU in BB Box's settings by the UUID nvidia-smi -L shows on the host.",
   ]);
 });
 
@@ -731,7 +731,7 @@ test("the doctor's GPU helper check reads what real helpers report: a dry run wa
   const dryRun = await doctorOnReport(helperReport(new FakeNode({ writes: "off" })));
   assert.deepEqual(verdict(dryRun("proxmox.gpu-helper")), [
     "warn",
-    "bb-box-gpu 0.4.3 on pve runs with writes off, a dry run: it writes the GPU report, answers markers that need no write, and changes no guest. Until writes are on, bb-box moves no box to another card, and a stopped box starts on the card its lines name (071).",
+    "bb-box-gpu 0.4.3 on pve runs with writes off, a dry run: it writes the GPU report, answers markers that need no write, and changes no guest. Until writes are on, BB Box moves no box to another card, and a stopped box starts on the card its lines name (071).",
     "Once bb box gpu mark has marked this install's guests and a day of dry run shows no write the helper would make, run host/setup-gpu.sh --writes on --check, then host/setup-gpu.sh --writes on, as root on pve.",
   ]);
   assert.equal(dryRun("proxmox.gpu-report")?.status, "ok");
@@ -762,7 +762,7 @@ test("the doctor's GPU helper check fails a report 3 minutes old and a helper of
   assert.deepEqual(verdict(old("proxmox.gpu-helper")), ["fail", "The GPU helper on pve last reported 3 minutes ago, in VM 9190.", "Run systemctl status bb-box-gpu as root on pve, and check the host's clock."]);
   assert.equal(old("proxmox.gpu-report")?.status, "ok", "today's report still stands for 10 minutes");
   const stale = await doctorOnReport(notes, at + 10 * minute);
-  assert.deepEqual(verdict(stale("proxmox.gpu-report")), ["warn", "The host's report in VM 9190 is from 10 minutes ago, so bb-box reads GPU memory in desktops.", "Run systemctl status bb-box-gpu as root on pve, and check the host's clock."]);
+  assert.deepEqual(verdict(stale("proxmox.gpu-report")), ["warn", "The host's report in VM 9190 is from 10 minutes ago, so BB Box reads GPU memory in desktops.", "Run systemctl status bb-box-gpu as root on pve, and check the host's clock."]);
 
   const withHelper = (line: string) => notes.replace(/^(\s*)helper bb-box-gpu .*$/m, `$1${line}`);
   const newer = await doctorOnReport(withHelper("helper bb-box-gpu 2.0.0 protocol 2 writes on with new words"), at);
@@ -774,7 +774,7 @@ test("the doctor's GPU helper check fails a report 3 minutes old and a helper of
   const unreadable = await doctorOnReport(withHelper("helper bb-box-gpu 0.1.0 protocol broken"), at);
   assert.deepEqual(verdict(unreadable("proxmox.gpu-helper")), ["fail", "VM 9190's report has a helper line this BB Box cannot read.", "Run host/setup-gpu.sh again, from this BB Box's setup guide, as root on pve."], "a helper line with no protocol is not taken for no helper (Astra 5)");
   const many = await doctorOnReport(notes.replace(/^(\s*)serves .*$/m, "$1serves p1 p2 p3 and 40 more"), at);
-  assert.deepEqual(verdict(many("proxmox.gpu-helper")), ["warn", "bb-box-gpu 0.4.3 on pve serves more pools than its report lists, so bb-box cannot tell whether it serves this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
+  assert.deepEqual(verdict(many("proxmox.gpu-helper")), ["warn", "bb-box-gpu 0.4.3 on pve serves more pools than its report lists, so BB Box cannot tell whether it serves this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve."]);
 });
 
 test("the doctor's GPU helper check fails a report dated a minute or more ahead of BB's clock, as a stopped helper could pass for fresh until then (071 unit 3, Astra 4)", async () => {
@@ -783,7 +783,7 @@ test("the doctor's GPU helper check fails a report dated a minute or more ahead 
   const ahead = await doctorOnReport(notes, at - 24 * 60 * 60_000);
   assert.deepEqual(verdict(ahead("proxmox.gpu-helper")), [
     "fail",
-    "The GPU helper's report in VM 9190 is dated 1 day ahead of this BB server's clock, so bb-box cannot tell whether the helper still runs.",
+    "The GPU helper's report in VM 9190 is dated 1 day ahead of this BB server's clock, so BB Box cannot tell whether the helper still runs.",
     "Run systemctl status bb-box-gpu as root on pve, and check the host's clock.",
   ]);
   assert.equal(verdict((await doctorOnReport(notes, at - 60_000))("proxmox.gpu-helper"))?.[0], "fail");
@@ -898,7 +898,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   assert.deepEqual(
     puts.map((call) => Object.keys(call.params).sort()),
     [["cores", "cpuunits", "delete", "digest", "memory", "net0", "onboot"], ["digest", "tags"], ["delete", "digest"], ["digest", "tags"]],
-    "tags go in a PUT of their own; the low CPU weight and its tag go once it is ready (#888); each on the digest of the config bb-box checked",
+    "tags go in a PUT of their own; the low CPU weight and its tag go once it is ready (#888); each on the digest of the config BB Box checked",
   );
   assert.equal(puts[0]!.params.cpuunits, "10", "a tenth of the default weight while it starts");
   assert.ok(parseTags(String(puts[1]!.params.tags)).includes("bb-box-starting"));
@@ -1076,7 +1076,7 @@ test("a box that never answers on SSH is deleted with a clear reason", async () 
   ssh.down("192.0.2.100");
   await assert.rejects(
     backend.acquire(identity(), null, hooks().value, signal()),
-    /Port 22 of 192\.0\.2\.100 is open, but SSH as box did not answer.*user box in the linux template accepts bb-box's key/,
+    /Port 22 of 192\.0\.2\.100 is open, but SSH as box did not answer.*user box in the linux template accepts BB Box's key/,
   );
   assert.equal(proxmox.guests.has(7000), false);
 });
@@ -1122,7 +1122,7 @@ test("release deletes the guest, and a missing guest counts as released", async 
   assert.equal(proxmox.guests.has(7000), false);
   assert.equal(await backend.power(guest), null);
   await backend.release(guest, releasing());
-  await assert.rejects(backend.release({ ref: "9000", host: null, address: null, size: null }, releasing()), /outside bb-box's VMID range/);
+  await assert.rejects(backend.release({ ref: "9000", host: null, address: null, size: null }, releasing()), /outside BB Box's VMID range/);
   assert.equal(proxmox.guests.has(9000), true);
 });
 
@@ -1201,9 +1201,9 @@ test("another install's guests count against capacity, and this one leaves them 
     ),
   );
   assert.deepEqual(await other.held(), []);
-  await assert.rejects(other.power(desktop), /is outside bb-box's VMID range, so bb-box leaves it alone/);
-  await assert.rejects(other.stop(desktop), /is outside bb-box's VMID range, so bb-box leaves it alone/);
-  await assert.rejects(other.release(desktop, releasing()), /is outside bb-box's VMID range, so bb-box leaves it alone/);
+  await assert.rejects(other.power(desktop), /is outside BB Box's VMID range, so BB Box leaves it alone/);
+  await assert.rejects(other.stop(desktop), /is outside BB Box's VMID range, so BB Box leaves it alone/);
+  await assert.rejects(other.release(desktop, releasing()), /is outside BB Box's VMID range, so BB Box leaves it alone/);
   await other.maintain();
   assert.equal(proxmox.guests.get(7001)?.status, "running", "the other install's release left the desktop alone");
   assert.ok(proxmox.guests.has(7000), "the other install, with no warm pool, leaves this one's warm guest");
@@ -1213,7 +1213,7 @@ test("another install's guests count against capacity, and this one leaves them 
   assert.equal(theirs.ref, "7010", "the other install clones, in a VMID range of its own, rather than take this one's warm guest");
   assert.deepEqual(parseTags(proxmox.guests.get(7010)!.config.tags).slice(0, 2), ["bb-box", "install.other"]);
   assert.deepEqual((await backend.held()).map((guest) => guest.ref), ["7001"]);
-  await assert.rejects(backend.power(theirs), /is outside bb-box's VMID range, so bb-box leaves it alone/);
+  await assert.rejects(backend.power(theirs), /is outside BB Box's VMID range, so BB Box leaves it alone/);
 });
 
 test("stamp records this install on its guest from before install IDs, and leaves others alone", async () => {
@@ -2101,7 +2101,7 @@ test("doctor names the snapshot rights a token made before 070 lacks, without th
   const snapshots = report.checks.find((check) => check.id === "proxmox.snapshots")!;
   assert.deepEqual([snapshots.status, snapshots.detail, snapshots.fix], [
     "warn",
-    "The token lacks VM.Snapshot and VM.Snapshot.Rollback on /pool/bbbox, so bb-box cannot take or restore snapshots. " +
+    "The token lacks VM.Snapshot and VM.Snapshot.Rollback on /pool/bbbox, so BB Box cannot take or restore snapshots. " +
       "local-lvm (LVM-thin) restores any snapshot. tank (ZFS) restores only the newest snapshot.",
     "Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on pve. It keeps the token and its secret, and adds the missing rights to the token's role.",
   ]);
@@ -2184,7 +2184,7 @@ test("a box is from its template as built now only while the template has the bu
   assert.equal(await backend.asOffered(old, "linux", before.createdAt), false, "made before the replace");
   assert.equal(await backend.asOffered(cloned, "linux", during.createdAt), false, "made during the build, before the swap");
 
-  // A box from before bb-box recorded builds goes by the build's time.
+  // A box from before BB Box recorded builds goes by the build's time.
   const { build: _, ...data } = old.data!;
   const unrecorded = { ...old, data };
   assert.equal(await backend.asOffered(unrecorded, "linux", before.createdAt), false, "made before the build began");
@@ -2240,7 +2240,7 @@ test("a container resizes live in every part, with room for what it grows by, an
   proxmox.memory = { total: 64 * GiB, available: 7 * GiB };
   const tight = await backend.planResize(guest, "linux", to, [], signal());
   assert.equal(tight.room.ok, false);
-  assert.equal(tight.room.message, "pve has 7 GiB of memory free and keeps 4 GiB free, so the 4 GiB more the box needs does not fit. Release a box, ask for less memory, or lower the memory kept free in bb-box's settings.");
+  assert.equal(tight.room.message, "pve has 7 GiB of memory free and keeps 4 GiB free, so the 4 GiB more the box needs does not fit. Release a box, ask for less memory, or lower the memory kept free in BB Box's settings.");
   assert.equal((await backend.planResize(guest, "linux", { ...to, memoryMiB: 4096 }, [], signal())).room.ok, true, "the same memory needs none");
   proxmox.memory = { total: 64 * GiB, available: 48 * GiB };
   assert.equal((await backend.planResize(guest, "linux", { ...to, cores: 32 }, [], signal())).room.message, "pve has 16 CPU threads, fewer than the 32 cores asked for. Ask for at most 16 cores.");
@@ -2307,7 +2307,7 @@ test("a spare keeps a low CPU weight until a box takes it, and held() says so, f
   assert.ok(!parseTags(vm.config.tags).includes("bb-box-starting"));
   assert.equal((await backend.held()).find((each) => each.ref === spare.ref)?.settling, undefined);
 
-  // settle() for the sweep, with the guest as held() reads it now, leaves a guest bb-box did not lower as it is.
+  // settle() for the sweep, with the guest as held() reads it now, leaves a guest BB Box did not lower as it is.
   vm.config.cpuunits = "10";
   await assert.rejects(backend.settle!(spare, signal()), /is no longer box box_\d+ of this install/, "the spare's record names the box before relabel, which the guest no longer does");
   const taken = (await backend.held()).find((each) => each.ref === spare.ref)!;

@@ -1,6 +1,7 @@
 import { OPERATOR, SPARES } from "../../core/boxes.ts";
 import { CARD_CHECK_COMMAND, cardFactWords, judgeCardCheck, type CardCheck, type SeenCard } from "../card-check.ts";
 import type { CardClaim, CardPlacement, CardRoom, GpuPart, GpuRefusal } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export { DESKTOP_GPU_MIB } from "../card-check.ts";
 export const ALL_CARDS_DEVICE = "nvidia.com/gpu=all";
@@ -257,7 +258,7 @@ function holdersWords(card: string, holders: readonly CardHolder[], titles: Thre
   const parts = [
     ...(running.length ? [`${named(running)} running`] : []),
     ...(stopped.length ? [`${named(stopped)} holding it while stopped`] : []),
-    ...(making.length ? [`${named(making)}, which bb-box is making`] : []),
+    ...(making.length ? [`${named(making)}, which ${PRODUCT} is making`] : []),
   ];
   return parts.length ? `${card} has ${parts.join(", and ")}` : `${card} has boxes being made`;
 }
@@ -266,7 +267,7 @@ export function blockWords(block: CardBlock, titles: ThreadTitles, audience: Aud
   const card = cardName(block.card);
   switch (block.is) {
     case "whole":
-      if (block.holder.state === "making") return `${card} is kept whole for ${holderName(block.holder, titles, audience)}, which bb-box is making`;
+      if (block.holder.state === "making") return `${card} is kept whole for ${holderName(block.holder, titles, audience)}, which ${PRODUCT} is making`;
       return block.holder.otherInstall ? `${card} is held whole by ${holderName(block.holder, titles, audience)}` : `${card} is ${block.holder.name}'s whole card${audience.to === "person" ? threadWords(block.holder.threadId, titles) : ""}`;
     case "limit": {
       const names = block.holders.map((holder) => holderName(holder, titles, audience, true));
@@ -342,7 +343,7 @@ export function placementRefusal(host: string, part: CardPart, what: BoxWhat, bl
   const agent = said({ to: "agent", threadId });
   return {
     person: `${capitalised(lead(host, part))}${person ? `: ${person}` : ""}. ${instead.person}`,
-    agent: `Not made: ${lead(host, part)}${agent ? `: ${agent}` : ""}. ${agentChoices(blocks, threadId, instead.agent)} bb-box changed nothing.`,
+    agent: `Not made: ${lead(host, part)}${agent ? `: ${agent}` : ""}. ${agentChoices(blocks, threadId, instead.agent)} ${PRODUCT} changed nothing.`,
   };
 }
 
@@ -351,7 +352,7 @@ export function noCardsRefusal(host: string, why: string, what: BoxWhat): GpuRef
   const agent = what === "desktop" ? "Ask for a linux-desktop-cpu box" : "Ask for gpu none";
   return {
     person: `${capitalised(host)} cannot give a box a GPU now: ${why}. Install the NVIDIA Container Toolkit and generate its CDI spec (setup/docker/README.md), ${person}.`,
-    agent: `Not made: ${host} cannot give a box a GPU now: ${why}. ${agent}, or ask the user. bb-box changed nothing.`,
+    agent: `Not made: ${host} cannot give a box a GPU now: ${why}. ${agent}, or ask the user. ${PRODUCT} changed nothing.`,
   };
 }
 
@@ -364,8 +365,8 @@ export function oneDeviceForEveryCardOf(info: { readonly gpus: readonly string[]
 }
 
 export function reachWords(host: string, privileged: boolean, oneDeviceForEveryCard: boolean): string | null {
-  if (privileged) return `On ${host}, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.`;
-  if (oneDeviceForEveryCard) return `On ${host}, Docker gives every card as one device, so every box with a GPU can open every card. Whole card is what bb-box places, not what a box can reach.`;
+  if (privileged) return `On ${host}, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what BB Box places, not what a box can reach.`;
+  if (oneDeviceForEveryCard) return `On ${host}, Docker gives every card as one device, so every box with a GPU can open every card. Whole card is what BB Box places, not what a box can reach.`;
   return null;
 }
 

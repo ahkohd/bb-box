@@ -1,5 +1,6 @@
 import { currentKindId } from "../backends/kinds.ts";
 import { GPU_PARTS, type BoxKind, type BoxSize, type CardClaim, type CardPlacement, type GpuPart, type GpuRefusal, type GpuResize, type KindCapabilities, type MachineSize, type Resizing } from "../backends/types.ts";
+import { PRODUCT } from "../brand.ts";
 
 export type NvidiaUserspace = "none" | "unknown" | `${number}.${string}`;
 
@@ -199,21 +200,21 @@ function offOn(provider: Provider | null): string {
 export function wholeCardsOff(provider: Provider | null = null): WholeCardsOffWords {
   return {
     person: `Whole cards are off ${offOn(provider)}, so no box gets a card to itself${provider ? " there" : ""}. Ask for gpu shared, or ${turnWholeOn(provider)}.`,
-    agent: `Not made: whole cards are off ${offOn(provider)}. Ask for gpu shared, or ask the user. bb-box changed nothing.`,
+    agent: `Not made: whole cards are off ${offOn(provider)}. Ask for gpu shared, or ask the user. ${PRODUCT} changed nothing.`,
   };
 }
 
 export function wholeCardsOffForFork(provider: Provider | null = null): WholeCardsOffWords {
   return {
-    person: `Not forked: whole cards are off ${offOn(provider)}. Fork it with gpu shared or none, or ${turnWholeOn(provider)}. bb-box copied nothing.`,
-    agent: `Not forked: whole cards are off ${offOn(provider)}. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.`,
+    person: `Not forked: whole cards are off ${offOn(provider)}. Fork it with gpu shared or none, or ${turnWholeOn(provider)}. ${PRODUCT} copied nothing.`,
+    agent: `Not forked: whole cards are off ${offOn(provider)}. Fork it with gpu shared or none, or ask the user. ${PRODUCT} copied nothing.`,
   };
 }
 
 export function wholeCardsOffForResize(provider: Provider | null = null): WholeCardsOffWords {
   return {
-    person: `Not resized: whole cards are off ${offOn(provider)}. Keep the GPU shared, or ${turnWholeOn(provider)}. bb-box changed nothing.`,
-    agent: `Not resized: whole cards are off ${offOn(provider)}. Keep the GPU shared, or ask the user. bb-box changed nothing.`,
+    person: `Not resized: whole cards are off ${offOn(provider)}. Keep the GPU shared, or ${turnWholeOn(provider)}. ${PRODUCT} changed nothing.`,
+    agent: `Not resized: whole cards are off ${offOn(provider)}. Keep the GPU shared, or ask the user. ${PRODUCT} changed nothing.`,
   };
 }
 
@@ -261,8 +262,8 @@ export function gpuPlanChangedWords(name: string, agreed: GpuResize, now: GpuRes
   const said = (reason: string | null) => `when you checked, ${name} ${gpuPlanSummary(agreed)}; now ${reason ? `${reason}, so it` : "it"} ${gpuPlanSummary(now)}`;
   const restart = now.way === "restart";
   return {
-    person: `Not resized: ${said(because?.person ?? null)}. ${restart ? "Resize it again with the restart" : "Resize it again"} to do that, or keep its GPU as it is. bb-box changed nothing.`,
-    agent: `Not resized: ${said(because?.agent ?? null)}. ${restart ? "Call box_resize with restart true" : "Call box_resize again"} to do that, or ask the user. bb-box changed nothing.`,
+    person: `Not resized: ${said(because?.person ?? null)}. ${restart ? "Resize it again with the restart" : "Resize it again"} to do that, or keep its GPU as it is. ${PRODUCT} changed nothing.`,
+    agent: `Not resized: ${said(because?.agent ?? null)}. ${restart ? "Call box_resize with restart true" : "Call box_resize again"} to do that, or ask the user. ${PRODUCT} changed nothing.`,
   };
 }
 

@@ -48,7 +48,7 @@ test("each kind ships three presets, small by default but medium for ios, and a 
   assert.deepEqual(kindSizes("ios"), { ...macos, default: "medium" }, "an ios box has room for Xcode beside its device, at the size its measurements were made at (063)");
   assert.deepEqual(defaultSize(kindSizes("ios")), { cores: 6, memoryMiB: 16 * GiB, diskGiB: null });
   assert.deepEqual(kindSizes("windows-desktop"), desktop);
-  assert.deepEqual(kindSizes("solaris"), linux, "a kind bb-box has no sizes for takes linux's");
+  assert.deepEqual(kindSizes("solaris"), linux, "a kind BB Box has no sizes for takes linux's");
 });
 
 test("the box-sizes setting changes a kind's presets, default and largest", () => {
@@ -138,7 +138,7 @@ test("a size past the kind's largest names the setting that limits it: its Sizes
   assert.equal(withoutRaiseLargest("The Mac has 2 GiB of memory left."), "The Mac has 2 GiB of memory left.");
 });
 
-test("a custom size of a Linux kind has at least 2 GiB memory, and every preset bb-box ships has that", () => {
+test("a custom size of a Linux kind has at least 2 GiB memory, and every preset BB Box ships has that", () => {
   assert.equal(LINUX_LEAST_MEMORY_GIB, 2);
   const linux = kindSizes("linux");
   assert.deepEqual(chooseSize("linux", linux, { memoryGiB: 2 }), { ok: true, size: { cores: 2, memoryMiB: 2 * GiB, diskGiB: null } });
@@ -171,7 +171,7 @@ test("the doctor warns about a preset of a Linux kind that the box-sizes setting
       name: "Box sizes",
       status: "warn",
       detail: "The small linux preset, 1 core, 1 GiB memory, has less than 2 GiB memory, so its boxes can run out of memory as they become BB machines.",
-      fix: "Give it at least 2 GiB memory in bb-box's settings, under Kinds.",
+      fix: "Give it at least 2 GiB memory in BB Box's settings, under Kinds.",
     },
   ]);
   const checks = presetMemoryChecks({ "linux-desktop-cpu": { small: { memoryMiB: 1536 }, medium: { memoryMiB: GiB } }, "windows-desktop": { small: { memoryMiB: GiB } } });

@@ -6,7 +6,8 @@ import { useId, useState, type MouseEvent, type ReactNode } from "react";
 import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
 import { cn } from "@/lib/utils";
 import type { BoxView } from "../plugin/views.ts";
-import { deviceModelOf, IconButton, osName, relativeTime, RowTitle, boxTitleBadges, StatusLine, systemName } from "./common.tsx";
+import { ago } from "./box-words.ts";
+import { deviceModelOf, IconButton, osName, RowTitle, boxTitleBadges, StatusLine, systemName } from "./common.tsx";
 import { DESKTOP_PAGE, MACHINES_TAB, useOpenScreen } from "./desktop.tsx";
 import { JoinHelp, joinAdvice } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
@@ -98,7 +99,7 @@ export function BoxRow({
   box: BoxView;
   threadId: string;
   opening: RowOpening;
-  act: (method: BoxAction, box: BoxView, options?: { readonly deleteKept?: boolean }) => Promise<void>;
+  act: (method: BoxAction, box: BoxView, options?: { readonly deleteKept?: boolean }) => Promise<string | null | void> | void;
   now: number;
   /** Set for the box this thread runs on (036): a "BB machine" badge among the others, no Release, Stop or Start, and a line saying where those are. */
   held?: Held | null;
@@ -109,7 +110,6 @@ export function BoxRow({
   busy?: Busy | null;
   /** A quick action before the menu, such as the Boxes page's Open thread. */
   extra?: ReactNode;
-  /** "New thread…": a child of `threadId`'s thread. Off on the Boxes page, where "this thread" names none. */
   threading?: boolean;
   onBoxesPage?: () => void;
 }) {
@@ -126,7 +126,7 @@ export function BoxRow({
   const run = async (method: BoxAction, options: { readonly deleteKept?: boolean } = {}) => {
     setBusy(method);
     try {
-      await act(method, box, options);
+      return await act(method, box, options);
     } finally {
       setBusy(null);
     }
@@ -237,7 +237,7 @@ export function BoxRow({
             <Detail label="BB machine">{enrolWords(box)}</Detail>
             {timingWords(box) ? <Detail label="Timings">{timingWords(box)}</Detail> : null}
             {startWords(box) ? <Detail label="Last start">{startWords(box)}</Detail> : null}
-            <Detail label="Made">{relativeTime(box.createdAt, now)}</Detail>
+            <Detail label="Made">{ago(box.createdAt, now)}</Detail>
           </dl>
         ) : null}
       </div>

@@ -105,7 +105,8 @@ test("history's mean counts each step by the time it was read: one minute at 100
   assert.equal(summary, "Over the last 7 days, by the hour: CPU averaged 2%, highest 100% in hour 0; memory last 40%.");
   const network = historyNetworkSummary("the last 7 days, by the hour", [1024 * 1024, 0], [0, 0], [60, 3600], [], (index) => `in hour ${index}`, words, at(5));
   assert.match(network, /^Over the last 7 days, by the hour: download averaged 17 KB\/s, highest 1 MB\/s in hour 0; upload averaged 0 B\/s/);
-  assert.equal(stepWhenWords("24h", T0, 600_000, () => "today at 4:00 PM", "UTC"), "between today at 4:00 PM and " + new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone: "UTC" }).format(T0 + 600_000));
+  assert.equal(historyClock(T0 + 600_000, "UTC"), new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "UTC" }).format(T0 + 600_000));
+  assert.equal(stepWhenWords("24h", T0, 600_000, () => "Today 16:00", "UTC"), `between Today 16:00 and ${historyClock(T0 + 600_000, "UTC")}`);
   assert.equal(stepWhenWords("1h", T0, 60_000, () => "4:00 PM"), "at 4:00 PM");
 });
 

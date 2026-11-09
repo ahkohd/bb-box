@@ -9,7 +9,7 @@ import { forgetMonitorReadings } from "../src/app/monitor/use-snapshot.ts";
 import { resizedNow } from "../src/app/resize.tsx";
 import { boxResizing } from "../src/core/gpu.ts";
 import { rowLine, rowWords } from "../src/app/row-line.ts";
-import { HOLDS_NO_CARD, USERSPACE_UPDATE_REFUSAL } from "../src/plugin/gpu-page.ts";
+import { HOLDS_NO_CARD, userspaceUpdateCommand } from "../src/plugin/gpu-page.ts";
 
 const BOX = "bxamberfox01";
 const THREAD = "thr_ui";
@@ -457,7 +457,7 @@ test("071 unit 13: Resize shows the GPU change, names a program that has it open
 });
 
 test("071 unit 14: a box with no GPU keeps its facts when Docker reports every card", async () => {
-  const reach = "On devpc, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.";
+  const reach = "On devpc, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what BB Box places, not what a box can reach.";
   const slot = open(page(boxView({ gpu: false, gpuPart: "none", claim: null, form: "Docker", backendLabel: "Docker on devpc", facts: [{ label: "Cards", value: reach }] })));
   const facts = await slot.findByRole("region", { name: "Facts" });
   expect(facts.textContent).not.toContain("Cards");
@@ -467,7 +467,7 @@ test("071 unit 14: a box with no GPU keeps its facts when Docker reports every c
 });
 
 test("071 unit 14: a GPU box puts the every-card sentence on the card, and an unmatched reading is unavailable", async () => {
-  const reach = "On devpc, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.";
+  const reach = "On devpc, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what BB Box places, not what a box can reach.";
   const slot = open(page(boxView({ form: "Docker", backendLabel: "Docker on devpc", facts: [{ label: "GPU", value: "card 1, shared, NVIDIA RTX 4090, 24 GiB" }, { label: "Cards", value: reach }] })));
   const facts = await slot.findByRole("region", { name: "Facts" });
   expect(facts.textContent).not.toContain("every box");
@@ -500,14 +500,13 @@ test("071 unit 14: a stopped shared box's words, and each notice", async () => {
   cleanup();
   forgetLive();
 
-  const mismatch = open(page(boxView({ facts: [{ label: "GPU", value: userspace }] })));
+  const mismatch = open(page(boxView({ name: "amber-fox", facts: [{ label: "GPU", value: userspace }] })));
   const notice = await mismatch.findByRole("region", { name: "NVIDIA's userspace does not match the host's driver" });
   expect(notice.textContent).toMatch(/570\.86/);
-  fireEvent.click(within(notice).getByRole("button", { name: "Update NVIDIA's userspace…" }));
-  const dialog = await screen.findByRole("alertdialog");
-  expect(dialog.textContent).toContain("over 570.86");
-  fireEvent.click(within(dialog).getByRole("button", { name: "Update and restart" }));
-  expect(dialog.textContent).toContain(USERSPACE_UPDATE_REFUSAL);
+  expect(within(notice).queryByRole("button", { name: "Update NVIDIA's userspace…" })).toBeNull();
+  expect(notice.textContent).toContain("The update is not available from this page.");
+  expect(notice.querySelector("code")?.textContent).toBe(userspaceUpdateCommand("amber-fox", THREAD));
+  expect(screen.queryByRole("alertdialog")).toBeNull();
 });
 
 test("071 unit 14: the wrong-card notice uses the reading the GPU card loads", async () => {

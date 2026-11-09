@@ -86,7 +86,7 @@ test("what makes a guest one bb box gpu mark leaves is read again from the confi
     ["a template", (config) => (config.template = "1"), "It is a template now, and templates are never marked."],
     ["a held copy", (config) => (config.tags = `${config.tags};held-copy`), "It is a held copy of a snapshot now, which holds no card."],
     ["an earlier guest", (config) => (config.tags = `${config.tags};earlier-guest`), "It is an earlier guest now, kept after a restore, which holds no card."],
-    ["a warm guest being retired", (config) => (config.tags = `${config.tags};retired`), "bb-box is making or removing it now: an image box, or a warm guest being filled or retired."],
+    ["a warm guest being retired", (config) => (config.tags = `${config.tags};retired`), "BB Box is making or removing it now: an image box, or a warm guest being filled or retired."],
     ["another install's", (config) => (config.tags = config.tags!.replace(`install.${INSTALL}`, "install.zz99")), `Its tags no longer name install ${INSTALL}, so it is not this install's.`],
   ];
   for (const [what, turn, words] of turns) {
@@ -213,9 +213,9 @@ test("the doctor never passes a report that leaves lines out, or one with no led
   assert.equal((await migration(bridge))[0], "ok");
   const notes = bridge.proxmox.guests.get(REPORT_VMID)!.config.description!;
   bridge.proxmox.guests.get(REPORT_VMID)!.config.description = `${notes}\n    omitted 3 would lines`;
-  assert.deepEqual((await migration(bridge)).slice(0, 2), ["fail", "VM 9190's report leaves lines out (3 would lines), so bb-box cannot show every guest is marked and the helper would write nothing."]);
+  assert.deepEqual((await migration(bridge)).slice(0, 2), ["fail", "VM 9190's report leaves lines out (3 would lines), so BB Box cannot show every guest is marked and the helper would write nothing."]);
   bridge.proxmox.guests.get(REPORT_VMID)!.config.description = notes.split("\n").filter((line) => !/^\s*ledger /.test(line)).join("\n");
-  assert.deepEqual((await migration(bridge)).slice(0, 2), ["fail", "VM 9190's report has no ledger lines, which bb-box-gpu 0.2.0 and later write, so bb-box cannot show the helper granted each marker as it stands."]);
+  assert.deepEqual((await migration(bridge)).slice(0, 2), ["fail", "VM 9190's report has no ledger lines, which bb-box-gpu 0.2.0 and later write, so BB Box cannot show the helper granted each marker as it stands."]);
   bridge.guest(7301, desktop("bx7301", "new", CARD_B));
   const refused = await bridge.backend().markGpus(request());
   assert.equal(refused.refused?.detail, "bb-box-gpu 0.4.3 on pve does not report its ledger, which bb box gpu mark needs to ask above each guest's last answered generation and to read each grant.");
@@ -231,7 +231,7 @@ test("mark writes no tags without the digest Proxmox gives with the config (Astr
     return answered({ ...bridge.proxmox.guests.get(7310)!.config });
   };
   const marking = one(await bridge.backend().markGpus(request()), 7310);
-  assert.deepEqual([marking.outcome, marking.why], ["refused", "Proxmox gave no digest with its config, so bb-box does not write its tags."]);
+  assert.deepEqual([marking.outcome, marking.why], ["refused", "Proxmox gave no digest with its config, so BB Box does not write its tags."]);
   assert.deepEqual(puts(bridge), []);
 });
 

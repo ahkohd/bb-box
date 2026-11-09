@@ -8,6 +8,7 @@ import { describeSize, fits, formatMiB } from "../core/sizes.ts";
 import type { MachineSize, DoctorCheck, KindSettings } from "./types.ts";
 
 /** A kind a host offers, and the largest box of it the host holds while it runs nothing else. */
+import { PRODUCT } from "../brand.ts";
 export interface KindRoom {
   readonly kind: string;
   readonly settings: KindSettings;
@@ -59,7 +60,7 @@ export function sizesCheck(room: HostRoom): DoctorCheck | null {
     name,
     status: "warn",
     detail: `${host} has ${room.has}${keeps}. ${found.join(" ")}`,
-    fix: `Give ${host} more ${list(more, "and")}${lower}, or make the presets of ${list(short.map((kind) => kind.kind), "and")} smaller in bb-box's settings, under Kinds.`,
+    fix: `Give ${host} more ${list(more, "and")}${lower}, or make the presets of ${list(short.map((kind) => kind.kind), "and")} smaller in ${PRODUCT}'s settings, under Kinds.`,
   };
 }
 

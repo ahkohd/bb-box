@@ -12,6 +12,7 @@
 
 import { PerformanceObserver, constants, performance } from "node:perf_hooks";
 import type { SpawnTotals } from "../transports/spawns.ts";
+import { PRODUCT } from "../brand.ts";
 
 const TICK_MS = 100;
 /** A gap between ticks this long is a stall: the loop ran nothing else for that long, or ran something that long. */
@@ -128,7 +129,7 @@ export class LoopWatch {
     if (spawns) {
       const count = spawns.count - this.#spawnedHour.count;
       parts.push(
-        `bb-box started ${count} ${count === 1 ? "process" : "processes"} in ${period}, the spawn calls taking ${Math.round(spawns.ms - this.#spawnedHour.ms)} ms in all` +
+        `${PRODUCT} started ${count} ${count === 1 ? "process" : "processes"} in ${period}, the spawn calls taking ${Math.round(spawns.ms - this.#spawnedHour.ms)} ms in all` +
           helpedPart(spawns, this.#spawnedHour) +
           mostFromPart(spawns, this.#spawnedHour),
       );

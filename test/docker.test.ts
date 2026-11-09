@@ -92,7 +92,7 @@ test("parses the fields, with the setup guide's defaults", () => {
   assert.equal(all.host, "ssh://builder@docker.example:2222");
   assert.equal(all.boxes, 3);
   assert.equal(dockerConfig({ "host": "unix:///run/user/1000/docker.sock" }).host, "unix:///run/user/1000/docker.sock");
-  // A BB machine, reached through bb-box's relay (042).
+  // A BB machine, reached through BB Box's relay (042).
   assert.deepEqual([dockerConfig({ host: "bb:host_m1" }).host, dockerConfig({ host: "bb:host_m1" }).machine], ["bb:host_m1", "host_m1"]);
   assert.equal(dockerConfig({ host: "tcp://127.0.0.1:2375" }).host, "tcp://127.0.0.1:2375");
   assert.equal(dockerConfig({ host: "wsl://bbdocker" }).host, "wsl://bbdocker");
@@ -144,7 +144,7 @@ test("refuses fields it cannot use, and says which, at each field", () => {
   assert.deepEqual(none.problems, [{ path: "linux-image", message: "Docker: give a linux or a desktop image." }]);
 });
 
-test("reads its part of bb-box's configuration", () => {
+test("reads its part of BB Box's configuration", () => {
   const configuration = toConfiguration({ backends: [{ id: "docker", type: "docker", enabled: true, fields: { privileged: false, boxes: 3 } }] });
   assert.deepEqual(configuration.problems, []);
   const parsed = dockerDriver.parse(backendPart(configuration.document.backends[0]!, dockerDriver, configuration.secrets));
@@ -369,7 +369,7 @@ test("a GPU desktop on a desktop image built before gpu-bus-id stays unprivilege
   const desktop = (labels: Record<string, string>) =>
     writeFileSync(join(fake.root, "images.json"), JSON.stringify({ "bbbox/linux:1": { "bbbox.image-version": "1" }, "bbbox/linux-desktop:1": labels }));
   desktop({ "bbbox.image-version": "1" });
-  // Until bb-box has seen the image, the setting decides.
+  // Until BB Box has seen the image, the setting decides.
   assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], ["docker"], ["docker"]]);
   assert.equal((await backend.capacity("linux-desktop", SMALL, [], signal())).ok, true);
   assert.deepEqual(backend.kinds().map((kind) => kind.capabilities.features), [["docker"], ["docker"], [], ["docker"]]);
@@ -541,7 +541,7 @@ test("removes the container when a box does not come up, and says why", async ()
 
 test("refuses a missing image without pulling it", async () => {
   const { backend } = setup({ "linux-image": "example/missing:1" });
-  await assert.rejects(backend.acquire(identity(), null, hooks().hooks, signal()), /has no image example\/missing:1, and bb-box never pulls one/);
+  await assert.rejects(backend.acquire(identity(), null, hooks().hooks, signal()), /has no image example\/missing:1, and BB Box never pulls one/);
 });
 
 test("leaves alone a container of the box's name that another box has, and goes on with its own", async () => {
@@ -550,7 +550,7 @@ test("leaves alone a container of the box's name that another box has, and goes 
   const name = containerName(box.boxId);
   execFileSync(fake.binary, ["network", "create", "bbbox"]);
   execFileSync(fake.binary, ["container", "create", "--name", name, "--label", "bbbox.backend=docker", "--label", "bbbox.install=test", "--label", "bbbox.box=bxanother00000", "--cpus", "1", "--memory", "512m", "--network", "bbbox", "bbbox/linux:1"]);
-  await assert.rejects(backend.acquire(box, null, hooks().hooks, signal()), /belongs to another box, so bb-box left it alone/);
+  await assert.rejects(backend.acquire(box, null, hooks().hooks, signal()), /belongs to another box, so BB Box left it alone/);
   assert.equal(fake.inspect(name).Config.Labels["bbbox.box"], "bxanother00000");
 
   // An acquire that resumes after a restart finds its own container and goes on.
@@ -604,7 +604,7 @@ test("counts every install's containers and the memory limits of running ones", 
   await backend.acquire(identity(), null, hooks().hooks, signal());
   const full = await backend.capacity("linux", SMALL, [], signal());
   assert.equal(full.ok, false);
-  assert.match(full.message!, /has 2 of the 2 bb-box containers it may have, counting stopped boxes and other installs' boxes/);
+  assert.match(full.message!, /has 2 of the 2 BB Box containers it may have, counting stopped boxes and other installs' boxes/);
   await assert.rejects(backend.acquire(identity(), null, hooks().hooks, signal()), (error: unknown) => error instanceof BackendError && error.code === "no_capacity");
   assert.equal(fake.containers().length, 2);
 });
@@ -721,7 +721,7 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
   await make("other").acquire(identity(), null, hooks().hooks, signal());
   const again = await backend.doctor(signal());
   assert.match(again.notes[1]!, /leaves alone the containers of other installs on fake-docker: 1 of install other\. They still count against its room\./);
-  assert.match(again.checks.find((check) => check.id === "docker.network")!.detail, /Made by bb-box/);
+  assert.match(again.checks.find((check) => check.id === "docker.network")!.detail, /Made by BB Box/);
 
   writeFileSync(join(fake.root, "images.json"), JSON.stringify({ "bbbox/linux:1": { "bbbox.image-version": "0" } }));
   fake.set({ rootless: true, arch: "aarch64" });
@@ -773,12 +773,12 @@ test("the doctor judges each image by its record's label: contract, age, BB's ap
   const desktop = by("bbbox/linux-desktop:1");
   assert.equal(desktop.status, "warn");
   assert.match(desktop.detail, /^For linux-desktop-cpu(, linux-desktop)? boxes\. /);
-  assert.match(desktop.detail, /It is 20 days old, more than 14, .* It has no build of BB's app, .* It was built with other pins than this bb-box's/);
-  assert.equal(desktop.fix, "Build it again with this bb-box's setup/docker/build.sh --bb-url <BB's server URL>.");
+  assert.match(desktop.detail, /It is 20 days old, more than 14, .* It has no build of BB's app, .* It was built with other pins than this BB Box's/);
+  assert.equal(desktop.fix, "Build it again with this BB Box's setup/docker/build.sh --bb-url <BB's server URL>.");
 
   const wayland = by("bbbox/linux-desktop-wayland:1");
   assert.equal(wayland.status, "fail");
-  assert.match(wayland.detail, /It keeps image contract 0, and this bb-box needs 1, so its boxes may not work\./);
+  assert.match(wayland.detail, /It keeps image contract 0, and this BB Box needs 1, so its boxes may not work\./);
   assert.equal(report.ok, false);
 
   // Built by an earlier bb-box: its layout, and no record.
@@ -965,13 +965,13 @@ test("the doctor says whether the docker calls to an ssh:// host share one SSH c
   assert.equal(await check(), undefined);
 });
 
-test("the doctor warns of a network bb-box did not make", async () => {
+test("the doctor warns of a network BB Box did not make", async () => {
   const { fake, backend } = setup();
   execFileSync(fake.binary, ["network", "create", "bbbox"]);
   const report = await backend.doctor(signal());
   const network = report.checks.find((check) => check.id === "docker.network")!;
   assert.equal(network.status, "warn");
-  assert.match(network.detail, /bb-box did not make the network bbbox/);
+  assert.match(network.detail, /BB Box did not make the network bbbox/);
 });
 
 test("runs commands, copies files and opens a shell through docker exec, as the box user", async () => {
@@ -1182,7 +1182,7 @@ test("two daemons that keep the same container id never share a rename", async (
   assert.equal((await shared.list("docker/relabel/")).length, 0);
 });
 
-test("a Docker host that is a BB machine is reached through bb-box's relay, named as BB names it, and an offline one takes no box and runs nothing (042)", async () => {
+test("a Docker host that is a BB machine is reached through BB Box's relay, named as BB names it, and an offline one takes no box and runs nothing (042)", async () => {
   const fake = fakeDockerHost();
   const state = { connected: true as boolean | null, readies: 0 };
   const context = {
@@ -1247,7 +1247,7 @@ test("a BB machine's OS is BB's word, kept in storage, so a restart knows a Wind
   assert.equal(restarted.hostOs, "linux");
 });
 
-test("on a BB machine, the doctor's fix for a missing image is bb-box's own build there (042)", async () => {
+test("on a BB machine, the doctor's fix for a missing image is BB Box's own build there (042)", async () => {
   const fake = fakeDockerHost();
   writeFileSync(join(fake.root, "images.json"), JSON.stringify({}));
   const context = {
@@ -1258,7 +1258,7 @@ test("on a BB machine, the doctor's fix for a missing image is bb-box's own buil
   const report = await backend.doctor(signal());
   const image = report.checks.find((check) => check.id === "image.bbbox/linux:1");
   assert.equal(image?.status, "fail");
-  assert.equal(image?.fix, "Run bb box docker-build devpc, or turn Docker on devpc off and on in bb-box's settings, to build it there.", "named as BB names it, which the command takes");
+  assert.equal(image?.fix, "Run bb box docker-build devpc, or turn Docker on devpc off and on in BB Box's settings, to build it there.", "named as BB names it, which the command takes");
 });
 
 test("on a BB machine, a command or a capacity check stops waiting when its signal aborts, though BB never answers, so a stopping plugin's sweep ends", async () => {
@@ -1307,7 +1307,7 @@ test("a container's cores and memory resize live with docker update, with room f
 
   // 16 GiB, 4 of it this box's and 4 kept free: 8 GiB more fits, 9 GiB more does not; 10 cores are more than the host's.
   const tight = await backend.planResize(guest, "linux", { ...to, memoryMiB: 13 * 1024 }, [], signal());
-  assert.equal(tight.room.message, "fake-docker has 12 GiB of memory free and keeps 4 GiB free, so the 9 GiB more the box needs does not fit. Ask for less memory, release a box, or lower the memory kept free in bb-box's settings.");
+  assert.equal(tight.room.message, "fake-docker has 12 GiB of memory free and keeps 4 GiB free, so the 9 GiB more the box needs does not fit. Ask for less memory, release a box, or lower the memory kept free in BB Box's settings.");
   assert.equal((await backend.planResize(guest, "linux", { ...to, memoryMiB: 12 * 1024 }, [], signal())).room.ok, true);
   assert.equal((await backend.planResize(guest, "linux", { ...to, cores: 10 }, [], signal())).room.message, "fake-docker has 8 cores, fewer than the 10 asked for. Ask for at most 8 cores.");
 
@@ -1489,7 +1489,7 @@ test("on a host without LXCFS, boxes are made without its files and the doctor s
   assert.equal(desktop.fix, null);
 });
 
-test("a box is made without LXCFS's files when LXCFS went from the host after bb-box last looked, and without the CPUs online where LXCFS has none (062)", async () => {
+test("a box is made without LXCFS's files when LXCFS went from the host after BB Box last looked, and without the CPUs online where LXCFS has none (062)", async () => {
   const { fake, backend } = setup({}, { lxcfs: true, cpus: 8 });
   await backend.acquire(identity(), null, hooks().hooks, signal());
   fake.set({ lxcfs: false });
@@ -1531,7 +1531,7 @@ test("the sweep probes a host with boxes again before its probes are 10 minutes 
 
   const empty = fakeDockerHost();
   await new DockerBackend(dockerConfig(), testContext(), { binary: empty.binary, now: () => now }).maintain(signal());
-  assert.equal(existsSync(join(empty.root, "probes")), false, "a host with no bb-box box is not probed");
+  assert.equal(existsSync(join(empty.root, "probes")), false, "a host with no BB Box box is not probed");
 
   const a = await backend.acquire(identity("linux", one), null, hooks().hooks, signal());
   assert.equal(fake.inspect(a.ref).HostConfig.CpusetCpus, "27");

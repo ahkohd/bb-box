@@ -14,6 +14,7 @@ import { BackendError, type AcquireHooks, type BoxIdentity, type BoxTransports, 
 import type { IosHostsConfig, TartConfig, TartHost } from "./config.ts";
 import { DEVICE_HOST_EXITS, DEVICE_HOST_HELPER, claimantInput, helperCommand, keepServerApp, keptAppWords, parseHostStatus, slotDaemonKeptByHost, type HostStatus, type ServerApp, type SlotClaimant } from "./device-host.ts";
 import { claimScript, ownerText, parseFields, script, type HostState } from "./host.ts";
+import { PRODUCT } from "../../brand.ts";
 
 export const HOST_ROLE = "device-host";
 export const HOST_VM_PREFIX = "bb-box-host-";
@@ -404,7 +405,7 @@ export class IosHosts implements SlotLender {
         try {
           return await (gaveUp ? Promise.race([look(), gaveUp]) : look());
         } catch (error) {
-          if (bound?.signal.aborted) return { owner, running, address: null, status: null, why: `The shared iOS host ${owner.vm} on ${owner.mac.name} did not answer within ${Math.round(boundMs! / 1000)} s: bb-box waited on ${waitingOn}.` };
+          if (bound?.signal.aborted) return { owner, running, address: null, status: null, why: `The shared iOS host ${owner.vm} on ${owner.mac.name} did not answer within ${Math.round(boundMs! / 1000)} s: ${PRODUCT} waited on ${waitingOn}.` };
           return { owner, running, address: null, status: null, why: `The shared iOS host ${owner.vm} on ${owner.mac.name} did not answer: ${error instanceof Error ? error.message : String(error)}` };
         } finally {
           if (timer) clearTimeout(timer);
@@ -468,7 +469,7 @@ export class IosHosts implements SlotLender {
   }
 
   async offer(kind: SlotKind, model: string | null, signal: AbortSignal): Promise<SlotTier> {
-    if (!this.lends(kind)) return { tier: "wait", words: "Shared iOS hosts are off in bb-box's Tart settings." };
+    if (!this.lends(kind)) return { tier: "wait", words: `Shared iOS hosts are off in ${PRODUCT}'s Tart settings.` };
     await this.#access.measure?.(signal);
     const states = await this.#readStates(signal);
     const slotModel = this.#slotModel(states);
@@ -620,7 +621,7 @@ export class IosHosts implements SlotLender {
 
   async #newHost(macName: string, box: BoxIdentity, signal: AbortSignal): Promise<SlotTaken> {
     const mac = this.#access.mac(macName);
-    if (!mac) return { lost: `There is no Mac ${macName} in bb-box's Tart settings.` };
+    if (!mac) return { lost: `There is no Mac ${macName} in ${PRODUCT}'s Tart settings.` };
     const image = this.#access.config().iosImage!;
     const asked = performance.now();
     return this.#access.placement(async (): Promise<SlotTaken> => {
@@ -734,7 +735,7 @@ export class IosHosts implements SlotLender {
       this.#access.log(`Shared iOS host ${vm} on ${mac.name} did not start, so bb-box deletes its VM and starts a fresh clone of the iOS image, once: ${firstWords}`);
       await this.#access.run(mac, hostFirstStartFailedScript(vm, this.#access.installId, firstWords), { signal });
       const discarded = (await this.#access.run(mac, hostCloneDiscardScript(vm, this.#access.installId), { timeoutMs: 120_000, signal })).stdout.trim();
-      if (discarded !== "discarded") throw new Error(`${firstWords} Its owner file went before bb-box could start a fresh clone.`);
+      if (discarded !== "discarded") throw new Error(`${firstWords} Its owner file went before ${PRODUCT} could start a fresh clone.`);
       try {
         return await this.#prepare(mac, vm, settings, signal);
       } catch (second) {
@@ -789,7 +790,7 @@ export class IosHosts implements SlotLender {
   async #installHelper(command: SshTransport, signal?: AbortSignal): Promise<void> {
     const source = readFileSync(join(setupDir(), HELPER_SOURCE));
     const result = await command.run(helperInstallCommand(), { stdin: source, timeoutMs: 60_000, signal });
-    if (result.exitCode !== 0) throw new Error(`bb-box could not install its device-host helper: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+    if (result.exitCode !== 0) throw new Error(`${PRODUCT} could not install its device-host helper: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
   }
 
   async #vacate(mac: TartHost, vm: string, command: SshTransport, signal?: AbortSignal): Promise<boolean> {
@@ -844,7 +845,7 @@ export class IosHosts implements SlotLender {
   async acquire(box: BoxIdentity, previous: Guest, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     const ref = slotRefOf(previous)!;
     const mac = this.#access.mac(previous.host);
-    if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${previous.host ?? "unknown"}, which is not in bb-box's Tart settings.`);
+    if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${previous.host ?? "unknown"}, which is not in ${PRODUCT}'s Tart settings.`);
     this.#acquiring.set(ref.vm, (this.#acquiring.get(ref.vm) ?? 0) + 1);
     this.#acquiringBoxes.add(box.boxId);
     this.#order.asked(ref.vm, box.boxId);
@@ -943,7 +944,7 @@ export class IosHosts implements SlotLender {
 
   async #release(guest: Guest, ref: SlotRef, signal?: AbortSignal): Promise<{ readonly last: boolean; readonly hostDeleted: boolean }> {
     const mac = this.#access.mac(guest.host);
-    if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${guest.host ?? "unknown"}, which is not in bb-box's Tart settings.`);
+    if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${guest.host ?? "unknown"}, which is not in ${PRODUCT}'s Tart settings.`);
     const boxId = typeof guest.data?.box === "string" ? guest.data.box : "";
     this.#order.served(boxId);
     const { owner, states } = await this.#ownerOf(ref.vm, signal);
@@ -1004,13 +1005,13 @@ export class IosHosts implements SlotLender {
   async stopped(guest: Guest, signal?: AbortSignal): Promise<StopReason | null> {
     const power = await this.power(guest, signal);
     if (power !== "stopped") return null;
-    return { reason: "The shared iOS host's VM is not running, as after its Mac restarted. bb-box starts the host again, and every box on it comes back.", crashed: true, at: null };
+    return { reason: `The shared iOS host's VM is not running, as after its Mac restarted. ${PRODUCT} starts the host again, and every box on it comes back.`, crashed: true, at: null };
   }
 
   async start(guest: Guest, signal?: AbortSignal): Promise<void> {
     const ref = slotRefOf(guest)!;
     const mac = this.#access.mac(guest.host);
-    if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${guest.host ?? "unknown"}, which is not in bb-box's Tart settings.`);
+    if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${guest.host ?? "unknown"}, which is not in ${PRODUCT}'s Tart settings.`);
     const address = await this.#serving(mac, ref.vm, signal ?? this.#stopping.signal);
     const { access } = await this.#access.slotAccess(mac, address, slotUserOf(guest));
     await this.#access.waitAnswers(mac, ref.vm, access, Date.now() + SLOT_READY_MS, signal);
@@ -1019,7 +1020,7 @@ export class IosHosts implements SlotLender {
   async transports(guest: Guest): Promise<BoxTransports> {
     const ref = slotRefOf(guest)!;
     const mac = this.#access.mac(guest.host);
-    if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${guest.host ?? "unknown"}, which is not in bb-box's Tart settings.`);
+    if (!mac) throw new Error(`The shared iOS host ${ref.vm} is on Mac ${guest.host ?? "unknown"}, which is not in ${PRODUCT}'s Tart settings.`);
     const address = (await this.#access.address(mac, ref.vm)) ?? guest.address;
     if (!address) throw new Error(`The shared iOS host ${ref.vm} on ${mac.name} has no address. It may be starting again.`);
     const { command, access } = await this.#access.slotAccess(mac, address, slotUserOf(guest));
@@ -1168,13 +1169,13 @@ export class IosHosts implements SlotLender {
     const now = Date.now();
     const made = owner.made ? `, made ${Math.round((now - owner.made) / 1000)} s ago` : "";
     const again = owner.firstStartFailure ? `, on a fresh clone as its first start failed (${owner.firstStartFailure})` : "";
-    if (!owner.startBy || owner.startBeat === null) return `${made}${again}, no bb-box instance starting it`;
-    const by = owner.startBy === this.#instance ? "this bb-box instance" : `bb-box instance ${owner.startBy}`;
+    if (!owner.startBy || owner.startBeat === null) return `${made}${again}, no ${PRODUCT} instance starting it`;
+    const by = owner.startBy === this.#instance ? `this ${PRODUCT} instance` : `${PRODUCT} instance ${owner.startBy}`;
     return `${made}${again}, started by ${by}, last heard from ${Math.max(0, Math.round((now - owner.startBeat * 1000) / 1000))} s ago`;
   }
 
   dispose(): void {
-    this.#stopping.abort(new Error("bb-box stopped."));
+    this.#stopping.abort(new Error(`${PRODUCT} stopped.`));
   }
 
   async startsLeft(mostMs: number): Promise<void> {

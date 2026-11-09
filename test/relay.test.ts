@@ -315,7 +315,7 @@ test("a connection whose input ends first still gets its output, as docker exec 
   assert.equal(reply, `read ${2 * 1024 * 1024}`);
 });
 
-test("a machine the relay cannot reach answers the docker CLI with the reason, and an idle relay closes when bb-box has no box there", async (t) => {
+test("a machine the relay cannot reach answers the docker CLI with the reason, and an idle relay closes when BB Box has no box there", async (t) => {
   const failing = new RelayHub({ dir: tempDir("relay-fail"), open: async () => Promise.reject(new Error("Host is not connected")), keep: async () => false, logError: () => {} });
   t.after(() => failing.dispose());
   const path = (await failing.endpoint("host_off")).slice("unix://".length);
@@ -362,7 +362,7 @@ test("Docker the machine cannot reach answers the docker CLI with the machine's 
   assert.ok(logs.includes(`Docker on BB machine host_nodocker did not answer: ${reason}`), logs.join("\n"));
 });
 
-test("a worker socket that opens after bb-box stopped waiting is closed, so no relay keeps the worker's lease", async (t) => {
+test("a worker socket that opens after BB Box stopped waiting is closed, so no relay keeps the worker's lease", async (t) => {
   const dir = tempDir("relay-late");
   const docker = await fakeDocker(join(dir, "docker.sock"));
   t.after(() => docker.close());

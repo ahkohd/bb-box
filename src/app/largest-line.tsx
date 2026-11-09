@@ -50,11 +50,9 @@ export function LargestLine({ kind, largest, asked, onFollow }: { kind: string; 
     if (event.button === 0) onFollow?.();
   };
   return (
-    <p className="grid text-xs leading-snug text-muted-foreground" data-largest-line>
-      <span aria-hidden className="invisible col-start-1 row-start-1">
-        {roomFor} {CHANGE_LARGEST_WORDS}
-      </span>
-      <span aria-live="polite" className="col-start-1 row-start-1">
+    <p className="min-h-[1lh] text-xs leading-snug text-muted-foreground" data-largest-line>
+      <span className="sr-only">{roomFor}</span>
+      <span aria-live="polite">
         {reached.length ? (
           <>
             {largestWords(largest, reached, kindLabel)}{" "}

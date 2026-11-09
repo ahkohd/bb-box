@@ -168,7 +168,7 @@ Every box, and every machine of yours, has a page of its own on the Boxes page, 
 
 The page shows, from the top:
 
-- the box's name, system, device and badges, its state in words, such as 'Ready · up 2 h 14 min' or 'Stopped · 3 h 5 min ago, today at 3:53 PM, by you', its ID and **Copy link**, which copy with a click, and the thread it is for, with whether that thread is working now
+- the box's name, system, device and badges, its state in words, such as 'Ready · up 2 h 14 min' or 'Stopped · 3 h 5 min ago, Today 15:53, by you', its ID and **Copy link**, which copy with a click, and the thread it is for, with whether that thread is working now
 - its views, Desktop, Simulator or Emulator and Terminal, then Start or Stop and the menu. A view that cannot open now is greyed out and says why, such as 'calm-otter is stopped'. Hold Command or Ctrl as you select a view to open it in a new tab
 - notices, when there are any: a stop, start, resize or release that failed, with what BB Box saw of the box after it, a backend that is no longer in BB Box's settings, a box that does not answer, a box that did not start, a stop BB Box did not ask for, a device that did not boot, and a box that could not join BB
 - while the box starts, its steps so far and what it waits on
@@ -204,7 +204,7 @@ These ranges come from box history: BB Box reads every running box once a minute
 - Over 24 h and 7 d, a light band above CPU's line is each step's busiest minute, so a short spike is not averaged away. Reading a point names the busiest minute where it is 5 points or more above the mean.
 - **Disk** is a third line, hidden until you select it, as it moves slowly. Each GPU's use is a line, with its busiest minute over 24 h and 7 d, and its memory a line hidden until you select it. A GPU's point is the mean of its readings once a minute, each the card's use at that moment. A card that was shared is the whole card's, and the chart's description says so. A shared slot's third line is the Mac's CPU instead, and it has no network chart, as the Mac's network is every slot's. Over 24 h and 7 d, a slot says that its work shorter than a minute may not show, and that Live shows it.
 - A gap says why: **Not made yet**, **Starting**, **Stopped**, **Not read** (the Monitor or box history was off) or **No reading** (a reading failed or was skipped). Only a stop BB Box confirmed shows as Stopped. A gap shows at its own times, even within a step that has a value. A step of 24 h or 7 d that missed a minute or more of readings says 'partly read', and for how long it was read.
-- Each chart's description says its numbers and its gaps, such as 'Over the last 24 hours, by 10 minutes: CPU averaged 31%, busiest minute 78% between today at 4:10 PM and 4:20 PM; memory last 58%. Stopped from today at 3:53 PM.' Its averages count each step by the time it was read.
+- Each chart's description says its numbers and its gaps, such as 'Over the last 24 hours, by 10 minutes: CPU averaged 31%, busiest minute 78% between today at 16:10 and 16:20; memory last 58%. Stopped from today at 15:53.' Its averages count each step by the time it was read.
 - If BB Box cannot read a box's history again, the charts stay as they were and say when they were read, and a screen reader hears it.
 - On the night the clocks go back, a time the clock shows twice says its time zone, such as 1:00 AM EDT and 1:00 AM EST.
 

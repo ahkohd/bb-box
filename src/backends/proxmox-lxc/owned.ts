@@ -1,6 +1,7 @@
 import { ProxmoxError, parseTags, rootDiskGiB, type GuestSettings, type Proxmox } from "../proxmox/api.ts";
 import { copyTags, isEarlierGuest, isHeldCopy } from "../proxmox/copies.ts";
 import { TAG, installFromDescription, installFromTags, installTag, namesOf, ownerFromDescription, ownerFromTags } from "../proxmox/owner.ts";
+import { PRODUCT } from "../../brand.ts";
 
 type Config = Record<string, unknown>;
 
@@ -56,7 +57,7 @@ export function boxOwner(install: string, box: string | null): GuestOwner {
 }
 
 export function madeOwner(install: string, box: string | null): GuestOwner {
-  return guarded({ words: `the guest bb-box is making for box ${box} of this install`, owns: (config) => !isTemplate(config) && describedFor(config, install, box) }, install);
+  return guarded({ words: `the guest ${PRODUCT} is making for box ${box} of this install`, owns: (config) => !isTemplate(config) && describedFor(config, install, box) }, install);
 }
 
 export function copyOwner(install: string, box: string | null): GuestOwner {
@@ -71,7 +72,7 @@ export function copyOwner(install: string, box: string | null): GuestOwner {
 
 export function warmOwner(install: string, made: string): GuestOwner {
   return guarded({
-    words: "the warm guest of this install that bb-box made",
+    words: `the warm guest of this install that ${PRODUCT} made`,
     owns: (config) => !isTemplate(config) && sameDescription(config.description, made) && made.startsWith("bb-box warm ") && installFromDescription(made) === install && copyTags(parseTags(config.tags)).box === null,
   }, install);
 }
@@ -98,7 +99,7 @@ export function eitherOwner(first: GuestOwner, second: GuestOwner): GuestOwner {
 }
 
 export function describedOwner(install: string, description: string): GuestOwner {
-  return guarded({ words: "the guest bb-box has just made", owns: (config) => sameDescription(config.description, description) }, install);
+  return guarded({ words: `the guest ${PRODUCT} has just made`, owns: (config) => sameDescription(config.description, description) }, install);
 }
 
 export function unstampedOwner(box: string): GuestOwner {
@@ -113,18 +114,18 @@ export function unstampedOwner(box: string): GuestOwner {
 
 export function sameGuestOwner(install: string, as: Config): GuestOwner {
   const box = namesOf(as).box;
-  return { words: `${box ? `box ${box}` : "the guest"} of this install, as bb-box read it`, owns: (config) => namesOf(config).install === install && namesOf(config).box === box };
+  return { words: `${box ? `box ${box}` : "the guest"} of this install, as ${PRODUCT} read it`, owns: (config) => namesOf(config).install === install && namesOf(config).box === box };
 }
 
 function namedWords(config: Config): string {
   const names = namesOf(config);
-  if (!parseTags(config.tags).includes(TAG) && !names.install) return "no bb-box guest";
+  if (!parseTags(config.tags).includes(TAG) && !names.install) return `no ${PRODUCT} guest`;
   return names.box ? `box ${names.box} of ${names.install ? `install ${names.install}` : "no install"}` : names.install ? `no box, of install ${names.install}` : "no box of any install";
 }
 
 function noLongerWords(vmid: number, owner: GuestOwner, config: Config | null): string {
-  if (!config) return `CT ${vmid} has gone, so it is no longer ${owner.words}. bb-box changes nothing on it.`;
-  return `CT ${vmid} is no longer ${owner.words}: its config names ${namedWords(config)}. bb-box changes nothing on it and does not start it.`;
+  if (!config) return `CT ${vmid} has gone, so it is no longer ${owner.words}. ${PRODUCT} changes nothing on it.`;
+  return `CT ${vmid} is no longer ${owner.words}: its config names ${namedWords(config)}. ${PRODUCT} changes nothing on it and does not start it.`;
 }
 
 export type Sighting = (vmid: number, words: string) => void;
@@ -182,7 +183,7 @@ export class OwnedGuests {
   async #after(vmid: number, owner: GuestOwner, what: string, signal?: AbortSignal): Promise<Config | null> {
     const config = await this.#configOrNull(vmid, signal);
     if (config && !owner.owns(config)) {
-      const words = `CT ${vmid} held a guest that is not ${owner.words} right after bb-box's ${what}: its config names ${namedWords(config)}. bb-box acts on it no more.`;
+      const words = `CT ${vmid} held a guest that is not ${owner.words} right after ${PRODUCT}'s ${what}: its config names ${namedWords(config)}. ${PRODUCT} acts on it no more.`;
       this.#seen(vmid, words);
       throw new NoLongerOurs(words);
     }
@@ -198,13 +199,13 @@ export class OwnedGuests {
       return;
     }
     await run();
-    if (!(await this.#after(vmid, owner, what, signal))) throw new NoLongerOurs(`CT ${vmid} went right after bb-box's ${what}. bb-box acts on it no more.`);
+    if (!(await this.#after(vmid, owner, what, signal))) throw new NoLongerOurs(`CT ${vmid} went right after ${PRODUCT}'s ${what}. ${PRODUCT} acts on it no more.`);
     if (onTheNode) await this.#power?.acted(vmid, onTheNode);
   }
 
   async writeOn(vmid: number, owner: GuestOwner, config: Config, settings: GuestSettings, signal?: AbortSignal): Promise<void> {
     if (!owner.owns(config)) throw new NoLongerOurs(noLongerWords(vmid, owner, config));
-    if (typeof config.digest !== "string" || !config.digest) throw new Error(`Proxmox gave no digest with CT ${vmid}'s config, so bb-box does not write it.`);
+    if (typeof config.digest !== "string" || !config.digest) throw new Error(`Proxmox gave no digest with CT ${vmid}'s config, so ${PRODUCT} does not write it.`);
     await this.#check?.beforeWrite(vmid, config, settings, signal);
     await this.#api.configure(vmid, { ...settings, digest: config.digest }, signal);
   }
@@ -228,7 +229,7 @@ export class OwnedGuests {
       const config = await this.read(vmid, owner, signal);
       const settings = typeof change === "function" ? change(config) : change;
       if (!Object.keys(settings).length) return;
-      if (typeof config.digest !== "string" || !config.digest) throw new Error(`Proxmox gave no digest with CT ${vmid}'s config, so bb-box does not write its network.`);
+      if (typeof config.digest !== "string" || !config.digest) throw new Error(`Proxmox gave no digest with CT ${vmid}'s config, so ${PRODUCT} does not write its network.`);
       try {
         await this.#api.setNetwork(vmid, { ...settings, digest: config.digest }, signal);
         return;
@@ -259,7 +260,7 @@ export class OwnedGuests {
       const config = await this.read(vmid, owner, signal);
       const current = rootDiskGiB(config);
       if (current !== null && current >= sizeGiB) return false;
-      if (typeof config.digest !== "string" || !config.digest) throw new Error(`Proxmox gave no digest with CT ${vmid}'s config, so bb-box does not grow its disk.`);
+      if (typeof config.digest !== "string" || !config.digest) throw new Error(`Proxmox gave no digest with CT ${vmid}'s config, so ${PRODUCT} does not grow its disk.`);
       try {
         await this.#api.resizeRootDisk(vmid, sizeGiB, config.digest, signal);
         return true;

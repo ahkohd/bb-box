@@ -58,7 +58,7 @@ test("each SDK part is pinned from Google's repository by URL, the manifest's SH
   assert.match(pins.license.accepted, /^[0-9a-f]{40}$/);
 });
 
-test("the records the template's build writes are what bb-box reads: each device, its runtime and its snapshot's origin", () => {
+test("the records the template's build writes are what BB Box reads: each device, its runtime and its snapshot's origin", () => {
   const runtime = (made: string) => ({
     platform: "android",
     api: pins.systemImage.api,

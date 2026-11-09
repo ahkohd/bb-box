@@ -22,7 +22,7 @@ async function done(state: World): Promise<void> {
   await state.boxes.dispose();
 }
 
-test("071 unit 1: a restore through bb-box keeps the GPU part its box's record has, and keeps a record from before without one", async () => {
+test("071 unit 1: a restore through BB Box keeps the GPU part its box's record has, and keeps a record from before without one", async () => {
   const state = world();
   const whole = await recordAs(state, await readyBox(state), { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" });
   const old = await readyBox(state);
@@ -37,7 +37,7 @@ test("071 unit 1: a restore through bb-box keeps the GPU part its box's record h
   await done(state);
 });
 
-test("071 unit 1: a restore made outside bb-box reads the size back and keeps the GPU part its box's record has", async () => {
+test("071 unit 1: a restore made outside BB Box reads the size back and keeps the GPU part its box's record has", async () => {
   const state = world();
   const box = await recordAs(state, await readyBox(state), { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" });
   await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });

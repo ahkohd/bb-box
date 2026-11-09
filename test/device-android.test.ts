@@ -640,7 +640,7 @@ describe("the Android driver", () => {
     assert.deepEqual(grpc.battery, { charger: 1, chargeLevel: 100 });
   });
 
-  test("a clean status bar is SystemUI's demo mode, showing the battery bb-box set, set again when the device starts, and live leaves it", async () => {
+  test("a clean status bar is SystemUI's demo mode, showing the battery BB Box set, set again when the device starts, and live leaves it", async () => {
     const { emulator, driver, paths, port, dir } = await rig();
     await driver.attach(PIXEL_8, AbortSignal.timeout(5000));
     const none = { personHasControl: false };
@@ -765,7 +765,7 @@ describe("the Android driver", () => {
     await keeper.use("Pixel 8", AbortSignal.timeout(5000));
     emulator.reachable = false;
     await keeper.read(AbortSignal.timeout(5000));
-    assert.deepEqual(keeper.settings().network, { known: false, why: "The network is none of bb-box's presets: airplane mode disabled, Wi-Fi on, not slowed, a default network Android has not validated." });
+    assert.deepEqual(keeper.settings().network, { known: false, why: "The network is none of BB Box's presets: airplane mode disabled, Wi-Fi on, not slowed, a default network Android has not validated." });
     await assert.rejects(keeper.waitNetworkAfterBoot(AbortSignal.timeout(5000)), /bb-box set the network online, and restarted Wi-Fi as the device had no validated network 0\.3 s after the boot, but 0\.3 s later it reads airplane mode disabled, Wi-Fi on, not slowed, a default network Android has not validated\./);
     emulator.wifiSaved = false;
     await assert.rejects(keeper.setNetwork("online", AbortSignal.timeout(5000)), /The network was set to online, but 0\.3 s later the device reads airplane mode disabled, Wi-Fi on, not slowed, no default network\./);
@@ -972,7 +972,7 @@ describe("the emulator's service", () => {
     assert.equal(discoveryValues("a=b=c\nnone\n").get("a"), "b=c");
   });
 
-  test("finds an emulator whose discovery file has gone by bb-box's own copy of it, or by its console port without a token, and waits only for one it can reach (F-4)", async () => {
+  test("finds an emulator whose discovery file has gone by BB Box's own copy of it, or by its console port without a token, and waits only for one it can reach (F-4)", async () => {
     const home = tempDir("android-home");
     const running = join(home, ".android", "avd", "running");
     mkdirSync(running, { recursive: true });

@@ -13,6 +13,7 @@ import { abortable } from "../../core/abortable.ts";
 import { Capture, quote } from "../../transports/process.ts";
 import type { MachineAccess } from "../types.ts";
 import { msbScript, type MsbScript } from "./release.ts";
+import { PRODUCT } from "../../brand.ts";
 
 const MiB = 1024 * 1024;
 
@@ -86,7 +87,7 @@ export class MsbCli {
   #access() {
     const machine = this.#machine!;
     const access = this.#machines?.msb?.(machine);
-    if (!access) throw new MsbError(`bb-box reaches BB machine ${machine} only when it runs in BB.`, true);
+    if (!access) throw new MsbError(`${PRODUCT} reaches BB machine ${machine} only when it runs in BB.`, true);
     return access;
   }
 

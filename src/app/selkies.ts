@@ -13,6 +13,7 @@ import Keyboard from "@novnc/novnc/core/input/keyboard.js";
 import keysyms from "@novnc/novnc/core/input/keysymdef.js";
 import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
 import { POINTER_VERB } from "../core/pointer.ts";
+import { PRODUCT } from "./product.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
 import { DEVICE_CLIPBOARD_MOST, DEVICE_FIRST_FRAME_MS, FRAME_GENERATIONS_SINCE_VERSION, PASTE_REQUEST_SINCE_VERSION, frameGenerationOf, stillsRequestText, viewRequestText, type DeviceAnswer, type DeviceControl, type DeviceRequest, type DeviceState, type ModelName, type TouchContact } from "../core/device.ts";
@@ -207,19 +208,19 @@ const DEVICE_PASTE_MS_PER_THOUSAND_CHARACTERS = 2_500;
 export const DEVICE_TEXT_ONLY_WORDS = "A device takes text only from this computer's clipboard, so the image was not pasted.";
 
 export function devicePasteTooLongWords(characters: number): string {
-  return `The text is ${characters} characters, more than the ${DEVICE_CLIPBOARD_MOST} bb-box pastes into a device.`;
+  return `The text is ${characters} characters, more than the ${DEVICE_CLIPBOARD_MOST} ${PRODUCT} pastes into a device.`;
 }
 
 function devicePasteLostWords(why: "ended" | "late"): string {
   const lead = why === "ended" ? "The connection to the device ended while pasting" : "No answer came while pasting";
-  return `${lead}, so bb-box cannot tell whether the text arrived. Look at the device before pasting again.`;
+  return `${lead}, so ${PRODUCT} cannot tell whether the text arrived. Look at the device before pasting again.`;
 }
 
 export const STILLS_WORDS = "This browser cannot play the device's video, so it shows a picture a few times a second.";
 export const SLOW_VIDEO_STILLS_WORDS = "The device's video did not show within 3 s, so this shows a picture a few times a second and tries the video again shortly.";
 export const SLOW_VIDEO_RETRY_MS = 10_000;
 const SLOW_VIDEO_RETRY_MOST_MS = 60_000;
-export const DEVICE_HUB_WORDS = "Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and bb-box closes it. The device is in the Simulator tab.";
+export const DEVICE_HUB_WORDS = `Do not open Device Hub here. It takes the device's clipboard, so pasting stops working, and ${PRODUCT} closes it. The device is in the Simulator tab.`;
 
 export class SelkiesSession implements Kept {
   readonly element = document.createElement("div");

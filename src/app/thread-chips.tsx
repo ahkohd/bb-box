@@ -5,6 +5,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import type { ThreadOnBox } from "../plugin/contract.ts";
+import { PRODUCT } from "./product.ts";
+import { THIS_BOX_THREAD, threadName, threadTitle, UNTITLED_THREAD } from "./thread-title.ts";
+
+export { THIS_BOX_THREAD, threadInSentence, threadName, threadTitle, UNTITLED_THREAD } from "./thread-title.ts";
 
 export const SHOWN_CHIPS = 3;
 export const SEARCH_FROM = 8;
@@ -12,19 +16,19 @@ export const SEARCH_FROM = 8;
 const ONLY_WHERE_CHIPS_FIT = "@max-md:hidden";
 const ONLY_WHERE_CHIPS_STACK = "@md:hidden";
 
-const REPLY_PREFIX = /^\s*Replying to this earlier message in the conversation:\s*/i;
-
-export function threadTitle(thread: ThreadOnBox): string {
-  const title = (thread.title ?? "").replace(REPLY_PREFIX, "").replace(/^[\s>"“]+/, "").trim();
-  return title || thread.id;
+function quotedThread(thread: ThreadOnBox): string {
+  const title = threadName(thread);
+  return title ? `"${title}"` : THIS_BOX_THREAD;
 }
 
 export function workingOnWords(threads: readonly ThreadOnBox[], boxName: string): string {
   const [only] = threads;
   if (threads.length === 1 && only) {
-    return only.unchecked ? `bb-box could not ask BB whether ${only.title ? threadTitle(only) : "its thread"} is working on ${boxName}` : `${threadTitle(only)} is working on ${boxName}`;
+    return only.unchecked ? `${PRODUCT} could not ask BB whether ${only.title ? quotedThread(only) : "its thread"} is working on ${boxName}` : `${quotedThread(only)} is working on ${boxName}`;
   }
-  return threads.some((thread) => thread.unchecked) ? `${threads.length} threads may be working on ${boxName}` : `${threads.length} threads are working on ${boxName}`;
+  const named = threads.map(quotedThread);
+  const list = named.length < 2 ? (named[0] ?? "") : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
+  return threads.some((thread) => thread.unchecked) ? `${list} may be working on ${boxName}` : `${list} are working on ${boxName}`;
 }
 
 export function byActivity(threads: readonly ThreadOnBox[]): ThreadOnBox[] {

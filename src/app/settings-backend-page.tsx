@@ -1,16 +1,19 @@
 import { experimental_Icon as Icon, UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { BoxDialog, DialogButton, useDialogAction } from "./box-dialog.tsx";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { FieldProblem } from "./field-shell.tsx";
+import { INVALID_BORDER } from "./size-field.ts";
 import type { DoctorCheck, DoctorReport } from "../backends/types.ts";
 import type { BackendConfig } from "../core/document.ts";
 import type { Contract } from "../plugin/contract.ts";
 import type { ConfigState, DriverView, FieldView } from "../plugin/configuration.ts";
-import { Badge, relativeTime, StatusDot, type Tone } from "./common.tsx";
+import { ago } from "./box-words.ts";
+import { Badge, StatusDot, type Tone } from "./common.tsx";
 import { groupFields, isSecretField, isSecretState } from "./config.ts";
 import { REPOSITORY_URL } from "./settings-backends.tsx";
 import { backendPart, FieldCards, hasFormProblem, HostsSection, RemoveHostDialog, type BackendForm } from "./settings-backend-fields.tsx";
@@ -24,7 +27,7 @@ import { BackendImages } from "./settings-images.tsx";
 import { GpusGroup } from "./settings-gpus.tsx";
 import { Card, Group, NotHere, PageHeader, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
 import { backendAt, backendEnabledPath, backendLabelPath, candidateOf, hostPath, type Path, type PathEdit } from "./settings-paths.ts";
-import { RestoredNote, SAVING_RULE, SaveBar, useDraft, type Draft } from "./settings-saving.tsx";
+import { refusedInstant, RestoredNote, SAVING_RULE, SaveBar, useDraft, type Draft } from "./settings-saving.tsx";
 import { backendHealth, backendLabel, hostChip, isMachineDocker, kindName, onBbMachine, plural, warningsIn, withWarnings, type BackendHealth } from "./settings-status.ts";
 
 const CHECK_LOOK: Record<DoctorCheck["status"], { icon: string; className: string; label: string }> = {
@@ -85,7 +88,7 @@ export function passedWords(report: DoctorReport): string {
 }
 
 function storedLine(health: BackendHealth, report: DoctorReport | null, now: number): string {
-  const ago = health.checkedAt !== null ? relativeTime(health.checkedAt, now) : null;
+  const checked = health.checkedAt !== null ? ago(health.checkedAt, now) : null;
   switch (health.status) {
     case "off":
       return "It takes no new boxes. Check it before you turn it on.";
@@ -94,11 +97,11 @@ function storedLine(health: BackendHealth, report: DoctorReport | null, now: num
     case "never":
       return "Check runs all its checks against what is saved, up to 30 s.";
     case "changed":
-      return report && ago ? `Its settings changed after its last check, ${ago}, which ${report.ok ? "passed" : "did not pass"}: ${passedWords(report)}. Check again to know.` : "Its settings changed after its last check. Check again to know.";
+      return report && checked ? `Its settings changed after its last check, ${checked}, which ${report.ok ? "passed" : "did not pass"}: ${passedWords(report)}. Check again to know.` : "Its settings changed after its last check. Check again to know.";
     case "stale":
-      return report && ago ? `${passedWords(report)} · checked ${ago}, so it may have changed since` : "It may have changed since its last check.";
+      return report && checked ? `${passedWords(report)} · checked ${checked}, so it may have changed since` : "It may have changed since its last check.";
     default:
-      return report && ago ? `${passedWords(report)} · checked ${ago}` : (health.detail ?? "");
+      return report && checked ? `${passedWords(report)} · checked ${checked}` : (health.detail ?? "");
   }
 }
 
@@ -129,7 +132,7 @@ function HealthCard({ form, check, running, onCheck, id, machines }: { form: Bac
   const line = running
     ? `Running all its checks against ${draft.changes ? "your unsaved changes" : "what is saved"}, up to 30 s.`
     : ofDraft
-      ? `Checked ${relativeTime(ofDraft.at, now)}, against your unsaved changes. Nothing is saved yet.${ofDraft.result?.doctor ? ` ${passedWords(ofDraft.result.doctor)}.` : ""}`
+      ? `Checked ${ago(ofDraft.at, now)}, against your unsaved changes. Nothing is saved yet.${ofDraft.result?.doctor ? ` ${passedWords(ofDraft.result.doctor)}.` : ""}`
       : storedLine(health, report, now);
   const showChecks = !running && report !== null && (ofDraft !== null || health.status !== "off");
   const problems = showChecks ? report!.checks.filter((each) => each.status === "fail" || each.status === "warn") : [];
@@ -307,78 +310,83 @@ function focusMenuOf(id: string) {
   };
 }
 
-function RenameDialog({ open, label, id, driverLabel, onCancel, onSave }: { open: boolean; label: string; id: string; driverLabel: string; onCancel: () => void; onSave: (name: string) => void }) {
+function RenameDialog({ open, label, id, driverLabel, onCancel, onSave }: { open: boolean; label: string; id: string; driverLabel: string; onCancel: () => void; onSave: (name: string) => Promise<string | null> }) {
   const [name, setName] = useState(label);
+  const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
   const field = useRef<HTMLInputElement>(null);
   const problem = name.trim().length > 64 ? "Give it a name of up to 64 characters." : null;
+  const save = async () => {
+    if (problem || busy) return;
+    setBusy(true);
+    setRefused(null);
+    const why = await onSave(name).catch((error: unknown) => (error instanceof Error ? error.message : "Not renamed. The name you wrote is still here."));
+    setBusy(false);
+    if (why) setRefused(why);
+  };
   return (
-    <AlertDialog open={open} onOpenChange={(next) => !next && onCancel()}>
-      <AlertDialogContent
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          field.current?.focus();
-          field.current?.select();
-        }}
-        onCloseAutoFocus={focusMenuOf(id)}
-      >
-        <AlertDialogHeader>
-          <AlertDialogTitle>Rename {label}</AlertDialogTitle>
-          <AlertDialogDescription>
-            The name BB Box shows for it. Its ID, {id}, stays as it is, so nothing that uses it changes. Empty uses {driverLabel}.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <Input
-          ref={field}
-          aria-label="Name"
-          aria-invalid={problem ? true : undefined}
-          className="h-8 text-sm"
-          value={name}
-          placeholder={driverLabel}
-          onChange={(event) => setName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter" || problem) return;
-            event.preventDefault();
-            onSave(name);
-          }}
-        />
-        {problem ? (
-          <p role="alert" className="text-xs text-destructive-text">
-            {problem}
-          </p>
-        ) : null}
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction disabled={problem !== null} onClick={() => onSave(name)}>
-            Save name
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <BoxDialog
+      open={open}
+      title={`Rename ${label}`}
+      description={`The name BB Box shows for it. Its ID, ${id}, stays as it is, so nothing that uses it changes. Empty uses ${driverLabel}.`}
+      busy={busy}
+      refused={refused}
+      onClose={onCancel}
+      onSubmit={() => void save()}
+      onOpenAutoFocus={(event) => {
+        event.preventDefault();
+        field.current?.focus();
+        field.current?.select();
+      }}
+      onCloseAutoFocus={focusMenuOf(id)}
+      footer={
+        <>
+          <DialogButton variant="outline" onClick={onCancel}>
+            Cancel
+          </DialogButton>
+          <DialogButton type="submit" busyWords="Renaming…" disabled={problem !== null}>
+            Rename
+          </DialogButton>
+        </>
+      }
+    >
+      <label className="block space-y-1">
+        <span className="sr-only">Name</span>
+        <Input ref={field} aria-label="Name" aria-invalid={problem ? true : undefined} aria-describedby={problem ? "backend-rename-problem" : undefined} className={cn("h-8 text-sm", problem && INVALID_BORDER)} value={name} placeholder={driverLabel} onChange={(event) => setName(event.target.value)} />
+        {problem ? <FieldProblem id="backend-rename-problem">{problem}</FieldProblem> : null}
+      </label>
+    </BoxDialog>
   );
 }
 
-function RemoveBackendDialog({ open, id, label, secrets, onCancel, onConfirm }: { open: boolean; id: string; label: string; secrets: readonly string[]; onCancel: () => void; onConfirm: () => void }) {
+function RemoveBackendDialog({ open, id, label, secrets, onCancel, onConfirm }: { open: boolean; id: string; label: string; secrets: readonly string[]; onCancel: () => void; onConfirm: () => Promise<string | null> }) {
+  const action = useDialogAction(onCancel);
+  const close = () => action.close();
   return (
-    <AlertDialog open={open} onOpenChange={(next) => !next && onCancel()}>
-      <AlertDialogContent onCloseAutoFocus={focusMenuOf(id)}>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
-          <AlertDialogDescription asChild>
-            <div className="space-y-2">
-              <p>Its settings are deleted{secrets.length ? `, with ${secrets.join(" and ")}, which BB Box cannot show or get back` : ""}. Its warm boxes are released.</p>
-              <p>Threads can no longer get boxes from it. To use it again you set it up again. There is no undo.</p>
-              <p>BB Box refuses to remove a backend while it has boxes.</p>
-            </div>
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={onConfirm}>
+    <BoxDialog
+      open={open}
+      title={`Remove ${label}?`}
+      busy={action.busy}
+      refused={action.refused}
+      onClose={close}
+      onCloseAutoFocus={focusMenuOf(id)}
+      footer={
+        <>
+          <DialogButton variant="outline" onClick={close}>
+            Cancel
+          </DialogButton>
+          <DialogButton danger busyWords="Removing…" onClick={() => void action.run(onConfirm)}>
             Remove backend
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+          </DialogButton>
+        </>
+      }
+    >
+      <div className="space-y-2">
+        <p>Its settings are deleted{secrets.length ? `, with ${secrets.join(" and ")}, which BB Box cannot show or get back` : ""}. Its warm boxes are released.</p>
+        <p>Threads can no longer get boxes from it. To use it again you set it up again. There is no undo.</p>
+        <p>BB Box refuses to remove a backend while it has boxes.</p>
+      </div>
+    </BoxDialog>
   );
 }
 
@@ -447,15 +455,16 @@ function BackendEditor({ config }: { config: BackendConfig }) {
     if (hostId) void machines.recheck([hostId]);
     void checks.run(part, fingerprint, draft.changes > 0, () => rpc.call("config.check", { draft: candidate.document, test: config.id }), Date.now).then(() => refresh());
   };
-  const notes = [instant.note(key), instant.note(switchKey.backendLabel(config.id)), instant.note(switchKey.removeBackend(config.id))];
-  const remove = () => {
-    setRemoving(false);
-    void instant.run(writes.removeBackend(draft.latest, config, label)).then((outcome) => {
-      if (outcome?.kind !== "saved" && outcome?.kind !== "already") return;
+  const notes = [instant.note(key), instant.note(switchKey.backendLabel(config.id)), removing ? null : instant.note(switchKey.removeBackend(config.id))];
+  const remove = async (): Promise<string | null> => {
+    const outcome = await instant.run(writes.removeBackend(draft.latest, config, label));
+    if (outcome?.kind === "saved" || outcome?.kind === "already") {
       drafts().discard(part);
       checks.forget(part);
       nav.toOverview();
-    });
+      return null;
+    }
+    return refusedInstant(outcome, instant.note(switchKey.removeBackend(config.id)));
   };
   const copy = () => {
     void navigator.clipboard
@@ -550,10 +559,23 @@ function BackendEditor({ config }: { config: BackendConfig }) {
           </Button>
         }
       />
-      {renaming ? <RenameDialog open label={config.label ?? ""} id={config.id} driverLabel={driver.label} onCancel={() => setRenaming(false)} onSave={(name) => {
-        setRenaming(false);
-        void instant.run(writes.backendLabel(draft.latest, config, name, `The name of ${label}`));
-      }} /> : null}
+      {renaming ? (
+        <RenameDialog
+          open
+          label={config.label ?? ""}
+          id={config.id}
+          driverLabel={driver.label}
+          onCancel={() => setRenaming(false)}
+          onSave={async (name) => {
+            const outcome = await instant.run(writes.backendLabel(draft.latest, config, name, `The name of ${label}`));
+            if (!outcome || outcome.kind === "saved" || outcome.kind === "already") {
+              setRenaming(false);
+              return null;
+            }
+            return instant.note(switchKey.backendLabel(config.id))?.text ?? "Not renamed. The name you wrote is still here.";
+          }}
+        />
+      ) : null}
       <RemoveBackendDialog open={removing} id={config.id} label={label} secrets={secretsSet(driver, config)} onCancel={() => setRemoving(false)} onConfirm={remove} />
       <RemoveHostDialog
         name={removingHost}

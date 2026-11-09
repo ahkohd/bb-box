@@ -3,6 +3,7 @@ import { isEarlierGuest, isHeldCopy } from "../proxmox/copies.ts";
 import { installTag, isTemplate } from "../proxmox/owner.ts";
 import type { GpuPart } from "../types.ts";
 import type { GpuHelperVerdict, HelperTooOld } from "./gpu-helper.ts";
+import { PRODUCT } from "../../brand.ts";
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const MARKER = new RegExp(`^gpu\\.(?:(none|release)|(shared|whole)\\.(${UUID}))\\.g([1-9][0-9]{0,8})$`);
@@ -359,7 +360,7 @@ export function ineligibility(look: GuestLook, eligibility: Eligibility): string
   if (isTemplate(look.config)) return "It is a template now, and templates are never marked.";
   if (isHeldCopy(tags) || HELD_COPY_DESCRIPTION.test(description)) return "It is a held copy of a snapshot now, which holds no card.";
   if (isEarlierGuest(tags) || /^earlier guest$/m.test(description)) return "It is an earlier guest now, kept after a restore, which holds no card.";
-  if (eligibility.madeAndRemovedByBbBox(tags)) return "bb-box is making or removing it now: an image box, or a warm guest being filled or retired.";
+  if (eligibility.madeAndRemovedByBbBox(tags)) return `${PRODUCT} is making or removing it now: an image box, or a warm guest being filled or retired.`;
   if (!tags.includes(installTag(eligibility.installId))) return `Its tags no longer name install ${eligibility.installId}, so it is not this install's.`;
   if (installNamed(description) !== eligibility.installId) return `Its description does not name install ${eligibility.installId}, so it is not this install's to the helper.`;
   return null;
@@ -412,7 +413,7 @@ const REFUSALS: Readonly<Record<string, string>> = {
   "not-served": "its pool is not one the helper serves",
   privileged: "it is a privileged container",
   template: "it is a template",
-  "not-bb-box": "its description names no bb-box install",
+  "not-bb-box": `its description names no ${PRODUCT} install`,
   "unknown-card": "the helper does not list its card",
   "card-nodes": "the helper could not find its card's device nodes",
   "no-cards": "nvidia-smi listed no card then",
@@ -606,19 +607,19 @@ function unsettledWords(lines: HelperLines, ours: ReadonlySet<number>, guests: r
 export function judgeGpuMigration(lines: HelperLines, guests: readonly MigrationGuest[], seen: Eligibility & { readonly node: string; readonly vmid: number }): GpuHelperVerdict {
   const journal = `journalctl -u bb-box-gpu on ${seen.node}`;
   if (lines.ledgerUnknown) {
-    return { status: "fail", detail: `The GPU helper on ${seen.node} reports its ledger as unknown, so bb-box cannot show the helper granted each marker as it stands. VM ${seen.vmid}'s report says why in its error lines.`, fix: `Read what it says with ${journal}.` };
+    return { status: "fail", detail: `The GPU helper on ${seen.node} reports its ledger as unknown, so ${PRODUCT} cannot show the helper granted each marker as it stands. VM ${seen.vmid}'s report says why in its error lines.`, fix: `Read what it says with ${journal}.` };
   }
   if (!lines.ledgerReported) {
     return {
       status: "fail",
-      detail: `VM ${seen.vmid}'s report has no ledger lines, which bb-box-gpu 0.2.0 and later write, so bb-box cannot show the helper granted each marker as it stands.`,
+      detail: `VM ${seen.vmid}'s report has no ledger lines, which bb-box-gpu 0.2.0 and later write, so ${PRODUCT} cannot show the helper granted each marker as it stands.`,
       fix: `Run host/setup-gpu.sh from this BB Box's setup guide, as root on ${seen.node}.`,
     };
   }
   if (lines.omitted.length) {
     return {
       status: "fail",
-      detail: `VM ${seen.vmid}'s report leaves lines out (${lines.omitted.join("; ")}), so bb-box cannot show every guest is marked and the helper would write nothing.`,
+      detail: `VM ${seen.vmid}'s report leaves lines out (${lines.omitted.join("; ")}), so ${PRODUCT} cannot show every guest is marked and the helper would write nothing.`,
       fix: `Read what the helper says with ${journal}.`,
     };
   }

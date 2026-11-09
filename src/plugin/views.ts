@@ -1,6 +1,7 @@
 // What the panel, the tools and the CLI show about boxes: plain JSON views
 // for the panel, and short text for agents. Nothing here holds a credential.
 
+import { PRODUCT } from "../brand.ts";
 import { providerName } from "../core/provider-name.ts";
 import { boxForm, driverLabel, providerFamily, type BackendStatus, type OfferedKind } from "../backends/index.ts";
 import { currentKindId, kindAliases, kindInfo, vmOffersLast } from "../backends/kinds.ts";
@@ -578,7 +579,7 @@ export function deviceLines(box: BoxRecord, state: DeviceState | null, server: s
   if (state) {
     lines.push(`Device state: ${deviceStateWords(state)}`);
     lines.push(`Device actions, for box_device: ${actionsOf(deviceModel(state.model)).join(", ")}`);
-  } else lines.push(`Device state: ${server ?? "not known yet: bb-box has not reached the box's device server"}`);
+  } else lines.push(`Device state: ${server ?? `not known yet: ${PRODUCT} has not reached the box's device server`}`);
   if (encoder) lines.push(encoder);
   if (offer.platform === "ios") lines.push(`Device commands: simctl in box_run takes booted as the ${platformWord(offer.platform)} device, as in xcrun simctl openurl booted <url>`);
   if (offer.platform === "android") lines.push("Device commands: adb in box_run reaches the device as emulator-5554, as in adb install app.apk; the Android SDK is in /opt/android-sdk");
@@ -591,7 +592,7 @@ function controlLine(owner: ControlView["owner"], controlled: "desktop" | "devic
   const leaveAlone = controlled === "device" ? "Leave the device alone" : "Leave the desktop's windows alone";
   const words: Record<ControlView["owner"], string> = {
     agent: "the agent",
-    human: `the user, in bb-box's panel. ${leaveAlone} until they hand control back, or until they ask you to continue: then call computer_take_control`,
+    human: `the user, in ${PRODUCT}'s panel. ${leaveAlone} until they hand control back, or until they ask you to continue: then call computer_take_control`,
     none: "changing hands",
   };
   return `${controlled === "device" ? "Device" : "Desktop"} control: ${words[owner]}`;
@@ -689,9 +690,9 @@ function installNoticeOf(box: BoxRecord): UserspaceNotice | null {
   const state = boxUserspaceState(box);
   switch (state.is) {
     case "updating":
-      return { words: `bb-box is installing NVIDIA's userspace ${state.update.to} in it, to add its GPU, at its ${state.update.step} step.`, action: null };
+      return { words: `${PRODUCT} is installing NVIDIA's userspace ${state.update.to} in it, to add its GPU, at its ${state.update.step} step.`, action: null };
     case "running":
-      return { words: "An earlier install of NVIDIA's userspace is still running in it: bb-box reads its userspace once it ends, and starts no other until then.", action: null };
+      return { words: `An earlier install of NVIDIA's userspace is still running in it: ${PRODUCT} reads its userspace once it ends, and starts no other until then.`, action: null };
     case "half":
       return { words: `It has ${readingWords(state.reading)}, and no GPU.`, action: "resize-again" };
     case "unfinished":
@@ -719,9 +720,9 @@ export function userspaceNoticeOf(box: BoxRecord): UserspaceNotice | null {
         ? { words: `${updateLeftWords(box.name, state.update)} bb box doctor reads it, and says whether that update is still running and when to update it again.`, action: null }
         : { words: updateLeftWords(box.name, state.update), action: "update-again" };
     case "updating":
-      return { words: `bb-box is updating NVIDIA's userspace in it to ${state.update.to}, at its ${state.update.step} step.`, action: null };
+      return { words: `${PRODUCT} is updating NVIDIA's userspace in it to ${state.update.to}, at its ${state.update.step} step.`, action: null };
     case "running":
-      return { words: "An earlier update of NVIDIA's userspace is still running in it: bb-box reads its userspace once it ends, and starts no other update until then.", action: null };
+      return { words: `An earlier update of NVIDIA's userspace is still running in it: ${PRODUCT} reads its userspace once it ends, and starts no other update until then.`, action: null };
     default:
       return null;
   }
@@ -789,13 +790,13 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
     off:
       capabilities.enrol && neverReady(box)
         ? box.state === "acquiring" || box.state === "starting"
-          ? "not yet: it joins BB once it is ready, if bb-box enrols boxes"
+          ? `not yet: it joins BB once it is ready, if ${PRODUCT} enrols boxes`
           : "not enrolled"
         : box.restoredAt && capabilities.enrol
-        ? "not enrolled since bb-box restored its lost record. It enrols again once it runs and answers, if bb-box enrols boxes"
+        ? `not enrolled since ${PRODUCT} restored its lost record. It enrols again once it runs and answers, if ${PRODUCT} enrols boxes`
         : capabilities.enrol
           ? // A box made before its kind's boxes joined BB, as a Windows box made before #539, is not enrolled in place.
-            "not enrolled: it was made while boxes of its kind did not join BB, and stays so until it is released. A new one joins BB when bb-box enrols boxes"
+            `not enrolled: it was made while boxes of its kind did not join BB, and stays so until it is released. A new one joins BB when ${PRODUCT} enrols boxes`
           : "not enrolled",
     enrolling: box.joinTries
       ? `${joiningWords(box.joinTries, Date.now())}. Until it joins, box_run runs commands without the thread's access`
@@ -825,7 +826,7 @@ export function boxDetail(box: BoxRecord, control?: ControlView): string {
  * ends the wait, and the next bb-box goes on acquiring the box (#533).
  */
 export function startingWords(box: BoxRecord, restarted: boolean): string {
-  if (restarted) return `bb-box restarted, as for an update, before box ${box.name} was ready. It goes on starting once bb-box is back, usually within seconds.`;
+  if (restarted) return `${PRODUCT} restarted, as for an update, before box ${box.name} was ready. It goes on starting once ${PRODUCT} is back, usually within seconds.`;
   const waiting = waitingWords(box);
   return waiting ? `Box ${box.name} is still starting. ${waiting}` : `Box ${box.name} is still starting.`;
 }
@@ -938,8 +939,8 @@ export function versionsText(versions: Versions): string {
   const { aptSnapshot } = versions;
   return [
     versions.following
-      ? "A rebuild of the standard Linux images now takes, against this bb-box's pins:"
-      : "With --pinned, a rebuild of the standard Linux images takes this bb-box's pins alone:",
+      ? `A rebuild of the standard Linux images now takes, against this ${PRODUCT}'s pins:`
+      : `With --pinned, a rebuild of the standard Linux images takes this ${PRODUCT}'s pins alone:`,
     ...[...lines.values()].map(({ words, arches, why }) => `  ${words}, for ${arches.join(" and ")}: ${why}.`),
     `  apt snapshot ${aptSnapshot.version}${aptSnapshot.version === aptSnapshot.pinned ? ", as pinned" : `, pinned ${aptSnapshot.pinned}`}.`,
   ].join("\n");
@@ -955,7 +956,7 @@ export function doctorText(view: DoctorView): string {
     }
     for (const note of report.notes) lines.push(`  Note: ${note}`);
   }
-  if (!view.sections.length) lines.push("No backend is on. bb box setup docker sets up Docker on the machine that runs BB; or add one with bb box backend add <type>, or in bb-box's settings.");
+  if (!view.sections.length) lines.push(`No backend is on. bb box setup docker sets up Docker on the machine that runs BB; or add one with bb box backend add <type>, or in ${PRODUCT}'s settings.`);
   return lines.join("\n");
 }
 
@@ -983,8 +984,8 @@ function changeWords(change: SizeChange | undefined): string | null {
 /** The configuration in words, for bb box config show. Secrets show only as set or not. */
 export function configText(state: ConfigState): string {
   const { document } = state;
-  const lines = [`bb-box's configuration, revision ${state.revision}.`, ""];
-  if (!document.backends.length) lines.push("Backends: none. Add one on bb-box's settings page, or with bb box config apply.");
+  const lines = [`${PRODUCT}'s configuration, revision ${state.revision}.`, ""];
+  if (!document.backends.length) lines.push(`Backends: none. Add one on ${PRODUCT}'s settings page, or with bb box config apply.`);
   else lines.push("Backends, in the order they are tried:");
   for (const backend of document.backends) {
     const status = state.backends.find((candidate) => candidate.id === backend.id);
@@ -1001,9 +1002,9 @@ export function configText(state: ConfigState): string {
   }
   lines.push("");
   const kinds = Object.entries(document.kinds);
-  if (!kinds.length) lines.push("Kinds: all on, at bb-box's own sizes.");
+  if (!kinds.length) lines.push(`Kinds: all on, at ${PRODUCT}'s own sizes.`);
   else {
-    lines.push("Kinds changed from bb-box's own (any other is on, at bb-box's sizes):");
+    lines.push(`Kinds changed from ${PRODUCT}'s own (any other is on, at ${PRODUCT}'s sizes):`);
     for (const [id, kind] of kinds) {
       const parts = [
         kind.enabled === false ? "off" : null,
@@ -1026,7 +1027,7 @@ export function configText(state: ConfigState): string {
   if (state.migrated) {
     lines.push(
       "",
-      `bb-box keeps a copy of the BB settings it moved into this configuration on ${new Date(state.migrated.at).toISOString()}. bb box config migrated shows it, and --remove removes it.`,
+      `${PRODUCT} keeps a copy of the BB settings it moved into this configuration on ${new Date(state.migrated.at).toISOString()}. bb box config migrated shows it, and --remove removes it.`,
     );
   }
   return lines.join("\n");
@@ -1035,7 +1036,7 @@ export function configText(state: ConfigState): string {
 /** The copy of BB's settings the move kept, for bb box config migrated. */
 export function movedText(copy: MovedCopy): string {
   const lines = [
-    `bb-box ${copy.version} moved these BB settings into its configuration on ${new Date(copy.at).toISOString()}. Secrets show only whether they were set.`,
+    `${PRODUCT} ${copy.version} moved these BB settings into its configuration on ${new Date(copy.at).toISOString()}. Secrets show only whether they were set.`,
     "",
     ...Object.entries(copy.values).map(([key, value]) => `${key}: ${fieldValue(value)}`),
   ];
@@ -1105,17 +1106,17 @@ export function resizeText(answer: ResizeAnswer, checked: boolean, audience: "pe
 }
 
 function installsWords(driver: string, desktop: boolean): string {
-  return `It has no NVIDIA userspace for the host's driver ${driver}, which a card needs, so bb-box installs it first, while it runs with no GPU, then restarts it with the card: about ${USERSPACE_INSTALL_SECONDS} s more${desktop ? ". Its desktop is set to draw on the GPU" : ""}. If the install fails, it goes on running with no GPU, as it was.`;
+  return `It has no NVIDIA userspace for the host's driver ${driver}, which a card needs, so ${PRODUCT} installs it first, while it runs with no GPU, then restarts it with the card: about ${USERSPACE_INSTALL_SECONDS} s more${desktop ? ". Its desktop is set to draw on the GPU" : ""}. If the install fails, it goes on running with no GPU, as it was.`;
 }
 
 function installedWords(box: BoxRecord, installed: UserspaceInstalled, desktop: boolean, audience: "person" | "agent"): string {
   const over = installed.from === "none" ? "where it had none" : `over ${installed.from}`;
   if (installed.problem) {
     const fix = audience === "agent" ? "Ask the user to update it again." : `Update it again: bb box gpu update ${box.name}${box.threadId === OPERATOR ? " --machine" : ` --thread ${box.threadId}`}`;
-    return `bb-box installed NVIDIA's userspace ${installed.driver} in it, ${over}, before the restart, but its check after the restart failed: ${installed.problem.replace(/\.$/, "")}. ${fix}`;
+    return `${PRODUCT} installed NVIDIA's userspace ${installed.driver} in it, ${over}, before the restart, but its check after the restart failed: ${installed.problem.replace(/\.$/, "")}. ${fix}`;
   }
   const fact = box.guest?.facts?.find((candidate) => candidate.label === "GPU")?.value ?? "its card";
-  return `bb-box installed NVIDIA's userspace ${installed.driver} in it, ${over}, before the restart. nvidia-smi in it lists ${fact}, and CUDA's driver initialises.${desktop ? " Its desktop is drawn by the GPU, and its video encoded with NVENC." : ""}`;
+  return `${PRODUCT} installed NVIDIA's userspace ${installed.driver} in it, ${over}, before the restart. nvidia-smi in it lists ${fact}, and CUDA's driver initialises.${desktop ? " Its desktop is drawn by the GPU, and its video encoded with NVENC." : ""}`;
 }
 
 function becomesWords(becomes: KindChange, gpu: GpuPart, done: boolean): string {
@@ -1157,7 +1158,7 @@ export interface JoinAgainWords {
 
 export function joinAgainWords(answer: { readonly is: "joined" | "joining" | "trying"; readonly box: BoxRecord }, followWith: string): JoinAgainWords {
   const { box } = answer;
-  const untouched = "bb-box ran BB's installer in it as its user, and did not restart, stop or resize it.";
+  const untouched = `${PRODUCT} ran BB's installer in it as its user, and did not restart, stop or resize it.`;
   if (answer.is === "joined") return { text: `Box ${box.name} is a BB machine already, as machine ${box.enrol.hostId}. Nothing changed.`, failed: false };
   if (answer.is === "joining") return { text: `Box ${box.name} is joining BB now, so nothing else was started. Follow it with ${followWith}.`, failed: false };
   if (box.enrol.state === "enrolled") return { text: `Box ${box.name} joined BB as machine ${box.enrol.hostId}. ${untouched}`, failed: false };

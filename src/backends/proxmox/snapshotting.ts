@@ -1,3 +1,4 @@
+import { PRODUCT } from "../../brand.ts";
 import {
   RestoreChanged,
   SnapshotFailed,
@@ -146,15 +147,15 @@ export function storageKey(node: string, name: string, shared: boolean): string 
 }
 
 export async function thinMetadata(api: Proxmox, name: string, configs: ReadonlyMap<string, StorageConfig> | Error, signal?: AbortSignal): Promise<{ readonly percent: number | null; readonly unread: string | null }> {
-  if (configs instanceof Error) return { percent: null, unread: `bb-box cannot read ${name}'s settings: ${configs.message.replace(/\.$/, "")}` };
+  if (configs instanceof Error) return { percent: null, unread: `${PRODUCT} cannot read ${name}'s settings: ${configs.message.replace(/\.$/, "")}` };
   const config = configs.get(name);
-  if (!config?.vgname || !config.thinpool) return { percent: null, unread: `bb-box cannot read which thin pool ${name} is` };
+  if (!config?.vgname || !config.thinpool) return { percent: null, unread: `${PRODUCT} cannot read which thin pool ${name} is` };
   let pools;
   try {
     pools = await api.thinPools(signal);
   } catch (error) {
     if (signal?.aborted) throw error;
-    return { percent: null, unread: `bb-box cannot read the node's thin pools: ${(error instanceof Error ? error.message : String(error)).replace(/\.$/, "")}` };
+    return { percent: null, unread: `${PRODUCT} cannot read the node's thin pools: ${(error instanceof Error ? error.message : String(error)).replace(/\.$/, "")}` };
   }
   const pool = pools.find((each) => each.vg === config.vgname && each.lv === config.thinpool);
   if (!pool || pool.metadataSize <= 0) return { percent: null, unread: `the node lists no thin pool ${config.vgname}/${config.thinpool}` };
@@ -243,16 +244,16 @@ export class ProxmoxSnapshotting {
   #memoryTarget(config: Record<string, unknown>, configs: ReadonlyMap<string, StorageConfig> | Error): { readonly name: string } | { readonly why: string } {
     const set = typeof config.vmstatestorage === "string" && config.vmstatestorage ? config.vmstatestorage : null;
     if (set) return { name: set };
-    if (configs instanceof Error) return { why: `bb-box cannot read the storage settings Proxmox chooses a memory snapshot's storage by: ${configs.message.replace(/\.$/, "")}` };
+    if (configs instanceof Error) return { why: `${PRODUCT} cannot read the storage settings Proxmox chooses a memory snapshot's storage by: ${configs.message.replace(/\.$/, "")}` };
     const used = [...new Set(this.#guests.disks(config).map((disk) => storageOfVolume(config[disk])).filter((name): name is string => name !== null))];
     const unread = used.find((name) => !configs.has(name));
-    if (unread) return { why: `bb-box cannot read the settings of ${unread}, where one of its disks is, so it cannot tell where Proxmox would save its memory` };
+    if (unread) return { why: `${PRODUCT} cannot read the settings of ${unread}, where one of its disks is, so it cannot tell where Proxmox would save its memory` };
     const shared = used.filter((name) => configs.get(name)!.shared);
     const pool = shared.length ? shared : used;
-    if (!pool.length) return { why: "it has no disk on a storage, so bb-box cannot tell where Proxmox would save its memory" };
+    if (!pool.length) return { why: `it has no disk on a storage, so ${PRODUCT} cannot tell where Proxmox would save its memory` };
     const files = pool.filter((name) => configs.get(name)!.path !== null);
     const candidates = files.length ? files : pool;
-    if (candidates.length > 1) return { why: `Proxmox would save its memory on one of ${candidates.join(", ")}, and bb-box cannot tell which. Set vmstatestorage on the VM, or take one without memory` };
+    if (candidates.length > 1) return { why: `Proxmox would save its memory on one of ${candidates.join(", ")}, and ${PRODUCT} cannot tell which. Set vmstatestorage on the VM, or take one without memory` };
     return { name: candidates[0]! };
   }
 
@@ -273,24 +274,24 @@ export class ProxmoxSnapshotting {
     const memoryMiB = memoryMiBOf(config);
     const reasons: string[] = [];
     if (privileges && !privileges.has(SNAPSHOT_PRIVILEGES[0])) {
-      reasons.push(`The Proxmox token lacks VM.Snapshot on /pool/${this.#guests.pool}, so bb-box cannot take snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
+      reasons.push(`The Proxmox token lacks VM.Snapshot on /pool/${this.#guests.pool}, so ${PRODUCT} cannot take snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
     }
     const takes = storageName && storage ? storageSnapshots({ name: storageName, type, volume }, this.#guests.type) : null;
-    if (!takes) reasons.push(`bb-box could not read the storage guest ${vmid}'s disk is on, so it takes no snapshot of it.`);
-    else if (takes.restore === "none" || takes.restore === "unknown") reasons.push(`${takes.words.replace(/\.$/, "")}, so bb-box takes no snapshot there.`);
+    if (!takes) reasons.push(`${PRODUCT} could not read the storage guest ${vmid}'s disk is on, so it takes no snapshot of it.`);
+    else if (takes.restore === "none" || takes.restore === "unknown") reasons.push(`${takes.words.replace(/\.$/, "")}, so ${PRODUCT} takes no snapshot there.`);
     const restores: { readonly restore: SnapshotRestore; readonly words: string }[] = takes ? [takes] : [];
     for (const other of this.#guests.disks(config)) {
       const name = storageOfVolume(config[other]);
       if (!name || other === disk) continue;
       const otherType = name === storageName ? type : (configs instanceof Error ? undefined : configs.get(name)?.type) ?? (await api.storageStatus(name, signal).catch(() => null))?.type;
       if (!otherType) {
-        reasons.push(`bb-box cannot read storage ${name}, where guest ${vmid}'s ${other} is, so it takes no snapshot of it.`);
-        restores.push({ restore: "unknown", words: `bb-box cannot read storage ${name}, where guest ${vmid}'s ${other} is.` });
+        reasons.push(`${PRODUCT} cannot read storage ${name}, where guest ${vmid}'s ${other} is, so it takes no snapshot of it.`);
+        restores.push({ restore: "unknown", words: `${PRODUCT} cannot read storage ${name}, where guest ${vmid}'s ${other} is.` });
         continue;
       }
       const verdict = storageSnapshots({ name, type: otherType, volume: String(config[other]) }, this.#guests.type);
       restores.push(verdict);
-      if (verdict.restore === "none" || verdict.restore === "unknown") reasons.push(`Guest ${vmid}'s ${other} is on ${name}, and ${verdict.words.replace(/\.$/, "")}, so bb-box takes no snapshot of it.`);
+      if (verdict.restore === "none" || verdict.restore === "unknown") reasons.push(`Guest ${vmid}'s ${other} is on ${name}, and ${verdict.words.replace(/\.$/, "")}, so ${PRODUCT} takes no snapshot of it.`);
     }
     let locked: SnapshotPlan["locked"] = null;
     let lockWhy: string | null = null;
@@ -304,7 +305,7 @@ export class ProxmoxSnapshotting {
         busy = words.running;
       } else if (words.fix) locked = { lock, fix: words.fix };
       else {
-        reasons.push(`Proxmox has guest ${vmid} locked (${lock}), so bb-box takes no snapshot of it.`);
+        reasons.push(`Proxmox has guest ${vmid} locked (${lock}), so ${PRODUCT} takes no snapshot of it.`);
         lockWhy = `Proxmox has guest ${vmid} locked (${lock}).`;
       }
     }
@@ -315,7 +316,7 @@ export class ProxmoxSnapshotting {
       if ("why" in target) memoryWhy = `${target.why}.`;
       else {
         const memoryStorage = target.name === storageName ? storage : await this.#storage(api, target.name, configs, signal);
-        if (!memoryStorage) memoryWhy = `bb-box cannot read storage ${target.name}, where Proxmox would save its memory.`;
+        if (!memoryStorage) memoryWhy = `${PRODUCT} cannot read storage ${target.name}, where Proxmox would save its memory.`;
         else memory = { storage: memoryStorage, addsBytes: (memoryMiB * 2 + STATE_EXTRA_MIB) * MiB };
       }
     }
@@ -360,10 +361,10 @@ export class ProxmoxSnapshotting {
     const copyBytes = diskGiB !== null ? diskGiB * GiB : null;
     const none = (why: string): SnapshotPlan["restore"] => ({ way: "none", why, undo: "none", undoAboutMs: 0, undoBytes: null, sizeBack: null, leavesOnEarlierGuest: 0, newer: 0, copyAboutMs });
     const weakest = seen.restores.find((each) => each.restore === "none" || each.restore === "unknown");
-    if (!seen.restores.length) return none(seen.takeWhy ?? `bb-box could not read the storage guest ${vmid}'s disk is on.`);
+    if (!seen.restores.length) return none(seen.takeWhy ?? `${PRODUCT} could not read the storage guest ${vmid}'s disk is on.`);
     if (weakest) return none(weakest.words);
     if (seen.privileges && !seen.privileges.has(SNAPSHOT_PRIVILEGES[1])) {
-      return none(`The Proxmox token lacks VM.Snapshot.Rollback on /pool/${this.#guests.pool}, so bb-box cannot restore snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
+      return none(`The Proxmox token lacks VM.Snapshot.Rollback on /pool/${this.#guests.pool}, so ${PRODUCT} cannot restore snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
     }
     if (seen.lock === "suspended") return none("a stopped Proxmox QEMU box is kept suspended to disk, so start it first.");
     if (seen.lockWhy) return none(seen.lockWhy);
@@ -374,7 +375,7 @@ export class ProxmoxSnapshotting {
     const listed = await api.snapshots(vmid, signal);
     const found = listed.find((snapshot) => snapshot.name === name);
     if (!found) return none(`Guest ${vmid} has no snapshot ${name}.`);
-    if (found.snapstate) return none(`${snapstateWords(found.snapstate)}, so bb-box does not restore it.`);
+    if (found.snapstate) return none(`${snapstateWords(found.snapstate)}, so ${PRODUCT} does not restore it.`);
     const newer = found.snaptime === null ? 0 : listed.filter((snapshot) => snapshot.name !== name && snapshot.snaptime !== null && snapshot.snaptime > found.snaptime!).length;
     const sizeBack = await api
       .snapshotConfig(vmid, name, signal)
@@ -397,7 +398,7 @@ export class ProxmoxSnapshotting {
     const copyOf = (size: MachineSize | null) => ({ aboutMs: Math.round((size?.diskGiB ?? 0) * COPY_ABOUT_MS_PER_GIB), bytes: size?.diskGiB != null ? size.diskGiB * GiB : null });
     const none = (why: string, size: MachineSize | null = null): SnapshotPlan["fork"] => ({ ok: false, why, ...copyOf(size), size });
     if (seen.privileges && !seen.privileges.has(CLONE_PRIVILEGE)) {
-      return none(`The Proxmox token lacks ${CLONE_PRIVILEGE} on /pool/${this.#guests.pool}, so bb-box cannot fork snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
+      return none(`The Proxmox token lacks ${CLONE_PRIVILEGE} on /pool/${this.#guests.pool}, so ${PRODUCT} cannot fork snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
     }
     if (seen.lock === "suspended") return none("a stopped Proxmox QEMU box is kept suspended to disk, so start it first.");
     if (seen.lockWhy) return none(seen.lockWhy);
@@ -406,7 +407,7 @@ export class ProxmoxSnapshotting {
     const name = snapshotName(target.id);
     const found = await this.#listed(api, vmid, name, signal);
     if (!found) return none(`Guest ${vmid} has no snapshot ${name}.`);
-    if (found.snapstate) return none(`${snapstateWords(found.snapstate)}, so bb-box does not fork it.`);
+    if (found.snapstate) return none(`${snapstateWords(found.snapstate)}, so ${PRODUCT} does not fork it.`);
     const size = await api
       .snapshotConfig(vmid, name, signal)
       .then((saved) => this.#guests.sizeOf(saved))
@@ -414,7 +415,7 @@ export class ProxmoxSnapshotting {
         if (signal?.aborted) throw error;
         return null;
       });
-    if (!size) return none(`bb-box could not read the size snapshot ${name} of guest ${vmid} holds, which its fork would have.`);
+    if (!size) return none(`${PRODUCT} could not read the size snapshot ${name} of guest ${vmid} holds, which its fork would have.`);
     return { ok: true, why: null, ...copyOf(size), size };
   }
 
@@ -439,10 +440,10 @@ export class ProxmoxSnapshotting {
     const vmid = this.#guests.vmid(ref.guest);
     const name = snapshotName(ref.id);
     const listed = await this.#listed(api, vmid, name, signal);
-    if (!listed) throw new SnapshotFailed(`Guest ${vmid} has no snapshot ${name}, so bb-box cannot write its keep date there.`);
+    if (!listed) throw new SnapshotFailed(`Guest ${vmid} has no snapshot ${name}, so ${PRODUCT} cannot write its keep date there.`);
     const label = parseSnapshotLabel(listed.description);
     if (!label || label.install !== this.#guests.installId || label.snapshot !== ref.id) {
-      throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not bb-box's snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". bb-box changed nothing.`);
+      throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not ${PRODUCT}'s snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". ${PRODUCT} changed nothing.`);
     }
     try {
       await api.describeSnapshot(vmid, name, snapshotLabel({ ...label, kept }), signal);
@@ -490,7 +491,7 @@ export class ProxmoxSnapshotting {
     const found = await this.#listed(api, vmid, name, signal);
     if (!found) throw new SnapshotFailed(failure ?? `Proxmox's task ended, but guest ${vmid} has no snapshot ${name}.`);
     if (found.snapstate) throw new SnapshotIncomplete(`${snapstateWords(found.snapstate)}${failure ? `: ${failure}` : ""}.`);
-    if (failure) throw new SnapshotIncomplete(`Proxmox's task failed (${failure}), though it left the snapshot with no part-made state, so bb-box does not count it as taken.`);
+    if (failure) throw new SnapshotIncomplete(`Proxmox's task failed (${failure}), though it left the snapshot with no part-made state, so ${PRODUCT} does not count it as taken.`);
     return { ref: name, holds: found.vmstate ? "disk-and-memory" : "disk", capturedAt: found.snaptime !== null ? found.snaptime * 1000 : this.#now(), size: null };
   }
 
@@ -503,7 +504,7 @@ export class ProxmoxSnapshotting {
     if (!listed) return;
     const box = typeof ref.guest.data?.box === "string" ? ref.guest.data.box : null;
     if (!this.#ours(listed, ref.id, box)) {
-      throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not bb-box's snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". bb-box deleted nothing.`);
+      throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not ${PRODUCT}'s snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". ${PRODUCT} deleted nothing.`);
     }
     const config = await this.#guests.ownConfig(api, ref.guest, signal);
     const lock = typeof config.lock === "string" && config.lock ? config.lock : null;
@@ -541,9 +542,9 @@ export class ProxmoxSnapshotting {
       const listed = await this.#listed(api, vmid, name, signal);
       if (!listed) throw new SnapshotFailed(`Guest ${vmid} has no snapshot ${name}.`);
       const box = typeof guest.data?.box === "string" ? guest.data.box : null;
-      if (!this.#ours(listed, ref.id, box)) throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not bb-box's snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". bb-box changed nothing.`);
-      if (listed.snapstate) throw new SnapshotFailed(`${snapstateWords(listed.snapstate)}, so bb-box does not restore it.`);
-      if ((await api.status(vmid, signal))?.status === "running") throw new SnapshotFailed(`Guest ${vmid} is running, and bb-box restores a guest only once it has stopped.`);
+      if (!this.#ours(listed, ref.id, box)) throw new SnapshotFailed(`The snapshot named ${name} on guest ${vmid} is not ${PRODUCT}'s snapshot ${ref.id}: its description says "${listed.description.slice(0, 200)}". ${PRODUCT} changed nothing.`);
+      if (listed.snapstate) throw new SnapshotFailed(`${snapstateWords(listed.snapstate)}, so ${PRODUCT} does not restore it.`);
+      if ((await api.status(vmid, signal))?.status === "running") throw new SnapshotFailed(`Guest ${vmid} is running, and ${PRODUCT} restores a guest only once it has stopped.`);
       const config = await this.#guests.ownConfig(api, guest, signal);
       const lock = typeof config.lock === "string" && config.lock ? config.lock : null;
       if (lock) {
@@ -590,7 +591,7 @@ export class ProxmoxSnapshotting {
         guest: copy.guest,
         where: "held-copy",
         state: copy.template ? "complete" : "incomplete",
-        words: copy.template ? null : "Its copy is not a template yet, so bb-box does not trust it.",
+        words: copy.template ? null : `Its copy is not a template yet, so ${PRODUCT} does not trust it.`,
         holds: "disk",
         takenAt: copy.takenAt,
         keptUntil: keptUntilOf(copy.kept),
