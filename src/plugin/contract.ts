@@ -1,3 +1,4 @@
+import type { FilesTree } from "../core/files-tree.ts";
 // The panel's RPC contract. The panel imports only its type.
 
 import type { Busy } from "../monitor/busy.ts";
@@ -400,6 +401,7 @@ export const contract = defineRpcContract({
   "monitor.machines": { input: z.null(), output: z.object({ machines: z.array(machineSchema) }) },
   "monitor.machine": { input: z.object({ machineId: z.string().min(1), force: z.boolean() }), output: snapshotSchema },
   "monitor.alerts": { input: z.null(), output: monitorStatusSchema },
+  "files.tree": { input: z.object({ box: z.string().min(1), path: z.string().min(1).max(4096).nullable().optional(), hidden: z.boolean().optional(), recursive: z.boolean().optional(), refresh: z.boolean().optional() }), output: z.custom<FilesTree>() },
   "files.home": { input: z.object({ box: z.string().min(1) }), output: z.custom<FilesHome>() },
   "files.list": { input: z.object({ box: z.string().min(1), path: z.string().min(1).max(4096) }), output: z.custom<FilesList>() },
   "files.read": { input: z.object({ box: z.string().min(1), path: z.string().min(1).max(4096) }), output: z.custom<FilesRead>() },

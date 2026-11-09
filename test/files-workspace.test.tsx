@@ -1,0 +1,151 @@
+import { z } from "zod";
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { afterEach, expect, test, vi } from 'vitest';
+import { renderSlot } from '@get-bb/plugin-sdk/testing/app';
+import { Workspace } from '../src/app/files-ui/Workspace.tsx';
+import type { FilesTree } from '../src/core/files-tree.ts';
+
+vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
+Element.prototype.scrollIntoView = () => {};
+afterEach(() => { cleanup(); localStorage.clear(); });
+const request = z.object({ path: z.string().nullable().optional(), recursive: z.boolean().optional(), refresh: z.boolean().optional() });
+const tree = (path = '/home/box', paths: string[] = [], directories = ['src']): FilesTree => ({ error: null, path, paths, directories, truncated: false, partial: false, cached: false });
+function deferred() {
+  let resolve: (result: FilesTree) => void = () => {};
+  const promise = new Promise<FilesTree>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+test('one RPC draws a shallow tree before background index and expansion survives delayed root refresh', async () => {
+  const refresh = deferred();
+  const index = deferred();
+  const calls: string[] = [];
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async (value: unknown) => {
+      const input = request.parse(value);
+      calls.push(input.recursive ? 'index' : input.path?.endsWith('/src') ? 'expand' : input.refresh ? 'refresh' : 'open');
+      if (input.recursive) return index.promise;
+      if (input.path?.endsWith('/src')) return tree(input.path, ['one.ts'], []);
+      if (input.refresh) return refresh.promise;
+      return { ...tree(), cached: true };
+    },
+  } });
+  await screen.findByRole('treeitem', { name: 'src' });
+  expect(calls[0]).toBe('open');
+  fireEvent.click(screen.getByRole('treeitem', { name: 'src' }));
+  await screen.findByRole('treeitem', { name: 'one.ts' });
+  await act(async () => refresh.resolve(tree()));
+  expect(screen.getByRole('treeitem', { name: 'one.ts' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Go to file by name' }));
+  expect(screen.getByText('File names are still filling.')).toBeTruthy();
+  await act(async () => index.resolve(tree('/home/box', ['src/one.ts'])));
+  await waitFor(() => expect(screen.queryByText('File names are still filling.')).toBeNull());
+});
+test('wide layout puts the tree on the right and the mirrored toggle at breadcrumb end', async () => {
+  const result = renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: { 'files.tree': async () => tree() } });
+  await screen.findByRole('treeitem', { name: 'src' });
+  const resize = screen.getByRole('separator', { name: 'Resize the file explorer' });
+  expect(resize.nextElementSibling?.querySelector('[role=tree]')).toBeTruthy();
+  expect(resize.previousElementSibling?.querySelector('[aria-label="Hide the file explorer"]')).toBeTruthy();
+  const toggle = screen.getByRole('button', { name: 'Hide the file explorer' });
+  expect(toggle.parentElement?.lastElementChild).toBe(toggle);
+  expect(toggle.querySelector('.rotate-180')).toBeTruthy();
+  result.unmount();
+});
+
+test('navigation clears old quick-open names and pending folder skeletons', async () => {
+  const folder = deferred();
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async (value: unknown) => {
+      const input = request.parse(value);
+      if (input.path?.endsWith('/src')) return folder.promise;
+      if (input.path === '/next') return input.recursive ? { error: 'Cannot read index.' } : tree('/next', [], ['other']);
+      return input.recursive ? tree('/home/box', ['old.txt']) : tree();
+    },
+  } });
+  await screen.findByRole('treeitem', { name: 'src' });
+  fireEvent.click(screen.getByRole('treeitem', { name: 'src' }));
+  await screen.findByRole('status', { name: 'Loading folder' });
+  const path = screen.getByRole('textbox', { name: 'Path' });
+  fireEvent.change(path, { target: { value: '/next' } });
+  fireEvent.submit(path.closest('form')!);
+  await screen.findByRole('treeitem', { name: 'other' });
+  expect(screen.queryByRole('status', { name: 'Loading folder' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Go to file by name' }));
+  await waitFor(() => expect(screen.queryByText('File names are still filling.')).toBeNull());
+  expect(screen.queryByText('old.txt')).toBeNull();
+  await act(async () => folder.resolve(tree('/home/box/src', ['late.ts'], [])));
+  expect(screen.queryByText('late.ts')).toBeNull();
+});
+
+test('unreadable and invalid child paths keep the rest of the tree', async () => {
+  const paths: (string | null | undefined)[] = [];
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async (value: unknown) => {
+      const input = request.parse(value);
+      paths.push(input.path);
+      return input.path?.endsWith('/denied') ? { error: 'That folder cannot be read.' } : tree('/home/box', ['kept.txt'], ['denied', 'back\\slash']);
+    },
+  } });
+  await screen.findByRole('treeitem', { name: 'denied' });
+  fireEvent.focus(screen.getByRole('treeitem', { name: 'denied' }));
+  await act(async () => {});
+  expect(screen.getByRole('treeitem', { name: 'kept.txt' })).toBeTruthy();
+  const before = paths.filter((path) => path === null).length;
+  fireEvent.click(screen.getByRole('treeitem', { name: 'back\\slash' }));
+  await screen.findByText('That folder path cannot be opened.');
+  expect(paths.filter((path) => path === null).length).toBe(before);
+});
+
+test('refresh rereads expanded branches and replaces their direct children', async () => {
+  let version = 1;
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async (value: unknown) => {
+      const input = request.parse(value);
+      return input.path?.endsWith('/src') ? tree('/home/box/src', [`file-${version}.ts`], []) : tree();
+    },
+  } });
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'src' }));
+  await screen.findByRole('treeitem', { name: 'file-1.ts' });
+  version = 2;
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }));
+  await screen.findByRole('treeitem', { name: 'file-2.ts' });
+  expect(screen.queryByRole('treeitem', { name: 'file-1.ts' })).toBeNull();
+});
+
+test('dotfile changes reload expanded folders and folder caps are shown', async () => {
+  let reads = 0;
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async (value: unknown) => {
+      const input = request.parse(value);
+      if (input.path?.endsWith('/src')) { reads++; return { ...tree('/home/box/src', ['one.ts'], []), truncated: true }; }
+      return tree();
+    },
+  } });
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'src' }));
+  await screen.findByRole('treeitem', { name: 'one.ts' });
+  await screen.findByText('Showing the first 5,000 entries. Open a smaller folder to see more.');
+  fireEvent.click(screen.getByRole('button', { name: 'Show dotfiles' }));
+  await waitFor(() => expect(reads).toBeGreaterThan(1));
+  expect(screen.getByRole('treeitem', { name: 'one.ts' })).toBeTruthy();
+});
+
+test('creation completing after navigation does not return to the old folder', async () => {
+  let complete: (value: { error: null }) => void = () => {};
+  const creation = new Promise<{ error: null }>((resolve) => { complete = resolve; });
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async (value: unknown) => { const input = request.parse(value); return tree(input.path ?? '/home/box'); },
+    'files.create': async () => creation,
+  } });
+  await screen.findByRole('treeitem', { name: 'src' });
+  fireEvent.click(screen.getByLabelText('Create'));
+  fireEvent.click(screen.getByRole('button', { name: 'New file' }));
+  const name = screen.getByRole('textbox', { name: 'New file name' });
+  fireEvent.change(name, { target: { value: 'created.txt' } });
+  fireEvent.keyDown(name, { key: 'Enter' });
+  const path = screen.getByRole('textbox', { name: 'Path' });
+  fireEvent.change(path, { target: { value: '/next' } });
+  fireEvent.submit(path.closest('form')!);
+  await waitFor(() => expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Path' }).value).toBe('/next'));
+  await act(async () => complete({ error: null }));
+  expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Path' }).value).toBe('/next');
+});

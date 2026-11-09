@@ -525,3 +525,5 @@ agent mostly needs:
   the user to run.
 - `bb plugin logs bb-box`, which says why each box was released, and how long
   each step of joining BB took.
+
+The Files view opens one folder level first, then fills quick open in the background. Cached folders refresh quietly. Its tree is on the right on wide windows; the create menu sits beside the path. These panel calls remain unavailable to agents.
