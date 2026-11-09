@@ -825,8 +825,8 @@ test("box_record records a Linux desktop, and stop puts the clip and a page that
   const said = text(stopped);
   const name = /\$BB_THREAD_STORAGE\/(recordings\/[^ ]+)\.mp4/.exec(said)?.[1];
   assert.ok(name, said);
-  assert.match(said, /^Recorded box \S+: a 4\.2 s clip of 10\.0 s recorded, 6\.0 s of still stretches cut, played 2x, 1280x720, 1 KB, framed\. It reached the 5-minute limit/);
-  assert.match(said, /Making it took \d+\.\d s: \d+\.\d s to stop and find the still stretches, \d+\.\d s to plan, \d+\.\d s to draw the pills, \d+\.\d s to draw the rest and encode, and \d+\.\d s to copy it here\./, "what each part of the stop cost");
+  assert.match(said, /^Recorded box \S+: a 4\.2 s clip of 10\.0 s recorded, 6\.0 s of idle stretches cut, played 2x, 1280x720, 1 KB, framed\. It reached the 5-minute limit/);
+  assert.match(said, /Making it took \d+\.\d s: \d+\.\d s to stop and find the idle stretches, \d+\.\d s to plan, \d+\.\d s to draw the pills, \d+\.\d s to draw the rest and encode, and \d+\.\d s to copy it here\./, "what each part of the stop cost");
   assert.ok(said.includes(`::inline-vis{source="thread-storage" file="${name}.html" height="368"}`), said);
   assert.equal(readFileSync(join(world.storage, `${name}.mp4`), "utf8"), "mp4data");
   assert.ok(readFileSync(join(world.storage, `${name}.html`), "utf8").includes(`<video id="clip" src="${name.split("/").pop()}.mp4"`));

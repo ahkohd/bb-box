@@ -18,6 +18,7 @@ import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
 import { describeSize } from "../core/sizes.ts";
 import { listWords } from "../core/device.ts";
 import { wholeCardsOffInList } from "../core/gpu.ts";
+import { fontFiles } from "../core/record-font.ts";
 import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, boxClockScript, chaptersOf, clockOffset, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, driverDrawsAgentCursor, withAgentCursorHidden, withInputs, type Chapter, type ClipPlan, type ClockReading } from "../core/record.ts";
 import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
@@ -526,7 +527,7 @@ export interface StopTimings {
 
 export function timingWords(timings: StopTimings, total: number): string {
   const seconds = (value: number) => `${value.toFixed(1)} s`;
-  return `Making it took ${seconds(total)}: ${seconds(timings.stopping)} to stop and find the still stretches, ${seconds(timings.planning)} to plan, ${seconds(timings.drawing)} to draw the pills, ${seconds(timings.encoding)} to draw the rest and encode, and ${seconds(timings.copying)} to copy it here.`;
+  return `Making it took ${seconds(total)}: ${seconds(timings.stopping)} to stop and find the idle stretches, ${seconds(timings.planning)} to plan, ${seconds(timings.drawing)} to draw the pills, ${seconds(timings.encoding)} to draw the rest and encode, and ${seconds(timings.copying)} to copy it here.`;
 }
 
 export function sceneWords(plan: ClipPlan): string[] {
@@ -957,19 +958,19 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_record",
     description:
-      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. The clip draws a larger pointer that glides to each click, a ring where each click lands, a pill for each shortcut or special key and one "Typing" pill for typing into an element by its ref, never the text typed; nothing shows for a password, or for typing whose field ${PRODUCT} cannot tell, as into a window, single keys, or a person's typing. It zooms in gently where you click, drag and type by ref, and shows the screen inset on a plain background (073): zoom false or frame false at stop turns either off. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops. On an ios or android box it records the device's own screen, not the host's: the device in its frame, turning as it turns, with touches shown as circles and the captions in a band above or below it; a stretch the device or its server lost is captioned in the clip.`,
+      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A step whose captions would cover more of what changes during it than the other side would has them on the other side. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. The clip draws a larger pointer that glides to each click, a ring where each click lands, a pill for each shortcut or special key and one "Typing" pill for typing into an element by its ref, never the text typed; nothing shows for a password, or for typing whose field ${PRODUCT} cannot tell, as into a window, single keys, or a person's typing. It zooms in gently where you click, drag and type by ref, and shows the screen inset on a plain background (073): zoom false or frame false at stop turns either off. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Idle stretches, where nothing moves but a blinking caret or a clock, are cut to half a second unless stills is "keep", so do not pause between steps for the viewer. A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops. On an ios or android box it records the device's own screen, not the host's: the device in its frame, turning as it turns, with touches shown as circles and the captions in a band above or below it; a stretch the device or its server lost is captioned in the clip.`,
     presentation: { label: { pending: "Recording the screen", completed: "Recorded the screen" } },
     parameters: z.object({
       box: boxParam,
       action: z.enum(["start", "step", "result", "stop"]).describe("start begins recording; step captions the next check; result gives its outcome; stop ends it and makes the clip."),
       text: z.string().min(1).max(200).optional().describe("With step: what you check next. With result: what you saw. One short line each."),
       passed: z.boolean().optional().describe("With result: whether the check passed."),
-      position: z.enum(["top", "bottom"]).optional().describe('With start: where step captions go. Defaults to "top"; "bottom" when what you check is near the top of the screen.'),
+      position: z.enum(["top", "bottom"]).optional().describe('With start: where step captions usually go. Defaults to "top"; "bottom" when what you check is near the top of the screen. A step moves its captions to the other side when theirs would cover more of what it changes.'),
       speed: z
         .union([z.literal(1), z.literal(2), z.literal(4)])
         .optional()
         .describe("With stop: the clip plays this many times faster. Defaults to 1."),
-      stills: z.enum(["cut", "keep"]).optional().describe("With stop: cut each still stretch to half a second (the default), or keep it."),
+      stills: z.enum(["cut", "keep"]).optional().describe("With stop: cut each idle stretch to half a second (the default), or keep it."),
       zoom: z.boolean().optional().describe("With stop: zoom in gently where you click, drag and type, and out between (the default), or false for the whole screen throughout."),
       frame: z.boolean().optional().describe("With stop: show the screen inset on a plain background with rounded corners (the default), or false for the screen edge to edge."),
     }),
@@ -1053,10 +1054,11 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
               app.devices.recordingEnded(found.id);
               timings.stopping = (Date.now() - stopBegan) / 1000;
               const planBegan = Date.now();
-              const plan = planClip(withAgentCursorHidden(withInputs(facts, inputs), cursorHidden), times, { zoom: zoom ?? true, frame: frame ?? true });
+              const plan = planClip(withAgentCursorHidden(withInputs(facts, inputs), cursorHidden), times, { zoom: zoom ?? true, frame: frame ?? true, stills: stills ?? "cut" });
               const drawing = sceneBundle(plan);
               timings.planning = (Date.now() - planBegan) / 1000;
               if (drawing) await boxes.writeFile(owner, found.id, `${RECORD_DIR}/${SCENE_BUNDLE}`, drawing, { signal });
+              for (const file of fontFiles()) await boxes.writeFile(owner, found.id, `${RECORD_DIR}/${file.name}`, file.bytes, { signal }).catch(() => undefined);
               const makeBegan = Date.now();
               const { result } = await runLong(recordMakeScript(plan, os));
               const said = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;
@@ -1099,7 +1101,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const cut = plan.cuts.reduce((sum, [from, to]) => sum + (to - from), 0);
         const parts = [
           `a ${made.clip.toFixed(1)} s clip of ${made.recorded.toFixed(1)} s recorded`,
-          ...(cut >= 0.5 ? [`${cut.toFixed(1)} s of still stretches cut`] : []),
+          ...(cut >= 0.5 ? [`${cut.toFixed(1)} s of idle stretches cut`] : []),
           ...(times > 1 ? [`played ${times}x`] : []),
           `${made.size}, ${Math.max(1, Math.round(made.bytes / 1024))} KB`,
           ...sceneWords(plan),

@@ -1,7 +1,23 @@
 # 073: Recordings draw the pointer, keys and zooms from the event log
 
-Status: accepted, 7 November 2026, for the launch polish. Extends
-[059](059-agents-record-their-desktop-box-with-box-record.md).
+Status: accepted, 7 November 2026, for the launch polish. Amended
+8 November 2026: a typing zoom keeps the changed region in frame, one
+typing call is one pill, and the pointer is the owner's cursor set.
+Amended again the same day: a secret call does not lengthen a public
+Typing pill, an I-beam holds through that pill and until the pointer
+moves on, a drag frames its window at the end, a click that removes
+its window zooms out, and the words and marks are Inter and the
+owner's icons. [079](079-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)
+supersedes the soft disc under a button that is held still, and the
+rule that a typing zoom uses the whole field when that field would
+not zoom. [080](080-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md)
+supersedes zooming in on a window before it has painted, a result
+caption that stays until the next step, and two captions for one moment.
+[081](081-a-recording-is-cut-to-its-actions-and-its-captions-keep-clear.md)
+supersedes cutting only still stretches where bb-box draws the pointer,
+captions that keep their places, the 1.5 seconds out before typing into
+a field just clicked, and a zoom that holds until a change elsewhere happens.
+Extends [059](059-agents-record-their-desktop-box-with-box-record.md).
 
 ## Context
 
@@ -75,16 +91,28 @@ while recording loses it, and the clip is made from the sampler alone.
 ### What is drawn
 
 - **The pointer.** The screen's own pointer is left out of the capture
-  where the box samples it, and bb-box draws a larger arrow, about a
-  thirtieth of the screen's height, no shadow. It is in the style of
-  Bibata Modern, but bb-box's own: no file, path or geometry of Bibata's,
-  which is GPL-3.0. Seven corners, each rounded by its own fillet, an
-  outline of even width, about a twelfth of its height, and edges softened
-  over 0.9 px. It comes in two inks: dark with a light outline, and light
-  with a dark outline. It follows the latest source that moved it. A jump, as the agent's clicks
-  are, glides over 0.5 s to arrive as the click lands, on the web-demo
-  skill's curve, `cubic-bezier(0.23, 1, 0.32, 1)`. A person's motion is
-  smoothed over five frames, centred, so it does not lag.
+  where the box samples it, and bb-box draws the owner's cursors. Each is
+  a 32 unit square with a white outline and a soft shadow, one unit below
+  and half a unit of blur, at 25% black. The dark parts are black. On a
+  dark part of the screen the black and white swap, and the shadow stays.
+  The arrow is the default, its hotspot at the tip. A link or a button
+  uses the pointing hand, a text field the I-beam, and a drag the open
+  hand from the moment the button goes down until it comes up. There is
+  no closed hand. A drag that starts on a window's edge or corner uses a
+  resize cursor: left and right, or up and down, for an edge; a diagonal
+  for a corner; a one-way arrow when that edge can only move one way. A
+  pane divider uses the column cursor, or the up and down cursor when the
+  divider is wider than it is tall. When the edge cannot be told, the
+  drag keeps the open hand. A shape changes when the event happens and
+  then holds for at least 0.3 s, so it does not flicker. The I-beam holds
+  from the click in the field until the pointer next glides away, and
+  through the Typing pill. A later click or drag still takes over. The arrow reads
+  as about 26 pixels on a 1280-wide clip. It is drawn at twice that and
+  scaled down, so a 2x zoom stays sharp. It follows the latest source
+  that moved it. A jump, as the agent's clicks are, glides over 0.5 s to
+  arrive as the click lands, on the web-demo skill's curve,
+  `cubic-bezier(0.23, 1, 0.32, 1)`. A person's motion is smoothed over
+  five frames, centred, so it does not lag.
 - **Which ink.** The stop's pass that finds still stretches also writes
   the screen's brightness, a grid of 16 by 9 cells, once a second. The
   pointer is dark over a cell lighter than 150 of 255 and light over one
@@ -93,17 +121,32 @@ while recording loses it, and the clip is made from the sampler alone.
   brightness chooses.
 - **Clicks.** A ring grows and fades over 0.4 s where each click lands, in
   the pointer's inks as it is there: a band of its fill between thin edges
-  of its outline's ink, blue for a right click, two rings 0.12 s apart for
-  a double click. While a button is held, a soft
-  disc stays under the pointer, so a drag shows as one.
+  of its outline's ink. The hand and the open hand are white on a light
+  screen, so their rings are light there. A right click is blue. Two rings
+  0.12 s apart mark a double click. While the pointer moves with the
+  button held, a soft disc stays under it, so a drag shows as one.
+  [079](079-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)
+  supersedes a disc under a button that is held still: that is a click,
+  and its ring is gone within the 0.4 s.
 - **Keys.** A chord or a named key (Enter, Tab, Escape, arrows, F-keys,
   Home, End, Page Up and Down, Delete) shows as a small pill, "Ctrl+S" or
   "⌘K", for 1.2 s after its last press. The same key pressed again within
-  0.8 s counts up, "↓ ×3". Typing shows one pill, "Typing", from its first
-  key to 0.6 s after its last; Backspace within it is part of it.
-- **Where pills go.** Centred at the bottom, above a dock or taskbar, or at
-  the top below the captions when the captions are at the bottom or the
-  pointer is in the bottom fifth of the picture.
+  0.8 s counts up, "↓ ×3". One typing call shows one pill, "Typing", from
+  the moment the text is in the field, for at least 1 s and until 0.6 s
+  after the call's last key. A slow call is still one pill. Keys the
+  driver echoes during the call do not add a pill, and do not hide it.
+  A later secret call, or a call from the other input, does not lengthen
+  a public pill or hide it. Backspace within the call is part of it.
+  The words are Inter Regular on Linux and Inter Medium on macOS and
+  Windows, copied into the box with the clip. A glyph Inter lacks uses
+  the box font for that glyph. The keyboard, play, tick, cross, warning
+  and cut marks are the owner's icons, drawn at the letters' size and
+  tinted with the colour the glyph had.
+- **Where pills go.** Below the region the action changed, or above it
+  when below does not fit, or at the screen edge that covers less of it.
+  The pill stays clear of the captions and of a dock or taskbar. With no
+  region to avoid, it sits at the bottom, or at the top when the captions
+  are at the bottom or the pointer is in the bottom fifth.
 - **Framing**, on by default: the screen inset by 3.5% of the clip's
   width on a plain background, with corners rounded to 1% of the width,
   no shadow. The background is near-black, `#161618`, or near-white,
@@ -169,16 +212,28 @@ today.
 On by default; `zoom: false` at the stop turns it off.
 
 - **Focus** comes from real events only: clicks, drags, scrolls and typing
-  that is not secret. Typing's focus is its element's frame, or else the
-  region that changed on the screen while it went on, or else the pointer.
+  that is not secret. Typing's focus is the region that changed while the
+  call went on, or else the element's frame, or else the pointer. A field
+  whose frame would not reach 1.3x is framed on a line at the caret
+  instead, so the camera still eases in
+  ([079](079-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)).
+  A change that is the whole field repainting is not the line. A call
+  that never closes is framed at the moment it started, so later typing
+  does not widen it. The view contains that region. If it does not fit
+  at 1.3x, the zoom goes lower, down to no zoom, so the region is never
+  cropped. A drag whose click names a window is framed on that window
+  where the pointer is at the end of the drag, contained the same way.
   Chords keep a zoom but do not move it.
 - **Groups.** Events less than 3 s apart form a group. A group's view is
   its events' bounds, a quarter larger on each side, at most 2x and at
-  least 1.3x, else no zoom: a single click zooms 1.8x. The view stays on
-  the screen.
+  least 1.3x, else no zoom: a single click zooms 1.8x. A typing group that
+  must keep its region in frame may go below 1.3x. The view stays on the
+  screen.
 - **Moves** take 0.9 s, eased in and out (cubic): in, to arrive 0.15 s
   before the group's first event; out, 1.5 s after its last. When the next
   group starts soon after, the view pans to it instead of zooming out.
+  A window that has only just opened is not the destination until it has
+  painted ([080](080-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md)).
 - **Out early** when a change covers more than 40% of the screen, or
   more than a tenth of it falls outside the view, so a dialog that opens
   elsewhere is seen. The zoom ends as the change happens: the group is
@@ -192,9 +247,11 @@ On by default; `zoom: false` at the stop turns it off.
   merges with it into one region, or a window moving as it is dragged.
   The log carries the window of each of the agent's clicks, scrolls and
   typing; without one, the element's frame or the click's place stands in,
-  and a drag's start and end. A change elsewhere, or later, still ends the
-  zoom. One that opens over the same window within the half second, as a
-  dialog can, keeps it.
+  and a drag's start and end. A change that removes most of a click's
+  window is outside, so closing that window zooms out. A change elsewhere,
+  or later, still ends the zoom. One that opens over the same window
+  within the half second, as a dialog can, keeps it. Typing is not held
+  to that test: text that fills its field keeps the zoom.
 - **Still while reading.** A caption's hold, a still frame, holds the view
   too.
 - **Cuts keep the motion.** A cut still stretch is trimmed so it never

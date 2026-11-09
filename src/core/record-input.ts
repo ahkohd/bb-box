@@ -24,10 +24,10 @@ export interface TypedField {
 }
 
 export type ActedInput =
-  | { readonly type: "click"; readonly button: MouseButton; readonly count: 1 | 2; readonly point: InputPoint; readonly area: InputArea | null; readonly window?: InputArea | null }
+  | { readonly type: "click"; readonly button: MouseButton; readonly count: 1 | 2; readonly point: InputPoint; readonly area: InputArea | null; readonly role?: string | null; readonly window?: InputArea | null }
   | { readonly type: "scroll"; readonly point: InputPoint; readonly window?: InputArea | null }
   | { readonly type: "keys"; readonly key: string; readonly modifiers: readonly string[] }
-  | { readonly type: "typing"; readonly characters: number; readonly area: InputArea | null; readonly secret: boolean; readonly window?: InputArea | null };
+  | { readonly type: "typing"; readonly characters: number; readonly area: InputArea | null; readonly secret: boolean; readonly role?: string | null; readonly window?: InputArea | null };
 
 export type PersonInput =
   | { readonly type: "pointer"; readonly x: number; readonly y: number; readonly buttons: number }
@@ -40,10 +40,10 @@ export type InputSpace = "screen" | "picture";
 export type InputSource = "agent" | "person";
 
 export type InputEvent =
-  | { readonly at: number; readonly by: InputSource; readonly type: "click"; readonly space: InputSpace; readonly button: MouseButton; readonly count: 1 | 2; readonly x: number; readonly y: number; readonly area: InputArea | null; readonly window?: InputArea | null }
+  | { readonly at: number; readonly by: InputSource; readonly type: "click"; readonly space: InputSpace; readonly button: MouseButton; readonly count: 1 | 2; readonly x: number; readonly y: number; readonly area: InputArea | null; readonly role?: string | null; readonly window?: InputArea | null }
   | { readonly at: number; readonly by: InputSource; readonly type: "scroll"; readonly space: InputSpace; readonly x: number; readonly y: number; readonly window?: InputArea | null }
   | { readonly at: number; readonly by: InputSource; readonly type: "keys"; readonly chord: KeyChord }
-  | { readonly at: number; readonly by: InputSource; readonly type: "typing"; readonly characters: number; readonly space: InputSpace; readonly area: InputArea | null; readonly secret: boolean; readonly window?: InputArea | null }
+  | { readonly at: number; readonly by: InputSource; readonly type: "typing"; readonly characters: number; readonly space: InputSpace; readonly area: InputArea | null; readonly secret: boolean; readonly role?: string | null; readonly window?: InputArea | null; readonly call?: number }
   | { readonly at: number; readonly by: "person"; readonly type: "pointer"; readonly space: "picture"; readonly x: number; readonly y: number; readonly buttons: number };
 
 export const INPUT_EVENTS_MOST = 20_000;
@@ -308,7 +308,8 @@ interface Recording {
   readonly events: InputEvent[];
   readonly held: Map<number, HeldModifier>;
   lastPointer: { at: number; x: number; y: number; buttons: number } | null;
-  typing: { readonly secret: boolean; readonly window: InputArea | null } | null;
+  calls: number;
+  typing: { readonly secret: boolean; readonly window: InputArea | null; readonly call: number } | null;
   composing: Composition | null;
 }
 
@@ -321,7 +322,7 @@ export class RecordingInputs {
   }
 
   begin(boxId: string, offsetMs: number, os: GuestOs): void {
-    this.#recordings.set(boxId, { offsetMs, os, events: [], held: new Map(), lastPointer: null, typing: null, composing: null });
+    this.#recordings.set(boxId, { offsetMs, os, events: [], held: new Map(), lastPointer: null, calls: 0, typing: null, composing: null });
   }
 
   recording(boxId: string): boolean {
@@ -348,7 +349,7 @@ export class RecordingInputs {
     const at = this.#boxSeconds(recording, sentAt);
     switch (input.type) {
       case "click":
-        this.#push(recording, { at, by: "agent", type: "click", space: "screen", button: input.button, count: input.count, x: input.point.x, y: input.point.y, area: input.area, window: input.window ?? null });
+        this.#push(recording, { at, by: "agent", type: "click", space: "screen", button: input.button, count: input.count, x: input.point.x, y: input.point.y, area: input.area, role: input.role ?? null, window: input.window ?? null });
         return;
       case "scroll":
         this.#push(recording, { at, by: "agent", type: "scroll", space: "screen", x: input.point.x, y: input.point.y, window: input.window ?? null });
@@ -364,10 +365,10 @@ export class RecordingInputs {
         return;
       }
       case "typing": {
-        const started = input.characters > 0 ? { secret: input.secret, window: input.window ?? null } : recording.typing;
+        const started = input.characters > 0 ? { secret: input.secret, window: input.window ?? null, call: ++recording.calls } : recording.typing;
         if (!started) return;
         recording.typing = input.characters > 0 ? started : null;
-        this.#push(recording, { at, by: "agent", type: "typing", characters: input.characters, space: "screen", area: input.area, secret: started.secret, window: started.window });
+        this.#push(recording, { at, by: "agent", type: "typing", characters: input.characters, space: "screen", area: input.area, secret: started.secret, role: input.characters > 0 ? (input.role ?? null) : null, window: started.window, call: started.call });
         return;
       }
     }

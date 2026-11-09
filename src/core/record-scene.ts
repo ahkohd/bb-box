@@ -1,4 +1,6 @@
-import { cornerArt, pointerArt, pressArt, ringArt, type Art, type Pointer, type PointerVariant } from "./record-art.ts";
+import { cornerArt, pressArt, ringArt, type Art, type Pointer, type PointerVariant } from "./record-art.ts";
+import { activityMoments, clipEnds, idleStretches, notableRegions, type ClipEnds } from "./record-edit.ts";
+import { CURSOR_BODY, CURSOR_VIEW, cursorArt, cursorCanvas, ringInk, type PointerShape } from "./record-cursors.ts";
 import type { InputArea, InputEvent } from "./record-input.ts";
 import { planKeyPills, type KeyPill, type KeyStyle, type PlacedKeys, type PlacedKeyTyping } from "./record-keys.ts";
 import {
@@ -8,8 +10,14 @@ import {
   RING_STAGES,
   cameraAt,
   cameraMoves,
+  clicksBeforeTheirWindowGoes,
+  pillRegion,
   planCamera,
   planPointer,
+  pointerShapes,
+  ringStageShown,
+  shapeAt,
+  typingSpan,
   type CameraKey,
   type ChangedRegion,
   type PlacedClick,
@@ -19,6 +27,7 @@ import {
   type PointerPlan,
   type PointerSample,
   type Scene,
+  type ShapeSpan,
   type Span,
   type View,
 } from "./record-motion.ts";
@@ -39,6 +48,13 @@ export interface VariantSpan {
   readonly variant: PointerVariant;
 }
 
+export interface InkSpan {
+  readonly from: number;
+  readonly to: number;
+  readonly shape: PointerShape;
+  readonly variant: PointerVariant;
+}
+
 export interface SceneFacts {
   readonly pointer: PointerMode;
   readonly screen: { readonly width: number; readonly height: number } | null;
@@ -55,6 +71,24 @@ export interface SceneFacts {
 export interface SceneOptions {
   readonly zoom: boolean;
   readonly frame: boolean;
+  readonly stills?: "cut" | "keep";
+  readonly captions?: readonly number[];
+  readonly results?: readonly number[];
+}
+
+export const LANDED_AT_ONCE_S = 0.1;
+export const RESULT_TAKES_OVER_S = 0.5;
+
+function typedAtOnceBeforeResult(scene: Scene, pill: KeyPill, results: readonly number[]): boolean {
+  if (!pill.typing) return false;
+  const spans = scene.typing
+    .filter((each) => each.characters > 0 && !each.secret)
+    .map((each) => typingSpan(each, scene.typing))
+    .filter((span) => span.from <= pill.from + 0.001 && span.to >= pill.from - 0.001);
+  if (!spans.length) return false;
+  const from = Math.min(...spans.map((span) => span.from));
+  const to = Math.max(...spans.map((span) => span.to));
+  return to - from <= LANDED_AT_ONCE_S && results.some((at) => at >= from - LANDED_AT_ONCE_S && at - to <= RESULT_TAKES_OVER_S);
 }
 
 export interface FrameLayout {
@@ -75,9 +109,15 @@ export interface ScenePlan {
   readonly kept: readonly Span[];
   readonly art: readonly Art[];
   readonly pointerArt: Pointer | null;
+  readonly cursors: readonly Pointer[];
   readonly pointerHeight: number;
   readonly variants: readonly VariantSpan[];
+  readonly shapes: readonly ShapeSpan[];
+  readonly inks: readonly InkSpan[];
   readonly ringStyles: readonly RingStyle[];
+  readonly idle: readonly Span[] | null;
+  readonly ends: ClipEnds | null;
+  readonly notable: readonly ChangedRegion[];
 }
 
 export interface RingStyle {
@@ -113,17 +153,17 @@ export function sceneOf(facts: SceneFacts, size: { readonly width: number; reado
   const clicks: PlacedClick[] = inputs.flatMap((input) => {
     if (input.type !== "click") return [];
     const scale = spaceScale(input.space);
-    return [{ at: time(input.at), x: input.x * scale, y: input.y * scale, button: input.button, count: input.count, area: scaled(input.area, scale), window: scaled(input.window ?? null, scale) }];
+    return [{ at: time(input.at), x: input.x * scale, y: input.y * scale, button: input.button, count: input.count, area: scaled(input.area, scale), role: input.role ?? null, window: scaled(input.window ?? null, scale) }];
   });
   const scrolls: PlacedScroll[] = inputs.flatMap((input) => (input.type === "scroll" ? [{ at: time(input.at), x: input.x * spaceScale(input.space), y: input.y * spaceScale(input.space), window: scaled(input.window ?? null, spaceScale(input.space)) }] : []));
   const typing: PlacedTyping[] = inputs.flatMap((input) =>
-    input.type === "typing" ? [{ at: time(input.at), characters: input.characters, area: scaled(input.area, spaceScale(input.space)), secret: input.secret, window: scaled(input.window ?? null, spaceScale(input.space)) }] : [],
+    input.type === "typing" ? [{ at: time(input.at), characters: input.characters, area: scaled(input.area, spaceScale(input.space)), secret: input.secret, role: input.role ?? null, window: scaled(input.window ?? null, spaceScale(input.space)), by: input.by, ...(input.call !== undefined ? { call: input.call } : {}) }] : [],
   );
   const keys: PlacedKeys[] = inputs.flatMap((input) => (input.type === "keys" ? [{ at: time(input.at), chord: input.chord }] : []));
   return {
-    scene: { width: size.width, height: size.height, length, samples, clicks, scrolls, typing, changes: facts.changes, agentCursor: !!facts.agentCursor },
+    scene: { width: size.width, height: size.height, length, samples, clicks, scrolls, typing, changes: facts.changes, brightness: facts.brightness ?? [], agentCursor: !!facts.agentCursor },
     keys,
-    keyTyping: typing.map((each) => ({ at: each.at, secret: each.secret })),
+    keyTyping: typing.map((each) => ({ at: each.at, secret: each.secret, characters: each.characters, by: each.by, ...(each.call !== undefined ? { call: each.call } : {}) })),
   };
 }
 
@@ -157,23 +197,45 @@ function variantFor(under: number | null): PointerVariant | null {
   return under <= DIM_UNDER ? "light" : null;
 }
 
-export function pointerVariants(frames: readonly PointerFrame[], grids: readonly BrightnessGrid[], size: { readonly width: number; readonly height: number }, pointerHeight: number, luma: number | null): VariantSpan[] {
-  const wanted = frames.map((frame, index) => variantFor(brightnessUnder(grids, size, index / CLIP_FPS, frame.x + pointerHeight * 0.25, frame.y + pointerHeight * 0.45)));
+const WHITE_HANDS: readonly PointerShape[] = ["hand", "grab"];
+export const HAND_DARK_UNDER = 60;
+
+function sampledFrom(shape: PointerShape): readonly [number, number] {
+  if (shape === "hand") return [0.1, 0.3];
+  if (shape === "grab") return [0, 0];
+  return [0.25, 0.45];
+}
+
+function variantForShape(shape: PointerShape, under: number | null): PointerVariant | null {
+  if (!WHITE_HANDS.includes(shape) || under === null) return variantFor(under);
+  return under <= HAND_DARK_UNDER ? "light" : "dark";
+}
+
+export function pointerVariants(frames: readonly PointerFrame[], grids: readonly BrightnessGrid[], size: { readonly width: number; readonly height: number }, pointerHeight: number, luma: number | null, shapes: readonly ShapeSpan[] = []): VariantSpan[] {
+  const shapeOf = (index: number): PointerShape => (shapes.length ? shapeAt(shapes, index / CLIP_FPS) : "arrow");
+  const wanted = frames.map((frame, index) => {
+    const shape = shapeOf(index);
+    const [across, down] = sampledFrom(shape);
+    return variantForShape(shape, brightnessUnder(grids, size, index / CLIP_FPS, frame.x + pointerHeight * across, frame.y + pointerHeight * down));
+  });
   let current: PointerVariant = wanted.find((each) => each !== null) ?? (luma !== null && luma >= 128 ? "dark" : "light");
-  const runs: VariantSpan[] = [];
+  const runs: (VariantSpan & { readonly handBegins: boolean })[] = [];
   wanted.forEach((each, index) => {
     current = each ?? current;
     const last = runs.at(-1);
-    if (last && last.variant === current) runs[runs.length - 1] = { ...last, to: index + 1 };
-    else runs.push({ from: index, to: index + 1, variant: current });
+    const handBegins = index > 0 && WHITE_HANDS.includes(shapeOf(index)) !== WHITE_HANDS.includes(shapeOf(index - 1));
+    if (last && last.variant === current && !handBegins) runs[runs.length - 1] = { ...last, to: index + 1 };
+    else runs.push({ from: index, to: index + 1, variant: current, handBegins });
   });
   const least = Math.round(VARIANT_LEAST_S * CLIP_FPS);
-  return runs.reduce((kept: VariantSpan[], run) => {
-    const last = kept.at(-1);
-    if (last && (last.variant === run.variant || run.to - run.from < least)) kept[kept.length - 1] = { ...last, to: run.to };
-    else kept.push(run);
-    return kept;
-  }, []);
+  return runs
+    .reduce((kept: (VariantSpan & { readonly handBegins: boolean })[], run) => {
+      const last = kept.at(-1);
+      if (last && (last.variant === run.variant || (run.to - run.from < least && !run.handBegins))) kept[kept.length - 1] = { ...last, to: run.to };
+      else kept.push(run);
+      return kept;
+    }, [])
+    .map(({ from, to, variant }) => ({ from, to, variant }));
 }
 
 function variantAt(spans: readonly VariantSpan[], frame: number): PointerVariant {
@@ -184,12 +246,25 @@ export function backgroundFor(luma: number | null): string {
   return luma !== null && luma >= 128 ? LIGHT_BACKGROUND : DARK_BACKGROUND;
 }
 
+function knowsIdle(facts: SceneFacts, options: SceneOptions): boolean {
+  return options.stills !== "keep" && facts.pointer === "drawn" && facts.samples.length > 0 && (facts.brightness?.length ?? 0) > 0;
+}
+
 export function planScene(facts: SceneFacts, size: { readonly width: number; readonly height: number }, start: number, length: number, options: SceneOptions): ScenePlan {
-  const { scene, keys, keyTyping } = sceneOf(facts, size, start, length);
-  const pointer = planPointer(scene);
-  const camera = options.zoom ? planCamera(scene, pointer) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
+  const placed = sceneOf(facts, size, start, length);
+  const { keys, keyTyping } = placed;
+  const captionMoments = (options.captions ?? []).map((at) => at - facts.lag);
+  const scene = clicksBeforeTheirWindowGoes(placed.scene, keys, captionMoments);
+  const moments = knowsIdle(facts, options) ? activityMoments(scene, keys, captionMoments) : null;
+  const idle = moments ? idleStretches(moments, length) : null;
+  const pointer = planPointer(scene, captionMoments);
+  const results = (options.results ?? []).map((at) => at - facts.lag);
+  const camera = options.zoom ? planCamera(scene, pointer, idle ?? [], results) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
   const zooms = camera.some((key) => key.view.zoom > 1);
-  const pills = planKeyPills(keys, keyTyping, facts.keys, length);
+  const ends = moments ? clipEnds(scene, keys, pointer, moments, results) : null;
+  const pills = planKeyPills(keys, keyTyping, facts.keys, length)
+    .filter((pill) => !typedAtOnceBeforeResult(scene, pill, results))
+    .map((pill) => ({ ...pill, avoid: pillRegion(scene, pointer, pill.from, pill.to) }));
   const drawsPointer = facts.pointer === "drawn" && pointer.frames.length > 0 && pointer.visibleFrom !== null;
   const kept: Span[] = [
     ...(drawsPointer ? pointer.glides : []),
@@ -199,27 +274,47 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
     ...(zooms ? cameraMoves(camera) : []),
   ].map((span) => ({ from: round3(Math.max(0, span.from)), to: round3(Math.min(length, span.to)) }));
   const { content, inset } = contentSize(size, options.frame);
-  const pointerHeight = Math.max(16, Math.round(size.height / 30));
-  const variants = pointerVariants(pointer.frames, facts.brightness ?? [], size, pointerHeight, facts.luma);
-  const ringStyles = ringStylesOf(pointer, variants);
-  const pointerImages = drawsPointer ? (["dark", "light"] as const).filter((variant) => variants.some((span) => span.variant === variant)).map((variant) => pointerArt(pointerHeight, variant)) : [];
+  const canvas = cursorCanvas(size.width, content.width);
+  const pointerHeight = Math.max(16, Math.round((canvas * CURSOR_BODY) / CURSOR_VIEW));
+  const shapes = pointerShapes(scene, captionMoments);
+  const variants = pointerVariants(pointer.frames, facts.brightness ?? [], size, pointerHeight, facts.luma, shapes);
+  const inks = inkSpans(shapes, variants, pointer.frames.length);
+  const seen: PointerShape[] = [];
+  for (const ink of inks) if (!seen.includes(ink.shape)) seen.push(ink.shape);
+  const cursors = drawsPointer ? seen.flatMap((shape) => (["dark", "light"] as const).filter((variant) => inks.some((ink) => ink.shape === shape && ink.variant === variant)).map((variant) => cursorArt(shape, variant, canvas))) : [];
+  const ringStyles = ringStylesOf(pointer, variants, shapes);
   const frame = options.frame ? { inset, radius: Math.max(4, Math.round(contentSize(size, true).clip.width * FRAME_RADIUS_SHARE)), background: backgroundFor(facts.luma) } : null;
   const art: Art[] = [
     ...ringStyles.flatMap((style) => Array.from({ length: RING_STAGES }, (_, stage) => ringArt(pointerHeight, stage, style.kind, style.variant))),
     ...(drawsPointer && pointer.drags.length ? [pressArt(pointerHeight)] : []),
-    ...pointerImages,
+    ...cursors,
     ...(frame ? [cornerArt(frame.radius, frame.background)] : []),
   ];
-  return { source: size, content, pointer, drawsPointer, camera, zooms, frame, pills, kept, art, pointerArt: pointerImages[0] ?? null, pointerHeight, variants, ringStyles };
+  return { source: size, content, pointer, drawsPointer, camera, zooms, frame, pills, kept, art, pointerArt: cursors[0] ?? null, cursors, pointerHeight, variants, shapes, inks, ringStyles, idle, ends, notable: notableRegions(scene, pointer) };
 }
 
-function ringStylesOf(pointer: PointerPlan, variants: readonly VariantSpan[]): RingStyle[] {
-  const styles = pointer.rings.map((ring): RingStyle => ({ kind: ring.kind, variant: variantAt(variants, Math.round(ring.at * CLIP_FPS)) }));
+function inkSpans(shapes: readonly ShapeSpan[], variants: readonly VariantSpan[], frames: number): InkSpan[] {
+  const out: InkSpan[] = [];
+  for (let index = 0; index < frames; index++) {
+    const shape = shapeAt(shapes, index / CLIP_FPS);
+    const variant = variantAt(variants, index);
+    const last = out.at(-1);
+    if (last && last.shape === shape && last.variant === variant) out[out.length - 1] = { ...last, to: index + 1 };
+    else out.push({ from: index, to: index + 1, shape, variant });
+  }
+  return out;
+}
+
+function ringStylesOf(pointer: PointerPlan, variants: readonly VariantSpan[], shapes: readonly ShapeSpan[]): RingStyle[] {
+  const styles = pointer.rings.map((ring): RingStyle => ({ kind: ring.kind, variant: ringInk(shapeAt(shapes, ring.at), variantAt(variants, Math.round(ring.at * CLIP_FPS))) }));
   return styles.filter((style, index) => styles.findIndex((other) => other.kind === style.kind && other.variant === style.variant) === index);
 }
 
 const ringTarget = (style: RingStyle, stage: number) => `overlay@ring${style.kind[0]}${style.variant[0]}${stage}`;
-const pointerTarget = (variant: PointerVariant) => `overlay@pointer${variant[0]}`;
+const cursorTarget = (name: string) => {
+  const match = /^cursor-(.+)-(dark|light)\.png$/.exec(name)!;
+  return `overlay@${match[1]}${match[2]![0]}`;
+};
 
 export function sceneCommands(plan: ScenePlan): string {
   const lines: { at: number; order: number; text: string }[] = [];
@@ -227,36 +322,32 @@ export function sceneCommands(plan: ScenePlan): string {
   const art = (name: string) => plan.art.find((each) => each.name === name)!;
   if (plan.drawsPointer && plan.pointerArt) {
     const press = plan.pointer.drags.length ? art("press.png") : null;
-    const drawn = (["dark", "light"] as const).filter((variant) => plan.variants.some((span) => span.variant === variant));
-    let last: { x: number; y: number } | null = null;
+    let last: { x: number; y: number; shape: string } | null = null;
     plan.pointer.frames.forEach((frame, index) => {
-      if (last && last.x === frame.x && last.y === frame.y) return;
-      last = frame;
-      const parts = drawn.flatMap((variant) => [`${pointerTarget(variant)} x ${frame.x - plan.pointerArt!.hotX}`, `${pointerTarget(variant)} y ${frame.y - plan.pointerArt!.hotY}`]);
+      const shape = shapeAt(plan.shapes, index / CLIP_FPS);
+      if (last && last.x === frame.x && last.y === frame.y && last.shape === shape) return;
+      last = { x: frame.x, y: frame.y, shape };
+      const parts = plan.cursors.flatMap((cursor) => [`${cursorTarget(cursor.name)} x ${frame.x - cursor.hotX}`, `${cursorTarget(cursor.name)} y ${frame.y - cursor.hotY}`]);
       if (press) parts.push(`overlay@press x ${frame.x - Math.round(press.width / 2)}`, `overlay@press y ${frame.y - Math.round(press.height / 2)}`);
       lines.push({ at: at(index), order: 1, text: parts.join(", ") });
     });
     const visibleFrom = plan.pointer.visibleFrom ?? 0;
-    plan.variants.forEach((span, index) => {
+    plan.inks.forEach((span, index) => {
+      const target = cursorTarget(`cursor-${span.shape}-${span.variant}.png`);
       const to = at(span.to);
-      if (to <= visibleFrom && index < plan.variants.length - 1) return;
-      lines.push({ at: Math.max(visibleFrom, at(span.from)), order: 2, text: `${pointerTarget(span.variant)} enable 1` });
-      if (index < plan.variants.length - 1) lines.push({ at: to, order: 0, text: `${pointerTarget(span.variant)} enable 0` });
+      if (to <= visibleFrom && index < plan.inks.length - 1) return;
+      lines.push({ at: Math.max(visibleFrom, at(span.from)), order: 2, text: `${target} enable 1` });
+      if (index < plan.inks.length - 1) lines.push({ at: to, order: 0, text: `${target} enable 0` });
     });
-    if (press) {
-      for (const drag of plan.pointer.drags) {
-        lines.push({ at: drag.from, order: 2, text: "overlay@press enable 1" }, { at: drag.to, order: 0, text: "overlay@press enable 0" });
-      }
-    }
   }
   for (const ring of plan.pointer.rings) {
-    const style: RingStyle = { kind: ring.kind, variant: variantAt(plan.variants, Math.round(ring.at * CLIP_FPS)) };
+    const style: RingStyle = { kind: ring.kind, variant: ringInk(shapeAt(plan.shapes, ring.at), variantAt(plan.variants, Math.round(ring.at * CLIP_FPS))) };
     for (let stage = 0; stage < RING_STAGES; stage++) {
+      if (!ringStageShown(ring, stage)) continue;
       const image = art(`ring-${style.kind}-${style.variant}-${stage}.png`);
       const from = round3(ring.at + (stage * RING_FRAMES_PER_STAGE) / CLIP_FPS);
       const target = ringTarget(style, stage);
-      lines.push({ at: from, order: 2, text: `${target} x ${ring.x - Math.round(image.width / 2)}, ${target} y ${ring.y - Math.round(image.height / 2)}, ${target} enable 1` });
-      lines.push({ at: round3(from + RING_FRAMES_PER_STAGE / CLIP_FPS), order: 0, text: `${target} enable 0` });
+      lines.push({ at: from, order: 2, text: `${target} x ${ring.x - Math.round(image.width / 2)}, ${target} y ${ring.y - Math.round(image.height / 2)}` });
     }
   }
   return lines
@@ -285,6 +376,26 @@ function piecewise(keys: readonly CameraKey[], value: (view: View) => number, ge
   return parts.length === 1 ? parts[0]!.replace(/^gte\(it,0\.000\)\*/, "") : parts.join("+");
 }
 
+function shown(spans: readonly string[]): string {
+  return spans.length ? `'${spans.join("+")}'` : "0";
+}
+
+function ringShown(plan: ScenePlan, kind: string, variant: string, stage: number): string {
+  return shown(
+    plan.pointer.rings.flatMap((ring) => {
+      const ink = ringInk(shapeAt(plan.shapes, ring.at), variantAt(plan.variants, Math.round(ring.at * CLIP_FPS)));
+      if (ring.kind !== kind || ink !== variant || !ringStageShown(ring, stage)) return [];
+      const from = round3(ring.at + (stage * RING_FRAMES_PER_STAGE) / CLIP_FPS);
+      const to = round3(from + RING_FRAMES_PER_STAGE / CLIP_FPS);
+      return [`between(t,${from.toFixed(3)},${to.toFixed(3)})`];
+    }),
+  );
+}
+
+function dragShown(plan: ScenePlan): string {
+  return shown(plan.pointer.drags.map((drag) => `between(t,${drag.from.toFixed(3)},${drag.to.toFixed(3)})`));
+}
+
 export function zoomFilter(plan: ScenePlan): string {
   const { width, height } = plan.content;
   if (!plan.zooms) return `scale=${width}:${height}:flags=bicubic`;
@@ -305,10 +416,13 @@ export function sceneHead(plan: ScenePlan, firstInput: number): { readonly graph
     if (art.name === "corner.png") return;
     const input = firstInput + index;
     const ring = /^ring-(left|right)-(dark|light)-(\d)\.png$/.exec(art.name);
-    const pointerVariant = /^pointer-(dark|light)\.png$/.exec(art.name)?.[1] as PointerVariant | undefined;
-    const target = ring ? ringTarget({ kind: ring[1] as "left" | "right", variant: ring[2] as PointerVariant }, Number(ring[3])) : pointerVariant ? pointerTarget(pointerVariant) : "overlay@press";
+    const cursor = /^cursor-(.+)-(dark|light)\.png$/.exec(art.name);
+    const target = ring ? ringTarget({ kind: ring[1] as "left" | "right", variant: ring[2] as PointerVariant }, Number(ring[3])) : cursor ? cursorTarget(art.name) : "overlay@press";
+    const enable = ring ? ringShown(plan, ring[1]!, ring[2]!, Number(ring[3])) : art.name === "press.png" ? dragShown(plan) : "0";
     const next = into();
-    lines.push(`[${label}][${input}:v]${target}=x=0:y=0:enable=0[${next}]`);
+    const source = cursor ? `c${index}` : `${input}:v`;
+    if (cursor) lines.push(`[${input}:v]format=rgba,scale=iw/2:ih/2:flags=lanczos[${source}]`);
+    lines.push(`[${label}][${source}]${target}=x=0:y=0:enable=${enable}:format=auto[${next}]`);
     label = next;
   });
   const zoomed = into();
@@ -334,6 +448,17 @@ export function frameTail(plan: ScenePlan, from: string, cornerInput: number, cl
     `[f3][k3f]overlay=${right}:${bottom}[f4]`,
   ];
   return { graph: lines.join(";\n"), last: "f4" };
+}
+
+export function areaOnClip(plan: ScenePlan, area: InputArea, t: number): InputArea {
+  const view = cameraAt(plan.camera, t);
+  const width = plan.source.width / view.zoom;
+  const height = plan.source.height / view.zoom;
+  const left = Math.min(plan.source.width - width, Math.max(0, view.x - width / 2));
+  const top = Math.min(plan.source.height - height, Math.max(0, view.y - height / 2));
+  const scaleX = plan.content.width / width;
+  const scaleY = plan.content.height / height;
+  return { x: (area.x - left) * scaleX, y: (area.y - top) * scaleY, width: area.width * scaleX, height: area.height * scaleY };
 }
 
 export function pointerOnClip(plan: ScenePlan, t: number): { readonly x: number; readonly y: number } | null {
