@@ -9,6 +9,7 @@ import { runsWayland } from "./boxes-filter.ts";
 import { effectiveKind, PRESET_NAMES, warmShortWords } from "./config.ts";
 import { switchKey, useSettings } from "./settings-context.tsx";
 import { describedBy, DraftNumberRow, unplacedProblems } from "./settings-draft-fields.tsx";
+import { reasonAfterColon } from "./settings-drafts.ts";
 import { KindSwitch, kindPart, MAKES_TONES, MAKES_WORDS, NO_WARM_WORDS, runsOn, sparesWords, useKindSwitch, type RunsOn } from "./settings-kinds.tsx";
 import { Card, FOCUS_RING, Group, NotHere, PageHeader, ProviderGlyph, RowControl, RowNote, Rows, SavedTick, StateLine, TextLink } from "./settings-parts.tsx";
 import { backendFieldPath, kindPath, plain, sizeName, sizePath, sizeRowPath, SIZE_PARTS, storedProblemPath, warmPath, type Path, type PlainValue, type SizeName, type SizePart } from "./settings-paths.ts";
@@ -44,8 +45,7 @@ function shownSize(part: SizePart) {
 }
 
 function withName(name: string, message: string): string {
-  const lowered = /^[A-Z][a-z]/.test(message) ? message[0]!.toLowerCase() + message.slice(1) : message;
-  return `${name}: ${lowered}`;
+  return `${name}: ${reasonAfterColon(message)}`;
 }
 
 function ConflictsAt({ draft, paths, label }: { draft: Draft; paths: readonly Path[]; label: (path: Path) => string }) {

@@ -195,6 +195,9 @@ test("a reason after a colon lower-cases a leading common word and leaves a prov
   const configuration = readFileSync(join(ROOT, "app/settings-configuration.tsx"), "utf8");
   assert.match(configuration, /reasonAfterColon\(/);
   assert.equal(configuration.includes("([A-Z])(?=[a-z])"), false);
+  const kindPage = readFileSync(join(ROOT, "app/settings-kind-page.tsx"), "utf8");
+  assert.match(kindPage, /reasonAfterColon\(/);
+  assert.equal(kindPage.includes("/^[A-Z][a-z]/"), false);
 });
 
 test("a picture's label reads naturally for today, yesterday and an older day", () => {
