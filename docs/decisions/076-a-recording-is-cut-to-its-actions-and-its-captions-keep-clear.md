@@ -34,6 +34,17 @@ the still stretches are cut as before. `stills: "keep"` keeps both.
 
 A result is held for reading at most 1 second.
 
+### The clip starts on the first action and fades out after the last
+
+Where idle stretches are cut, the clip starts 0.2 seconds before its first
+caption, input, pointer movement or notable change, keeping the glide to a
+first click. It ends 1.5 seconds after the last result, input or pointer
+movement: the moment is held for 1 second, then the whole picture, captions
+too, fades over 0.5 seconds to the frame's background, or black without a
+frame. That last result is not held further. A recording stopped sooner is
+padded with its last frame. Trimming the ends shows no skip mark. With
+`stills: "keep"` the ends stay, and the clip still fades out.
+
 ### Typing into a clicked field is zoomed
 
 Typing that follows a click in the same field within 2 seconds is framed on

@@ -33,6 +33,7 @@ import { clipGraph, driverDrawsAgentCursor, parsePrepared, planClip, withAgentCu
 import { personInput } from "../src/core/selkies.ts";
 
 const SCREEN = { width: 1920, height: 1080 };
+const round = (value: number) => Math.round(value * 1000) / 1000;
 
 function scene(parts: Partial<Scene>): Scene {
   return { ...SCREEN, length: 20, samples: [], clicks: [], scrolls: [], typing: [], changes: [], ...parts };
@@ -435,6 +436,28 @@ test("a dressed recording cuts its idle stretches by default, though a caret bli
   const hovered = planClip({ ...idleRecording({ samples: [{ at: 1000, x: 100, y: 100, buttons: 0 }, ...moving] }), cuts: [[22.5, 26]] }, 1);
   const hoverCut = hovered.cuts.reduce((sum, [a, b]) => sum + Math.max(0, Math.min(b, 25) - Math.max(a, 23)), 0);
   assert.equal(hoverCut, 0, "a pointer moving over a still screen is not idle");
+});
+
+test("a dressed recording starts on its first action and ends a second after its last result, then fades out to the frame (076)", () => {
+  const events: Prepared["events"] = [
+    { at: 1004, kind: "step", text: "Press the button" },
+    { at: 1005.5, kind: "pass", text: "It was pressed" },
+  ];
+  const recording = (recorded: number): Prepared => ({ ...idleRecording({ changes: [], inputs: [click(5, 600, 400)] }, events), recorded });
+  const plan = planClip(recording(30), 1);
+  assert.ok(plan.cuts[0]![0] === 0 && plan.cuts[0]![1] >= 3.7, `the 4 s before the first step are gone: ${JSON.stringify(plan.cuts)}`);
+  const step = plan.captions.find((caption) => caption.kind === "step")!;
+  assert.ok(step.from <= 0.25, `the clip opens on the step: ${step.from}`);
+  const result = plan.captions.find((caption) => caption.kind === "pass")!;
+  assert.ok(Math.abs(plan.length - result.from - 1.5) < 0.05, `a second held after the result, then half a second's fade: ${plan.length - result.from}`);
+  assert.deepEqual(plan.overlays.filter((overlay) => overlay.look === "mark"), [], "trimming the ends shows no skip mark");
+  assert.ok(clipGraph(plan, true).endsWith(`[end]fade=t=out:st=${round(plan.length - 0.5)}:d=0.5:color=0x161618[out]`), clipGraph(plan, true).slice(-200));
+  const stopped = planClip(recording(5.6), 1);
+  const last = stopped.captions.find((caption) => caption.kind === "pass")!;
+  assert.ok(Math.abs(stopped.length - last.from - 1.5) < 0.05, "a recording stopped just after its result still holds it for a second");
+  const kept = planClip(recording(30), 1, { zoom: true, frame: true, stills: "keep" });
+  assert.deepEqual(kept.cuts, [], "stills keep keeps the ends");
+  assert.ok(clipGraph(kept, true).endsWith(`[end]fade=t=out:st=${round(kept.length - 0.5)}:d=0.5:color=0x161618[out]`), "and still fades out");
 });
 
 test("a result is held at most about a second, though its words would take longer to read (076)", () => {

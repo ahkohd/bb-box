@@ -7,6 +7,14 @@ export const IDLE_LEAD_S = 0.25;
 export const QUIET_CHANGE_SHARE = 0.003;
 export const NOTABLE_MOST_SHARE = 0.5;
 export const CLICK_MARK_PX = 48;
+export const HEAD_LEAD_S = 0.2;
+export const END_HOLD_S = 1;
+export const FADE_OUT_S = 0.5;
+
+export interface ClipEnds {
+  readonly start: number;
+  readonly end: number | null;
+}
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
 
@@ -54,4 +62,22 @@ export function notableRegions(scene: Scene, pointer: PointerPlan): ChangedRegio
     return focus && notable(focus) ? [{ at: typing.at, ...focus }] : [];
   });
   return [...changed, ...clicked, ...typed].sort((a, b) => a.at - b.at);
+}
+
+export function clipEnds(scene: Scene, keys: readonly PlacedKeys[], pointer: PointerPlan, moments: readonly number[], results: readonly number[]): ClipEnds {
+  const start = moments.length ? Math.max(0, moments[0]! - HEAD_LEAD_S) : 0;
+  const pointerMoves = scene.samples.slice(1).map((sample) => sample.at);
+  const acted = [...scene.clicks.map((click) => click.at), ...scene.scrolls.map((scroll) => scroll.at), ...scene.typing.map((typing) => typing.at), ...keys.map((each) => each.at), ...pointer.drags.map((drag) => drag.to), ...pointerMoves];
+  const last = [...results, ...acted].filter((at) => Number.isFinite(at) && at <= scene.length);
+  return { start: round3(start), end: last.length ? round3(Math.max(...last) + END_HOLD_S + FADE_OUT_S) : null };
+}
+
+export function unionOfCuts(cuts: readonly (readonly [number, number])[]): [number, number][] {
+  const merged: [number, number][] = [];
+  for (const [from, to] of [...cuts].sort((a, b) => a[0] - b[0])) {
+    const last = merged.at(-1);
+    if (last && from <= last[1] + 0.001) last[1] = Math.max(last[1], to);
+    else merged.push([from, to]);
+  }
+  return merged;
 }

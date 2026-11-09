@@ -1,5 +1,5 @@
 import { cornerArt, pressArt, ringArt, type Art, type Pointer, type PointerVariant } from "./record-art.ts";
-import { activityMoments, idleStretches, notableRegions } from "./record-edit.ts";
+import { activityMoments, clipEnds, idleStretches, notableRegions, type ClipEnds } from "./record-edit.ts";
 import { CURSOR_BODY, CURSOR_VIEW, cursorArt, cursorCanvas, ringInk, type PointerShape } from "./record-cursors.ts";
 import type { InputArea, InputEvent } from "./record-input.ts";
 import { planKeyPills, type KeyPill, type KeyStyle, type PlacedKeys, type PlacedKeyTyping } from "./record-keys.ts";
@@ -116,6 +116,7 @@ export interface ScenePlan {
   readonly inks: readonly InkSpan[];
   readonly ringStyles: readonly RingStyle[];
   readonly idle: readonly Span[] | null;
+  readonly ends: ClipEnds | null;
   readonly notable: readonly ChangedRegion[];
 }
 
@@ -231,11 +232,13 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
   const placed = sceneOf(facts, size, start, length);
   const { keys, keyTyping } = placed;
   const scene = clicksBeforeTheirWindowGoes(placed.scene, keys);
-  const idle = knowsIdle(facts, options) ? idleStretches(activityMoments(scene, keys, (options.captions ?? []).map((at) => at - facts.lag)), length) : null;
+  const moments = knowsIdle(facts, options) ? activityMoments(scene, keys, (options.captions ?? []).map((at) => at - facts.lag)) : null;
+  const idle = moments ? idleStretches(moments, length) : null;
   const pointer = planPointer(scene);
   const camera = options.zoom ? planCamera(scene, pointer, idle ?? []) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
   const zooms = camera.some((key) => key.view.zoom > 1);
   const results = (options.results ?? []).map((at) => at - facts.lag);
+  const ends = moments ? clipEnds(scene, keys, pointer, moments, results) : null;
   const pills = planKeyPills(keys, keyTyping, facts.keys, length)
     .filter((pill) => !typedAtOnceBeforeResult(scene, pill, results))
     .map((pill) => ({ ...pill, avoid: pillRegion(scene, pointer, pill.from, pill.to) }));
@@ -264,7 +267,7 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
     ...cursors,
     ...(frame ? [cornerArt(frame.radius, frame.background)] : []),
   ];
-  return { source: size, content, pointer, drawsPointer, camera, zooms, frame, pills, kept, art, pointerArt: cursors[0] ?? null, cursors, pointerHeight, variants, shapes, inks, ringStyles, idle, notable: notableRegions(scene, pointer) };
+  return { source: size, content, pointer, drawsPointer, camera, zooms, frame, pills, kept, art, pointerArt: cursors[0] ?? null, cursors, pointerHeight, variants, shapes, inks, ringStyles, idle, ends, notable: notableRegions(scene, pointer) };
 }
 
 function inkSpans(shapes: readonly ShapeSpan[], variants: readonly VariantSpan[], frames: number): InkSpan[] {

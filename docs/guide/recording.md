@@ -39,7 +39,7 @@ The zooms follow what was actually done, not guesses: the agent's clicks and key
 
 ### Still stretches and captions
 
-Idle stretches are cut to half a second, so a long session makes a short clip. A stretch is idle when nothing happens for more than a second: no caption, click, key or typing, the pointer still, and nothing on the screen changing but something as small as a blinking caret or a clock. Where bb-box does not draw the pointer, as on Wayland, it cuts only stretches where nothing on the screen moves. Where a cut skips 3 seconds or more, a small mark in a bottom corner shows the real time skipped, such as "14 s later", for about a second. A clip the agent speeds up to 2x or 4x shows its speed in that corner the whole time. Every word is set in Inter. A glyph Inter does not have uses the box's own font for that glyph only.
+The clip starts on the first caption or action, and ends a second after the last result or action, fading out to the background. Idle stretches are cut to half a second, so a long session makes a short clip. A stretch is idle when nothing happens for more than a second: no caption, click, key or typing, the pointer still, and nothing on the screen changing but something as small as a blinking caret or a clock. Where bb-box does not draw the pointer, as on Wayland, it cuts only stretches where nothing on the screen moves. Where a cut skips 3 seconds or more, a small mark in a bottom corner shows the real time skipped, such as "14 s later", for about a second. A clip the agent speeds up to 2x or 4x shows its speed in that corner the whole time. Every word is set in Inter. A glyph Inter does not have uses the box's own font for that glyph only.
 
 When an agent tests something, it captions each check:
 

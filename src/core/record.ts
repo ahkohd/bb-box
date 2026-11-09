@@ -15,6 +15,7 @@ import { RECORD_DIR, RECORD_LIMIT_S, type CaptionPosition, type StepKind } from 
 import { fontName, textRuns, type FontWeight } from "./record-font.ts";
 import { markArt, markRgb, type MarkKind } from "./record-icons.ts";
 import type { InputEvent } from "./record-input.ts";
+import { END_HOLD_S, FADE_OUT_S, unionOfCuts } from "./record-edit.ts";
 import { CLIP_FPS, keptMotion, type ChangedRegion, type PointerSample } from "./record-motion.ts";
 import { GRID_COLUMNS, GRID_ROWS, areaOnClip, bundle, contentSize, frameTail, planScene, pointerOnClip, sceneHead, type BrightnessGrid, type PointerMode, type SceneFacts, type SceneOptions, type ScenePlan } from "./record-scene.ts";
 
@@ -366,6 +367,7 @@ export interface ClipPlan {
   readonly edge: number;
   readonly fps: number;
   readonly scene: ScenePlan | null;
+  readonly fadeOut: { readonly at: number; readonly seconds: number; readonly color: string } | null;
 }
 
 export const CLIP_WIDTH = 1280;
@@ -476,10 +478,16 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
   const planned = prepared.scene && !layout && prepared.width > 0 && prepared.height > 0 ? planScene(prepared.scene, size, prepared.start ?? 0, prepared.recorded, { ...options, captions: captionMoments, results: resultMoments }) : null;
   const scene = planned && (planned.art.length > 0 || planned.zooms) ? planned : null;
   const stills = planned?.idle ? planned.idle.map((span): [number, number] => [span.from, span.to]) : [...prepared.cuts].sort((a, b) => a[0] - b[0]);
-  const cuts = planned ? keptMotion(stills, planned.kept) : stills;
+  const ends = planned?.ends ?? null;
+  const endHeld = ends?.end != null ? [{ from: ends.end - END_HOLD_S - FADE_OUT_S, to: ends.end }] : [];
+  const stillCuts = planned ? keptMotion(stills, [...planned.kept, ...endHeld]) : stills;
+  const head = ends && ends.start > 0 ? keptMotion([[0, ends.start]], planned!.kept, 0.05) : [];
+  const tail: [number, number][] = ends?.end != null && ends.end < prepared.recorded - 0.05 ? [[ends.end, round3(prepared.recorded)]] : [];
+  const trims = [...head, ...tail].map(([from, to]) => ({ from, to }));
+  const cuts = unionOfCuts([...stillCuts, ...head, ...tail]);
   const removedBefore = (at: number) => cuts.reduce((sum, [from, to]) => sum + Math.max(0, Math.min(at, to) - from), 0);
   const onClip = (at: number) => (at - removedBefore(at)) / speed;
-  const base = onClip(prepared.recorded);
+  const base = ends?.end != null ? Math.max(onClip(prepared.recorded), onClip(ends.end)) : onClip(prepared.recorded);
   const start = prepared.start ?? 0;
   const placed = (real: number) => Math.min(base, Math.max(0, onClip(real)));
   const changes = [
@@ -500,7 +508,9 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
     shownAt.push(change.at + added);
     const natural = (shownChanges[index + 1]?.at ?? base) - change.at;
     const reading = Math.max(0, readingSeconds(change.text) - natural);
-    const hold = change.kind === "pass" || change.kind === "fail" ? Math.min(RESULT_HOLD_MOST_S, reading) : reading;
+    const result = change.kind === "pass" || change.kind === "fail";
+    const endsTheClip = result && ends?.end != null && change.real - (prepared.scene?.lag ?? 0) >= ends.end - END_HOLD_S - FADE_OUT_S - 0.05;
+    const hold = endsTheClip ? 0 : result ? Math.min(RESULT_HOLD_MOST_S, reading) : reading;
     if (hold > 0) {
       holds.push({ at: round3(change.at), seconds: round3(hold) });
       added += hold;
@@ -545,7 +555,7 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
   };
   const noteAt = (t: number) => (layout ? (position === "top" ? layout.band.y + layout.band.height + gap : layout.band.y - gap - pill(fontSize)) : captionY(1, t));
   const finalAt = (at: number) => at + holds.filter((hold) => hold.at < at - 0.0005).reduce((sum, hold) => sum + hold.seconds, 0);
-  const skips = cuts
+  const skips = keptMotion(stillCuts, trims, 0)
     .filter(([from, to]) => to - from >= SKIP_MARK_S)
     .map(([from, to]): Overlay => {
       const shown = round3(finalAt(onClip(from)));
@@ -583,7 +593,8 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
     ...keyPills,
   ];
   const moves = !!scene && (scene.drawsPointer || scene.zooms || scene.pointer.rings.length > 0);
-  return { speed, cuts, holds, captions, overlays, position, length, width, height, fontSize, edge: edge + inset, fps: moves ? CLIP_FPS : RECORD_FPS, scene };
+  const fadeOut = scene && length > FADE_OUT_S * 2 ? { at: round3(length - FADE_OUT_S), seconds: FADE_OUT_S, color: scene.frame?.background ?? "000000" } : null;
+  return { speed, cuts, holds, captions, overlays, position, length, width, height, fontSize, edge: edge + inset, fps: moves ? CLIP_FPS : RECORD_FPS, scene, fadeOut };
 }
 
 const PILLS: Readonly<Record<PillLook, { readonly mark: MarkKind; readonly color: string; readonly fill: string; readonly alpha: number }>> = {
@@ -622,14 +633,16 @@ export function clipGraph(plan: ClipPlan, withOverlays: boolean): string {
     parts.push(`[0:v]${timing},scale='min(${CLIP_WIDTH},iw)':-2[v0]`);
     last = "v0";
   }
+  const fadeOut = plan.fadeOut ? `fade=t=out:st=${plan.fadeOut.at}:d=${plan.fadeOut.seconds}:color=0x${plan.fadeOut.color}` : "null";
   if (!withOverlays || !plan.overlays.length) {
     if (!scene) return parts[0]!.replace(/\[v0\]$/, "[out]");
-    parts.push(`[${last}]null[out]`);
+    parts.push(`[${last}]${fadeOut}[out]`);
     return parts.join(";\n");
   }
+  const lastInto = scene ? "end" : "out";
   plan.overlays.forEach((overlay, index) => {
     const x = overlay.x === "centre" ? "(W-w)/2" : `W-w-${plan.edge}`;
-    const into = index === plan.overlays.length - 1 ? "out" : `p${index + 1}`;
+    const into = index === plan.overlays.length - 1 ? lastInto : `p${index + 1}`;
     if (overlay.fade > 0) {
       const faded = `q${index}`;
       parts.push(`[${firstPill + index}:v]format=rgba,fade=t=in:st=${overlay.from}:d=${overlay.fade}:alpha=1,fade=t=out:st=${overlay.to}:d=${overlay.fade}:alpha=1[${faded}]`);
@@ -639,6 +652,7 @@ export function clipGraph(plan: ClipPlan, withOverlays: boolean): string {
     }
     last = into;
   });
+  if (scene) parts.push(`[end]${fadeOut}[out]`);
   return scene ? parts.join(";\n") : parts.join(";").replace(/\[p(\d+)\]/g, "[v$1]");
 }
 
