@@ -24,7 +24,32 @@ Documentation: [bbbox.dev](https://bbbox.dev).
 
 ## Quick start
 
-You need a Linux machine that runs BB and Docker, with about 10 GB of disk free and at least 8 GiB of memory for the server image. A desktop image needs about 18 GB of disk free, and the host needs at least 12 GiB of memory for a desktop box. Docker Desktop on a Mac or Windows works too. On a Mac with Apple silicon the images are x86_64, so boxes run under emulation, slowly.
+Boxes run on the machine that runs BB to start with:
+
+- **Linux**: Docker, with about 10 GB of disk free and at least 8 GiB of memory for the server image. A desktop image needs about 18 GB of disk free, and at least 12 GiB of memory for a desktop box.
+- **A Mac with Apple silicon**: [microsandbox](setup/microsandbox/README.md#on-a-mac), which needs nothing installed and runs arm64 Linux boxes as microVMs, each counted at its full memory size. It needs about 80 GiB of free disk while it builds its first image, and keeps about 2.4 GiB after, or 6 GiB with the desktop image. [Tart](setup/tart/README.md) adds macOS, iOS and Windows boxes. Avoid Docker Desktop on a Mac: its images are x86_64, so boxes run emulated and slowly.
+- **Windows**: Docker in WSL 2. See [Docker on a Windows PC](setup/docker-wsl/README.md).
+
+<details open>
+<summary><strong>With an agent</strong></summary>
+
+Paste this into a BB thread. The docs site's home page has the same prompt, with a copy button.
+
+```text
+Set up BB Box for me: the BB plugin that gives threads computers of their own, called boxes.
+
+1. Install it: bb plugin install git:https://github.com/ahkohd/bb-box.git@main --yes
+2. Follow its bb-box-setup skill. If your skills do not list it yet, find it with bb skill list and read it with bb skill show <id>.
+3. Look at the machine that runs BB with bb box doctor, and set up the backend the skill suggests for it: Docker on Linux or in WSL 2 on Windows, microsandbox on a Mac with Apple silicon.
+4. Ask me first before anything that needs root, changes BB's settings, or makes Docker boxes privileged containers, which can take over the machine they run on.
+5. Prove it: bb box kinds, then bb box acquire with the Linux kind it lists, then bb box run <box> "uname -a", then bb box release <box>.
+6. Tell me what you set up, what bb box doctor says, and what is left for me to do.
+```
+
+</details>
+
+<details>
+<summary><strong>Manually</strong></summary>
 
 1. Install BB Box from BB's plugin store. In BB, open Settings, then Installed plugins, and search for **BB Box**. Or open the plugin store and install **BB Box**.
 
@@ -40,17 +65,18 @@ You need a Linux machine that runs BB and Docker, with about 10 GB of disk free 
    bb plugin install git:https://github.com/ahkohd/bb-box.git@main
    ```
 
-   It asks you to confirm. An agent or a script adds `--yes`, as it cannot answer.
-
    The store installs the latest release and updates within 0.x. `@main` follows new work as it lands. A release tag, such as `@v0.1.0`, stays on that release.
 
-2. Open a thread's **Box** panel, or BB Box in BB's settings, and select **Use Docker on this machine**, or have an agent run `bb box setup docker`. The Linux image usually builds in 5 to 12 minutes, depending on the machine. `bb box doctor` checks the setup.
-3. Select the plus, then **Create box**. Or ask the thread's agent: "Get a Linux box and run uname -a in it."
-
-   **If a box says Could not join BB.** Boxes join BB by reaching BB's server. If BB is signed in to your bb account, bb connect does that. If it is not, start BB with `npx bb-app --server-bind-host 0.0.0.0`, then in BB's settings, under Machines, set Machine access to **Manual** with this machine's address on your network, such as `http://192.0.2.10:38886`. See [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb).
-
+2. On Linux, open a thread's **Box** panel, or BB Box in BB's settings, and select **Use Docker on this machine**. The Linux image usually builds in 5 to 12 minutes, depending on the machine. On a Mac with Apple silicon, run `bb box backend add microsandbox --on` instead; its arm64 image builds in about 3 minutes. `bb box doctor` checks the setup.
+3. Select the plus, then **Create box**.
 4. For a desktop, select the plus, choose **Desktop**, and under Display X11 or Wayland, then **Build and create**. BB Box builds that desktop's image before the first one, usually in 4 to 10 minutes.
 5. Open the box's desktop. Select **Open desktop** on the box's row.
+
+</details>
+
+### If a box says Could not join BB
+
+Boxes join BB by reaching BB's server. If BB is signed in to your bb account, bb connect does that. If it is not, start BB with `npx bb-app --server-bind-host 0.0.0.0`, then in BB's settings, under Machines, set Machine access to **Manual** with this machine's address on your network, such as `http://192.0.2.10:38886`. See [when a box does not join BB](docs/guide/boxes.md#when-a-box-does-not-join-bb).
 
 ## Backends and boxes
 
