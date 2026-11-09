@@ -14,27 +14,23 @@ const fileUrl = (path: string) => `${repository}/blob/${repositoryRef}/${path}`;
 <style>
   .site-footer {
     display: flex;
-    gap: 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.25rem;
     margin: 3rem 0 0;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border);
+    font-family: var(--sl-font-mono);
     font-size: 0.75rem;
     line-height: 1rem;
     color: var(--muted-foreground);
   }
 
-  :global([data-has-hero]) .site-footer {
-    max-width: 42rem;
-    margin: 3rem auto 4rem;
-  }
-
   a {
     color: inherit;
-    text-decoration-line: underline;
-    text-decoration-color: var(--muted-foreground);
-    text-decoration-thickness: 1px;
-    text-underline-offset: 2px;
+    text-decoration: none;
   }
 
   a:hover {
-    text-decoration-color: var(--foreground);
+    color: var(--foreground);
   }
 </style>

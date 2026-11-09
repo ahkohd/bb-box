@@ -1,0 +1,42 @@
+---
+import StarlightPageTitle from "@astrojs/starlight/components/PageTitle.astro";
+import { markdownCopyOf } from "../markdown-copy.ts";
+
+const longestTitleOnTwoLines = 60;
+const markdownCopy = markdownCopyOf(import.meta.env.BASE_URL, Astro.locals.starlightRoute.id);
+const longTitle = Astro.locals.starlightRoute.entry.data.title.length > longestTitleOnTwoLines;
+---
+
+<p class="page-mark" data-long-title={longTitle ? "" : undefined}>
+  <span class="hash" aria-hidden="true">#</span>
+  {markdownCopy && <a href={markdownCopy}>View as Markdown</a>}
+</p>
+<StarlightPageTitle {...Astro.props} />
+
+<style>
+  .page-mark {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    margin: 0 0 0.5rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.75rem;
+    line-height: 1.5;
+  }
+
+  .hash {
+    color: var(--accent);
+  }
+
+  a {
+    color: var(--muted-foreground);
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--foreground);
+    text-decoration-line: underline;
+    text-decoration-color: var(--accent);
+    text-underline-offset: 3px;
+  }
+</style>
