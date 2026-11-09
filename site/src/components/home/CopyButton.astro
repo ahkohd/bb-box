@@ -66,13 +66,14 @@ const { source, class: className, label = "Copy" } = Astro.props;
 </script>
 
 <style>
-  .copy-button {
+  button.copy-button {
     display: inline-grid;
+    place-items: center;
     cursor: pointer;
     font: inherit;
   }
 
-  .copy-button[hidden] {
+  button.copy-button[hidden] {
     display: none;
   }
 
