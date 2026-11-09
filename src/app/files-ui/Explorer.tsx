@@ -183,8 +183,8 @@ export function Explorer({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-surface-recessed">
       {header}
 
-      <div className="flex shrink-0 flex-wrap items-center gap-1.5 px-2 pb-2">
-        <div className="relative min-w-[11rem] flex-1">
+      <div className="flex shrink-0 items-center gap-1.5 px-2 pb-2">
+        <div className="relative min-w-0 flex-1">
           <Icon
             name="Search"
             aria-hidden
@@ -265,7 +265,7 @@ export function Explorer({
           />
         ) : null}
         <ExplorerAction
-          icon="ArrowReloadHorizontal"
+          icon="RotateCcw"
           label="Refresh files"
           isSpinning={isLoading}
           onClick={onRefresh}
@@ -290,9 +290,7 @@ export function Explorer({
         <div className="min-h-0 flex-1 overflow-auto pb-2">
           {error !== null || actionError !== null ? (
             <p className="px-3 py-2 text-xs text-destructive-text">{error ?? actionError}</p>
-          ) : isLoading && entries.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-muted-foreground">Reading this folder...</p>
-          ) : rows.length === 0 && !(draft?.mode === "create" && draft.parent === "") ? (
+          ) : isLoading && entries.length === 0 ? null : rows.length === 0 && !(draft?.mode === "create" && draft.parent === "") ? (
             <p className="px-3 py-2 text-xs text-muted-foreground">
               This folder has no files yet.
             </p>
@@ -331,7 +329,7 @@ export function Explorer({
       )}
 
       <div className="shrink-0 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
-        {`${fileCount.toLocaleString()} files`}
+        {isLoading && entries.length === 0 ? "\u00a0" : `${fileCount.toLocaleString()} files`}
         {!isSearching && allRows.length > rows.length
           ? ` - showing first ${ROW_LIMIT.toLocaleString()}`
           : ""}
