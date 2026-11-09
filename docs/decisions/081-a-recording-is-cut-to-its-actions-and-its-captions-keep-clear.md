@@ -116,7 +116,9 @@ A result stays until the next step starts, or the clip ends. With idle
 stretches cut, that is seldom more than a few seconds, and a result that
 fades early leaves its step alone, as if it were still pending. Each
 caption, warning, key pill and skip mark fades in and out over 0.2 seconds,
-so one step crossfades into the next. The speed mark, shown all along, does
+so one step crossfades into the next. A caption or warning fades in over
+the 0.2 seconds before its moment, where the clip has room, so it is in
+full when the action it introduces lands. The speed mark, shown all along, does
 not fade. Each fading pill is its still image looped from its own start, so
 the box decodes it only while it shows.
 

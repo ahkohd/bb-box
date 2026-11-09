@@ -98,6 +98,7 @@ test("box_record's captions are drawn with FFmpeg 8 too, as on Ubuntu 26.04's Wa
   assert.match(readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!, /-i \S+\/pill-0\.png .*-filter_complex .*\[1:v\]format=rgba,fade=t=in.*\[q0\]overlay=/, "the step's pill over the clip");
 });
 
+const round3 = (value: number) => Math.round(value * 1000) / 1000;
 const PREPARED: Prepared = { ended: "stopped", recorded: 30, width: 1920, height: 1080, start: 1000, cuts: [[5.5, 15]], events: [] };
 
 test("a capture that never writes a picture stops itself (080)", { skip }, () => {
@@ -154,7 +155,7 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
   assert.match(clipGraph(plan, true), /\[v4\]\[5:v\]overlay=x=W-w-25:y=614:enable='between\(t,0,12\.25\)'\[v5\]/);
   const clock = "(T-(clip(T-5.500,0,9.5)))/2";
   assert.ok(clipGraph(plan, true).includes(`setpts='(${clock}+1*gt(${clock},2.75)+1*gt(${clock},9.75))/TB'`), clipGraph(plan, true));
-  assert.match(clipGraph(plan, true), /\[2:v\]format=rgba,fade=t=in:st=2\.75:d=0\.2:alpha=1,fade=t=out:st=4\.25:d=0\.2:alpha=1\[q1\];\[v1\]\[q1\]overlay=x=\(W-w\)\/2:y=71:eof_action=pass:enable='between\(t,2\.75,4\.45\)'\[v2\]/);
+  assert.match(clipGraph(plan, true), /\[2:v\]format=rgba,fade=t=in:st=2\.55:d=0\.2:alpha=1,fade=t=out:st=4\.05:d=0\.2:alpha=1\[q1\];\[v1\]\[q1\]overlay=x=\(W-w\)\/2:y=71:eof_action=pass:enable='between\(t,2\.55,4\.25\)'\[v2\]/);
   assert.match(clipGraph(plan, true), /\[v5\]\[q5\]overlay=.*\[out\]$/);
   assert.doesNotMatch(clipGraph(plan, false), /overlay/);
   assert.ok(clipGraph(plan, false).includes(",fps=15,tpad=stop_mode=clone:stop_duration=12.25,trim=duration=12.25,"), "a hold at the end lasts though no frame follows it");
@@ -230,6 +231,19 @@ test("a step's reading time runs while it stays up, through its result, so a qui
   assert.equal(warning.to, next.from, "and stays until the next step, as a result does");
 });
 
+test("a caption has faded in by its moment, when the clip has room before it, and steps still crossfade (081)", () => {
+  const plan = planClip({ ...PREPARED, cuts: [], events: [
+    { at: 1000.1, kind: "step", text: "Open the file" },
+    { at: 1005, kind: "step", text: "Close the file" },
+  ] }, 1);
+  const [first, second] = plan.captions;
+  const shown = plan.overlays.filter((overlay) => overlay.look === "step");
+  assert.equal(shown[1]!.from, round3(second!.from - 0.2), "the second step fades in over the 0.2 s before it");
+  assert.equal(shown[0]!.to, shown[1]!.from, "as the first fades out");
+  assert.equal(shown[0]!.from, 0, "a step at the very start fades in from the first frame");
+  assert.ok(first!.from > 0);
+});
+
 test("a result stays until the next step, and captions fade in and out over 0.2 s, so one step crossfades into the next (081)", () => {
   const plan = planClip({ ...PREPARED, cuts: [], events: [
     { at: 1001, kind: "step", text: "Open the file" },
@@ -247,7 +261,7 @@ test("a result stays until the next step, and captions fade in and out over 0.2 
   assert.equal(Number(out[2]), Number(into[1]), "the old step fades out as the new one fades in");
   assert.ok(plan.overlays.every((overlay) => overlay.fade === 0.2));
   const made = recordMakeScript(plan);
-  assert.ok(made.includes(`-itsoffset ${second!.from} -loop 1 -framerate 15 -t `), "each faded pill is a still image looped from its own time");
+  assert.ok(made.includes(`-itsoffset ${plan.overlays.find((overlay) => overlay.text === second!.text)!.from} -loop 1 -framerate 15 -t `), "each faded pill is a still image looped from its own time");
 });
 
 test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its console before it would force it, then captions and makes the clip as elsewhere (059)", () => {

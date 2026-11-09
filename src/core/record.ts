@@ -583,7 +583,8 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
     if (change.kind !== "note") return [];
     const from = shownAt[index]!;
     const to = "lostStretch" in change ? Math.min(length, from + Math.min(RESULT_S, readingSeconds(change.text))) : nextStep(index);
-    return [{ look: "note", text: change.text, size: fontSize, x: "centre", y: noteAt(from), from: round3(from), to: round3(to), fade: CAPTION_FADE_S }];
+    const fading = round3(Math.max(0, from - CAPTION_FADE_S));
+    return [{ look: "note", text: change.text, size: fontSize, x: "centre", y: noteAt(from), from: fading, to: round3(Math.max(fading, to - CAPTION_FADE_S)), fade: CAPTION_FADE_S }];
   });
   const keyPills = (planned?.pills ?? []).flatMap((each): Overlay[] => {
     const from = round3(finalAt(onClip(each.from)));
@@ -607,7 +608,10 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
     return [{ look: "key", text: each.text, size: fontSize, x: "centre", y, from, to, fade: CAPTION_FADE_S }];
   });
   const overlays: Overlay[] = [
-    ...captions.map((caption): Overlay => ({ look: caption.kind, text: caption.text, size: fontSize, x: "centre", y: captionY(caption.row, caption.from), from: caption.from, to: caption.to, fade: CAPTION_FADE_S })),
+    ...captions.map((caption): Overlay => {
+      const from = round3(Math.max(0, caption.from - CAPTION_FADE_S));
+      return { look: caption.kind, text: caption.text, size: fontSize, x: "centre", y: captionY(caption.row, caption.from), from, to: round3(Math.max(from, caption.to - CAPTION_FADE_S)), fade: CAPTION_FADE_S };
+    }),
     ...(speed > 1 ? [{ look: "mark" as const, text: `${speed}x`, size: markSize, x: "right" as const, y: cornerY, from: 0, to: length, fade: 0 }] : []),
     ...skips,
     ...notes,
