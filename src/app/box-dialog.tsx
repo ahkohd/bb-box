@@ -6,7 +6,8 @@ import { cn } from "@/lib/utils";
 export const DIALOG_CONTENT = "flex max-h-[calc(100dvh-2rem)] w-[calc(100%-1rem)] max-w-lg flex-col gap-4 overflow-hidden rounded-lg p-4 shadow-none sm:w-full sm:p-6";
 export const DIALOG_HEADER = "shrink-0 space-y-2 text-left";
 export const DIALOG_TITLE = "text-base font-normal";
-export const DIALOG_BODY = "min-h-0 flex-1 space-y-3 overflow-y-auto text-sm leading-relaxed text-muted-foreground";
+const ROOM_FOR_FOCUS_RINGS = "-m-1 p-1";
+export const DIALOG_BODY = `min-h-0 flex-1 space-y-3 overflow-y-auto ${ROOM_FOR_FOCUS_RINGS} text-sm leading-relaxed text-muted-foreground`;
 export const DIALOG_FOOTER = "shrink-0 flex-col items-stretch gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:space-x-0 [&>*]:mt-0 [&>*]:h-auto [&>*]:w-full [&>*]:whitespace-normal sm:[&>*]:w-auto";
 
 const DialogBusy = createContext(false);

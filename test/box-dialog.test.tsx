@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, expect, test } from "vitest";
-import { BoxDialog, DIALOG_CONTENT, DIALOG_FOOTER, DIALOG_TITLE, DialogButton, DialogCancel, Refused } from "../src/app/box-dialog.tsx";
+import { BoxDialog, DIALOG_BODY, DIALOG_CONTENT, DIALOG_FOOTER, DIALOG_TITLE, DialogButton, DialogCancel, Refused } from "../src/app/box-dialog.tsx";
 
 afterEach(cleanup);
 
@@ -125,4 +125,17 @@ test("a dialog shows its busy label and the refusal, and returns focus to the bu
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   await waitFor(() => expect(document.activeElement).toBe(opener));
   expect(dialog).toBeTruthy();
+});
+
+test("a full-width field's focus ring is not clipped by the scrolling body: the body pads by as much as it pulls out", () => {
+  render(
+    <BoxDialog open onClose={() => {}} title="Take a snapshot of bot">
+      <input aria-label="Name" className="w-full focus-visible:ring-1" />
+    </BoxDialog>,
+  );
+  const body = screen.getByRole("textbox", { name: "Name" }).parentElement!;
+  expect(body.className).toBe(DIALOG_BODY);
+  expect(body.className).toContain("overflow-y-auto");
+  expect(body.classList).toContain("-m-1");
+  expect(body.classList).toContain("p-1");
 });
