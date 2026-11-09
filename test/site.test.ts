@@ -77,11 +77,11 @@ const markdownLinks = (text: string) => [...blankedCode(text).replace(/`[^`\n]*`
 test("llms.txt is as llmstxt.org lays it out, and lists every page of the site once, with what it is, as Markdown", () => {
   const text = llmsTxt(pages, onSite);
   const blocks = text.split("\n\n");
-  assert.equal(blocks[0], "# bb-box");
+  assert.equal(blocks[0], "# BB Box");
   assert.match(blocks[1]!, /^> \S[^\n]+$/);
 
   const headings = [...text.matchAll(/^(#+) (.+)$/gm)].map((match) => `${match[1]} ${match[2]}`);
-  assert.equal(headings[0], "# bb-box");
+  assert.equal(headings[0], "# BB Box");
   assert.ok(headings.slice(1).every((heading) => heading.startsWith("## ")), "only sections after the title");
   assert.equal(headings.at(-1), "## Optional", "the decision records come last, as the part an agent may skip");
 

@@ -31,6 +31,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 React, Radix's menus and dialogs, and the other packages BB shares with plugins come from BB at runtime. bb-box does not bundle them. The licence texts of everything bundled are in its package in `node_modules` after `npm install`.
 
+`components/ui` is BB's own components, vendored into this repository. The files carry no separate licence notice.
+
 ## In the documentation site
 
 The site in `site/` is built from these packages. Its pages carry their code, styles and fonts.

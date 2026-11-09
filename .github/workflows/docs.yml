@@ -1,0 +1,51 @@
+# Publishes the docs site to GitHub Pages at https://bbbox.dev on each push to main.
+# It runs only in ahkohd/bb-box, where Pages is set up with GitHub Actions as its source.
+name: docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'ahkohd/bb-box'
+    runs-on: ubuntu-latest
+    container:
+      image: node:26-bookworm
+      options: --init
+    timeout-minutes: 10
+    env:
+      SITE_URL: https://bbbox.dev
+      SITE_BASE: /
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check-links
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

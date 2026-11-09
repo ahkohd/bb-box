@@ -1484,7 +1484,7 @@ floor is the device's own drawing on the CPU, 50 to 60 ms from a touch to
 the encoded frame, which a host with KVM and a GPU would lower. Its 95th
 percentile through BB, 76 to 346 ms idle, is BB's server standing still
 while the input waits, which desktops share
-([#1158](https://github.com/moonstead/bb-box/issues/1158)).
+([#1158](https://github.com/ahkohd/bb-box/issues/1158)).
 
 ## Changes to the brief
 

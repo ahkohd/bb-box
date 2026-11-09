@@ -10,7 +10,7 @@ function checkoutAbove(directory: string): string {
 }
 
 export const repoRoot = checkoutAbove(fileURLToPath(new URL(".", import.meta.url)));
-export const repository = "https://github.com/moonstead/bb-box";
+export const repository = "https://github.com/ahkohd/bb-box";
 export const repositoryRef = process.env.SITE_REPOSITORY_REF || "main";
 
 export interface Page {

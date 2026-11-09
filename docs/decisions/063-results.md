@@ -2048,7 +2048,7 @@ synced by NTP:
 
 So Android's bar is about 70 to 90 ms at the median through BB, with the
 device's CPU drawing, 50 to 60 ms, as its floor. The tail through BB is
-[#1158](https://github.com/moonstead/bb-box/issues/1158), shared with
+[#1158](https://github.com/ahkohd/bb-box/issues/1158), shared with
 desktops.
 
 ### Each action, through box_device

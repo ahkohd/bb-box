@@ -2427,7 +2427,7 @@ and the doctor.
 | About 07:39:02 | Host 1 failed, its VM being deleted |
 | 07:39:12 | Host 2 starting, for the two later boxes: not refused, though host 1's VM was not yet gone (item 3) |
 | 07:39:20 | Host 1's VM deleted |
-| 07:39:25 | The first box failed: "The shared iOS host ... did not start: The box at 192.168.64.4 did not answer on SSH." No fresh clone |
+| 07:39:25 | The first box failed: "The shared iOS host ... did not start: The box at 192.0.2.4 did not answer on SSH." No fresh clone |
 | 07:39:59 | Host 2 serving, 46.3 s after its start; the two boxes ready 65.2 and 64.8 s after they were asked for |
 
 ### Run 2: the VM stopped as soon as Tart listed it running
@@ -2485,7 +2485,7 @@ a retry could serve.
 | --- | --- | --- |
 | 1 | 5 s after the VM ran | The first start failed by itself with Virtualization's error at 08:09:35, and the two later boxes joined the starting host. The fresh clone ran at 08:10:30 and was stopped at 08:10:35. The log at 08:10:43: "... stopped before it answered on SSH: Tart lists it stopped. bb-box saw it 16.7 s after the VM started, and stops waiting for it." All three boxes failed at 08:11:07 with both causes, 2 min 10 s after the first was asked for; in run 2 this took 11 min 31 s (fix B) |
 | 2 | As soon as the VM ran | The first start failed by itself again, the watcher spared the fresh clone, and it served. The three boxes were ready in 168.6 s, and 49.4 and 72.3 s for the two that joined (item 4) |
-| 3 | 2 s after the VM's SSH port opened | The first start ran, and was stopped at 08:29:41. At 08:30:21 the log: "did not start, so bb-box deletes its VM and starts a fresh clone of the iOS image, once: Its VM stopped after it answered on SSH, before it served: The box at 192.168.64.7 did not answer on SSH." The fresh clone served at 08:31:10, for 3 boxes, ready in 192.0, 85.1 and 65.9 s (fix A) |
+| 3 | 2 s after the VM's SSH port opened | The first start ran, and was stopped at 08:29:41. At 08:30:21 the log: "did not start, so bb-box deletes its VM and starts a fresh clone of the iOS image, once: Its VM stopped after it answered on SSH, before it served: The box at 192.0.2.7 did not answer on SSH." The fresh clone served at 08:31:10, for 3 boxes, ready in 192.0, 85.1 and 65.9 s (fix A) |
 
 Every host's VM was gone after its boxes were released, by the doctor
 and on the Mac.

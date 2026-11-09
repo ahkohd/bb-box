@@ -51,7 +51,7 @@ export function sidebar(pages: Page[]): SidebarGroup[] {
       items: existing(pages, [
         { slug: "start", label: "Introduction" },
         { slug: "start/quick-start", label: "Quick start" },
-        { slug: "setup", label: "Setting up bb-box" },
+        { slug: "setup", label: "Setting up BB Box" },
       ]),
     },
     {
@@ -71,12 +71,12 @@ export function sidebar(pages: Page[]): SidebarGroup[] {
       ],
     },
     {
-      label: "Developing bb-box",
+      label: "Developing BB Box",
       collapsed: true,
       items: existing(pages, [
         { slug: "architecture", label: "Architecture" },
-        { slug: "development", label: "Developing bb-box" },
-        { slug: "bb-requests", label: "What bb-box asks of BB" },
+        { slug: "development", label: "Developing BB Box" },
+        { slug: "bb-requests", label: "What BB Box asks of BB" },
       ]),
     },
     {

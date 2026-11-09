@@ -5,7 +5,7 @@ description: Boxes for BB threads, Linux, macOS or Windows computers for command
 
 # bb-box
 
-bb-box gives each BB thread its own boxes: Linux, macOS or Windows
+BB Box gives each BB thread its own boxes: Linux, macOS or Windows
 computers that start in seconds. A box belongs to the thread that acquired
 it. It goes when the thread releases it with `box_release`, or a few
 minutes after the thread is archived or deleted. Boxes do not expire. Push
@@ -36,13 +36,13 @@ where it is built ahead, which its boxes claim at once (#440). The
   restart (061). Parts you leave out stay as they are, and the disk only
   grows. A live change keeps everything in the box running, so you can
   resize the box your thread runs on. A change that needs a restart ends
-  everything running in the box: bb-box makes it only with `restart: true`,
+  everything running in the box: BB Box makes it only with `restart: true`,
   never for the box your thread runs on, and not while a person holds the
   desktop or a thread works on the box. `check: true` says what would
   change first. A live shrink of memory below what the box uses is refused.
   BB counts a machine's processors only when its daemon connects, and sets
   its automatic thread limit from them. After a live change of cores,
-  bb-box restarts BB's daemon on the box when no thread works there and
+  BB Box restarts BB's daemon on the box when no thread works there and
   no BB terminal is open there;
   otherwise its answer says how to set the limit by hand.
 - Ask for the kind's default size when you can. A kind can keep spare boxes
@@ -106,7 +106,7 @@ where it is built ahead, which its boxes claim at once (#440). The
   Health, Wallet and the like are off, for a quarter of the memory. Ask for
   `slim: false` for an app that uses one of them; its first boot then takes
   about a minute more. Do not open Device Hub on the host: it
-  takes the device's clipboard, and bb-box closes it.
+  takes the device's clipboard, and BB Box closes it.
 - Where `box_list` says a shared iOS host is set up, an `ios` box is shared
   by default: a macOS user on a Mac or VM shared with other ios boxes, ready
   in seconds, with its own device, files and keychain, but no sudo, Homebrew
@@ -143,14 +143,14 @@ where it is built ahead, which its boxes claim at once (#440). The
   and `adb` reaches the device as `emulator-5554`, as in `adb install
   app.apk` and `adb shell am start -n <package>/<activity>`. Its apps and
   data stay through a stop and start of the box. If the emulator ends
-  without saving, as when it crashes, bb-box boots it cold, in about 15 s,
+  without saving, as when it crashes, BB Box boots it cold, in about 15 s,
   which keeps what Android had written to its disk: run `adb shell sync`
   after `adb install`, so a crash cannot lose the app; `box_device`'s
   `install` does that itself. Each device gets its own Android ID the
   first time it boots in a box, which takes about 25 s more, once.
 - Cloud providers cost money while a box exists, so release such a box as
   soon as you are done. Hetzner Cloud's Linux boxes are containers on hosts
-  bb-box makes as boxes need them: a box on a host with room is ready in
+  BB Box makes as boxes need them: a box on a host with room is ready in
   seconds, and one that needs a new host in about a minute. A Namespace Mac
   is a Mac of its own, ready in about 20 s, or about a minute with its
   desktop, that ends at the plan's longest
@@ -165,12 +165,12 @@ where it is built ahead, which its boxes claim at once (#440). The
 
 `box_run`'s description gives its timeout, its jobs after 270 s and how to
 keep a server running. Its answers, and `box_job`'s, say what to do when
-bb-box restarts. Beyond those:
+BB Box restarts. Beyond those:
 
 - A command that exits with a non-zero code is not a tool error. A command
   that times out is.
 - A box can stop on its own, as when its VM crashes. The tool's error and
-  `box_status` say when and why. bb-box starts it again unless it crashed in
+  `box_status` say when and why. BB Box starts it again unless it crashed in
   the last 10 minutes.
 - Each command reads `~/.config/bb-box/env`, which sets `BB_BOX_ID`,
   `BB_BOX_NAME`, `BB_BOX_KIND`, `BB_THREAD_ID`, and `BB_HOST_ID` once the box
@@ -196,7 +196,7 @@ box's grants. They go with the box: a Tart VM is deleted, and a pool Mac's
 reset removes them. Linux and Windows boxes refuse.
 
 - Grant only the program that needs it, under the box user's home or in
-  `/Applications`. bb-box grants nothing to Apple's programs, shells,
+  `/Applications`. BB Box grants nothing to Apple's programs, shells,
   terminals or interpreters.
 - Sign the program first, with the box's own identity, so a rebuild keeps
   the grant: `codesign -s "bb-box local code signing" --identifier
@@ -248,11 +248,11 @@ can put the box back to it.
   migration, an upgrade, a deletion, or a change to the system. Take one
   when the person asks. Never take them on a schedule of your own.
 - When an attempt went wrong, restore with `box_restore` rather than
-  undoing it by hand. bb-box always takes an undo first, named "before the
+  undoing it by hand. BB Box always takes an undo first, named "before the
   restore at 11:02": restore that to undo the restore.
 - `box_snapshots` lists what you may see of a box's snapshots. Delete your
   own with `box_snapshot_delete` once they are no longer needed. A box holds 5 unless the person set otherwise; when you take one
-  past that, bb-box deletes the oldest one an agent of this thread took.
+  past that, BB Box deletes the oldest one an agent of this thread took.
   You cannot delete or restore a kept snapshot. You delete only those an
   agent of this thread took; on a box you run on, you see only those.
 - Only the person keeps a snapshot, so that it outlives the box's
@@ -270,11 +270,11 @@ can put the box back to it.
   in the thread with a form and answers at once. Then end your turn; the
   result comes to the thread as a message.
 - A box threads run on, the box your thread runs on or one of the person's
-  machines, is not restored for now: bb-box says so. When that changes, it
+  machines, is not restored for now: BB Box says so. When that changes, it
   too goes through the form, and on the box your thread runs on, nothing
   you do after asking survives the restore: your session there goes back
   too.
-- Never answer one of bb-box's forms yourself, with `bb thread
+- Never answer one of BB Box's forms yourself, with `bb thread
   interactions` or any other way. Only the person answers them.
 
 ## A box's files
@@ -293,11 +293,11 @@ Open an app or a URL with `computer_launch`, then read a window with
   window again: the references and images from before are gone.
 - A reference stays valid while its element is on screen. When it has gone,
   the tool says so: observe the window again.
-- When an app refuses input in the background, bb-box uses the real pointer
+- When an app refuses input in the background, BB Box uses the real pointer
   or keyboard, and says so. The desktop's focus may then have moved.
 - On a Wayland desktop, text that goes through the real keyboard is typed
   with a US keyboard layout. Text with a character that layout lacks, such
-  as `é`, is pasted instead: bb-box puts it on the box's clipboard, presses
+  as `é`, is pasted instead: BB Box puts it on the box's clipboard, presses
   Ctrl+V (Ctrl+Shift+V in a terminal), then puts the clipboard's text back,
   so an app that reads key presses, such as a game or a shortcut field,
   gets one paste. A box from an older image pastes all text. Keys and
@@ -330,7 +330,7 @@ host: use `box_run` for the host.
   fields only. Move a slider with `drag`, from x and y to `to_x` and
   `to_y` in your latest `computer_screenshot`.
 - `computer_type` types what a US keyboard has as keys, and pastes the
-  rest. Give `keys` such as `Return` in the same call: bb-box presses them
+  rest. Give `keys` such as `Return` in the same call: BB Box presses them
   once the field holds the text, and says so when it never does. `cmd` is
   the Command key on iOS; on Android `ctrl+a` selects all.
 - `computer_launch` opens an app by bundle ID, package or name, such as
@@ -338,7 +338,7 @@ host: use `box_run` for the host.
   shows its elements: the tool waits for them, about 4 to 6 s in all. On
   Android it takes 1 to 2.5 s.
 - Web pages: iOS gives a page's elements only one point at a time, so in
-  Safari, or another app showing a web page, bb-box reads the page point by
+  Safari, or another app showing a web page, BB Box reads the page point by
   point, in about 0.4 s, and lists its links, fields and text in a `web
   view` before the app's own controls. An element smaller than the points'
   spacing, 30 points down and a sixth of the screen across, may be
@@ -395,7 +395,7 @@ the device.
   what apps read: level, and charging or not.
 - `location` sets the simulated location. Leave out both `latitude` and
   `longitude` to clear it. iOS cannot read it back, so the state shows what
-  bb-box set. An Android emulator always has a location, so clearing it
+  BB Box set. An Android emulator always has a location, so clearing it
   gives back the emulator's own.
 - `network` on Android takes `online`, `offline` (airplane mode) or `slow`
   (474 kbit/s each way, 100 ms more on the way out), each a whole preset.
@@ -414,7 +414,7 @@ the device.
   `xcrun simctl privacy booted grant photos <bundle id>` to give an app the
   photo library, and `xcrun simctl push booted <bundle id> payload.json` to
   send it a push notification. An appearance or text size set this way
-  shows in the state as changed outside bb-box, and on a shared box shows
+  shows in the state as changed outside BB Box, and on a shared box shows
   on the screen only after a reboot. On Android, `adb` in
   `box_run` does the same, such as `adb shell pm grant <package>
   android.permission.CAMERA`.
@@ -425,7 +425,7 @@ the device.
 so you can show your work in the thread rather than describe it. Start it, do what the
 video should show, then stop it. Its answer gives a line that plays the
 clip in the thread: put it on its own in your reply. The line shows a file
-of the storage folder of the thread it is in, so bb-box copies the clip to
+of the storage folder of the thread it is in, so BB Box copies the clip to
 your parent threads too: a parent can pass the line on in its own report as
 it is. Do not write an absolute path into it. Idle stretches are
 cut by default, so a long session makes a short clip: do not pause between
@@ -510,7 +510,7 @@ one, follow these steps:
 
 ## The bb box command
 
-The `bb box` command checks and sets up bb-box; the
+The `bb box` command checks and sets up BB Box; the
 [CLI reference](../../docs/reference/cli.md) lists it. To set up a backend,
 or change kinds, sizes, spares or options, use the `bb-box-setup` skill. An
 agent mostly needs:

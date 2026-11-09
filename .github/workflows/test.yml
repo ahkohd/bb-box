@@ -1,5 +1,6 @@
 # Typecheck and the tests, docs included (#503), on every pull request and push to main.
-# They run on the organisation's self-hosted runners, in a fresh Node container per job.
+# They run on GitHub-hosted ubuntu-latest runners, in a fresh Node container per job.
+# The node tests are split into four shards that run at once, so the slowest shard sets the time.
 name: test
 
 on:
@@ -11,13 +12,29 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    runs-on: [self-hosted, linux, X64]
+  typecheck:
+    runs-on: ubuntu-latest
+    container:
+      image: node:26-bookworm
+      options: --init
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm run typecheck
+
+  node-tests:
+    name: node tests (${{ matrix.shard }} of 4)
+    runs-on: ubuntu-latest
     container:
       image: node:26-bookworm
       # --init reaps what the tests' commands leave behind, which the runner's own first process does not.
-      options: --init --memory=8g --cpus=8
-    timeout-minutes: 20
+      options: --init
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       # The job runs as root on the runner user's checkout, which git refuses without this.
@@ -26,14 +43,24 @@ jobs:
       # helper's grant tests write TCC's databases with sqlite3 (058).
       - run: apt-get update -qq && apt-get install -y -qq --no-install-recommends jq sqlite3 xxd faketime
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
+      - run: node --import ./test/exit-guard.ts --test --test-timeout=120000 --test-shard=${{ matrix.shard }}/4 test/*.test.ts
 
-  site:
-    runs-on: [self-hosted, linux, X64]
+  panel-tests:
+    runs-on: ubuntu-latest
     container:
       image: node:26-bookworm
-      options: --init --memory=4g --cpus=4
+      options: --init
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npx vitest run
+
+  site:
+    runs-on: ubuntu-latest
+    container:
+      image: node:26-bookworm
+      options: --init
     timeout-minutes: 10
     defaults:
       run:
