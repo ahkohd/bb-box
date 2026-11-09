@@ -15,6 +15,7 @@ import {
 } from "./device.ts";
 import { PRODUCT } from "../brand.ts";
 
+
 export const IOS_DEFAULT_CONTENT_SIZE: IosContentSize = "large";
 export const ANDROID_DEFAULT_FONT_SCALE: AndroidFontScale = 1;
 export const IOS_DEFAULT_APPEARANCE = "light" as const;
