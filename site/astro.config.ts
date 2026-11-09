@@ -9,7 +9,7 @@ export default defineConfig({
   base: process.env.SITE_BASE || "/",
   integrations: [
     starlight({
-      title: "bb-box",
+      title: "BB Box",
       description: "Computers for BB threads.",
       logo: { light: "./src/assets/logo-light.svg", dark: "./src/assets/logo-dark.svg" },
       favicon: "/favicon.svg",

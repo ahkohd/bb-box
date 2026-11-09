@@ -51,7 +51,7 @@ export function sidebar(pages: Page[]): SidebarGroup[] {
       items: existing(pages, [
         { slug: "start", label: "Introduction" },
         { slug: "start/quick-start", label: "Quick start" },
-        { slug: "setup", label: "Setting up bb-box" },
+        { slug: "setup", label: "Setting up BB Box" },
       ]),
     },
     {

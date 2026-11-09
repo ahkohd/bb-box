@@ -27,7 +27,7 @@ interface Addresses {
   site: SiteAddress;
 }
 
-const projectName = "bb-box";
+const projectName = "BB Box";
 const skippableGroup = "Decision records";
 const skippableHeading = "Optional";
 const decisionsIndex = "docs/decisions/README.md";
