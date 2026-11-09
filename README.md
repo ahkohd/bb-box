@@ -74,7 +74,7 @@ Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.m
 - [Setting up BB Box](setup/README.md)
 - [Reference](docs/reference/README.md)
 - [Architecture](docs/architecture.md)
-- [Developing BB Box and writing a backend](docs/development.md), and [AGENTS.md](AGENTS.md), the rules for working in this repository
+- [Developing BB Box and writing a backend](docs/development.md)
 - [Decision records](docs/decisions)
 - [Research notes](docs/research)
 - [Design specs](docs/design)
