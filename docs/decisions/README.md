@@ -82,7 +82,7 @@ which records still stand as written. The current design as a whole is in
 | [074](074-a-box-has-a-files-view.md) | A box has a files view: the box user's own files, in the panel | Accepted; the view itself is superseded by 075 |
 | [074](074-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md) | A click ring fades, and a large field zooms on its line | Accepted |
 | [075](075-the-files-view-is-the-editor-plugins-ui.md) | The files view is the editor plugin's own UI, reading the box | Accepted; creating, renaming and a narrow window are in 076; initial loading and placement are superseded by 077 |
-| [075](075-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md) | A window is zoomed once it has painted, and a result fades | Accepted |
+| [075](075-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md) | A window is zoomed once it has painted, and a result fades | Accepted; a result that fades after 2.5 seconds, and a flat window after a click in its field, are superseded by 076 |
 | [076](076-the-files-view-can-create-rename-and-delete.md) | The files view can create, rename and delete, and a narrow window shows one surface | Accepted |
 | [076](076-a-recording-is-cut-to-its-actions-and-its-captions-keep-clear.md) | A recording is cut to its actions, and its captions keep clear | Accepted |
 | [077](077-files-draw-one-level-before-walking-names.md) | Files draw one level before walking names; cached reopen and a right-hand tree | Accepted |

@@ -349,6 +349,7 @@ export interface Overlay {
   readonly y: number;
   readonly from: number;
   readonly to: number;
+  readonly fade: number;
 }
 
 export interface ClipPlan {
@@ -372,6 +373,7 @@ export const SKIP_MARK_S = 3;
 export const MARK_SHOWN_S = 1.2;
 export const RESULT_S = 2.5;
 export const RESULT_HOLD_MOST_S = 1;
+export const CAPTION_FADE_S = 0.2;
 export const SAME_CAPTION_S = 1.2;
 
 const mentionsCancel = (text: string) => /\bcancel/i.test(text);
@@ -512,7 +514,7 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
     if (change.kind === "note") return [];
     const from = round3(shownAt[index]!);
     const untilNext = nextStep(index);
-    const to = round3(change.kind === "step" ? untilNext : Math.min(untilNext, from + RESULT_S));
+    const to = round3(untilNext);
     return [{ kind: change.kind, text: change.text, row: change.kind === "step" ? 0 : 1, from, to, real: round3(change.real) }];
   });
   const framed = contentSize(size, !!scene?.frame);
@@ -546,10 +548,10 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
     .filter(([from, to]) => to - from >= SKIP_MARK_S)
     .map(([from, to]): Overlay => {
       const shown = round3(finalAt(onClip(from)));
-      return { look: "mark", text: skipWords(to - from), size: markSize, x: "right", y: skipAt(shown), from: shown, to: round3(Math.min(length, shown + MARK_SHOWN_S)) };
+      return { look: "mark", text: skipWords(to - from), size: markSize, x: "right", y: skipAt(shown), from: shown, to: round3(Math.min(length, shown + MARK_SHOWN_S)), fade: CAPTION_FADE_S };
     });
   const notes = shownChanges.flatMap((change, index): Overlay[] =>
-    change.kind === "note" ? [{ look: "note", text: change.text, size: fontSize, x: "centre", y: noteAt(shownAt[index]!), from: round3(shownAt[index]!), to: round3(Math.min(length, shownAt[index]! + Math.min(RESULT_S, readingSeconds(change.text)))) }] : [],
+    change.kind === "note" ? [{ look: "note", text: change.text, size: fontSize, x: "centre", y: noteAt(shownAt[index]!), from: round3(shownAt[index]!), to: round3(Math.min(length, shownAt[index]! + Math.min(RESULT_S, readingSeconds(change.text)))), fade: CAPTION_FADE_S }] : [],
   );
   const keyPills = (planned?.pills ?? []).flatMap((each): Overlay[] => {
     const from = round3(finalAt(onClip(each.from)));
@@ -570,11 +572,11 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
     const bandBottom = side === "top" ? inset + inner - dock - tall : captionY(0, from) - gap - tall;
     const region = each.avoid && each.avoid.width > 0 && each.avoid.height > 0 ? areaOnClip(planned!, each.avoid, each.from) : null;
     const y = region ? pillClearOf(region.y + inset, region.height, tall, gap, Math.min(bandTop, bandBottom), Math.max(bandTop, bandBottom), clear) : clear;
-    return [{ look: "key", text: each.text, size: fontSize, x: "centre", y, from, to }];
+    return [{ look: "key", text: each.text, size: fontSize, x: "centre", y, from, to, fade: CAPTION_FADE_S }];
   });
   const overlays: Overlay[] = [
-    ...captions.map((caption): Overlay => ({ look: caption.kind, text: caption.text, size: fontSize, x: "centre", y: captionY(caption.row, caption.from), from: caption.from, to: caption.to })),
-    ...(speed > 1 ? [{ look: "mark" as const, text: `${speed}x`, size: markSize, x: "right" as const, y: cornerY, from: 0, to: length }] : []),
+    ...captions.map((caption): Overlay => ({ look: caption.kind, text: caption.text, size: fontSize, x: "centre", y: captionY(caption.row, caption.from), from: caption.from, to: caption.to, fade: CAPTION_FADE_S })),
+    ...(speed > 1 ? [{ look: "mark" as const, text: `${speed}x`, size: markSize, x: "right" as const, y: cornerY, from: 0, to: length, fade: 0 }] : []),
     ...skips,
     ...notes,
     ...keyPills,
@@ -627,7 +629,13 @@ export function clipGraph(plan: ClipPlan, withOverlays: boolean): string {
   plan.overlays.forEach((overlay, index) => {
     const x = overlay.x === "centre" ? "(W-w)/2" : `W-w-${plan.edge}`;
     const into = index === plan.overlays.length - 1 ? "out" : `p${index + 1}`;
-    parts.push(`[${last}][${firstPill + index}:v]overlay=x=${x}:y=${overlay.y}:enable='between(t,${overlay.from},${overlay.to})'[${into}]`);
+    if (overlay.fade > 0) {
+      const faded = `q${index}`;
+      parts.push(`[${firstPill + index}:v]format=rgba,fade=t=in:st=${overlay.from}:d=${overlay.fade}:alpha=1,fade=t=out:st=${overlay.to}:d=${overlay.fade}:alpha=1[${faded}]`);
+      parts.push(`[${last}][${faded}]overlay=x=${x}:y=${overlay.y}:eof_action=pass:enable='between(t,${overlay.from},${round3(overlay.to + overlay.fade)})'[${into}]`);
+    } else {
+      parts.push(`[${last}][${firstPill + index}:v]overlay=x=${x}:y=${overlay.y}:enable='between(t,${overlay.from},${overlay.to})'[${into}]`);
+    }
     last = into;
   });
   return scene ? parts.join(";\n") : parts.join(";").replace(/\[p(\d+)\]/g, "[v$1]");
@@ -680,6 +688,17 @@ function run(argv) {
 }
 `;
 
+export function pillInputs(plan: ClipPlan, path: (file: number) => string): string {
+  const files = pillFiles(plan);
+  return plan.overlays
+    .map((overlay, index) => {
+      if (overlay.fade <= 0) return `-i ${path(files[index]!)}`;
+      const seconds = round3(Math.max(1 / plan.fps, overlay.to + overlay.fade - overlay.from + 1 / plan.fps));
+      return `-itsoffset ${overlay.from} -loop 1 -framerate ${plan.fps} -t ${seconds} -i ${path(files[index]!)}`;
+    })
+    .join(" ");
+}
+
 export function pillFiles(plan: ClipPlan): number[] {
   const seen = new Map<string, number>();
   return plan.overlays.map((overlay, index) => {
@@ -721,8 +740,7 @@ function markInstalls(plan: ClipPlan): string {
 export function recordMakeScript(plan: ClipPlan, os: GuestOs = "linux"): string {
   if (os === "windows") return windowsMake(plan);
   const pills = pillCalls(plan, "pill", "linux");
-  const files = pillFiles(plan);
-  const inputs = files.map((file) => `-i "$d/pill-${file}.png"`).join(" ");
+  const inputs = pillInputs(plan, (file) => `"$d/pill-${file}.png"`);
   const marks = markInstalls(plan);
   return String.raw`d="$HOME/${RECORD_DIR}"
 [ -s "$d/capture.mkv" ] || exit ${RECORD_STOP_EXITS.none}
@@ -794,7 +812,7 @@ began=$(now)
 captions=${plan.overlays.length ? "1" : "none"}
 ${pills.map((line) => `[ "$captions" = 0 ] || ${line} || captions=0`).join("\n")}
 drawn=$(now)
-${plan.scene ? sceneRun(plan, inputs) : `if [ "$captions" = 1 ]; then
+${plan.scene ? sceneRun(plan) : `if [ "$captions" = 1 ]; then
   ffmpeg -nostdin -loglevel error -y -i "$d/capture.mkv" ${inputs} -filter_complex "${clipGraph(plan, true)}" -map "[out]" ${CLIP} "$d/clip.mp4" || exit ${RECORD_STOP_EXITS.failed}
 else
   ffmpeg -nostdin -loglevel error -y -i "$d/capture.mkv" -filter_complex "${clipGraph(plan, false)}" -map "[out]" ${CLIP} "$d/clip.mp4" || exit ${RECORD_STOP_EXITS.failed}
@@ -811,9 +829,9 @@ printf '{"ended":"stopped","recorded":%s,"clip":%s,"bytes":%s,"size":"%s","capti
 
 export const SCENE_BUNDLE = "overlay.bundle";
 
-function sceneRun(plan: ClipPlan, pillInputs: string): string {
+function sceneRun(plan: ClipPlan): string {
   const art = plan.scene!.art.map((each) => `-i ${each.name}`).join(" ");
-  const pills = pillInputs.replaceAll('"$d/', '"');
+  const pills = pillInputs(plan, (file) => `"pill-${file}.png"`);
   return String.raw`[ -s "$d/${SCENE_BUNDLE}" ] || { echo "The clip's drawing was not delivered to the box." >&2; exit ${RECORD_STOP_EXITS.failed}; }
 D="$d" perl -MMIME::Base64 -ne 'chomp; my ($n, $b) = split /\t/, $_, 2; next unless defined $b && $n =~ /^[A-Za-z0-9._-]+$/; open(my $f, ">", "$ENV{D}/$n") or die "$n: $!\n"; binmode $f; print $f decode_base64($b); close $f' "$d/${SCENE_BUNDLE}" || exit ${RECORD_STOP_EXITS.failed}
 major=$(ffmpeg -version | sed -n '1s/^ffmpeg version [^0-9]*\([0-9]*\).*/\1/p')
@@ -1031,7 +1049,7 @@ function windowsMarkInstalls(plan: ClipPlan): string {
 }
 
 function windowsMake(plan: ClipPlan): string {
-  const inputs = pillFiles(plan).map((file) => `-i "$d\\pill-${file}.png"`).join(" ");
+  const inputs = pillInputs(plan, (file) => `"$d\\pill-${file}.png"`);
   return String.raw`${WINDOWS_DIR}
 $capture = "$d\capture.mkv"
 if (-not (Test-Path $capture)) { exit ${RECORD_STOP_EXITS.none} }
@@ -1067,7 +1085,7 @@ exit ${RECORD_STOP_EXITS.made}
 
 function windowsSceneRun(plan: ClipPlan): string {
   const art = plan.scene!.art.map((each) => `-i ${each.name}`).join(" ");
-  const pills = pillFiles(plan).map((file) => `-i pill-${file}.png`).join(" ");
+  const pills = pillInputs(plan, (file) => `pill-${file}.png`);
   return String.raw`$bundle = Join-Path $d '${SCENE_BUNDLE}'
 if (-not (Test-Path $bundle)) { [Console]::Error.WriteLine("The clip's drawing was not delivered to the box."); exit ${RECORD_STOP_EXITS.failed} }
 foreach ($line in [IO.File]::ReadAllLines($bundle)) {

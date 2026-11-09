@@ -54,7 +54,7 @@ test("box_record starts once, refuses no display, and stop makes the clip with s
   assert.ok(drawing! >= 0 && encoding! >= 0, "the time each part took");
   const encoded = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!;
   assert.ok(encoded.includes("select='not(between(t,1.500,6.000)+between(t,8.500,10.000))',setpts='(((T-STARTT)-(clip((T-STARTT)-1.500,0,4.5)+clip((T-STARTT)-8.500,0,1.5)))/2)/TB',fps=15,tpad=stop_mode=clone:stop_duration=2,trim=duration=2,scale='min(1280,iw)':-2[v0]"), encoded);
-  assert.match(encoded, /-i \S+\/pill-0\.png -i \S+\/pill-1\.png -filter_complex /, "the speed and the cut drawn as marks");
+  assert.match(encoded, /-i \S+\/pill-0\.png -itsoffset [\d.]+ -loop 1 -framerate 15 -t [\d.]+ -i \S+\/pill-1\.png -filter_complex /, "the speed and the cut drawn as marks, the cut fading in and out");
   assert.match(encoded, /-c:v libx264 .*-crf 28 -tune animation -pix_fmt yuv420p -movflags \+faststart/);
   assert.ok(!existsSync(join(home, RECORD_DIR, "capture.mkv")), "the capture goes once the clip is made");
   assert.equal(readFileSync(join(home, RECORD_DIR, "clip.mp4"), "utf8"), "mp4data");
@@ -80,8 +80,8 @@ test("box_record's steps and results are saved with the box's time while it reco
   assert.equal(parseRecordResult(made!.stdout)?.captions, true);
   const args = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n");
   assert.equal(args.filter((line) => line.includes("print(tw)")).length, 3, "each pill's words are measured once; the mark is an image");
-  assert.match(args.at(-1)!, /-i \S+\/pill-0\.png -i \S+\/pill-1\.png -i \S+\/pill-2\.png -filter_complex /);
-  assert.match(args.at(-1)!, /\[v0\]\[1:v\]overlay=x=\(W-w\)\/2:y=25:enable='between\(t,/);
+  assert.match(args.at(-1)!, /-itsoffset [\d.]+ -loop 1 -framerate 15 -t [\d.]+ -i \S+\/pill-0\.png -itsoffset [\d.]+ -loop 1 -framerate 15 -t [\d.]+ -i \S+\/pill-1\.png -itsoffset [\d.]+ -loop 1 -framerate 15 -t [\d.]+ -i \S+\/pill-2\.png -filter_complex /);
+  assert.match(args.at(-1)!, /\[v0\]\[q0\]overlay=x=\(W-w\)\/2:y=25:eof_action=pass:enable='between\(t,/);
   assert.equal(plan!.captions.length, 2);
   assert.ok(!existsSync(join(home, RECORD_DIR, "events")), "the steps go with the capture");
 });
@@ -95,7 +95,7 @@ test("box_record's captions are drawn with FFmpeg 8 too, as on Ubuntu 26.04's Wa
   const made = run(recordMakeScript(planClip(parsePrepared(prepared.stdout)!, 1, { zoom: true, frame: false })), home, {}, true, false, true);
   assert.equal(made.status, RECORD_STOP_EXITS.made, made.stderr);
   assert.equal(parseRecordResult(made.stdout)?.captions, true, "the pills are measured and drawn");
-  assert.match(readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!, /-i \S+\/pill-0\.png .*-filter_complex .*\[1:v\]overlay=/, "the step's pill over the clip");
+  assert.match(readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!, /-i \S+\/pill-0\.png .*-filter_complex .*\[1:v\]format=rgba,fade=t=in.*\[q0\]overlay=/, "the step's pill over the clip");
 });
 
 const PREPARED: Prepared = { ended: "stopped", recorded: 30, width: 1920, height: 1080, start: 1000, cuts: [[5.5, 15]], events: [] };
@@ -145,14 +145,14 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
   }
   assert.deepEqual([plan.width, plan.height, plan.fontSize, plan.edge, plan.position], [1280, 720, 19, 25, "top"]);
   assert.deepEqual(plan.overlays.slice(4), [
-    { look: "mark", text: "2x", size: 13, x: "right", y: 614, from: 0, to: 12.643 },
-    { look: "mark", text: "10 s later", size: 13, x: "right", y: 581, from: 3.143, to: 4.343 },
+    { look: "mark", text: "2x", size: 13, x: "right", y: 614, from: 0, to: 12.643, fade: 0 },
+    { look: "mark", text: "10 s later", size: 13, x: "right", y: 581, from: 3.143, to: 4.343, fade: 0.2 },
   ], "the speed in the bottom corner all along, and the cut over it for a moment");
   assert.match(clipGraph(plan, true), /\[v4\]\[5:v\]overlay=x=W-w-25:y=614:enable='between\(t,0,12\.643\)'\[v5\]/);
   const clock = "((T-STARTT)-(clip((T-STARTT)-5.500,0,9.5)))/2";
   assert.ok(clipGraph(plan, true).includes(`setpts='(${clock}+0.393*gt(${clock},1)+1*gt(${clock},2.75)+1*gt(${clock},9.75))/TB'`), clipGraph(plan, true));
-  assert.match(clipGraph(plan, true), /\[v1\]\[2:v\]overlay=x=\(W-w\)\/2:y=71:enable='between\(t,3\.143,4\.643\)'\[v2\]/);
-  assert.match(clipGraph(plan, true), /\[v5\]\[6:v\]overlay=.*\[out\]$/);
+  assert.match(clipGraph(plan, true), /\[2:v\]format=rgba,fade=t=in:st=3\.143:d=0\.2:alpha=1,fade=t=out:st=4\.643:d=0\.2:alpha=1\[q1\];\[v1\]\[q1\]overlay=x=\(W-w\)\/2:y=71:eof_action=pass:enable='between\(t,3\.143,4\.843\)'\[v2\]/);
+  assert.match(clipGraph(plan, true), /\[v5\]\[q5\]overlay=.*\[out\]$/);
   assert.doesNotMatch(clipGraph(plan, false), /overlay/);
   assert.ok(clipGraph(plan, false).includes(",fps=15,tpad=stop_mode=clone:stop_duration=12.643,trim=duration=12.643,"), "a hold at the end lasts though no frame follows it");
 
@@ -178,8 +178,7 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
   ] }, 1);
   const failed = stayed.captions.find((caption) => caption.kind === "fail")!;
   const step = stayed.captions.find((caption) => caption.kind === "step")!;
-  assert.ok(Math.abs(failed.to - failed.from - 2.5) < 0.02, "a result does not stay until the recording ends");
-  assert.ok(step.to > failed.to, "the step caption changes only when the next step starts");
+  assert.equal(failed.to, step.to, "a result stays as long as its step, until the next step or the end (076)");
   const replaced = planClip({ ...PREPARED, cuts: [], events: [
     { at: 1001, kind: "step", text: "Type a line into the note" },
     { at: 1012, kind: "step", text: "Drag the window" },
@@ -200,6 +199,26 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
   ] }, 1);
   assert.equal(realFailure.captions.some((caption) => caption.kind === "fail"), true, "a real failure stays a failure");
   assert.equal(realFailure.overlays.some((overlay) => overlay.look === "note"), false, "the note for that same moment is not a second caption");
+});
+
+test("a result stays until the next step, and captions fade in and out over 0.2 s, so one step crossfades into the next (076)", () => {
+  const plan = planClip({ ...PREPARED, cuts: [], events: [
+    { at: 1001, kind: "step", text: "Open the file" },
+    { at: 1003, kind: "pass", text: "It opened" },
+    { at: 1009, kind: "step", text: "Close the file" },
+    { at: 1011, kind: "pass", text: "It closed" },
+  ] }, 1);
+  const [first, opened, second] = plan.captions;
+  assert.equal(opened!.to, second!.from, "the result stays until the next step");
+  assert.equal(first!.to, second!.from);
+  const graph = clipGraph(plan, true);
+  const fadeOf = (index: number) => new RegExp(`\\[${index + 1}:v\\]format=rgba,fade=t=in:st=([\\d.]+):d=0\\.2:alpha=1,fade=t=out:st=([\\d.]+):d=0\\.2:alpha=1\\[q${index}\\]`).exec(graph);
+  const out = fadeOf(0)!;
+  const into = fadeOf(2)!;
+  assert.equal(Number(out[2]), Number(into[1]), "the old step fades out as the new one fades in");
+  assert.ok(plan.overlays.every((overlay) => overlay.fade === 0.2));
+  const made = recordMakeScript(plan);
+  assert.ok(made.includes(`-itsoffset ${second!.from} -loop 1 -framerate 15 -t `), "each faded pill is a still image looped from its own time");
 });
 
 test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its console before it would force it, then captions and makes the clip as elsewhere (059)", () => {
@@ -237,7 +256,8 @@ test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its co
   assert.match(make, /Pill 0 mark-play-\d+\.png \d+ '5f6368' 0\.82 21 'medium'/);
   assert.match(make, /Pill 1 mark-check-\d+\.png \d+ '2a2a2a' 0\.94 21 'medium'/);
   assert.doesNotMatch(make, /'4pa2'/);
-  assert.ok(make.includes(`-i $capture -i "$d\\pill-0.png" -i "$d\\pill-1.png" -i "$d\\pill-2.png" -i "$d\\pill-3.png" -filter_complex "${clipGraph(plan, true)}" -map '[out]'`), make);
+  assert.match(make, /-i \$capture( -itsoffset [\d.]+ -loop 1 -framerate 15 -t [\d.]+ -i "\$d\\pill-[01]\.png"){2} -i "\$d\\pill-2\.png" -itsoffset [\d.]+ -loop 1 -framerate 15 -t [\d.]+ -i "\$d\\pill-3\.png" -filter_complex /, "each caption and mark fading in and out, and the speed all along");
+  assert.ok(make.includes(`-filter_complex "${clipGraph(plan, true)}" -map '[out]'`), make);
   assert.ok(make.includes(`-i $capture -filter_complex "${clipGraph(plan, false)}" -map '[out]'`), make);
   assert.match(make, /\$drawn = switch \(\$captions\) \{ '1' \{ 'true' \} 'none' \{ 'null' \} default \{ 'false' \} \}/);
   assert.match(recordMakeScript(planClip({ ...prepared!, events: [], cuts: [] }, 1), "windows"), /\$captions = 'none'/);
@@ -279,7 +299,7 @@ test("a clip with a drawn pointer, rings and a frame is made from the drawing th
   assert.equal(made.status, RECORD_STOP_EXITS.made, made.stderr);
   const encoded = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!;
   assert.ok(encoded.startsWith("-nostdin -loglevel error -y -i capture.mkv -i ring-left-light-0.png"), encoded);
-  assert.match(encoded, /-i cursor-arrow-light\.png -i corner\.png -i pill-0\.png -i pill-1\.png -filter_complex_script clip\.graph -map \[out\]/);
+  assert.match(encoded, /-i cursor-arrow-light\.png -i corner\.png -itsoffset [\d.]+ -loop 1 -framerate 30 -t [\d.]+ -i pill-0\.png -itsoffset [\d.]+ -loop 1 -framerate 30 -t [\d.]+ -i pill-1\.png -filter_complex_script clip\.graph -map \[out\]/);
   for (const name of ["overlay.bundle", "pointer.cmd", "clip.graph", "cursor-arrow-light.png"]) assert.ok(!existsSync(join(dir, name)), `${name} goes once the clip is made`);
 });
 

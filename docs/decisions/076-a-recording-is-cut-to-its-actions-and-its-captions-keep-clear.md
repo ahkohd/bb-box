@@ -2,6 +2,9 @@
 
 Status: accepted, 9 November 2026.
 Extends [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md).
+Supersedes parts of [075](075-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md):
+a result that fades after 2.5 seconds, and a zoom left out when its window
+is one flat tone after a click in its field.
 
 ## Context
 
@@ -55,6 +58,16 @@ A window-sized change that overlaps a window's opening and comes within
 an agent resizes the window it launched. The previous framing holds until
 the last such change has been quiet for 0.4 seconds, as 075 holds it for
 paint.
+
+### A result stays, and captions crossfade
+
+A result stays until the next step starts, or the clip ends. With idle
+stretches cut, that is seldom more than a few seconds, and a result that
+fades early leaves its step alone, as if it were still pending. Each
+caption, warning, key pill and skip mark fades in and out over 0.2 seconds,
+so one step crossfades into the next. The speed mark, shown all along, does
+not fade. Each fading pill is its still image looped from its own start, so
+the box decodes it only while it shows.
 
 ### The camera pans rather than pumps
 
