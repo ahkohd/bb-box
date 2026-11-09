@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { pngPixels } from "../src/core/png.ts";
 import { textRuns } from "../src/core/record-font.ts";
 import { markArt, markRgb } from "../src/core/record-icons.ts";
-import { CHANGES_MOST, RECORD_DIR, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, analysisGraph, captionText, chaptersOf, clipGraph, parsePrepared, parseRecordResult, planClip, previewHeight, readingSeconds, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, type Prepared } from "../src/core/record.ts";
+import { CHANGES_MOST, chipSpacing, RECORD_DIR, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, analysisGraph, captionText, chaptersOf, clipGraph, parsePrepared, parseRecordResult, planClip, previewHeight, readingSeconds, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, type Prepared } from "../src/core/record.ts";
 import { fakeFfmpeg, tempDir } from "./helpers.ts";
 
 const skip = process.platform === "linux" ? false : "needs GNU stat and setsid";
@@ -84,6 +84,21 @@ test("box_record's steps and results are saved with the box's time while it reco
   assert.match(args.at(-1)!, /\[v0\]\[q0\]overlay=x=\(W-w\)\/2:y=25:eof_action=pass:enable='between\(t,/);
   assert.equal(plan!.captions.length, 2);
   assert.ok(!existsSync(join(home, RECORD_DIR, "events")), "the steps go with the capture");
+});
+
+test("a chip hugs its words: its sides are 0.7 of the font size, its icon gap 0.45 and its height 2.1, the same on every desktop (081)", { skip }, () => {
+  const home = tempDir("record-chip");
+  assert.equal(run(recordStartScript(), home, { DISPLAY: ":99" }).status, RECORD_START_EXITS.started);
+  assert.equal(run(recordStepScript("step", "Short"), home).status, RECORD_STEP_EXITS.saved);
+  const { plan, made } = stop(home, 1, "cut");
+  assert.equal(made!.status, RECORD_STOP_EXITS.made, made!.stderr);
+  const size = plan!.overlays[0]!.size;
+  const icon = markArt("play", size, markRgb("4f8df5")).display;
+  const measured = 120;
+  const chip = readFileSync(join(home, "ffmpeg-args"), "utf8").split("\n").map((line) => /color=c=black@0:s=(\d+)x(\d+)/.exec(line)).find(Boolean)!;
+  assert.deepEqual([Number(chip[1]), Number(chip[2])], [2 * Math.round(size * 0.7) + icon + Math.round(size * 0.45) + measured, Math.round(size * 2.1)], `a ${size} px step chip`);
+  assert.deepEqual(chipSpacing(18), { height: 38, side: 13, iconGap: 8 });
+  for (const os of ["linux", "macos", "windows"] as const) assert.match(recordMakeScript(plan!, os), new RegExp(`ill 0 \\S+ \\d+ '5f6368' 0\\.82 ${size} ${Math.round(size * 2.1)} ${Math.round(size * 0.7)} ${Math.round(size * 0.45)} `), `the same spacing on ${os}`);
 });
 
 test("box_record's captions are drawn with FFmpeg 8 too, as on Ubuntu 26.04's Wayland desktops, whose drawtext logs the text's width after an [Eval @ ...] prefix", { skip }, () => {
@@ -296,8 +311,8 @@ test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its co
   const make = recordMakeScript(plan, "windows");
   assert.match(make, /\[Drawing\.Font\]::new\('Segoe UI Semibold', \$fs, \[Drawing\.GraphicsUnit\]::Pixel\)/);
   assert.match(make, /Inter-Medium\.ttf/);
-  assert.match(make, /Pill 0 mark-play-\d+\.png \d+ '5f6368' 0\.82 21 'medium'/);
-  assert.match(make, /Pill 1 mark-check-\d+\.png \d+ '2a2a2a' 0\.94 21 'medium'/);
+  assert.match(make, /Pill 0 mark-play-\d+\.png \d+ '5f6368' 0\.82 21 44 15 9 'medium'/);
+  assert.match(make, /Pill 1 mark-check-\d+\.png \d+ '2a2a2a' 0\.94 21 44 15 9 'medium'/);
   assert.doesNotMatch(make, /'4pa2'/);
   assert.match(make, /-i \$capture( -itsoffset [\d.]+ -loop 1 -framerate 15 -t [\d.]+ -i "\$d\\pill-[01]\.png"){2} -i "\$d\\pill-2\.png" -itsoffset [\d.]+ -loop 1 -framerate 15 -t [\d.]+ -i "\$d\\pill-3\.png" -filter_complex /, "each caption and mark fading in and out, and the speed all along");
   assert.ok(make.includes(`-filter_complex "${clipGraph(plan, true)}" -map '[out]'`), make);

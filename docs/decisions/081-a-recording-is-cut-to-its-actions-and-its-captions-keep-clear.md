@@ -158,6 +158,15 @@ action is in another window, is that window going, whatever its size. The
 camera eases out as it goes, so the next window opens in full view rather
 than inside a zoom on bare desktop.
 
+### Chips hug their words
+
+A caption, warning, key or mark chip is 2.1 times its font size tall, with
+0.7 of the font size each side of its words and 0.45 between its mark and
+its words; before, each side was a whole font size and the gap 0.6. The
+plugin works these out once and passes them to the box, so the Linux, macOS
+and Windows renderers draw the same chip, and the layout places chips by the
+same height.
+
 ### The camera pans rather than pumps
 
 After a zoomed group, the camera stays in and pans to the next group when

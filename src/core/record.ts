@@ -552,7 +552,7 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
   const inner = layout ? height : framed.content.height;
   const inset = layout ? 0 : framed.inset;
   const fontSize = layout?.fontSize ?? Math.max(14, Math.round(inner / 38));
-  const pill = (size: number) => Math.round(size * 2.1);
+  const pill = (size: number) => chipSpacing(size).height;
   const gap = Math.max(4, Math.round(fontSize * 0.3));
   const edge = layout ? Math.round((layout.band.height - 2 * pill(fontSize) - gap) / 2) : Math.round(inner * 0.035);
   const dock = layout ? edge : Math.round(inner * 0.11);
@@ -684,7 +684,7 @@ export function clipGraph(plan: ClipPlan, withOverlays: boolean): string {
 const MAC_PILL = String.raw`ObjC.import("AppKit");
 ObjC.import("CoreText");
 function run(argv) {
-  const [runsFile, iconPath, iconWidth, fillHex, alpha, size, out] = argv;
+  const [runsFile, iconPath, iconWidth, fillHex, alpha, size, chipHeight, chipSide, chipIconGap, out] = argv;
   const fs = Number(size);
   const color = (hex, a) => $.NSColor.colorWithSRGBRedGreenBlueAlpha(parseInt(hex.slice(0, 2), 16) / 255, parseInt(hex.slice(2, 4), 16) / 255, parseInt(hex.slice(4, 6), 16) / 255, a);
   const seen = {};
@@ -708,9 +708,9 @@ function run(argv) {
   const asked = Number(iconWidth);
   const image = $.NSImage.alloc.initWithContentsOfFile(iconPath);
   const iw = image && asked > 0 ? asked : 0;
-  const gap = iw ? Math.round(fs * 0.6) : 0;
+  const gap = iw ? Number(chipIconGap) : 0;
   const tw = runs.reduce((sum, run) => sum + run.width, 0);
-  const h = Math.round(fs * 2.1), pad = fs, w = pad + iw + gap + tw + pad;
+  const h = Number(chipHeight), pad = Number(chipSide), w = pad + iw + gap + tw + pad;
   const rep = $.NSBitmapImageRep.alloc.initWithBitmapDataPlanesPixelsWidePixelsHighBitsPerSampleSamplesPerPixelHasAlphaIsPlanarColorSpaceNameBytesPerRowBitsPerPixel(null, w, h, 8, 4, true, false, $.NSDeviceRGBColorSpace, 0, 0);
   $.NSGraphicsContext.saveGraphicsState;
   $.NSGraphicsContext.setCurrentContext($.NSGraphicsContext.graphicsContextWithBitmapImageRep(rep));
@@ -759,10 +759,19 @@ function pillArt(plan: ClipPlan): { readonly overlay: Overlay; readonly index: n
   });
 }
 
+export const CHIP_HEIGHT_SHARE = 2.1;
+export const CHIP_SIDE_SHARE = 0.7;
+export const CHIP_ICON_GAP_SHARE = 0.45;
+
+export function chipSpacing(size: number): { readonly height: number; readonly side: number; readonly iconGap: number } {
+  return { height: Math.round(size * CHIP_HEIGHT_SHARE), side: Math.round(size * CHIP_SIDE_SHARE), iconGap: Math.round(size * CHIP_ICON_GAP_SHARE) };
+}
+
 function pillCalls(plan: ClipPlan, name: string, os: GuestOs): string[] {
   return pillArt(plan).map(({ overlay, index, art, fill, alpha }) => {
     const runs = textRuns(overlay.text, pillWeight(os)).flatMap((run) => [`'${run.font}'`, `'${Buffer.from(run.text).toString("base64")}'`]);
-    return `${name} ${index} ${art.name} ${art.display} '${fill}' ${alpha} ${overlay.size} ${runs.join(" ")}`;
+    const { height, side, iconGap } = chipSpacing(overlay.size);
+    return `${name} ${index} ${art.name} ${art.display} '${fill}' ${alpha} ${overlay.size} ${height} ${side} ${iconGap} ${runs.join(" ")}`;
   });
 }
 
@@ -801,8 +810,8 @@ if [ "$(uname)" = Darwin ]; then
   cat >"$d/pill.js" <<'PILL'
 ${MAC_PILL}PILL
   pill() {
-    index=$1; icon=$2; idew=$3; fill=$4; alpha=$5; fs=$6
-    shift 6
+    index=$1; icon=$2; idew=$3; fill=$4; alpha=$5; fs=$6; h=$7; pad=$8; gap=$9
+    shift 9
     : > "$d/pill-$index.runs"
     n=0
     while [ $# -ge 2 ]; do
@@ -811,13 +820,13 @@ ${MAC_PILL}PILL
       n=$((n + 1)); shift 2
     done
     iconfile="$d/$icon"; [ -s "$iconfile" ] || { iconfile=/dev/null; idew=0; }
-    osascript -l JavaScript "$d/pill.js" "$d/pill-$index.runs" "$iconfile" "$idew" "$fill" "$alpha" "$fs" "$d/pill-$index.png" >/dev/null
+    osascript -l JavaScript "$d/pill.js" "$d/pill-$index.runs" "$iconfile" "$idew" "$fill" "$alpha" "$fs" "$h" "$pad" "$gap" "$d/pill-$index.png" >/dev/null
   }
 else
   measure() { ffmpeg -nostdin -hide_banner -v info -f lavfi -i color=s=16x16:d=0.1 -vf "drawtext=fontfile=$1:textfile=$2:expansion=none:fontsize=$3:x='print(tw)'" -frames:v 1 -f null - 2>&1 | awk '/^(\[Eval @ [^]]*\] )?[0-9.]+$/ { print int($NF + 0.5); exit }'; }
   pill() {
-    index=$1; icon=$2; idew=$3; fill=$4; alpha=$5; fs=$6
-    shift 6
+    index=$1; icon=$2; idew=$3; fill=$4; alpha=$5; fs=$6; h=$7; pad=$8; gap=$9
+    shift 9
     : > "$d/pill-$index.runs"
     n=0; tw=0
     while [ $# -ge 2 ]; do
@@ -829,7 +838,6 @@ else
       tw=$((tw + width)); n=$((n + 1)); shift 2
     done
     [ -s "$d/$icon" ] || idew=0
-    h=$((fs * 21 / 10)); pad=$fs; gap=$((fs * 6 / 10))
     [ "$idew" -gt 0 ] || gap=0
     w=$((pad + idew + gap + tw + pad)); r=$((h / 2)); cap=$((fs * 73 / 100))
     rgb=$((0x$fill))
@@ -1036,7 +1044,7 @@ function Face($kind, $fs) {
   if ($kind -eq 'fallback') { return [Drawing.Font]::new('Segoe UI', $fs, [Drawing.GraphicsUnit]::Pixel) }
   return [Drawing.Font]::new('Segoe UI Semibold', $fs, [Drawing.GraphicsUnit]::Pixel)
 }
-function Pill($index, $icon, $display, $fillHex, $alpha, $size) {
+function Pill($index, $icon, $display, $fillHex, $alpha, $size, $chipHeight, $chipSide, $chipIconGap) {
   $ErrorActionPreference = 'Stop'
   Add-Type -AssemblyName System.Drawing
   $fs = [int]$size
@@ -1054,7 +1062,7 @@ function Pill($index, $icon, $display, $fillHex, $alpha, $size) {
   $iconPath = Join-Path $d $icon
   $iw = 0
   if ((Test-Path $iconPath) -and [int]$display -gt 0) { $iw = [int]$display }
-  $h = [int][Math]::Round($fs * 2.1); $pad = $fs; $gap = $(if ($iw -gt 0) { [int][Math]::Round($fs * 0.6) } else { 0 }); $w = $pad + $iw + $gap + $tw + $pad
+  $h = [int]$chipHeight; $pad = [int]$chipSide; $gap = $(if ($iw -gt 0) { [int]$chipIconGap } else { 0 }); $w = $pad + $iw + $gap + $tw + $pad
   $bitmap = [Drawing.Bitmap]::new($w, $h, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
   $g = [Drawing.Graphics]::FromImage($bitmap)
   $g.SmoothingMode = 'AntiAlias'; $g.PixelOffsetMode = 'HighQuality'; $g.TextRenderingHint = 'AntiAlias'
