@@ -19,7 +19,7 @@ Documentation: [bbbox.dev](https://bbbox.dev).
 - **Recordings that show the work.** An agent records its test run as a short clip, with each step and its result captioned. See [Recordings](docs/guide/recording.md).
 - **Keep boxes as your own machines.** Threads can run on them, such as an always-on agent with its own desktop.
 - **Every machine at a glance.** CPU, memory, disk, GPU and processes of every box and machine, in BB's sidebar. See [the Monitor](docs/guide/monitor.md).
-- **A box's files in a tab.** Browse them in a tree, open several at once, search them, and edit and save, with a check that the file has not changed underneath you. See [a box's files](docs/guide/box-files.md).
+- **Files.** Browse, search and edit a box's files in a tab. See [a box's files](docs/guide/box-files.md).
 
 *BB Box assumes one trusted user. It is not a sandbox for code you do not trust.*
 
