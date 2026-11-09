@@ -6,6 +6,7 @@ import darkVideo from "../../../docs/media/demo.mp4?url";
 import lightPoster from "../../../docs/media/demo-light-poster.jpg";
 import lightVideo from "../../../docs/media/demo-light.mp4?url";
 import InstallBlock from "../components/InstallBlock.astro";
+import { homePageHead } from "../head.ts";
 import { absoluteAddress, markdownPath } from "../llms.ts";
 import { listUnder } from "../rendered.ts";
 import { pageUrl, readPages } from "../repo.ts";
@@ -25,6 +26,7 @@ const quickStart = Astro.site ? absoluteAddress(markdownPath(base, "start/quick-
     title: "BB Box",
     description: "Computers for BB threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.",
     template: "splash",
+    head: homePageHead,
     hero: {
       title: `${mark}BB Box`,
       tagline: "Computers for BB threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.",

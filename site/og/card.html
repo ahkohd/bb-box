@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>BB Box</title>
+    <style>
+      @font-face {
+        font-family: "Inter Variable";
+        font-weight: 100 900;
+        src: url("../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2") format("woff2");
+      }
+
+      :root {
+        --foreground: #fafafa;
+        --muted-foreground: #a1a1a1;
+        --quiet: #737373;
+        --background: #0a0a0a;
+        --border: rgb(255 255 255 / 0.14);
+        --width: 1200px;
+        --height: 630px;
+        --margin: 72px;
+        --shot-width: 1664px;
+        --shot-left: -429px;
+        --shot-top: 0px;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        font-weight: 400;
+      }
+
+      html,
+      body {
+        width: var(--width);
+        height: var(--height);
+        overflow: hidden;
+        background: var(--background);
+      }
+
+      body {
+        position: relative;
+        font-family: "Inter Variable", sans-serif;
+        color: var(--foreground);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .words {
+        position: absolute;
+        inset: var(--margin) auto var(--margin) var(--margin);
+        width: 470px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .name {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 34px;
+        letter-spacing: -0.01em;
+      }
+
+      .name svg {
+        width: 40px;
+        height: 40px;
+      }
+
+      .promise {
+        margin-top: auto;
+        font-size: 66px;
+        line-height: 1.08;
+        letter-spacing: -0.03em;
+      }
+
+      .detail {
+        margin-top: 24px;
+        font-size: 27px;
+        line-height: 1.3;
+        letter-spacing: -0.01em;
+        color: var(--muted-foreground);
+      }
+
+      .address {
+        margin-top: auto;
+        font-size: 24px;
+        color: var(--quiet);
+      }
+
+      .picture {
+        position: absolute;
+        top: var(--margin);
+        left: 600px;
+        right: calc(var(--margin) * -1);
+        bottom: calc(var(--margin) * -1);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        background: #1e1e1e;
+      }
+
+      .picture img {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: var(--shot-width);
+        transform: translate(var(--shot-left), var(--shot-top));
+      }
+    </style>
+  </head>
+  <body>
+    <div class="words">
+      <p class="name">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z" /><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5" /></svg>
+        BB Box
+      </p>
+      <p class="promise">Computers for BB threads.</p>
+      <p class="detail">Linux, Windows, macOS, iOS and Android, for you and your agent.</p>
+      <p class="address">bbbox.dev</p>
+    </div>
+    <div class="picture">
+      <img src="../../docs/media/box-panel.png" alt="" />
+    </div>
+    <script>
+      const size = new URLSearchParams(location.search);
+      const style = document.documentElement.style;
+      style.setProperty("--width", `${size.get("width") ?? 1200}px`);
+      style.setProperty("--height", `${size.get("height") ?? 630}px`);
+    </script>
+  </body>
+</html>

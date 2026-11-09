@@ -3,7 +3,8 @@ import { test } from "node:test";
 import { anchor } from "../scripts/reference.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { descriptions, fullTextPath, headingAnchors as anchorsInMarkdown, llmsFullTxt, llmsTxt, markdownCopies, markdownPath } from "../site/src/llms.ts";
+import { homePageHead, icons, shareImage, siteHead, type HeadTag } from "../site/src/head.ts";
+import { descriptions, entryData, fullTextPath, headingAnchors as anchorsInMarkdown, llmsFullTxt, llmsTxt, markdownCopies, markdownPath } from "../site/src/llms.ts";
 import { blankedCode, lightTwinOf, pagesByFile, readPages, repoRoot, repository, siteHref, withoutFrontmatter, type Page } from "../site/src/repo.ts";
 import { installCommand, setupPrompt } from "../site/src/setup-prompt.ts";
 import { sidebar } from "../site/src/sidebar.ts";
@@ -157,4 +158,64 @@ test("the home page's setup prompt installs BB Box as the quick start does, with
   assert.ok(prompt.includes(`its ${skill} skill`));
 
   for (const backend of ["Docker", "microsandbox"]) assert.ok(prompt.includes(backend), `the prompt names ${backend}, as the quick start's platforms do`);
+});
+
+const siteDescription = /description: "([^"]+)"/.exec(readFileSync(join(repoRoot, "site", "astro.config.ts"), "utf8"))![1]!;
+const publishedSite = /SITE_URL: (\S+)/.exec(readFileSync(join(repoRoot, ".github", "workflows", "docs.yml"), "utf8"))![1]!;
+const searchSnippetLength = 160;
+
+function pngSize(file: string): { width: number; height: number } {
+  const png = readFileSync(file);
+  assert.equal(png.toString("latin1", 1, 4), "PNG", `${file} is not a PNG`);
+  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+}
+
+const metaContent = (head: HeadTag[], key: string) => head.find((tag) => tag.tag === "meta" && (tag.attrs.property === key || tag.attrs.name === key))?.attrs.content;
+
+test("each page of the site has a search description of its own, not the site's tagline or its title", () => {
+  const data = entryData(pages);
+  assert.deepEqual(pages.filter((page) => !data.get(page.id)?.description).map((page) => page.id), [], "pages without a description");
+  assert.deepEqual(pages.filter((page) => data.get(page.id)!.description === siteDescription).map((page) => page.id), [], "pages with the site's tagline");
+  assert.deepEqual(pages.filter((page) => data.get(page.id)!.description === page.title).map((page) => page.id), [], "pages described by their title");
+  const tooLong = pages.filter((page) => !page.description && data.get(page.id)!.description!.length > searchSnippetLength);
+  assert.deepEqual(tooLong.map((page) => page.id), [], `descriptions longer than ${searchSnippetLength} characters`);
+  const described = pages.map((page) => data.get(page.id)!.description);
+  assert.deepEqual(pages.filter((_, i) => described.indexOf(described[i]) !== i).map((page) => page.id), [], "pages that share a description");
+  assert.equal(data.get("decisions/001-provider-agnostic-core")!.description, "BB Box decision record 001. Status now: Current.");
+  assert.equal(data.get("guide/boat")!.description, "boat.dev rents Linux virtual machines, which it calls sandboxes, by the second.");
+});
+
+test("every page shares the site's card as an absolute image with its size and alt text, and links its PNG icons", () => {
+  assert.match(readFileSync(join(repoRoot, "site", "astro.config.ts"), "utf8"), /^\s+head: siteHead\(\{ site, base \}\),$/m, "the site's config gives Starlight the share image and icons");
+  const head = siteHead({ site: publishedSite, base: "/" });
+  const card = pngSize(join(repoRoot, "site", "public", shareImage.path));
+  assert.deepEqual(card, { width: 1200, height: 630 });
+  assert.equal(metaContent(head, "og:image"), `${publishedSite}/og.png`);
+  assert.equal(metaContent(head, "twitter:image"), `${publishedSite}/og.png`);
+  assert.equal(metaContent(head, "og:image:width"), String(card.width));
+  assert.equal(metaContent(head, "og:image:height"), String(card.height));
+  assert.ok(metaContent(head, "og:image:alt")!.startsWith("BB Box: computers for BB threads."));
+
+  assert.equal(metaContent(siteHead({ site: "https://example.com", base: "/docs/" }), "og:image"), "https://example.com/docs/og.png");
+  assert.equal(metaContent(siteHead({ base: "/" }), "og:image"), undefined, "a share image needs an absolute address, so a build without a site has none");
+
+  const linked = head.filter((tag) => tag.tag === "link");
+  assert.deepEqual(
+    linked.map((tag) => [tag.attrs.rel, tag.attrs.href, tag.attrs.sizes]),
+    [
+      ["icon", `/${icons.png.path}`, "32x32"],
+      ["apple-touch-icon", `/${icons.appleTouch.path}`, "180x180"],
+    ],
+  );
+  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.png.path)), { width: 32, height: 32 });
+  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.appleTouch.path)), { width: 180, height: 180 });
+  assert.deepEqual(pngSize(join(repoRoot, "site", "og", "github-social.png")), { width: 1280, height: 640 });
+});
+
+test("the home page says it is a website, not an article, and robots.txt lets every crawler in and names the sitemap", () => {
+  assert.equal(metaContent(homePageHead, "og:type"), "website");
+  assert.match(readFileSync(join(repoRoot, "site", "src", "pages", "index.astro"), "utf8"), /^\s+head: homePageHead,$/m);
+  const robots = readFileSync(join(repoRoot, "site", "public", "robots.txt"), "utf8");
+  assert.match(robots, /^User-agent: \*\nAllow: \/$/m);
+  assert.match(robots, new RegExp(`^Sitemap: ${publishedSite}/sitemap-index\\.xml$`, "m"));
 });
