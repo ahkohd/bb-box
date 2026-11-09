@@ -69,7 +69,7 @@ function WorkspaceBody({ boxId, os }: { boxId: string; os: GuestOs }) {
   const [folderErrors, setFolderErrors] = useState<ReadonlyMap<string, string>>(new Map());
   const [indexError, setIndexError] = useState<string | null>(null);
   const [indexPartial, setIndexPartial] = useState(false);
-  const folderLoader = useRef<(path: string) => void>(() => {});
+  const folderLoader = useRef<(path: string, showsStaleListing?: boolean) => void>(() => {});
   const loadedFolders = useRef(new Set(memory?.loadedFolders));
   useEffect(() => () => { if (memory?.valid) memory.loadedFolders = loadedFolders.current; }, [memory]);
   const applyTree = useCallback((result: { paths: string[]; directories: string[]; truncated: boolean }) => {
@@ -106,7 +106,7 @@ function WorkspaceBody({ boxId, os }: { boxId: string; os: GuestOs }) {
         setDirectories((current) => [...result.directories, ...descendants(current)]);
         setTreeStatus("ready");
         setTruncated(result.truncated);
-        for (const folder of reloadFolders) folderLoader.current(folder);
+        for (const folder of reloadFolders) folderLoader.current(folder, true);
       } else applyTree(result);
       requestAnimationFrame(() => requestAnimationFrame(() => {
         if (generation !== requestRef.current) return;
@@ -138,7 +138,7 @@ function WorkspaceBody({ boxId, os }: { boxId: string; os: GuestOs }) {
     loadTree(visibilityChanged ? root : requestedRoot.current, visibilityChanged || restoring);
     return () => { requestRef.current++; };
   }, [loadTree]);
-  const loadFolder = useCallback((relative: string) => {
+  const loadFolder = useCallback((relative: string, showsStaleListing = false) => {
     if (root === null || loadedFolders.current.has(relative)) return;
     const path = absoluteFrom(os, root, relative);
     if (path === null) {
@@ -147,7 +147,7 @@ function WorkspaceBody({ boxId, os }: { boxId: string; os: GuestOs }) {
     }
     loadedFolders.current.add(relative);
     const generation = requestRef.current;
-    setLoadingFolders((current) => new Set([...current, relative]));
+    if (!showsStaleListing) setLoadingFolders((current) => new Set([...current, relative]));
     const read = async (refresh: boolean): Promise<void> => {
       const result = await rpc.call("files.tree", { box: boxId, path, hidden: includeHidden, refresh });
       if (generation !== requestRef.current) return;
