@@ -4,6 +4,7 @@ import darkVideo from "../../../../docs/media/demo.mp4?url";
 import lightPoster from "../../../../docs/media/demo-light-poster.jpg";
 import lightVideo from "../../../../docs/media/demo-light.mp4?url";
 import { demoDescription } from "../../home.ts";
+import { plainVideoKey } from "../../motion-memory.ts";
 
 interface Props {
   class?: string;
@@ -13,30 +14,363 @@ const { class: className } = Astro.props;
 const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`;
 ---
 
-<video class={className} style={reservedShape} controls muted loop playsinline width={darkPoster.width} height={darkPoster.height} data-dark-src={darkVideo} data-dark-poster={darkPoster.src} data-light-src={lightVideo} data-light-poster={lightPoster.src} aria-label={demoDescription}></video>
-<script is:inline>
-  (() => {
-    const video = document.currentScript.previousElementSibling;
-    const stillPlease = matchMedia("(prefers-reduced-motion: reduce)");
-    const playsByItself = () => !stillPlease.matches;
-    const show = () => {
-      const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
-      if (video.dataset.shown === theme) return;
-      const firstShowing = !video.dataset.shown;
-      const keepPlaying = firstShowing ? playsByItself() : !video.paused;
-      const playedTo = video.currentTime;
-      video.dataset.shown = theme;
-      video.poster = video.dataset[`${theme}Poster`];
-      video.src = playedTo ? `${video.dataset[`${theme}Src`]}#t=${playedTo.toFixed(2)}` : video.dataset[`${theme}Src`];
-      if (keepPlaying) video.play().catch(() => {});
-    };
-    show();
-    stillPlease.addEventListener("change", () => {
-      if (stillPlease.matches) video.pause();
-    });
-    new MutationObserver(show).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-  })();
-</script>
+<div class="stage" data-demo-stage>
+  <script is:inline define:vars={{ plainVideoKey }}>
+    (() => {
+      const stage = document.currentScript.parentElement;
+      let plain = false;
+      try {
+        plain = sessionStorage.getItem(plainVideoKey) === "yes";
+      } catch {}
+      const still = matchMedia("(prefers-reduced-motion: reduce)").matches || document.documentElement.dataset.motion === "paused";
+      if (plain || still || !window.WebGLRenderingContext) return;
+      stage.classList.add("awaiting");
+      setTimeout(() => stage.classList.remove("awaiting"), 3000);
+    })();
+  </script>
+  <video class={className} style={reservedShape} controls muted loop playsinline width={darkPoster.width} height={darkPoster.height} data-dark-src={darkVideo} data-dark-poster={darkPoster.src} data-light-src={lightVideo} data-light-poster={lightPoster.src} aria-label={demoDescription}></video>
+  <script is:inline>
+    (() => {
+      const video = document.currentScript.previousElementSibling;
+      const stillPlease = matchMedia("(prefers-reduced-motion: reduce)");
+      const playsByItself = () => !stillPlease.matches && document.documentElement.dataset.motion !== "paused";
+      const show = () => {
+        const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
+        if (video.dataset.shown === theme) return;
+        const firstShowing = !video.dataset.shown;
+        const keepPlaying = firstShowing ? playsByItself() : !video.paused;
+        const playedTo = video.currentTime;
+        video.dataset.shown = theme;
+        video.poster = video.dataset[`${theme}Poster`];
+        video.src = playedTo ? `${video.dataset[`${theme}Src`]}#t=${playedTo.toFixed(2)}` : video.dataset[`${theme}Src`];
+        if (keepPlaying) video.play().catch(() => {});
+      };
+      show();
+      stillPlease.addEventListener("change", () => {
+        if (stillPlease.matches) video.pause();
+      });
+      new MutationObserver(show).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    })();
+  </script>
+  <canvas class="demo-shader" aria-hidden="true" hidden></canvas>
+</div>
 <noscript>
   <video class={className} style={reservedShape} autoplay controls muted loop playsinline width={darkPoster.width} height={darkPoster.height} poster={darkPoster.src} src={darkVideo} aria-label={demoDescription}></video>
 </noscript>
+<div class="demo-controls" data-demo-controls hidden>
+  <button type="button" class="demo-button" data-demo-play><span class="demo-word">Pause</span></button>
+  <span class="demo-time" aria-hidden="true">0:00 / 1:08</span>
+  <span class="demo-run" aria-hidden="true"></span>
+  <button type="button" class="demo-button" data-demo-plain aria-pressed="false"><span class="demo-word">Plain video</span></button>
+</div>
+
+<script>
+  import { cssValue, deviceScale, drawnInSoftware, linkedProgram, noiseSource, quad, quadVertexSource, rgbOf, texture, uniformsOf, type Rgb } from "../../effects/gl.ts";
+  import { plainVideoKey } from "../../motion-memory.ts";
+  import { animateWhileSeen, onMotionChange, pausedByPerson, reducedMotion } from "../../motion.ts";
+
+  const powerOnSeconds = 1.7;
+  const edgeBandPx = 26;
+  const haloPx = 22;
+  const visibleShareToPowerOn = 0.4;
+
+  const shaderSource = `
+    precision mediump float;
+    uniform sampler2D video;
+    uniform vec2 size;
+    uniform float margin;
+    uniform float scale;
+    uniform float power;
+    uniform float seconds;
+    uniform vec3 glow;
+    uniform vec3 paper;
+    ${noiseSource}
+
+    vec3 picture(vec2 uv) {
+      return texture2D(video, vec2(uv.x, 1.0 - uv.y)).rgb;
+    }
+
+    void main() {
+      vec2 frag = gl_FragCoord.xy;
+      vec2 area = size - 2.0 * margin;
+      vec2 p = (frag - margin) / area;
+      vec2 c = p - 0.5;
+      bool inRect = p.x >= 0.0 && p.x <= 1.0 && p.y >= 0.0 && p.y <= 1.0;
+      float settled = smoothstep(0.82, 1.0, power);
+      float scan = 0.5 + 0.5 * sin(frag.y * 3.14159 / scale);
+
+      if (!inRect) {
+        vec2 nearest = clamp(p, 0.0, 1.0);
+        float away = distance(frag, nearest * area + margin) / scale;
+        vec3 edgeColour = (picture(nearest) + picture(clamp(nearest + vec2(0.02, 0.0), 0.0, 1.0)) + picture(clamp(nearest - vec2(0.02, 0.0), 0.0, 1.0))) / 3.0;
+        float strength = exp(-away / ${(haloPx / 2.6).toFixed(2)}) * (0.35 + 0.65 * power);
+        float speck = step(bayer4(frag / scale), strength * 0.9);
+        vec3 tint = mix(glow, edgeColour, 0.35);
+        float alpha = speck * strength * 0.85;
+        gl_FragColor = vec4(tint * alpha, alpha);
+        return;
+      }
+
+      float edgePx = min(min(p.x, 1.0 - p.x) * area.x, min(p.y, 1.0 - p.y) * area.y) / scale;
+      float band = 1.0 - smoothstep(0.0, ${edgeBandPx.toFixed(1)}, edgePx);
+
+      float line = smoothstep(0.0, 0.2, power);
+      float open = smoothstep(0.18, 0.64, power);
+      vec2 q = vec2(c.x / max(line, 0.0005), c.y / mix(0.004, 1.0, open));
+      bool lit = abs(q.x) <= 0.5 && abs(q.y) <= 0.5;
+
+      float bend = 1.0 + (0.05 * band * band) * settled + (1.0 - settled) * 0.06 * dot(q, q);
+      vec2 uv = 0.5 + q / bend;
+      vec2 fringe = normalize(c + 0.0001) * (0.0028 * band * settled + 0.02 * (1.0 - power));
+      vec3 colour = vec3(picture(uv + fringe).r, picture(uv).g, picture(uv - fringe).b);
+      colour = mix(colour, paper, (0.24 * band * settled + 0.4 * (1.0 - settled)) * scan);
+      colour = mix(colour, paper, 0.32 * band * band * settled);
+      colour = mix(colour, glow, 0.08 * band * settled);
+      colour = mix(colour, glow, (1.0 - open) * 0.75 * float(lit));
+      colour = lit ? colour : paper;
+
+      float alpha = mix(1.0, band, settled);
+      gl_FragColor = vec4(colour * alpha, alpha);
+    }
+  `;
+
+  interface Look {
+    glow: Rgb;
+    paper: Rgb;
+  }
+
+  const lookOf = (element: Element): Look => ({ glow: rgbOf(cssValue(element, "--field-hot")), paper: rgbOf(cssValue(element, "--background")) });
+
+  const clock = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+
+  function rememberedPlain(): boolean {
+    try {
+      return sessionStorage.getItem(plainVideoKey) === "yes";
+    } catch {
+      return false;
+    }
+  }
+
+  function rememberPlain(plain: boolean): void {
+    try {
+      if (plain) sessionStorage.setItem(plainVideoKey, "yes");
+      else sessionStorage.removeItem(plainVideoKey);
+    } catch {}
+  }
+
+  function startDemo(stage: HTMLElement, controls: HTMLElement): void {
+    const video = stage.querySelector("video")!;
+    const canvas = stage.querySelector<HTMLCanvasElement>("canvas.demo-shader")!;
+    const playButton = controls.querySelector<HTMLButtonElement>("[data-demo-play]")!;
+    const plainButton = controls.querySelector<HTMLButtonElement>("[data-demo-plain]")!;
+    const time = controls.querySelector(".demo-time")!;
+    let plainChosen = rememberedPlain();
+    let shaderReady = false;
+    let powerStartedAt: number | undefined;
+    let visibleShare = 0;
+    let pausedForMotion = false;
+    let lastDrawnTime = -1;
+
+    controls.hidden = false;
+    video.controls = false;
+
+    const showTime = () => {
+      time.textContent = `${clock(video.currentTime)} / ${clock(video.duration || 68)}`;
+      playButton.querySelector(".demo-word")!.textContent = video.paused ? "Play" : "Pause";
+    };
+    ["play", "pause", "timeupdate", "loadedmetadata"].forEach((name) => video.addEventListener(name, showTime));
+    playButton.addEventListener("click", () => (video.paused ? video.play().catch(() => {}) : video.pause()));
+
+    const shaderWanted = () => shaderReady && !plainChosen && !reducedMotion() && !pausedByPerson();
+    const showMode = () => {
+      const shader = shaderWanted();
+      if (!shader) stage.classList.remove("awaiting");
+      canvas.hidden = !shader;
+      stage.classList.toggle("shaded", shader);
+      video.controls = !shader;
+      plainButton.setAttribute("aria-pressed", String(plainChosen));
+      plainButton.hidden = !shaderReady || reducedMotion();
+      plainButton.querySelector(".demo-word")!.textContent = "Plain video";
+      lastDrawnTime = -1;
+    };
+    plainButton.addEventListener("click", () => {
+      plainChosen = !plainChosen;
+      rememberPlain(plainChosen);
+      showMode();
+    });
+
+    onMotionChange(() => {
+      if (pausedByPerson() && !video.paused) {
+        pausedForMotion = true;
+        video.pause();
+      } else if (!pausedByPerson() && pausedForMotion) {
+        pausedForMotion = false;
+        video.play().catch(() => {});
+      }
+      showMode();
+    });
+
+    const gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: true });
+    const program = gl ? linkedProgram(gl, quadVertexSource, shaderSource) : undefined;
+    const corners = gl && program ? quad(gl) : null;
+    const frameTexture = gl && corners ? texture(gl, gl.LINEAR) : null;
+    if (!gl || !program || !corners || !frameTexture || drawnInSoftware(gl)) {
+      if (gl && program) gl.deleteProgram(program);
+      showMode();
+      showTime();
+      return;
+    }
+    const uniforms = uniformsOf(gl, program, ["video", "size", "margin", "scale", "power", "seconds", "glow", "paper"] as const);
+    let look = lookOf(stage);
+    canvas.addEventListener("webglcontextlost", () => {
+      shaderReady = false;
+      showMode();
+    });
+
+    new IntersectionObserver(
+      (entries) => {
+        visibleShare = entries[0]?.intersectionRatio ?? 0;
+      },
+      { threshold: [0, 0.2, 0.4, 0.6, 0.8, 1] },
+    ).observe(stage);
+
+    const resize = () => {
+      const scale = deviceScale();
+      const box = video.getBoundingClientRect();
+      canvas.width = Math.max(1, Math.round((box.width + haloPx * 2) * scale));
+      canvas.height = Math.max(1, Math.round((box.height + haloPx * 2) * scale));
+      lastDrawnTime = -1;
+    };
+
+    const powerAt = (seconds: number) => {
+      if (powerStartedAt === undefined) {
+        if (visibleShare < visibleShareToPowerOn || video.readyState < 2) return 0;
+        powerStartedAt = seconds;
+      }
+      return Math.min(1, (seconds - powerStartedAt) / powerOnSeconds);
+    };
+
+    const draw = (seconds: number) => {
+      if (canvas.hidden || gl.isContextLost() || video.readyState < 2) return;
+      const power = powerAt(seconds);
+      const settled = power >= 1;
+      if (settled && video.currentTime === lastDrawnTime) return;
+      lastDrawnTime = settled ? video.currentTime : -1;
+      const scale = deviceScale();
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(program);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, frameTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
+      gl.uniform1i(uniforms.video, 0);
+      gl.uniform2f(uniforms.size, canvas.width, canvas.height);
+      gl.uniform1f(uniforms.margin, haloPx * scale);
+      gl.uniform1f(uniforms.scale, scale);
+      gl.uniform1f(uniforms.power, power);
+      gl.uniform1f(uniforms.seconds, seconds);
+      gl.uniform3fv(uniforms.glow, look.glow);
+      gl.uniform3fv(uniforms.paper, look.paper);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      stage.classList.remove("awaiting");
+    };
+
+    const restyle = () => {
+      look = lookOf(stage);
+      lastDrawnTime = -1;
+    };
+
+    shaderReady = true;
+    showMode();
+    showTime();
+    resize();
+    animateWhileSeen(stage, { draw, resize, restyle }, 30);
+  }
+
+  for (const stage of document.querySelectorAll<HTMLElement>("[data-demo-stage]")) {
+    const controls = stage.parentElement?.querySelector<HTMLElement>("[data-demo-controls]");
+    if (controls) startDemo(stage, controls);
+  }
+</script>
+
+<style>
+  .stage {
+    position: relative;
+  }
+
+  .stage video {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .stage.awaiting video {
+    opacity: 0;
+  }
+
+  .demo-shader {
+    position: absolute;
+    inset: -22px;
+    width: calc(100% + 44px);
+    height: calc(100% + 44px);
+    pointer-events: none;
+  }
+
+  .demo-shader[hidden] {
+    display: none;
+  }
+
+  .demo-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 0.75rem;
+    font-family: var(--sl-font-mono);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--muted-foreground);
+  }
+
+  .demo-controls[hidden],
+  .demo-button[hidden] {
+    display: none;
+  }
+
+  .demo-run {
+    flex: 1;
+    height: 1px;
+    background-color: var(--frame-ink);
+  }
+
+  .demo-button {
+    padding: 0.25rem 0;
+    border: 0;
+    background: transparent;
+    font: inherit;
+    color: var(--foreground);
+    cursor: pointer;
+  }
+
+  .demo-button:hover {
+    color: var(--accent);
+  }
+
+  .demo-button[aria-pressed="true"] {
+    color: var(--accent);
+  }
+
+  .demo-word::before {
+    content: "[ " / "";
+    color: var(--accent);
+  }
+
+  .demo-word::after {
+    content: " ]" / "";
+    color: var(--accent);
+  }
+
+  .demo-time {
+    font-variant-numeric: tabular-nums;
+  }
+</style>
