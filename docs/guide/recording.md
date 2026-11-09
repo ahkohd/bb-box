@@ -31,7 +31,7 @@ On macOS and Windows, the computer-use driver draws its own pointer on the scree
 
 The clip zooms in gently, up to 2x, where the agent or you click, drag or scroll, and where the agent types into a field it named. It does not ease in on a window that has not painted. A window that changes size within a second of appearing is still opening. It holds the previous framing while that window is blank or still changing, then eases in on the first frame that has settled, and stays for 1.5 seconds once it is in. A zoom that could only land after its window has closed, or after something else has opened, is left out. When the agent clicks in a field and types into it within 2 seconds, the clip zooms on that field even when the window is a plain white page. A typing zoom frames the region the typing changed. When that region is the whole field and the field is too large to zoom, it frames a line at the caret instead, so the camera still eases in, and a long line stays inside the frame. It zooms out as far as it needs to, down to no zoom, so that region is never cut off. A call that never says it has finished is framed at the moment it started. A drag that starts in a named window frames that window where the drag ends. The clip holds still while you read, and zooms back out between bursts of work. When the next burst is in the same part of the screen and comes within 3 seconds, not counting cut idle time, the camera stays in and pans to it instead of easing out and back in.
 
-When something opens elsewhere on the screen, such as a dialog, the clip zooms out as it opens, even if more clicks follow, and stays out for at least 1.5 seconds so the change is seen. A click that closes its own window zooms out too, and so does a zoomed window that closes while the agent moves on to another, however small. The clicks after it get a zoom of their own. What an action changes in its own window, such as the text typed or a window being dragged, keeps the zoom.
+When something opens elsewhere on the screen, such as a dialog, the clip zooms out as it opens, even if more clicks follow, and stays out for at least 1.5 seconds so the change is seen. A click that closes its own window zooms out too. The clicks after it get a zoom of their own. What an action changes in its own window, such as the text typed or a window being dragged, keeps the zoom.
 
 It never zooms in on typing it treats as secret: a password field, your own typing, or typing whose field BB Box cannot tell.
 
@@ -54,7 +54,7 @@ The step caption and its result stay until the next step starts. Each caption an
 
 The agent can put the captions at the bottom of the video instead, above the Dock or taskbar, with the step above its result. It does this when what it tests is near the top of the screen, such as a menu bar or a window's title. The marks then go to a top corner.
 
-Each step's captions also move to the other side by themselves when they would cover more of what changes during that step, such as a dialog's name field at the top, than the other side would. Key pills and marks move with them.
+Each step's captions also move to the other side by themselves when they would cover more of what changes during that step, such as a dialog's name field at the top or the title bar of a window being dragged, than the other side would. Key pills and marks move with them.
 
 The page under the clip lists the steps, each with its result and its real time in the recording. Select a step to play the clip from there.
 

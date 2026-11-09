@@ -1,5 +1,5 @@
 import type { PlacedKeys } from "./record-keys.ts";
-import { typingFocus, type ChangedRegion, type PointerPlan, type Scene, type Span } from "./record-motion.ts";
+import { draggedWindows, titleBandOf, typingFocus, type ChangedRegion, type PointerPlan, type Scene, type Span } from "./record-motion.ts";
 
 export const IDLE_LEAST_S = 1;
 export const IDLE_KEPT_S = 0.5;
@@ -65,7 +65,15 @@ export function notableRegions(scene: Scene, pointer: PointerPlan): ChangedRegio
     const focus = typing.secret || !typing.characters ? null : typingFocus(scene, typing, pointer);
     return focus && notable(focus) ? [{ at: typing.at, ...focus }] : [];
   });
-  return [...changed, ...clicked, ...typed].sort((a, b) => a.at - b.at);
+  const mark = (at: number, point: { readonly x: number; readonly y: number }): ChangedRegion => ({ at, x: point.x - CLICK_MARK_PX / 2, y: point.y - CLICK_MARK_PX / 2, width: CLICK_MARK_PX, height: CLICK_MARK_PX });
+  const dragged = draggedWindows(scene, pointer).flatMap((drag): ChangedRegion[] => {
+    const points = [mark(drag.from, drag.start), mark(drag.to, drag.end)];
+    if (!drag.window) return points;
+    const band = titleBandOf(drag.window);
+    const moved = { ...band, x: band.x + drag.end.x - drag.start.x, y: band.y + drag.end.y - drag.start.y };
+    return [...points, { at: drag.from, ...band }, { at: drag.to, ...moved }];
+  });
+  return [...changed, ...clicked, ...typed, ...dragged].sort((a, b) => a.at - b.at);
 }
 
 export function clipEnds(scene: Scene, keys: readonly PlacedKeys[], pointer: PointerPlan, moments: readonly number[], results: readonly number[]): ClipEnds {

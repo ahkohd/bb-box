@@ -516,21 +516,39 @@ export function pillRegion(scene: Scene, pointer: PointerPlan, from: number, to:
   return areas.length ? unionOf(areas) : null;
 }
 
-export function focusesOf(scene: Scene, pointer: PointerPlan): Focus[] {
-  const small = (area: InputArea | null): area is InputArea => !!area && areaOf(area) <= (scene.width * scene.height) / 9;
-  const drags = pointer.drags.flatMap((drag) => {
-    const at = (t: number) => pointer.frames[Math.min(pointer.frames.length - 1, Math.max(0, Math.round(t * CLIP_FPS)))];
+export interface DraggedWindow {
+  readonly from: number;
+  readonly to: number;
+  readonly start: PointerFrame;
+  readonly end: PointerFrame;
+  readonly window: InputArea | null;
+}
+
+export function draggedWindows(scene: Scene, pointer: PointerPlan): DraggedWindow[] {
+  const at = (t: number) => pointer.frames[Math.min(pointer.frames.length - 1, Math.max(0, Math.round(t * CLIP_FPS)))];
+  return pointer.drags.flatMap((drag): DraggedWindow[] => {
     const start = at(drag.from);
     const end = at(drag.to);
     if (!start || !end) return [];
     const click = scene.clicks
       .filter((each) => each.window && Math.abs(each.at - drag.from) <= DRAG_CLICK_S && coversPoint(each.window, start.x, start.y, TITLE_PX))
       .sort((a, b) => Math.abs(a.at - drag.from) - Math.abs(b.at - drag.from))[0];
-    if (click?.window) {
-      const moved = { x: click.window.x + end.x - start.x, y: click.window.y + end.y - start.y, width: click.window.width, height: click.window.height };
+    return [{ from: drag.from, to: drag.to, start, end, window: click?.window ?? null }];
+  });
+}
+
+export function titleBandOf(window: InputArea): InputArea {
+  return { x: window.x, y: window.y - TITLE_PX, width: window.width, height: TITLE_PX * 2 };
+}
+
+export function focusesOf(scene: Scene, pointer: PointerPlan): Focus[] {
+  const small = (area: InputArea | null): area is InputArea => !!area && areaOf(area) <= (scene.width * scene.height) / 9;
+  const drags = draggedWindows(scene, pointer).flatMap((drag): Focus[] => {
+    if (drag.window) {
+      const moved = { x: drag.window.x + drag.end.x - drag.start.x, y: drag.window.y + drag.end.y - drag.start.y, width: drag.window.width, height: drag.window.height };
       return [{ at: drag.to, area: moved, contain: true }];
     }
-    return [{ at: drag.from, area: pointArea(start.x, start.y), contain: false }, { at: drag.to, area: pointArea(end.x, end.y), contain: false }];
+    return [{ at: drag.from, area: pointArea(drag.start.x, drag.start.y), contain: false }, { at: drag.to, area: pointArea(drag.end.x, drag.end.y), contain: false }];
   });
   const focuses: Focus[] = [
     ...pointer.rings.map((ring): Focus => {

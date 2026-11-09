@@ -657,6 +657,32 @@ test("a framed clip insets the screen on a background that matches its brightnes
   assert.equal(planClip({ ...prepared, scene: { ...prepared.scene!, luma: 30 } }, 1).scene!.frame!.background, "161618");
 });
 
+test("a step that drags a window by its title keeps its captions off that title bar and the pointer's path (081)", () => {
+  const note = { x: 300, y: 60, width: 600, height: 300 };
+  const field = { x: 310, y: 200, width: 580, height: 150 };
+  const path = Array.from({ length: 7 }, (_, index) => ({ at: 1003.6 + index * 0.1, x: 600 + index * 17, y: 42 + index * 8, buttons: 1 }));
+  const prepared: Prepared = {
+    ended: "stopped",
+    recorded: 8,
+    width: 1920,
+    height: 1080,
+    start: 1000,
+    position: "top",
+    cuts: [],
+    events: [
+      { at: 1002.9, kind: "step", text: "Drag the window" },
+      { at: 1004.5, kind: "pass", text: "The window moved" },
+    ],
+    scene: facts({
+      samples: [{ at: 1000, x: 900, y: 700, buttons: 0 }, { at: 1003.5, x: 600, y: 42, buttons: 0 }, ...path, { at: 1004.25, x: 702, y: 90, buttons: 0 }],
+      inputs: [{ at: 1003, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 600, y: 275, area: field, role: "text", window: note }],
+    }),
+  };
+  const plan = planClip(prepared, 1, { zoom: false, frame: true });
+  const step = plan.overlays.find((overlay) => overlay.text === "Drag the window")!;
+  assert.ok(step.y > plan.height / 2, `the title is dragged near the top, so the captions go to the bottom: ${step.y}`);
+});
+
 test("each step's captions go to the top or the bottom, whichever covers less of what changes during it, and the key pills keep clear of them (081)", () => {
   const name = { x: 700, y: 40, width: 500, height: 36 };
   const button = { x: 860, y: 980, width: 80, height: 40 };
