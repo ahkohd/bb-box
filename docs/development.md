@@ -249,13 +249,15 @@ static host can serve it. Three settings, read when it builds, say where:
 
 Two hosts suit it:
 
-- **GitHub Pages**: a workflow that runs `npm ci` and `npm run build` in
-  `site/`, with `SITE_URL` set to the Pages address and `SITE_BASE` to
-  `/bb-box/` for a project site, uploads `site/dist` with
+- **GitHub Pages**, as https://bbbox.dev is published:
+  `.github/workflows/docs.yml` runs `npm ci` and `npm run build` in
+  `site/` on each push to `main`, with `SITE_URL` set to the site's address
+  and `SITE_BASE` to `/`, checks its links, uploads `site/dist` with
   `actions/upload-pages-artifact`, and publishes it with
   `actions/deploy-pages`. In the repository's settings, under Pages, the
-  source is then GitHub Actions. Pages for a private repository needs a
-  paid GitHub plan.
+  source is GitHub Actions and the custom domain is the site's address. A
+  fork that publishes its own copy changes the workflow's repository check
+  and these two values.
 - **Cloudflare Pages**: connect the repository, with `site` as the root
   directory, `npm run build` as the build command and `dist` as the output
   directory. Set `NODE_VERSION` to 22.18 or later, and `SITE_URL` to the

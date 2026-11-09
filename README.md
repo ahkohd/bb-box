@@ -4,6 +4,8 @@
 
 Computers for [BB](https://getbb.app) threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.
 
+Documentation: [bbbox.dev](https://bbbox.dev).
+
 ## Why BB Box
 
 - **Each thread gets its own computers.** Boxes have the thread's Git access, its variables and BB itself.
