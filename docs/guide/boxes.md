@@ -52,8 +52,9 @@ In the Box panel, select a row to see its details. They give the box's address, 
 
 ### What you can do with a box
 
-The buttons on a row open the box's desktop or terminal, and stop or start the box where its backend can. The menu at the end of the row has these and more:
+The buttons on a row open the box's desktop, terminal or files. A stopped box also has Start, where its backend can start it. The menu at the end of the row has these and more:
 
+- Stop: turns the box off and keeps its disk, where its backend can stop it
 - Open in browser: shows the desktop on a page of its own
 - Details: opens [the box's page](#a-boxs-page), in the Box panel only
 - Copy address: copies the box's network address
@@ -68,7 +69,7 @@ The buttons on a row open the box's desktop or terminal, and stop or start the b
 
 Releasing a box deletes it and everything on its disk, so copy out anything you want to keep first. On a physical machine, releasing resets the machine and returns it to its pool. Everything in the box user's home is deleted.
 
-Release asks you first. If the box's own thread is working, or another thread is working on the box's BB machine, it asks again, for example 'Release calm-otter anyway?', and names the threads: 'Fix the sign-in flow is working on calm-otter.' Stop asks the same way, from a row, a menu, a box's page and a notice's **Stop again**, and so does a resize that needs a restart. If BB cannot say whether the box's thread is working, they ask too, and say so. A box whose threads are all idle stops at once. One of your machines asks only when a thread is working on it.
+Release asks you first. If the box's own thread is working, or another thread is working on the box's BB machine, it asks again, for example 'Release calm-otter anyway?', and names the threads: 'Fix the sign-in flow is working on calm-otter.' Stop asks the same way, from a row's menu, a box's page and a notice's **Stop again**, and so does a resize that needs a restart. If BB cannot say whether the box's thread is working, they ask too, and say so. A box whose threads are all idle stops at once. One of your machines asks only when a thread is working on it.
 
 ### The machine a thread runs on
 
@@ -124,7 +125,7 @@ On Threads, each thread's card comes where its first box falls in that order.
 
 A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. New thread… is only in the Box panel.
 
-Select a row, its name or the arrow at its end to open [the box's page](#a-boxs-page). Hold Command or Ctrl as you select its name or arrow to open the page in a new tab. With the keyboard, Tab reaches each row's name, then its buttons; Enter on a name opens the page.
+Select a row or its name to open [the box's page](#a-boxs-page). Hold Command or Ctrl as you select its name to open the page in a new tab. With the keyboard, Tab reaches each row's name, then its buttons; Enter on a name opens the page.
 
 A desktop or terminal you open from a row shows on the page, with a back arrow to the list. A row whose release did not finish says 'Release did not finish', and its menu has **Release again…**.
 
@@ -160,7 +161,7 @@ The line may take 2 lines on a narrow screen. What needs your attention stays; h
 
 Every box, and every machine of yours, has a page of its own on the Boxes page, at `/plugins/bb-box/desktop/box/` and the box's ID. Its address works in a new browser tab, after a reload and as a link you send. To open it:
 
-- on the Boxes page, select a box's row, its name or the arrow at its end
+- on the Boxes page, select a box's row or its name
 - in the Box panel, select **Details** in a box's menu
 - in the Monitor's machine status, select **Open** beside a box's name, then **Open details**
 - in a desktop, device or terminal on the Boxes page, select the box's name in its bar
