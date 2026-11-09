@@ -8,7 +8,6 @@ import { descriptions, entryData, fullTextPath, headingAnchors as anchorsInMarkd
 import { blankedCode, lightTwinOf, pagesByFile, readPages, repoRoot, repository, siteHref, withoutFrontmatter, type Page } from "../site/src/repo.ts";
 import { cipherFrame, letterGlyphsFor, revealTimes } from "../site/src/effects/cipher-text.ts";
 import { glyphRule } from "../site/src/effects/glyph-rule.ts";
-import { plainVideoKey, plainVideoRemembered, rememberPlainVideo, type VisitStorage } from "../site/src/motion-memory.ts";
 import { installCommand, setupPrompt } from "../site/src/setup-prompt.ts";
 import { sidebar } from "../site/src/sidebar.ts";
 import { repositoryFiles } from "./repository-files.ts";
@@ -43,8 +42,9 @@ test("a page made from one section of a file starts its headings at level 2, as 
   assert.equal(Math.min(...levels), 2);
 });
 
-test("the home page's demo can always be paused: each of its videos has controls, with JavaScript and without", () => {
+test("the home page's demo is the plain video: each of its videos has controls, with JavaScript and without, and nothing draws over it", () => {
   const demo = readFileSync(join(repoRoot, "site", "src", "components", "home", "DemoVideo.astro"), "utf8");
+  assert.doesNotMatch(demo, /<canvas\b|getContext\(|webgl/i, "no canvas or WebGL over the demo");
   const videos = [...demo.matchAll(/<video\b[^>]*>/g)].map((match) => match[0]);
   assert.equal(videos.length, 2);
   assert.deepEqual(videos.filter((video) => !/\scontrols\s/.test(video)), []);
@@ -74,31 +74,6 @@ test("a section rule is a line of the ramp's characters, the same for a seed eve
   assert.notEqual(glyphRule(3.9, 220), rule);
   assert.match(rule, /[ .·:]{6}/, "a quiet stretch");
   assert.match(rule, /[+*=]{4}/, "a dense stretch");
-});
-
-test("the plain video choice is remembered for the visit, forgotten when undone, and read as not chosen where storage fails", () => {
-  const kept = new Map<string, string>();
-  const storage: VisitStorage = { getItem: (key) => kept.get(key) ?? null, setItem: (key, value) => void kept.set(key, value), removeItem: (key) => void kept.delete(key) };
-  assert.equal(plainVideoRemembered(storage), false);
-  rememberPlainVideo(storage, true);
-  assert.equal(kept.get(plainVideoKey), "yes");
-  assert.equal(plainVideoRemembered(storage), true);
-  rememberPlainVideo(storage, false);
-  assert.equal(plainVideoRemembered(storage), false);
-  const failing: VisitStorage = {
-    getItem: () => {
-      throw new Error("storage is off");
-    },
-    setItem: () => {
-      throw new Error("storage is off");
-    },
-    removeItem: () => {
-      throw new Error("storage is off");
-    },
-  };
-  assert.doesNotThrow(() => rememberPlainVideo(failing, true));
-  assert.equal(plainVideoRemembered(failing), false);
-  assert.equal(plainVideoRemembered(undefined), false);
 });
 
 test("every page of the site is in its sidebar once a section lists it", () => {

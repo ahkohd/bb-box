@@ -39,7 +39,6 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
       new MutationObserver(show).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     })();
   </script>
-  <canvas class="demo-shader" aria-hidden="true" hidden></canvas>
 </div>
 <noscript>
   <video class={className} style={reservedShape} autoplay controls muted loop playsinline width={darkPoster.width} height={darkPoster.height} poster={darkPoster.src} src={darkVideo} aria-label={demoDescription}></video>
@@ -48,101 +47,19 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
   <button type="button" class="demo-button" data-demo-play aria-label="Pause demo"><span class="demo-word">Pause</span></button>
   <span class="demo-time" aria-hidden="true">{clockOf(0)} / {clockOf(demoSeconds)}</span>
   <span class="demo-run" aria-hidden="true"></span>
-  <button type="button" class="demo-button" data-demo-plain aria-pressed="false"><span class="demo-word">Plain video</span></button>
 </div>
 
 <script>
   import { clockOf, demoSeconds } from "../../demo.ts";
-  import { cssNumber, cssValue, deviceScale, drawnInSoftware, linkedProgram, noiseSource, quad, quadVertexSource, releaseGl, rgbOf, texture, uniformsOf, type Rgb } from "../../effects/gl.ts";
-  import { plainVideoRemembered, rememberPlainVideo, type VisitStorage } from "../../motion-memory.ts";
-  import { animateWhileSeen, onMotionChange, pausedByPerson, reducedMotion } from "../../motion.ts";
-
-  const powerOnSeconds = 0.9;
-  const edgeBandPx = 26;
-
-  const shaderSource = `
-    precision mediump float;
-    uniform sampler2D video;
-    uniform vec2 size;
-    uniform float margin;
-    uniform float scale;
-    uniform float power;
-    uniform float haloStrength;
-    uniform vec3 glow;
-    uniform vec3 paper;
-    ${noiseSource}
-
-    vec3 picture(vec2 uv) {
-      return texture2D(video, vec2(uv.x, 1.0 - uv.y)).rgb;
-    }
-
-    void main() {
-      vec2 frag = gl_FragCoord.xy;
-      vec2 area = size - 2.0 * margin;
-      vec2 p = (frag - margin) / area;
-      float warming = 1.0 - power;
-      float scan = 0.5 + 0.5 * sin(frag.y * 3.14159 / scale);
-      float sweep = exp(-pow((p.y - power) * 9.0, 2.0)) * warming;
-
-      if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) {
-        vec2 nearest = clamp(p, 0.0, 1.0);
-        float away = distance(frag, nearest * area + margin) / scale;
-        vec3 edgeColour = (picture(nearest) + picture(clamp(nearest + vec2(0.02, 0.0), 0.0, 1.0)) + picture(clamp(nearest - vec2(0.02, 0.0), 0.0, 1.0))) / 3.0;
-        float reach = margin / scale / 2.6;
-        float strength = haloStrength * exp(-away / reach) * (0.3 + 0.7 * power + 0.8 * sweep);
-        float speck = step(bayer4(frag / scale), strength * 0.9);
-        vec3 tint = mix(glow, edgeColour, 0.35);
-        float alpha = speck * min(1.0, strength) * 0.85;
-        gl_FragColor = vec4(tint * alpha, alpha);
-        return;
-      }
-
-      float edgePx = min(min(p.x, 1.0 - p.x) * area.x, min(p.y, 1.0 - p.y) * area.y) / scale;
-      float band = 1.0 - smoothstep(0.0, ${edgeBandPx.toFixed(1)}, edgePx);
-      vec3 colour = picture(p);
-      colour = mix(colour, paper, (0.24 + 0.3 * warming) * scan);
-      colour = mix(colour, paper, 0.32 * band);
-      colour = mix(colour, glow, 0.08 + 0.7 * warming * warming + 0.6 * sweep);
-      gl_FragColor = vec4(colour * band, band);
-    }
-  `;
-
-  interface Look {
-    glow: Rgb;
-    paper: Rgb;
-    halo: number;
-    haloStrength: number;
-  }
-
-  const lookOf = (element: Element): Look => ({
-    glow: rgbOf(cssValue(element, "--field-hot")),
-    paper: rgbOf(cssValue(element, "--background")),
-    halo: cssNumber(element, "--halo", 22),
-    haloStrength: cssNumber(element, "--halo-strength", 1),
-  });
-
-  function visitStorage(): VisitStorage | undefined {
-    try {
-      return sessionStorage;
-    } catch {
-      return undefined;
-    }
-  }
+  import { onMotionChange, pausedByPerson, reducedMotion } from "../../motion.ts";
 
   function startDemo(stage: HTMLElement, controls: HTMLElement): void {
     const video = stage.querySelector("video")!;
-    const canvas = stage.querySelector<HTMLCanvasElement>("canvas.demo-shader")!;
     const playButton = controls.querySelector<HTMLButtonElement>("[data-demo-play]")!;
-    const plainButton = controls.querySelector<HTMLButtonElement>("[data-demo-plain]")!;
     const time = controls.querySelector(".demo-time")!;
-    let plainChosen = plainVideoRemembered(visitStorage());
-    let shaderReady = false;
-    let powerStartedAt: number | undefined;
     let onScreen = false;
     let pausedForMotion = false;
     let pausedOffScreen = false;
-    let lastDrawnTime = -1;
-    let look = lookOf(stage);
 
     controls.hidden = false;
     video.controls = false;
@@ -155,21 +72,6 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
     };
     ["play", "pause", "timeupdate", "loadedmetadata"].forEach((name) => video.addEventListener(name, showTime));
     playButton.addEventListener("click", () => (video.paused ? video.play().catch(() => {}) : video.pause()));
-
-    const shaderWanted = () => shaderReady && !plainChosen && !reducedMotion() && !pausedByPerson();
-    const showMode = () => {
-      const shader = shaderWanted();
-      canvas.hidden = !shader;
-      video.controls = !shader;
-      plainButton.setAttribute("aria-pressed", String(plainChosen));
-      plainButton.hidden = !shaderReady || reducedMotion();
-      lastDrawnTime = -1;
-    };
-    plainButton.addEventListener("click", () => {
-      plainChosen = !plainChosen;
-      rememberPlainVideo(visitStorage(), plainChosen);
-      showMode();
-    });
 
     const resumeIfWanted = () => {
       if (pausedByPerson() || reducedMotion()) return;
@@ -196,76 +98,9 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
         if (onScreen) resumeIfWanted();
         else pausedOffScreen = true;
       }
-      showMode();
     });
 
-    const gl = canvas.getContext("webgl", { antialias: false, premultipliedAlpha: true });
-    const program = gl ? linkedProgram(gl, quadVertexSource, shaderSource) : undefined;
-    const corners = gl && program ? quad(gl) : null;
-    const frameTexture = gl && corners ? texture(gl, gl.LINEAR) : null;
-    const made = { programs: [program], buffers: [corners], textures: [frameTexture] };
-    const giveUp = () => {
-      shaderReady = false;
-      releaseGl(gl, made);
-      showMode();
-    };
     showTime();
-    if (!gl || !program || !corners || !frameTexture || drawnInSoftware(gl)) {
-      giveUp();
-      return;
-    }
-    const uniforms = uniformsOf(gl, program, ["video", "size", "margin", "scale", "power", "haloStrength", "glow", "paper"] as const);
-    canvas.addEventListener("webglcontextlost", () => {
-      if (shaderReady) giveUp();
-    });
-
-    const resize = () => {
-      look = lookOf(stage);
-      const scale = deviceScale();
-      const box = video.getBoundingClientRect();
-      canvas.width = Math.max(1, Math.round((box.width + look.halo * 2) * scale));
-      canvas.height = Math.max(1, Math.round((box.height + look.halo * 2) * scale));
-      lastDrawnTime = -1;
-    };
-
-    const powerAt = (seconds: number) => {
-      if (powerStartedAt === undefined) {
-        if (!onScreen || video.readyState < 2) return 0;
-        powerStartedAt = seconds;
-      }
-      return Math.min(1, (seconds - powerStartedAt) / powerOnSeconds);
-    };
-
-    const draw = (seconds: number) => {
-      if (!shaderReady || canvas.hidden || gl.isContextLost() || video.readyState < 2) return;
-      const power = powerAt(seconds);
-      if (power >= 1 && video.currentTime === lastDrawnTime) return;
-      lastDrawnTime = power >= 1 ? video.currentTime : -1;
-      const scale = deviceScale();
-      gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      gl.useProgram(program);
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, frameTexture);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
-      gl.uniform1i(uniforms.video, 0);
-      gl.uniform2f(uniforms.size, canvas.width, canvas.height);
-      gl.uniform1f(uniforms.margin, look.halo * scale);
-      gl.uniform1f(uniforms.scale, scale);
-      gl.uniform1f(uniforms.power, power);
-      gl.uniform1f(uniforms.haloStrength, look.haloStrength);
-      gl.uniform3fv(uniforms.glow, look.glow);
-      gl.uniform3fv(uniforms.paper, look.paper);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    };
-
-    const restyle = resize;
-
-    shaderReady = true;
-    showMode();
-    resize();
-    animateWhileSeen(stage, { draw, resize, restyle }, 30);
   }
 
   for (const stage of document.querySelectorAll<HTMLElement>("[data-demo-stage]")) {
@@ -273,11 +108,8 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
     if (controls) startDemo(stage, controls);
   }
 </script>
-
 <style>
   .stage {
-    --halo: 22px;
-    --halo-strength: 1;
     position: relative;
   }
 
@@ -285,18 +117,6 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
     display: block;
     width: 100%;
     height: auto;
-  }
-
-  .demo-shader {
-    position: absolute;
-    inset: calc(var(--halo) * -1);
-    width: calc(100% + var(--halo) * 2);
-    height: calc(100% + var(--halo) * 2);
-    pointer-events: none;
-  }
-
-  .demo-shader[hidden] {
-    display: none;
   }
 
   .demo-controls {
@@ -310,8 +130,7 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
     color: var(--muted-foreground);
   }
 
-  .demo-controls[hidden],
-  .demo-button[hidden] {
+  .demo-controls[hidden] {
     display: none;
   }
 
@@ -330,8 +149,7 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
     cursor: pointer;
   }
 
-  .demo-button:hover,
-  .demo-button[aria-pressed="true"] {
+  .demo-button:hover {
     color: var(--accent);
   }
 
@@ -349,10 +167,4 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
     font-variant-numeric: tabular-nums;
   }
 
-  @media (max-width: 40rem) {
-    .stage {
-      --halo: 12px;
-      --halo-strength: 0.6;
-    }
-  }
 </style>
