@@ -1,0 +1,155 @@
+<div class="aim" aria-hidden="true">
+  <div class="ring">
+    <span class="corner top-left"></span>
+    <span class="corner top-right"></span>
+    <span class="corner bottom-left"></span>
+    <span class="corner bottom-right"></span>
+  </div>
+</div>
+
+<script>
+  const reticle = document.querySelector<HTMLElement>(".aim");
+  const targets = "a[href], button:not([hidden])";
+  const reach = 6;
+  let aimed: Element | null = null;
+
+  function place(target: Element): boolean {
+    if (!reticle) return false;
+    const box = target.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) return false;
+    reticle.style.setProperty("--aim-x", `${box.left - reach}px`);
+    reticle.style.setProperty("--aim-y", `${box.top - reach}px`);
+    reticle.style.setProperty("--aim-width", `${box.width + reach * 2}px`);
+    reticle.style.setProperty("--aim-height", `${box.height + reach * 2}px`);
+    return true;
+  }
+
+  function lockOn(target: Element): void {
+    if (!reticle) return;
+    if (aimed === null) {
+      reticle.dataset.jump = "";
+      reticle.removeAttribute("data-locked");
+      if (!place(target)) return;
+      void reticle.offsetWidth;
+      reticle.removeAttribute("data-jump");
+    } else if (!place(target)) return;
+    aimed = target;
+    reticle.dataset.locked = "";
+  }
+
+  function release(): void {
+    aimed = null;
+    reticle?.removeAttribute("data-locked");
+  }
+
+  if (reticle) {
+    document.addEventListener("pointerover", (event) => {
+      if (event.pointerType === "touch") return;
+      const target = (event.target as Element).closest(targets);
+      if (target) lockOn(target);
+    });
+    document.addEventListener("pointerout", (event) => {
+      const from = (event.target as Element).closest(targets);
+      const to = (event.relatedTarget as Element | null)?.closest(targets);
+      if (from && from !== to) release();
+    });
+    document.addEventListener("focusin", (event) => {
+      const target = (event.target as Element).closest(targets);
+      if (target?.matches(":focus-visible")) lockOn(target);
+    });
+    document.addEventListener("focusout", release);
+    window.addEventListener("scroll", () => aimed && place(aimed), { passive: true });
+    window.addEventListener("resize", () => aimed && place(aimed));
+  }
+</script>
+
+<style>
+  .aim {
+    --corner: 9px;
+    --glide: 140ms cubic-bezier(0.2, 0.9, 0.3, 1);
+    position: fixed;
+    left: var(--aim-x, 0);
+    top: var(--aim-y, 0);
+    z-index: 30;
+    width: var(--aim-width, 0);
+    height: var(--aim-height, 0);
+    pointer-events: none;
+    transition: left var(--glide), top var(--glide), width var(--glide), height var(--glide);
+  }
+
+  .aim[data-jump] {
+    transition: none;
+  }
+
+  .ring {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 90ms ease-out;
+  }
+
+  .aim[data-locked] .ring {
+    opacity: 1;
+    animation: lock-on 160ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  }
+
+  @keyframes lock-on {
+    from {
+      transform: scale(1.22);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+
+  .corner {
+    position: absolute;
+    width: var(--corner);
+    height: var(--corner);
+    border: 0 solid var(--accent);
+  }
+
+  .top-left {
+    left: 0;
+    top: 0;
+    border-left-width: 1.5px;
+    border-top-width: 1.5px;
+  }
+
+  .top-right {
+    right: 0;
+    top: 0;
+    border-right-width: 1.5px;
+    border-top-width: 1.5px;
+  }
+
+  .bottom-left {
+    left: 0;
+    bottom: 0;
+    border-left-width: 1.5px;
+    border-bottom-width: 1.5px;
+  }
+
+  .bottom-right {
+    right: 0;
+    bottom: 0;
+    border-right-width: 1.5px;
+    border-bottom-width: 1.5px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .aim {
+      transition: none;
+    }
+
+    .aim[data-locked] .ring {
+      animation: none;
+    }
+  }
+
+  @media (pointer: coarse) {
+    .aim {
+      display: none;
+    }
+  }
+</style>
