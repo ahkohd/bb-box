@@ -160,6 +160,7 @@ echo $mode >"$d/pointer-mode"
 echo $! >"$d/pid"
 sleep 0.5
 kill -0 "$(cat "$d/pid")" 2>/dev/null || { rm -f "$d/pid"; [ ! -s "$d/pointer.pid" ] || kill "$(cat "$d/pointer.pid")" 2>/dev/null; tail -n 3 "$d/log" >&2; exit ${RECORD_START_EXITS.failed}; }
+perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' sh -c "sleep 8; d=\"\$HOME/${RECORD_DIR}\"; pid=\$(cat \"\$d/pid\" 2>/dev/null) || exit 0; kill -0 \"\$pid\" 2>/dev/null || exit 0; [ -s \"\$d/capture.mkv\" ] && exit 0; kill \"\$pid\" 2>/dev/null || true; pp=\$(cat \"\$d/pointer.pid\" 2>/dev/null || true); [ -n \"\$pp\" ] && kill \"\$pp\" 2>/dev/null || true" >/dev/null 2>&1 &
 `;
 }
 
@@ -369,6 +370,37 @@ export interface ClipPlan {
 export const CLIP_WIDTH = 1280;
 export const SKIP_MARK_S = 3;
 export const MARK_SHOWN_S = 1.2;
+export const RESULT_S = 2.5;
+export const SAME_CAPTION_S = 1.2;
+
+const mentionsCancel = (text: string) => /\bcancel/i.test(text);
+
+function oneCaption(changes: { kind: StepKind | "note"; text: string; real: number; at: number }[]): typeof changes {
+  const drop = new Set<number>();
+  for (let index = 0; index < changes.length; index++) {
+    for (let later = index + 1; later < changes.length; later++) {
+      if (changes[later]!.at - changes[index]!.at > SAME_CAPTION_S) break;
+      const pair = [changes[index]!, changes[later]!];
+      const note = pair.findIndex((change) => change.kind === "note");
+      const result = pair.findIndex((change) => change.kind === "pass" || change.kind === "fail");
+      if (note < 0 || result < 0) continue;
+      const resultAt = result === 0 ? index : later;
+      const noteAt = note === 0 ? index : later;
+      if (changes[resultAt]!.kind === "fail" && (mentionsCancel(changes[noteAt]!.text) || mentionsCancel(changes[resultAt]!.text))) drop.add(resultAt);
+      else drop.add(noteAt);
+    }
+  }
+  return changes.flatMap((change, index) => {
+    if (drop.has(index)) return [];
+    if (change.kind !== "fail" || !mentionsCancel(change.text)) return [change];
+    let step: (typeof changes)[number] | undefined;
+    for (let earlier = index - 1; earlier >= 0; earlier--) if (changes[earlier]!.kind === "step" && !drop.has(earlier)) {
+      step = changes[earlier];
+      break;
+    }
+    return step && mentionsCancel(step.text) ? [{ ...change, kind: "note" as const }] : [change];
+  });
+}
 
 export function readingSeconds(text: string): number {
   const words = text.split(/\s+/).filter(Boolean).length;
@@ -414,12 +446,13 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
       return { kind: "note" as const, text: captionText(note.text), real, at: placed(real) };
     }),
   ].sort((a, b) => a.at - b.at);
+  const shownChanges = oneCaption(changes);
   const holds: Hold[] = [];
   const shownAt: number[] = [];
   let added = 0;
-  changes.forEach((change, index) => {
+  shownChanges.forEach((change, index) => {
     shownAt.push(change.at + added);
-    const natural = (changes[index + 1]?.at ?? base) - change.at;
+    const natural = (shownChanges[index + 1]?.at ?? base) - change.at;
     const hold = Math.max(0, readingSeconds(change.text) - natural);
     if (hold > 0) {
       holds.push({ at: round3(change.at), seconds: round3(hold) });
@@ -428,12 +461,16 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
   });
   const length = round3(base + added);
   const nextStep = (index: number) => {
-    const later = changes.findIndex((change, other) => other > index && change.kind === "step");
+    const later = shownChanges.findIndex((change, other) => other > index && change.kind === "step");
     return later < 0 ? length : shownAt[later]!;
   };
-  const captions = changes.flatMap((change, index): Caption[] =>
-    change.kind === "note" ? [] : [{ kind: change.kind, text: change.text, row: change.kind === "step" ? 0 : 1, from: round3(shownAt[index]!), to: round3(nextStep(index)), real: round3(change.real) }],
-  );
+  const captions = shownChanges.flatMap((change, index): Caption[] => {
+    if (change.kind === "note") return [];
+    const from = round3(shownAt[index]!);
+    const untilNext = nextStep(index);
+    const to = round3(change.kind === "step" ? untilNext : Math.min(untilNext, from + RESULT_S));
+    return [{ kind: change.kind, text: change.text, row: change.kind === "step" ? 0 : 1, from, to, real: round3(change.real) }];
+  });
   const framed = contentSize(size, !!scene?.frame);
   const width = layout ? prepared.width : framed.clip.width;
   const height = layout ? prepared.height : framed.clip.height;
@@ -459,8 +496,8 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
       const shown = round3(finalAt(onClip(from)));
       return { look: "mark", text: skipWords(to - from), size: markSize, x: "right", y: skipY, from: shown, to: round3(Math.min(length, shown + MARK_SHOWN_S)) };
     });
-  const notes = changes.flatMap((change, index): Overlay[] =>
-    change.kind === "note" ? [{ look: "note", text: change.text, size: fontSize, x: "centre", y: noteY, from: round3(shownAt[index]!), to: round3(Math.min(length, shownAt[index]! + readingSeconds(change.text))) }] : [],
+  const notes = shownChanges.flatMap((change, index): Overlay[] =>
+    change.kind === "note" ? [{ look: "note", text: change.text, size: fontSize, x: "centre", y: noteY, from: round3(shownAt[index]!), to: round3(Math.min(length, shownAt[index]! + Math.min(RESULT_S, readingSeconds(change.text)))) }] : [],
   );
   const keyPills = (planned?.pills ?? []).flatMap((each): Overlay[] => {
     const from = round3(finalAt(onClip(each.from)));
@@ -802,6 +839,7 @@ $p = Start-Process $ffmpeg -WindowStyle Hidden -PassThru -RedirectStandardError 
 Set-Content "$d\pid" $p.Id
 Start-Sleep -Milliseconds 500
 if ($p.HasExited) { Remove-Item "$d\pid"; if (Test-Path "$d\pointer.pid") { Stop-Process -Id $sampler.Id -Force -ErrorAction Ignore }; Get-Content "$d\log" -Tail 3 | ForEach-Object { [Console]::Error.WriteLine($_) }; exit ${RECORD_START_EXITS.failed} }
+Start-Process $shell -WindowStyle Hidden -ArgumentList ('-NoProfile -Command "Start-Sleep -Seconds 8; $d = ''' + $d + '''; $pidFile = Join-Path $d pid; if (-not (Test-Path $pidFile)) { exit 0 }; $rec = [int](Get-Content $pidFile -Raw); if (-not (Get-Process -Id $rec -ErrorAction Ignore)) { exit 0 }; $cap = Join-Path $d capture.mkv; if ((Test-Path $cap) -and (Get-Item $cap).Length -gt 0) { exit 0 }; Stop-Process -Id $rec -Force -ErrorAction Ignore; $pp = Join-Path $d pointer.pid; if (Test-Path $pp) { Stop-Process -Id ([int](Get-Content $pp -Raw)) -Force -ErrorAction Ignore }"')
 exit ${RECORD_START_EXITS.started}
 `;
 }

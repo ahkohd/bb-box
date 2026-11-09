@@ -100,6 +100,15 @@ test("box_record's captions are drawn with FFmpeg 8 too, as on Ubuntu 26.04's Wa
 
 const PREPARED: Prepared = { ended: "stopped", recorded: 30, width: 1920, height: 1080, start: 1000, cuts: [[5.5, 15]], events: [] };
 
+test("a capture that never writes a picture stops itself (075)", { skip }, () => {
+  const home = tempDir("record-hung");
+  const started = run(recordStartScript(), home, { DISPLAY: ":99" });
+  assert.equal(started.status, RECORD_START_EXITS.started, started.stderr);
+  const pid = Number(readFileSync(join(home, RECORD_DIR, "pid"), "utf8"));
+  const gone = spawnSync("bash", ["-c", `for i in $(seq 1 24); do kill -0 ${pid} 2>/dev/null || exit 0; sleep 0.5; done; exit 1`]);
+  assert.equal(gone.status, 0, "the recorder is stopped when the capture stays empty");
+});
+
 test("box_record starts in zsh with no pills to clear and no glob error, and on a Mac starts ffmpeg in a session of its own with no nohup, which refuses where there is no console to leave, as under Namespace's agent (#1032)", () => {
   const home = tempDir("record-zsh");
   const shell = spawnSync("zsh", ["-fc", ":"]).status === 0 ? "zsh" : "sh";
@@ -124,8 +133,10 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
     ["step", 0, 1, 5.286],
     ["pass", 1, 3.143, 5.286],
     ["step", 0, 5.286, 14.786],
-    ["fail", 1, 11.786, 14.786],
+    ["fail", 1, 11.786, 14.286],
   ]);
+  assert.ok(plan.captions[3]!.to - plan.captions[3]!.from <= 2.5 + 0.001, "a result fades after about 2.5 s");
+  assert.ok(plan.captions[2]!.to - plan.captions[2]!.from > 2.5, "a step caption stays until the next step");
   assert.equal(plan.length, 14.786);
   for (const [index, caption] of plan.captions.entries()) {
     const next = plan.captions.slice(index + 1).find((later) => later.from > caption.from);
@@ -159,6 +170,35 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
   ]);
   assert.equal(captionText("a ".repeat(80)).length, 90);
   assert.ok(captionText("a ".repeat(80)).endsWith("…"));
+
+  const stayed = planClip({ ...PREPARED, cuts: [], recorded: 30, events: [
+    { at: 1001, kind: "step", text: "Type a line into the note" },
+    { at: 1004, kind: "fail", text: "The save was cancelled" },
+  ] }, 1);
+  const failed = stayed.captions.find((caption) => caption.kind === "fail")!;
+  const step = stayed.captions.find((caption) => caption.kind === "step")!;
+  assert.ok(Math.abs(failed.to - failed.from - 2.5) < 0.02, "a result does not stay until the recording ends");
+  assert.ok(step.to > failed.to, "the step caption changes only when the next step starts");
+  const replaced = planClip({ ...PREPARED, cuts: [], events: [
+    { at: 1001, kind: "step", text: "Type a line into the note" },
+    { at: 1012, kind: "step", text: "Drag the window" },
+  ] }, 1);
+  assert.equal(replaced.captions[0]!.to, replaced.captions[1]!.from, "the next step replaces the step caption");
+
+  const both = planClip({ ...PREPARED, cuts: [], events: [
+    { at: 1002, kind: "step", text: "Cancel the save" },
+    { at: 1004, kind: "note", text: "The dialog was cancelled" },
+    { at: 1004.4, kind: "fail", text: "The save was cancelled" },
+  ] }, 1);
+  assert.equal(both.captions.some((caption) => caption.kind === "fail"), false, "a cancel the step asked for is not a failure");
+  assert.equal(both.overlays.filter((overlay) => overlay.text.includes("cancelled")).length, 1, "one event has one caption");
+  const realFailure = planClip({ ...PREPARED, cuts: [], events: [
+    { at: 1002, kind: "step", text: "Save the note" },
+    { at: 1004, kind: "note", text: "The dialog was still open" },
+    { at: 1004.4, kind: "fail", text: "The folder was missing" },
+  ] }, 1);
+  assert.equal(realFailure.captions.some((caption) => caption.kind === "fail"), true, "a real failure stays a failure");
+  assert.equal(realFailure.overlays.some((overlay) => overlay.look === "note"), false, "the note for that same moment is not a second caption");
 });
 
 test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its console before it would force it, then captions and makes the clip as elsewhere (059)", () => {

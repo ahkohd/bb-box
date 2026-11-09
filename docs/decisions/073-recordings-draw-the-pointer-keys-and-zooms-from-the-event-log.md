@@ -10,7 +10,9 @@ its window zooms out, and the words and marks are Inter and the
 owner's icons. [074](074-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)
 supersedes the soft disc under a button that is held still, and the
 rule that a typing zoom uses the whole field when that field would
-not zoom.
+not zoom. [075](075-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md)
+supersedes zooming in on a window before it has painted, a result
+caption that stays until the next step, and two captions for one moment.
 Extends [059](059-agents-record-their-desktop-box-with-box-record.md).
 
 ## Context
@@ -226,6 +228,8 @@ On by default; `zoom: false` at the stop turns it off.
 - **Moves** take 0.9 s, eased in and out (cubic): in, to arrive 0.15 s
   before the group's first event; out, 1.5 s after its last. When the next
   group starts soon after, the view pans to it instead of zooming out.
+  A window that has only just opened is not the destination until it has
+  painted ([075](075-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md)).
 - **Out early** when a change covers more than 40% of the screen, or
   more than a tenth of it falls outside the view, so a dialog that opens
   elsewhere is seen. The zoom ends as the change happens: the group is

@@ -136,7 +136,7 @@ export function sceneOf(facts: SceneFacts, size: { readonly width: number; reado
   );
   const keys: PlacedKeys[] = inputs.flatMap((input) => (input.type === "keys" ? [{ at: time(input.at), chord: input.chord }] : []));
   return {
-    scene: { width: size.width, height: size.height, length, samples, clicks, scrolls, typing, changes: facts.changes, agentCursor: !!facts.agentCursor },
+    scene: { width: size.width, height: size.height, length, samples, clicks, scrolls, typing, changes: facts.changes, brightness: facts.brightness ?? [], agentCursor: !!facts.agentCursor },
     keys,
     keyTyping: typing.map((each) => ({ at: each.at, secret: each.secret, characters: each.characters, by: each.by, ...(each.call !== undefined ? { call: each.call } : {}) })),
   };
@@ -360,8 +360,8 @@ export function sceneHead(plan: ScenePlan, firstInput: number): { readonly graph
     const enable = ring ? ringShown(plan, ring[1]!, ring[2]!, Number(ring[3])) : art.name === "press.png" ? dragShown(plan) : "0";
     const next = into();
     const source = cursor ? `c${index}` : `${input}:v`;
-    if (cursor) lines.push(`[${input}:v]scale=iw/2:ih/2:flags=lanczos[${source}]`);
-    lines.push(`[${label}][${source}]${target}=x=0:y=0:enable=${enable}[${next}]`);
+    if (cursor) lines.push(`[${input}:v]format=rgba,scale=iw/2:ih/2:flags=lanczos[${source}]`);
+    lines.push(`[${label}][${source}]${target}=x=0:y=0:enable=${enable}:format=auto[${next}]`);
     label = next;
   });
   const zoomed = into();

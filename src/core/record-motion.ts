@@ -74,6 +74,11 @@ export interface ChangedRegion extends InputArea {
   readonly at: number;
 }
 
+export interface BrightnessSample {
+  readonly at: number;
+  readonly cells: readonly number[];
+}
+
 export interface Scene {
   readonly width: number;
   readonly height: number;
@@ -83,6 +88,7 @@ export interface Scene {
   readonly scrolls: readonly PlacedScroll[];
   readonly typing: readonly PlacedTyping[];
   readonly changes: readonly ChangedRegion[];
+  readonly brightness?: readonly BrightnessSample[];
   readonly agentCursor?: boolean;
 }
 
@@ -485,7 +491,88 @@ interface Group {
   readonly first: number;
   readonly last: number;
   readonly view: View;
+  readonly area: InputArea;
   readonly outsideAt: number | null;
+}
+
+const BRIGHT_COLUMNS = 16;
+const BRIGHT_ROWS = 9;
+const PAINT_QUIET_S = 0.4;
+const PAINT_WITH_ACTION_S = 0.15;
+const WINDOW_MIN_W = 120;
+const WINDOW_MIN_H = 80;
+const BLANK_SPREAD = 18;
+const BLANK_SHARE = 0.8;
+const PAINT_MOVE_SHARE = 0.25;
+
+function coversFocus(change: InputArea, focus: InputArea): boolean {
+  if (focus.width <= 0 || focus.height <= 0) return focus.x >= change.x && focus.x <= change.x + change.width && focus.y >= change.y && focus.y <= change.y + change.height;
+  return overlap(change, focus) > 0;
+}
+
+function openingOf(scene: Scene, focus: InputArea, at: number): ChangedRegion[] {
+  return scene.changes.filter((change) => change.width >= WINDOW_MIN_W && change.height >= WINDOW_MIN_H && change.at >= at - 1.2 && change.at <= at + PAINT_WITH_ACTION_S && coversFocus(change, focus));
+}
+
+function cellsUnder(scene: Scene, area: InputArea, at: number): number[] | null {
+  const grids = scene.brightness;
+  if (!grids?.length || scene.width <= 0 || scene.height <= 0 || area.width < WINDOW_MIN_W || area.height < WINDOW_MIN_H) return null;
+  let grid = grids[0]!;
+  for (const each of grids) if (each.at <= at + 0.05) grid = each;
+  if (grid.at > at + 0.05) return null;
+  const x0 = Math.min(BRIGHT_COLUMNS - 1, Math.max(0, Math.floor((area.x / scene.width) * BRIGHT_COLUMNS)));
+  const x1 = Math.min(BRIGHT_COLUMNS - 1, Math.max(0, Math.floor(((area.x + area.width - 1) / scene.width) * BRIGHT_COLUMNS)));
+  const y0 = Math.min(BRIGHT_ROWS - 1, Math.max(0, Math.floor((area.y / scene.height) * BRIGHT_ROWS)));
+  const y1 = Math.min(BRIGHT_ROWS - 1, Math.max(0, Math.floor(((area.y + area.height - 1) / scene.height) * BRIGHT_ROWS)));
+  const cells: number[] = [];
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) cells.push(grid.cells[y * BRIGHT_COLUMNS + x] ?? 0);
+  return cells;
+}
+
+function blankRegion(scene: Scene, area: InputArea, at: number): boolean {
+  const cells = cellsUnder(scene, area, at);
+  if (!cells || cells.length < 4) return false;
+  const sorted = [...cells].sort((a, b) => a - b);
+  const mid = sorted[Math.floor(sorted.length / 2)]!;
+  const alike = cells.filter((cell) => Math.abs(cell - mid) <= BLANK_SPREAD).length;
+  return alike / cells.length >= BLANK_SHARE;
+}
+
+function cellsDiffer(left: readonly number[], right: readonly number[]): boolean {
+  const count = Math.min(left.length, right.length);
+  if (count < 4) return false;
+  let moved = 0;
+  for (let index = 0; index < count; index++) if (Math.abs(left[index]! - right[index]!) > BLANK_SPREAD) moved += 1;
+  return moved / count >= PAINT_MOVE_SHARE;
+}
+
+function paintReady(scene: Scene, focus: InputArea, at: number, natural: number): number | null {
+  const opened = openingOf(scene, focus, at);
+  if (!opened.length) return natural;
+  const region = unionOf(opened);
+  const ready = Math.max(natural, Math.max(...opened.map((change) => change.at)) + PAINT_QUIET_S);
+  const grids = scene.brightness ?? [];
+  if (!grids.length) return ready;
+  let candidate: number | null = null;
+  let candidateCells: readonly number[] | null = null;
+  for (const grid of grids) {
+    if (grid.at < ready - 0.05 || grid.at > at + 2) continue;
+    if (blankRegion(scene, region, grid.at)) continue;
+    const cells = cellsUnder(scene, region, grid.at);
+    if (!cells) continue;
+    if (candidateCells && cellsDiffer(candidateCells, cells)) {
+      candidate = grid.at;
+      candidateCells = cells;
+      continue;
+    }
+    if (candidate === null) {
+      candidate = grid.at;
+      candidateCells = cells;
+      continue;
+    }
+    return candidate;
+  }
+  return candidate;
 }
 
 function closeGroups(scene: Scene, focuses: readonly Focus[]): Focus[][] {
@@ -591,7 +678,7 @@ function splitAtOutsideChanges(scene: Scene, groups: readonly Focus[][], actions
       queue.unshift({ members: members.filter((each) => each.at <= outsideAt!), endsAt: outsideAt }, { members: later, endsAt });
       continue;
     }
-    planned.push({ first: members[0]!.at, last: members.at(-1)!.at, view: viewOfMembers(scene, members), outsideAt });
+    planned.push({ first: members[0]!.at, last: members.at(-1)!.at, view: viewOfMembers(scene, members), area: unionOf(members.map((each) => each.area)), outsideAt });
   }
   return planned;
 }
@@ -616,8 +703,11 @@ export function planCamera(scene: Scene, pointer: PointerPlan): CameraKey[] {
   let outsideShownUntil = -Infinity;
   groups.forEach((group, index) => {
     const nextGroup = groups[index + 1];
-    const arrive = Math.max(group.first - SETTLE_S, outsideShownUntil + MOVE_S);
-    if (group.view.zoom > 1 && arrive > group.last) return;
+    const natural = Math.max(group.first - SETTLE_S, outsideShownUntil + MOVE_S);
+    if (group.view.zoom > 1 && natural > group.last) return;
+    const ready = group.view.zoom > 1 ? paintReady(scene, group.area, group.first, natural) : natural;
+    if (ready === null) return;
+    const arrive = ready > natural + 0.02 ? ready + MOVE_S : natural;
     moveTo(arrive, group.view);
     if (group.view.zoom === 1) return;
     const hold = Math.min(scene.length, group.last + LINGER_S, group.outsideAt ?? Infinity);

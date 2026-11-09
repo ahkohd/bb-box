@@ -394,7 +394,8 @@ test("the pointer's commands move it each frame it moves, show it from when it i
   assert.match(ring[0]!, /^3\.000 overlay@ringll0 x \d+, overlay@ringll0 y \d+;$/);
   assert.equal(ring.length, 1, "a stage is placed once; it cannot be left enabled");
   const head = sceneHead(plan, 1).graph;
-  assert.match(head, /overlay@ringll0=x=0:y=0:enable='between\(t,3\.000,3\.067\)'/);
+  assert.match(head, /overlay@ringll0=x=0:y=0:enable='between\(t,3\.000,3\.067\)':format=auto/);
+  assert.match(head, /format=rgba,scale=iw\/2:ih\/2:flags=lanczos/, "the cursor is scaled with its alpha, so the overlay does not leave a box");
   assert.match(head, /between\(t,3\.333,3\.400\)/);
   assert.equal(RING_S, 0.4);
   assert.doesNotMatch(head, /between\(t,3\.\d+,3\.[5-9]/, "every stage of the ring is gone by 0.4 s");
@@ -570,6 +571,66 @@ test("a button, typing into a large field, and a dialog each zoom in, and the ca
   assert.ok(!viewCovers(SCREEN, typed, field), "the whole editor is not the frame");
   assert.equal(cameraAt(keys, 12).zoom, 1, "out before the dialog");
   assert.ok(cameraAt(keys, 14.2).zoom >= ZOOM_LEAST, "in on the dialog's button");
+});
+
+test("a zoom waits until a new window has painted, and holds the previous framing while that window is blank (075)", () => {
+  const window = { x: 200, y: 120, width: 640, height: 420 };
+  const click = { at: 2, x: 400, y: 300, button: "left" as const, count: 1 as const, area: window, role: "push button", window };
+  const flat = new Array(144).fill(250);
+  const painted = flat.slice();
+  for (let x = 2; x < 8; x++) painted[16 + x] = 40;
+  painted[3 * 16 + 5] = 30;
+  painted[4 * 16 + 6] = 90;
+  const desktop = new Array(144).fill(30);
+  for (let index = 0; index < 40; index++) desktop[index] = 210;
+  const keys = camera({
+    clicks: [click],
+    changes: [
+      { at: 1.7, ...window },
+      { at: 2.2, x: window.x, y: window.y + 300, width: window.width, height: 100 },
+    ],
+    brightness: [
+      { at: 0, cells: desktop },
+      { at: 1, cells: flat },
+      { at: 2, cells: flat },
+      { at: 3, cells: painted },
+    ],
+    length: 12,
+  });
+  assert.equal(cameraAt(keys, 2.2).zoom, 1, "a flat window keeps the previous framing");
+  assert.ok(cameraAt(keys, 4.2).zoom > 1, "the camera eases in once the window has something on it");
+  const stillBlank = camera({
+    clicks: [click],
+    changes: [{ at: 1.7, ...window }],
+    brightness: [
+      { at: 0, cells: desktop },
+      { at: 1, cells: flat },
+      { at: 2, cells: flat },
+      { at: 3, cells: flat },
+      { at: 4, cells: flat },
+    ],
+    length: 12,
+  });
+  for (const key of stillBlank) assert.equal(key.view.zoom, 1, "a window that never paints is not zoomed");
+  const quiet = camera({ clicks: [click], changes: [{ at: 1.7, ...window }], length: 12 });
+  assert.equal(cameraAt(quiet, 1.9).zoom, 1, "with no brightness, the previous framing holds while the window is still changing");
+  assert.ok(cameraAt(quiet, 3.2).zoom > 1, "then the camera eases in");
+  const half = new Array(144).fill(250);
+  for (let y = 1; y <= 2; y++) for (let x = 1; x <= 6; x++) half[y * 16 + x] = 170;
+  const settled = new Array(144).fill(40);
+  for (let y = 1; y <= 4; y++) for (let x = 1; x <= 6; x++) settled[y * 16 + x] = (x + y) % 2 === 0 ? 30 : 200;
+  const drawing = camera({
+    clicks: [click],
+    changes: [{ at: 1.6, ...window }],
+    brightness: [
+      { at: 0, cells: desktop },
+      { at: 2, cells: half },
+      { at: 3, cells: settled },
+    ],
+    length: 12,
+  });
+  assert.equal(cameraAt(drawing, 2.5).zoom, 1, "a half-drawn window keeps the previous framing");
+  assert.ok(cameraAt(drawing, 4.5).zoom > 1, "the camera eases in once that window has settled");
 });
 
 test("a typing zoom keeps the whole changed region inside the frame, and zooms less instead of cropping it (073)", () => {
