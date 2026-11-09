@@ -122,6 +122,44 @@ export function descriptions(pages: Page[]): Map<string, string> {
   return new Map(pages.map((page) => [page.id, page.description ?? words.get(page.id) ?? statuses.get(page.file) ?? leadSentence(page) ?? page.title]));
 }
 
+const searchSnippetLength = 160;
+
+const endsInList = (sentence: string) => sentence.endsWith(":");
+
+function sentencesOf(lead: string): string[] {
+  const sentences = lead.split(/(?<=[.!?])\s+/);
+  const complete = sentences.filter((sentence, i) => i === 0 || !endsInList(sentence));
+  return complete.map((sentence) => (endsInList(sentence) ? `${sentence.slice(0, -1)}.` : sentence));
+}
+
+function withinSnippet(lead: string, limit = searchSnippetLength): string {
+  const text = sentencesOf(lead).join(" ");
+  if (text.length <= limit) return text;
+  const lastSentenceEnd = [...text.matchAll(/[.!?](?=\s)/g)].map((end) => end.index + 1).filter((end) => end <= limit).at(-1);
+  if (lastSentenceEnd) return text.slice(0, lastSentenceEnd);
+  const cut = text.slice(0, limit - 3);
+  return `${cut.slice(0, cut.lastIndexOf(" ")).replace(/[,:;]$/, "")}...`;
+}
+
+function recordDescription(page: Page, status: string): string {
+  const number = /^decisions\/(\d+)/.exec(page.id)?.[1];
+  const record = `BB Box decision record ${number}. Status now:`;
+  return `${record} ${withinSnippet(status, searchSnippetLength - record.length - 1)}`;
+}
+
+export function searchDescriptions(pages: Page[]): Map<string, string> {
+  const words = new Map(startingPoints.map((point) => [point.id, point.words]));
+  const statuses = decisionStatuses(pages);
+  return new Map(
+    pages.map((page) => {
+      const status = statuses.get(page.file);
+      const lead = leadParagraph(page);
+      const fromPage = status ? recordDescription(page, status) : lead ? withinSnippet(lead) : page.title;
+      return [page.id, page.description ?? words.get(page.id) ?? fromPage];
+    }),
+  );
+}
+
 function summary(pages: Page[]): string {
   const introduction = pages.find((page) => page.id === "start");
   const lead = introduction && leadParagraph(introduction);
@@ -170,4 +208,9 @@ export function llmsFullTxt(pages: Page[], site: SiteAddress): string {
   const inOrder = sections(pages).flatMap((section) => section.pages);
   const copies = inOrder.map((page) => [`# ${page.title}`, `Source: ${absoluteAddress(pageUrl(site.base, page.id), site)}`, bodyOnSite(page, addresses).trimEnd()].join("\n\n"));
   return `${[`# ${projectName}`, `> ${summary(pages)}`, ...copies].join("\n\n")}\n`;
+}
+
+export function entryData(pages: Page[]): Map<string, { title: string; description: string | undefined }> {
+  const described = searchDescriptions(pages);
+  return new Map(pages.map((page) => [page.id, { title: page.title, description: described.get(page.id) }]));
 }

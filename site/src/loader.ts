@@ -1,6 +1,7 @@
 import { join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Loader, LoaderContext } from "astro/loaders";
+import { entryData } from "./llms.ts";
 import { pagesByFile, readPages, repoRoot, rewriteLinks, type Page } from "./repo.ts";
 
 const watchedFolders = ["README.md", "docs", "setup", "skills"].map((path) => join(repoRoot, path));
@@ -16,9 +17,10 @@ async function loadPages({ store, parseData, renderMarkdown, generateDigest, con
   const rendered = await Promise.all(pages.map((page) => renderMarkdown(page.body, { fileURL: pathToFileURL(join(repoRoot, page.file)) })));
   const anchors = new Map(pages.map((page, i) => [page, rendered[i]!.metadata?.headings?.map((heading) => heading.slug) ?? []]));
   const byFile = pagesByFile(pages, (page) => anchors.get(page)!);
+  const dataOf = entryData(pages);
   store.clear();
   for (const [i, page] of pages.entries()) {
-    const data = await parseData({ id: page.id, data: { title: page.title, ...(page.description ? { description: page.description } : {}) } });
+    const data = await parseData({ id: page.id, data: dataOf.get(page.id)! });
     const html = searchWeighted(page, rewriteLinks(rendered[i]!.html, page.file, byFile, config.base));
     store.set({
       id: page.id,
