@@ -39,7 +39,7 @@ The zooms follow what was actually done, not guesses: the agent's clicks and key
 
 ### Still stretches and captions
 
-Still stretches, where nothing on the screen moves, are cut to half a second, so a long session makes a short clip. Where a cut skips 3 seconds or more, a small mark in a bottom corner shows the real time skipped, such as "14 s later", for about a second. A clip the agent speeds up to 2x or 4x shows its speed in that corner the whole time. Every word is set in Inter. A glyph Inter does not have uses the box's own font for that glyph only.
+Idle stretches are cut to half a second, so a long session makes a short clip. A stretch is idle when nothing happens for more than a second: no caption, click, key or typing, the pointer still, and nothing on the screen changing but something as small as a blinking caret or a clock. Where bb-box does not draw the pointer, as on Wayland, it cuts only stretches where nothing on the screen moves. Where a cut skips 3 seconds or more, a small mark in a bottom corner shows the real time skipped, such as "14 s later", for about a second. A clip the agent speeds up to 2x or 4x shows its speed in that corner the whole time. Every word is set in Inter. A glyph Inter does not have uses the box's own font for that glyph only.
 
 When an agent tests something, it captions each check:
 
@@ -48,7 +48,7 @@ When an agent tests something, it captions each check:
 
 A key pill starts with a keyboard mark, and a warning uses an amber one. The marks are the same height as the letters beside them.
 
-The step caption changes when the next step starts. A result fades after about 2.5 seconds. One moment has one caption: a warning and a result for the same moment show as one, and a cancel the step asked for is not shown as a failure. Each caption stays up long enough to read, even where still stretches are cut or the clip plays faster, and a result never stays longer than about 2.5 seconds.
+The step caption changes when the next step starts. A result fades after about 2.5 seconds. One moment has one caption: a warning and a result for the same moment show as one, and a cancel the step asked for is not shown as a failure. Each caption stays up long enough to read, even where idle stretches are cut or the clip plays faster. To give a result time to read, the clip holds it still for at most a second.
 
 ![The step "Cancel the save" and a warning, "The save was cancelled", over Mousepad. The typed line stays selected](../media/recording-step.png)
 
@@ -102,4 +102,4 @@ A desktop also samples its pointer 30 times a second while it records, on X11, m
 
 A busy 67 second recording on an X11 desktop of 8 cores, six rounds of clicks, typing, shortcuts and drags, took 9.9 seconds to make in all.
 
-Choosing the pointer's colours reads the brightness of the screen once a second, in the pass that finds still stretches. On a 15.5 second X11 recording of 8 cores that pass took 0.33 to 0.35 seconds with it and 0.31 to 0.35 seconds without, over 5 runs, and making the clip took the same time as before, 2.6 to 2.7 seconds.
+Choosing the pointer's colours reads the brightness of the screen once a second, in the pass that finds idle stretches. On a 15.5 second X11 recording of 8 cores that pass took 0.33 to 0.35 seconds with it and 0.31 to 0.35 seconds without, over 5 runs, and making the clip took the same time as before, 2.6 to 2.7 seconds.

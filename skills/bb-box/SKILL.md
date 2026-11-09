@@ -427,8 +427,9 @@ video should show, then stop it. Its answer gives a line that plays the
 clip in the thread: put it on its own in your reply. The line shows a file
 of the storage folder of the thread it is in, so bb-box copies the clip to
 your parent threads too: a parent can pass the line on in its own report as
-it is. Do not write an absolute path into it. Still stretches are
-cut by default, so a long session makes a short clip.
+it is. Do not write an absolute path into it. Idle stretches are
+cut by default, so a long session makes a short clip: do not pause between
+steps for the viewer.
 
 - Before you start a recording, clear or dismiss notifications, and close
   windows that do not belong in the video.

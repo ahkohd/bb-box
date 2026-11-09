@@ -385,6 +385,46 @@ test("still stretches are cut around the motion: glides, rings, pills' first sec
   for (const [from, to] of plan.cuts) assert.ok(to <= 10 - GLIDE_S || from >= 10.4, `the cut ${from}-${to} keeps the glide and ring`);
 });
 
+function idleRecording(parts: Partial<SceneFacts> = {}, events: Prepared["events"] = []): Prepared {
+  const caret = Array.from({ length: 26 }, (_, index) => ({ at: 6 + index * 0.5, x: 700, y: 400, width: 3, height: 20 }));
+  const grids = Array.from({ length: 31 }, (_, at) => grid(at, () => 40));
+  return {
+    ended: "stopped",
+    recorded: 30,
+    width: 1920,
+    height: 1080,
+    start: 1000,
+    cuts: [],
+    events,
+    scene: facts({ samples: [{ at: 1000, x: 100, y: 100, buttons: 0 }], changes: caret, brightness: grids, inputs: [click(5, 600, 400), click(21, 900, 500)], ...parts }),
+  };
+}
+
+test("a dressed recording cuts its idle stretches by default, though a caret blinks, keeps a moving pointer, and keeps them all with stills keep (076)", () => {
+  const plan = planClip(idleRecording(), 1);
+  const cut = (from: number, to: number) => plan.cuts.reduce((sum, [a, b]) => sum + Math.max(0, Math.min(b, to) - Math.max(a, from)), 0);
+  assert.ok(cut(6, 20) > 12, `the 14 s with only a blinking caret is cut: ${JSON.stringify(plan.cuts)}`);
+  assert.ok(cut(5, 5.5) === 0, "the first half second after the click stays");
+  assert.ok(cut(20.5, 21.4) === 0, "the glide to the next click stays");
+  assert.deepEqual(planClip(idleRecording(), 1, { zoom: true, frame: true, stills: "keep" }).cuts, [], "keep keeps every stretch");
+
+  const moving = Array.from({ length: 60 }, (_, index) => ({ at: 1023 + index / 30, x: 300 + index * 4, y: 300, buttons: 0 }));
+  const hovered = planClip({ ...idleRecording({ samples: [{ at: 1000, x: 100, y: 100, buttons: 0 }, ...moving] }), cuts: [[22.5, 26]] }, 1);
+  const hoverCut = hovered.cuts.reduce((sum, [a, b]) => sum + Math.max(0, Math.min(b, 25) - Math.max(a, 23)), 0);
+  assert.equal(hoverCut, 0, "a pointer moving over a still screen is not idle");
+});
+
+test("a result is held at most about a second, though its words would take longer to read (076)", () => {
+  const plan = planClip(idleRecording({}, [
+    { at: 1005.2, kind: "pass", text: "The note was saved and the window closed without a prompt" },
+    { at: 1005.4, kind: "step", text: "Find the file" },
+  ]), 1);
+  const result = plan.captions.find((caption) => caption.kind === "pass")!;
+  const held = plan.holds.find((hold) => Math.abs(hold.at - result.from) < 0.01);
+  assert.ok(held, `the result is held: ${JSON.stringify(plan.holds)}`);
+  assert.ok(held.seconds <= 1 + 0.001, `held ${held.seconds} s`);
+});
+
 test("the pointer's commands move it each frame it moves, show it from when it is known, and switch each ring stage on and off in turn (073)", () => {
   const plan = planScene(facts({ samples: [{ at: 1000, x: 100, y: 100, buttons: 0 }], inputs: [click(3, 500, 400)] }), SCREEN, 1000, 5, { zoom: true, frame: true });
   const commands = sceneCommands(plan).trim().split("\n");

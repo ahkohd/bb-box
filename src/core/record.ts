@@ -371,6 +371,7 @@ export const CLIP_WIDTH = 1280;
 export const SKIP_MARK_S = 3;
 export const MARK_SHOWN_S = 1.2;
 export const RESULT_S = 2.5;
+export const RESULT_HOLD_MOST_S = 1;
 export const SAME_CAPTION_S = 1.2;
 
 const mentionsCancel = (text: string) => /\bcancel/i.test(text);
@@ -427,10 +428,11 @@ function pillClearOf(top: number, height: number, tall: number, gap: number, min
 export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneOptions = DEFAULT_SCENE_OPTIONS): ClipPlan {
   const layout = prepared.layout;
   const size = { width: prepared.width, height: prepared.height };
-  const planned = prepared.scene && !layout && prepared.width > 0 && prepared.height > 0 ? planScene(prepared.scene, size, prepared.start ?? 0, prepared.recorded, options) : null;
+  const captionMoments = prepared.events.map((event) => event.at - (prepared.start ?? 0));
+  const planned = prepared.scene && !layout && prepared.width > 0 && prepared.height > 0 ? planScene(prepared.scene, size, prepared.start ?? 0, prepared.recorded, { ...options, captions: captionMoments }) : null;
   const scene = planned && (planned.art.length > 0 || planned.zooms) ? planned : null;
-  const sorted = [...prepared.cuts].sort((a, b) => a[0] - b[0]);
-  const cuts = planned ? keptMotion(sorted, planned.kept) : sorted;
+  const stills = planned?.idle ? planned.idle.map((span): [number, number] => [span.from, span.to]) : [...prepared.cuts].sort((a, b) => a[0] - b[0]);
+  const cuts = planned ? keptMotion(stills, planned.kept) : stills;
   const removedBefore = (at: number) => cuts.reduce((sum, [from, to]) => sum + Math.max(0, Math.min(at, to) - from), 0);
   const onClip = (at: number) => (at - removedBefore(at)) / speed;
   const base = onClip(prepared.recorded);
@@ -453,7 +455,8 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
   shownChanges.forEach((change, index) => {
     shownAt.push(change.at + added);
     const natural = (shownChanges[index + 1]?.at ?? base) - change.at;
-    const hold = Math.max(0, readingSeconds(change.text) - natural);
+    const reading = Math.max(0, readingSeconds(change.text) - natural);
+    const hold = change.kind === "pass" || change.kind === "fail" ? Math.min(RESULT_HOLD_MOST_S, reading) : reading;
     if (hold > 0) {
       holds.push({ at: round3(change.at), seconds: round3(hold) });
       added += hold;

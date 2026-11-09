@@ -1,4 +1,5 @@
 import { cornerArt, pressArt, ringArt, type Art, type Pointer, type PointerVariant } from "./record-art.ts";
+import { activityMoments, idleStretches } from "./record-edit.ts";
 import { CURSOR_BODY, CURSOR_VIEW, cursorArt, cursorCanvas, ringInk, type PointerShape } from "./record-cursors.ts";
 import type { InputArea, InputEvent } from "./record-input.ts";
 import { planKeyPills, type KeyPill, type KeyStyle, type PlacedKeys, type PlacedKeyTyping } from "./record-keys.ts";
@@ -67,6 +68,8 @@ export interface SceneFacts {
 export interface SceneOptions {
   readonly zoom: boolean;
   readonly frame: boolean;
+  readonly stills?: "cut" | "keep";
+  readonly captions?: readonly number[];
 }
 
 export interface FrameLayout {
@@ -93,6 +96,7 @@ export interface ScenePlan {
   readonly shapes: readonly ShapeSpan[];
   readonly inks: readonly InkSpan[];
   readonly ringStyles: readonly RingStyle[];
+  readonly idle: readonly Span[] | null;
 }
 
 export interface RingStyle {
@@ -199,8 +203,13 @@ export function backgroundFor(luma: number | null): string {
   return luma !== null && luma >= 128 ? LIGHT_BACKGROUND : DARK_BACKGROUND;
 }
 
+function knowsIdle(facts: SceneFacts, options: SceneOptions): boolean {
+  return options.stills !== "keep" && facts.pointer === "drawn" && facts.samples.length > 0 && (facts.brightness?.length ?? 0) > 0;
+}
+
 export function planScene(facts: SceneFacts, size: { readonly width: number; readonly height: number }, start: number, length: number, options: SceneOptions): ScenePlan {
   const { scene, keys, keyTyping } = sceneOf(facts, size, start, length);
+  const idle = knowsIdle(facts, options) ? idleStretches(activityMoments(scene, keys, (options.captions ?? []).map((at) => at - facts.lag)), length) : null;
   const pointer = planPointer(scene);
   const camera = options.zoom ? planCamera(scene, pointer) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
   const zooms = camera.some((key) => key.view.zoom > 1);
@@ -230,7 +239,7 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
     ...cursors,
     ...(frame ? [cornerArt(frame.radius, frame.background)] : []),
   ];
-  return { source: size, content, pointer, drawsPointer, camera, zooms, frame, pills, kept, art, pointerArt: cursors[0] ?? null, cursors, pointerHeight, variants, shapes, inks, ringStyles };
+  return { source: size, content, pointer, drawsPointer, camera, zooms, frame, pills, kept, art, pointerArt: cursors[0] ?? null, cursors, pointerHeight, variants, shapes, inks, ringStyles, idle };
 }
 
 function inkSpans(shapes: readonly ShapeSpan[], variants: readonly VariantSpan[], frames: number): InkSpan[] {
