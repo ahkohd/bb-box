@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CommandLine } from '../src/transports/process.ts';
@@ -8,7 +9,9 @@ import { readTree, treeScript } from '../src/core/files-tree.ts';
 import type { FsBox } from '../src/core/box-fs.ts';
 
 const box: FsBox = { id: 'bx_tree', os: 'linux', state: 'ready', command: true, device: false };
-for (const shell of ['sh', 'dash', 'busybox']) test(`${shell} draws home in one call and expands only one level`, async () => {
+const installed = (shell: string) => shell === 'busybox' ? existsSync('/usr/bin/busybox') : spawnSync('sh', ['-c', `command -v ${shell}`]).status === 0;
+
+for (const shell of ['sh', 'dash', 'busybox']) test(`${shell} draws home in one call and expands only one level`, { skip: installed(shell) ? false : `${shell} is not installed here` }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'files-tree-'));
   const scratch = mkdtempSync(join(tmpdir(), 'files-tree-scratch-'));
   try {
