@@ -26,17 +26,26 @@ Documentation: [bbbox.dev](https://bbbox.dev).
 
 You need a Linux machine that runs BB and Docker, with about 10 GB of disk free and at least 8 GiB of memory for the server image. A desktop image needs about 18 GB of disk free, and the host needs at least 12 GiB of memory for a desktop box. Docker Desktop on a Mac or Windows works too. On a Mac with Apple silicon the images are x86_64, so boxes run under emulation, slowly.
 
-### With an agent
+<details open>
+<summary><strong>With an agent</strong></summary>
 
-Ask a BB thread's agent:
+Paste this into a BB thread. The docs site's home page has the same prompt, with a copy button.
 
 ```text
-Install BB Box with bb plugin install git:https://github.com/ahkohd/bb-box.git@main --yes, then follow its bb-box-setup skill to set up Docker on this machine, and get me a Linux desktop box.
+Set up BB Box for me: the BB plugin that gives threads computers of their own, called boxes.
+
+1. Install it: bb plugin install git:https://github.com/ahkohd/bb-box.git@main --yes
+2. Follow its bb-box-setup skill. If your skills do not list it yet, find it with bb skill list and read it with bb skill show <id>.
+3. Ask me first whether Docker boxes may be privileged containers, which can take over the machine they run on, and before anything that needs root or changes BB's settings.
+4. Set up Docker on the machine that runs BB: run bb box doctor, then bb box setup docker. It needs Linux with Docker, about 10 GB of free disk and 8 GiB of memory, and its Linux image takes 5 to 12 minutes to build.
+5. Prove it: bb box acquire linux, then bb box run <box> "uname -a", then bb box release <box>.
+6. Tell me what you set up, what bb box doctor says, and what is left for me to do.
 ```
 
-The agent sets up Docker with `bb box setup docker` and makes the box with `bb box acquire`. The first time, the server and desktop images build first, usually 10 to 20 minutes in all. Then select **Open desktop** on the box's row in the thread's **Box** panel.
+</details>
 
-### By hand
+<details>
+<summary><strong>By hand</strong></summary>
 
 1. Install BB Box from BB's plugin store. In BB, open Settings, then Installed plugins, and search for **BB Box**. Or open the plugin store and install **BB Box**.
 
@@ -58,6 +67,8 @@ The agent sets up Docker with `bb box setup docker` and makes the box with `bb b
 3. Select the plus, then **Create box**.
 4. For a desktop, select the plus, choose **Desktop**, and under Display X11 or Wayland, then **Build and create**. BB Box builds that desktop's image before the first one, usually in 4 to 10 minutes.
 5. Open the box's desktop. Select **Open desktop** on the box's row.
+
+</details>
 
 ### If a box says Could not join BB
 

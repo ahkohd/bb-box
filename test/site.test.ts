@@ -141,7 +141,8 @@ test("the home page's setup prompt installs BB Box as the quick start does, with
   assert.match(command, /^bb plugin install git:\S+$/);
   assert.ok(quickStart.includes(command));
 
-  const prompt = setupPrompt(command, "https://docs.example.com/start/quick-start.md");
+  const prompt = setupPrompt(pages, "https://docs.example.com/start/quick-start.md");
+  assert.ok(prompt.startsWith("Set up BB Box for me"), "the prompt is the README's With an agent block");
   assert.ok(prompt.includes(`${command} --yes`), "an agent cannot answer the install's confirmation");
   assert.ok(prompt.endsWith("https://docs.example.com/start/quick-start.md"));
 
