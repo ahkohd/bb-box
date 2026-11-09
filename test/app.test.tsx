@@ -987,6 +987,11 @@ function openMenu(trigger: HTMLElement) {
   return screen.findByRole("menu");
 }
 
+async function chooseMenuItem(trigger: HTMLElement, item: string) {
+  const menu = await openMenu(trigger);
+  fireEvent.click(within(menu).getByRole("menuitem", { name: item }));
+}
+
 /** The desktop menu's Display submenu, opened from the keyboard as Radix's tests do. */
 async function openDisplay(trigger: HTMLElement) {
   const menu = await openMenu(trigger);
@@ -2197,7 +2202,7 @@ test("a box a thread runs on is released or stopped only once the user says so",
   const slot = panel(handlers);
   await slot.findByText("calm-otter");
 
-  fireEvent.click(slot.getByRole("button", { name: "Stop" }));
+  await chooseMenuItem(slot.getByRole("button", { name: "calm-otter actions" }), "Stop");
   let dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText("Stop calm-otter anyway?")).toBeTruthy();
   expect(within(dialog).getByText("Build the app is working on calm-otter.")).toBeTruthy();
@@ -2220,10 +2225,10 @@ test("the panel stops and starts a box that can, and not one that cannot", async
   const { handlers, changes } = server([box()]);
   const slot = panel(handlers);
 
-  fireEvent.click(await slot.findByRole("button", { name: "Stop" }));
+  await chooseMenuItem(await slot.findByRole("button", { name: "calm-otter actions" }), "Stop");
   expect(await slot.findByText("Stopped")).toBeTruthy();
   fireEvent.click(await slot.findByRole("button", { name: "Start" }));
-  await slot.findByRole("button", { name: "Stop" });
+  await slot.findByText("Ready in 2.1 s");
   expect(changes).toEqual(["stop box_1", "start box_1"]);
 
   cleanup();
@@ -2272,7 +2277,7 @@ test("the panel shows why a change failed", async () => {
   const { handlers } = server([box()], { failWith: "Stopping the box failed: the host did not answer." });
   const slot = panel(handlers);
 
-  fireEvent.click(await slot.findByRole("button", { name: "Stop" }));
+  await chooseMenuItem(await slot.findByRole("button", { name: "calm-otter actions" }), "Stop");
   expect((await slot.findByRole("alert")).textContent).toBe("Stopping the box failed: the host did not answer.");
 });
 
@@ -7265,7 +7270,7 @@ test("the Boxes page's Machines have settings' rows and warnings: Stop, Start an
   await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   expect(changes).toEqual([]);
   // Stop asks too; Stop anyway goes on.
-  fireEvent.click(list.getAllByRole("button", { name: "Stop" })[0]!);
+  await chooseMenuItem(list.getByRole("button", { name: "build-1 actions" }), "Stop");
   dialog = await screen.findByRole("alertdialog");
   await within(dialog).findByText("Stop build-1 anyway?");
   fireEvent.click(within(dialog).getByRole("button", { name: "Stop anyway" }));
@@ -7371,7 +7376,7 @@ function rowOf(list: ReturnType<typeof boxesPage>, name: string): HTMLElement {
   return list.getByRole("link", { name, hidden: true }).closest<HTMLElement>("[data-resource-row]")!;
 }
 
-test("on the Boxes page a row's click, its name and its chevron open the box's page from the list; a row no longer unfolds, and its controls do not open the page (069 unit 1d)", async () => {
+test("on the Boxes page a row's click and its name open the box's page from the list; a row no longer unfolds, and its controls do not open the page (069 unit 1d)", async () => {
   const { handlers, changes } = server([box(), desktopBox()]);
   const list = boxesPage(handlers);
   const name = await list.findByRole("link", { name: "calm-otter" });
@@ -7381,29 +7386,40 @@ test("on the Boxes page a row's click, its name and its chevron open the box's p
   fireEvent.click(name);
   expect(list.inspection.navigateCalls).toEqual([toPage]);
   const row = rowOf(list, "calm-otter");
-  const chevron = row.querySelector("[data-row-action]")!.lastElementChild as HTMLAnchorElement;
-  expect(chevron.getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_1/from-list");
-  expect(chevron.tabIndex).toBe(-1);
-  expect(chevron.getAttribute("aria-hidden")).toBe("true");
-  fireEvent.click(chevron);
   fireEvent.click(row.querySelector("[data-row-line]")!);
-  expect(list.inspection.navigateCalls).toEqual([toPage, toPage, toPage]);
+  expect(list.inspection.navigateCalls).toEqual([toPage, toPage]);
   fireEvent.click(name, { metaKey: true });
-  fireEvent.click(chevron, { ctrlKey: true });
-  fireEvent.click(within(row).getByRole("button", { name: "Stop" }));
+  fireEvent.click(name, { ctrlKey: true });
+  await chooseMenuItem(within(row).getByRole("button", { name: "calm-otter actions" }), "Stop");
   await waitFor(() => expect(changes).toEqual(["stop box_1"]));
-  const menu = await openMenu(within(row).getByRole("button", { name: "calm-otter actions" }));
-  fireEvent.click(within(menu).getByRole("menuitem", { name: "Check now" }));
-  expect(list.inspection.navigateCalls).toHaveLength(3);
+  await chooseMenuItem(within(row).getByRole("button", { name: "calm-otter actions" }), "Check now");
+  expect(list.inspection.navigateCalls).toHaveLength(2);
   expect(row.className).toContain("hover:bg-state-hover/40");
   expect(row.querySelector("dl")).toBeNull();
 });
 
-test("the Boxes page keeps its search, filters and sort, and focus returns to the row's name, after a box is opened by its name, its chevron, a quick icon or its menu (G9)", async () => {
+test("a ready row has no inline Stop and no chevron, and Stop in its menu stops it", async () => {
+  const { handlers, changes } = server([box()], { machines: [machine({}, [])] });
+  const list = boxesPage(handlers);
+  const openTab = async (name: RegExp, boxName: string) => {
+    fireEvent.click(await list.findByRole("tab", { name }));
+    return rowOf(list, (await list.findByRole("link", { name: boxName })).getAttribute("aria-label")!);
+  };
+  const machineRow = await openTab(/^Machines/, "build-1");
+  expect(within(machineRow).queryByRole("button", { name: "Stop" })).toBeNull();
+  expect(machineRow.querySelector("[data-row-action] a")).toBeNull();
+  const row = await openTab(/^Threads/, "calm-otter");
+  expect(within(row).queryByRole("button", { name: "Stop" })).toBeNull();
+  expect(row.querySelector("[data-row-action] a")).toBeNull();
+  await chooseMenuItem(within(row).getByRole("button", { name: "calm-otter actions" }), "Stop");
+  await waitFor(() => expect(changes).toEqual(["stop box_1"]));
+});
+
+test("the Boxes page keeps its search, filters and sort, and focus returns to the row's name, after a box is opened by its name, the row, a quick icon or its menu (G9)", async () => {
   const { handlers } = server([box(), desktopBox(), box({ id: "box_6", name: "swift-fox", state: "stopped" })]);
   const ways: [string, (row: HTMLElement) => Promise<void>, string][] = [
     ["name", async (row) => void fireEvent.click(within(row).getByRole("link", { name: "bold-heron" })), "box/box_2/from-list"],
-    ["chevron", async (row) => void fireEvent.click(row.querySelector("[data-row-action]")!.lastElementChild!), "box/box_2/from-list"],
+    ["row", async (row) => void fireEvent.click(row.querySelector("[data-row-line]")!), "box/box_2/from-list"],
     ["quick icon", async (row) => void fireEvent.click(within(row).getByRole("button", { name: "Open terminal" })), "box/box_2/terminal/from-list"],
     [
       "menu",
@@ -7461,7 +7477,6 @@ test("a machine's row opens its page, and a thread chip on it records the row, s
   list = boxesPage(handlers);
   const back = await list.findByRole("link", { name: "build-1" });
   await waitFor(() => expect(document.activeElement).toBe(back));
-  expect(rowOf(list, "build-1").querySelector("[data-row-action]")!.lastElementChild!.getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_m1/from-list");
 });
 
 test("the list's place is kept in session storage for a reload, with its scroll for the tab it was on; what is not a place is left out", () => {
@@ -7623,7 +7638,7 @@ test("a refusal in the Box panel or on the Boxes page is a red line with Dismiss
   const failure = "Stopping the box failed: the host did not answer.";
   const slot = panel(server([box()], { failWith: failure }).handlers);
   await slot.findByText("calm-otter");
-  fireEvent.click(slot.getByRole("button", { name: "Stop" }));
+  await chooseMenuItem(slot.getByRole("button", { name: "calm-otter actions" }), "Stop");
   expect(await slot.findByRole("alert")).toBeTruthy();
   expect(slot.getByRole("alert").textContent).toBe(failure);
   fireEvent.click(slot.getByRole("button", { name: "Dismiss" }));
@@ -7632,7 +7647,7 @@ test("a refusal in the Box panel or on the Boxes page is a red line with Dismiss
   cleanup();
   const list = boxesPage(server([box()], { failWith: failure }).handlers);
   await list.findByText("calm-otter");
-  fireEvent.click(list.getByRole("button", { name: "Stop" }));
+  await chooseMenuItem(list.getByRole("button", { name: "calm-otter actions" }), "Stop");
   expect((await list.findByRole("alert")).textContent).toBe(failure);
   fireEvent.click(list.getByRole("button", { name: "Dismiss" }));
   await waitFor(() => expect(list.queryByRole("alert")).toBeNull());
@@ -7687,8 +7702,13 @@ test("the panel lists the box this thread runs on first in the one list with a B
   expect(slot.queryByText(/^\d+ box(es)?$/)).toBeNull();
   const rows = slot.getAllByRole("button", { name: /: details$/ }).map((node) => node.getAttribute("aria-label"));
   expect(rows).toEqual(["build-1: details", "calm-otter: details"]);
-  expect(slot.getAllByRole("button", { name: "Stop" })).toHaveLength(1);
+  expect(slot.queryByRole("button", { name: "Stop" })).toBeNull();
+  const own = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
+  expect(within(own).getByRole("menuitem", { name: "Stop" })).toBeTruthy();
+  fireEvent.keyDown(own, { key: "Escape" });
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   const menu = await openMenu(slot.getByRole("button", { name: "build-1 actions" }));
+  expect(within(menu).queryByRole("menuitem", { name: "Stop" })).toBeNull();
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open desktop", "Open in browser", "Open terminal", "Open files", "Details", "Copy address", "Check now"]);
 
   cleanup();

@@ -12,7 +12,7 @@ import { BoxMenu } from "./box-menu.tsx";
 import { releaseUnfinished, unreachableWhy } from "./box-words.ts";
 import type { BoxOpens } from "./box-opens.tsx";
 import type { PageLink } from "./box-nav.tsx";
-import { myViewers, openPageOnClick, PAGE_ROW, RowChevron, RowNameLink } from "./box-row.tsx";
+import { myViewers, openPageOnClick, PAGE_ROW, RowNameLink } from "./box-row.tsx";
 import { rowLine } from "./row-line.ts";
 import { rowDescribedBy, RowStatus, useNameFocus } from "./row-status.tsx";
 
@@ -73,9 +73,7 @@ export function MachineRow({
         {canOpenTerminal(box) ? <IconButton label="Open terminal" icon={<TerminalGlyph />} onClick={() => opens.terminal(box)} /> : null}
         {canOpenFiles(box) ? <IconButton label="Open files" icon={<FolderGlyph />} onClick={() => opens.files(box)} /> : null}
         {stops && box.state === "stopped" ? <IconButton label="Start" icon="Play" onClick={onStart} loading={busy === `start:${box.id}`} disabled={acting} /> : null}
-        {stops && ready ? <IconButton label="Stop" icon="Square" onClick={onStop} loading={busy === `stop:${box.id}`} disabled={acting} /> : null}
         <BoxMenu box={box} of={{ owner: "yours", inBrowser: true, stop: onStop, start: onStart, remove: onRemove, forget: onForget }} opens={opens} resizing={resizing} onResizing={setResizing} />
-        <RowChevron page={page} />
       </span>
     </div>
   );
