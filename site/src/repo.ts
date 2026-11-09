@@ -142,6 +142,8 @@ export function withLightTwins(body: string, file: string): string {
   return paired + body.slice(copiedUpTo);
 }
 
+const githubVideo = /^https:\/\/github\.com\/user-attachments\/assets\/\S+\n+/gm;
+
 function pageFrom(source: Source): Page {
   const { frontmatter, content } = withoutFrontmatter(readText(source.file));
   const { title, body } = splitTitle(content);
@@ -156,6 +158,7 @@ function pageFrom(source: Source): Page {
     const section = sectionOf(body, source.withoutSection, source.file);
     pageBody = body.slice(0, section.start) + body.slice(section.end);
   }
+  pageBody = pageBody.replace(githubVideo, "");
   return {
     id: source.id,
     file: source.file,
