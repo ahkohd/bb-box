@@ -114,3 +114,21 @@ export function drawnInSoftware(gl: WebGLRenderingContext): boolean {
   if (!info) return false;
   return softwareRenderers.test(String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL)));
 }
+
+export interface GlAllocations {
+  programs?: (WebGLProgram | null | undefined)[];
+  buffers?: (WebGLBuffer | null | undefined)[];
+  textures?: (WebGLTexture | null | undefined)[];
+  framebuffers?: (WebGLFramebuffer | null | undefined)[];
+}
+
+export function releaseGl(gl: WebGLRenderingContext | null, made: GlAllocations = {}): void {
+  if (!gl) return;
+  if (!gl.isContextLost()) {
+    made.programs?.forEach((program) => program && gl.deleteProgram(program));
+    made.buffers?.forEach((buffer) => buffer && gl.deleteBuffer(buffer));
+    made.textures?.forEach((made) => made && gl.deleteTexture(made));
+    made.framebuffers?.forEach((framebuffer) => framebuffer && gl.deleteFramebuffer(framebuffer));
+  }
+  gl.getExtension("WEBGL_lose_context")?.loseContext();
+}

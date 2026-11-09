@@ -9,7 +9,8 @@ const { class: className } = Astro.props;
 <canvas class:list={["hero-field", className]} data-motion aria-hidden="true"></canvas>
 
 <script>
-  import { cssNumber, cssValue, deviceScale, drawnInSoftware, linkedProgram, noiseSource, quad, quadVertexSource, rgbOf, texture, uniformsOf, type Rgb } from "../../effects/gl.ts";
+  import { cssNumber, cssValue, deviceScale, drawnInSoftware, linkedProgram, noiseSource, quad, quadVertexSource, releaseGl, rgbOf, texture, uniformsOf, type Rgb } from "../../effects/gl.ts";
+  import { stillFieldValue } from "../../effects/still-field.ts";
   import { animateWhileSeen, announceMotionChange } from "../../motion.ts";
 
   const ramp = " .·:-=+*%#";
@@ -28,6 +29,7 @@ const { class: className } = Astro.props;
     uniform float presence;
     uniform float lowest;
     uniform float quietLeft;
+    uniform float leftFloor;
     ${noiseSource}
     void main() {
       vec2 cell = gl_FragCoord.xy;
@@ -44,7 +46,7 @@ const { class: className } = Astro.props;
       value += 0.28 * exp(-pow((height - sweep) * 16.0, 2.0)) * (0.25 + value);
       value *= smoothstep(0.0, 0.75, height);
       float across = gl_FragCoord.x / grid.x;
-      value *= mix(1.0, 0.3 + 0.7 * smoothstep(0.1, 0.7, across), quietLeft);
+      value *= mix(1.0, leftFloor + (1.0 - leftFloor) * smoothstep(0.1, 0.7, across), quietLeft);
       float away = distance(position, pointer);
       float lens = presence * exp(-(away * away) / (2.0 * ${pointerReachPx.toFixed(1)} * ${pointerReachPx.toFixed(1)}));
       float churn = hash(floor(cell) + floor(seconds * (1.2 + 16.0 * lens)));
@@ -80,6 +82,7 @@ const { class: className } = Astro.props;
     paper: Rgb;
     strength: number;
     lowest: number;
+    leftFloor: number;
   }
 
   const lookOf = (canvas: HTMLCanvasElement): Look => ({
@@ -88,6 +91,7 @@ const { class: className } = Astro.props;
     paper: rgbOf(cssValue(canvas, "--dither-paper")),
     strength: cssNumber(canvas, "--dither-strength", 0.4),
     lowest: cssNumber(canvas, "--dither-floor", 0.3),
+    leftFloor: cssNumber(canvas, "--field-left", 0.3),
   });
 
   function glyphSheet(cellWidth: number, cellHeight: number, scale: number): HTMLCanvasElement {
@@ -103,9 +107,50 @@ const { class: className } = Astro.props;
     return sheet;
   }
 
-  function giveUp(canvas: HTMLCanvasElement): void {
-    canvas.hidden = true;
+  const quietLeftFor = (cssWidth: number) => (cssWidth > 900 ? 1 : 0.6);
+
+  function drawStillIn2d(canvas: HTMLCanvasElement): void {
+    const look = lookOf(canvas);
+    const fresh = canvas.cloneNode() as HTMLCanvasElement;
+    fresh.removeAttribute("data-motion");
+    canvas.replaceWith(fresh);
     announceMotionChange();
+    const pen = fresh.getContext("2d");
+    if (!pen) {
+      fresh.hidden = true;
+      return;
+    }
+    const { width, height } = fresh.getBoundingClientRect();
+    fresh.width = Math.max(1, Math.round(width));
+    fresh.height = Math.max(1, Math.round(height));
+    pen.font = `${glyphFontPx}px "JetBrains Mono Variable", ui-monospace, monospace`;
+    pen.textBaseline = "top";
+    const cellWidth = pen.measureText("0").width;
+    const columns = Math.ceil(width / cellWidth);
+    const rows = Math.ceil(height / glyphLinePx);
+    const quietLeft = quietLeftFor(width);
+    const [r, g, b] = look.ink.map((channel) => Math.round(channel * 255));
+    const levels = [...ramp].map(() => [] as string[]);
+    for (let row = 0; row < rows; row++) {
+      const lines = levels.map(() => Array<string>(columns).fill(" "));
+      for (let column = 0; column < columns; column++) {
+        const value = stillFieldValue(column, rows - 1 - row, columns, rows, cellWidth / glyphLinePx, { lowest: look.lowest, quietLeft, leftFloor: look.leftFloor });
+        const level = Math.floor(Math.min(0.999, value) * ramp.length);
+        if (level > 0) lines[level]![column] = ramp[level]!;
+      }
+      lines.forEach((line, level) => levels[level]!.push(line.join("")));
+    }
+    levels.forEach((lines, level) => {
+      if (level === 0) return;
+      const value = (level + 0.5) / ramp.length;
+      pen.fillStyle = `rgb(${r} ${g} ${b} / ${(look.strength * (0.35 + 0.65 * value)).toFixed(3)})`;
+      lines.forEach((line, row) => pen.fillText(line, 0, row * glyphLinePx));
+    });
+  }
+
+  function giveUp(canvas: HTMLCanvasElement, gl: WebGLRenderingContext | null, made: Parameters<typeof releaseGl>[1]): void {
+    releaseGl(gl, made);
+    drawStillIn2d(canvas);
   }
 
   function startField(canvas: HTMLCanvasElement): void {
@@ -116,13 +161,18 @@ const { class: className } = Astro.props;
     const fieldTexture = gl && corners ? texture(gl, gl.NEAREST) : null;
     const atlasTexture = gl && corners ? texture(gl, gl.NEAREST) : null;
     const frame = gl && corners ? gl.createFramebuffer() : null;
-    if (!gl || !fieldProgram || !glyphProgram || !corners || !fieldTexture || !atlasTexture || !frame) {
-      if (gl) [fieldProgram, glyphProgram].forEach((program) => program && gl.deleteProgram(program));
-      giveUp(canvas);
+    const made = { programs: [fieldProgram, glyphProgram], buffers: [corners], textures: [fieldTexture, atlasTexture], framebuffers: [frame] };
+    if (!gl || !fieldProgram || !glyphProgram || !corners || !fieldTexture || !atlasTexture || !frame || drawnInSoftware(gl)) {
+      giveUp(canvas, gl, made);
       return;
     }
-    canvas.addEventListener("webglcontextlost", () => giveUp(canvas));
-    const fieldUniforms = uniformsOf(gl, fieldProgram, ["grid", "cellSize", "seconds", "scroll", "pointer", "presence", "lowest", "quietLeft"] as const);
+    let lost = false;
+    canvas.addEventListener("webglcontextlost", () => {
+      if (lost) return;
+      lost = true;
+      giveUp(canvas, gl, made);
+    });
+    const fieldUniforms = uniformsOf(gl, fieldProgram, ["grid", "cellSize", "seconds", "scroll", "pointer", "presence", "lowest", "quietLeft", "leftFloor"] as const);
     const glyphUniforms = uniformsOf(gl, glyphProgram, ["field", "atlas", "grid", "cellDevice", "glyphs", "ink", "hot", "paper", "strength"] as const);
     const hero = canvas.closest("section") ?? canvas;
     let look = lookOf(canvas);
@@ -134,8 +184,7 @@ const { class: className } = Astro.props;
     let pointerWanted = 0;
     let presence = 0;
 
-    const still = drawnInSoftware(gl);
-    const scaleNow = () => (still ? 1 : deviceScale());
+    const scaleNow = deviceScale;
 
     const resize = () => {
       const scale = scaleNow();
@@ -167,9 +216,9 @@ const { class: className } = Astro.props;
     };
 
     const draw = (seconds: number) => {
-      if (canvas.hidden || gl.isContextLost()) return;
+      if (lost || gl.isContextLost()) return;
       presence += (pointerWanted - presence) * presenceEase;
-      const quietLeft = canvas.width / scaleNow() > 900 ? 1 : 0.6;
+      const quietLeft = quietLeftFor(canvas.width / scaleNow());
       gl.bindFramebuffer(gl.FRAMEBUFFER, frame);
       gl.viewport(0, 0, columns, rows);
       gl.useProgram(fieldProgram);
@@ -181,6 +230,7 @@ const { class: className } = Astro.props;
       gl.uniform1f(fieldUniforms.presence, presence);
       gl.uniform1f(fieldUniforms.lowest, look.lowest);
       gl.uniform1f(fieldUniforms.quietLeft, quietLeft);
+      gl.uniform1f(fieldUniforms.leftFloor, look.leftFloor);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, canvas.width, canvas.height);
@@ -216,12 +266,8 @@ const { class: className } = Astro.props;
       resize();
       draw(0);
     });
-    if (still) {
-      canvas.removeAttribute("data-motion");
-      announceMotionChange();
-    }
     resize();
-    animateWhileSeen(canvas, { draw, resize, restyle }, 24, still);
+    animateWhileSeen(canvas, { draw, resize, restyle }, 24);
   }
 
   function startWhenIdle(): void {
