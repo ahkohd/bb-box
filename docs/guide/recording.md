@@ -2,7 +2,7 @@
 
 An agent can record a desktop box, or the phone or tablet of a device box, while it works and show you the clip in the thread, rather than describe what it did. When it tests something, it captions each step and its result, so you can see what it checked and whether it passed.
 
-![A Linux desktop recording. It zooms onto a painted window named Ready, with a pointing hand and a click ring on the button. The camera eases out as Mousepad opens, and back in on the line "A long line for the clip, kept in the note." as it is typed. The line is selected with a Ctrl+A pill, a Save As dialog opens with a Ctrl+S pill and the captions below its name field, and cancelling it shows a warning. The window is widened with a resize cursor and dragged by the title with an open hand. The last check fails because the file is not on disk, and the clip fades out](../media/recording.webp)
+![A Linux desktop recording. It zooms onto a painted window named Ready, with a pointing hand and a click ring on the button. The camera eases out as Mousepad opens, and back in on the line "A long line for the clip, kept in the note." as it is typed. The line is selected with a Ctrl+A pill, a Save As dialog opens with a Ctrl+S pill and the captions below its name field, and cancelling it shows a warning. The window is widened with a resize cursor and dragged by the title with a white open hand, the captions below it. The last check fails because the file is not on disk, and the clip fades out](../media/recording.webp)
 
 ## What a clip shows
 
