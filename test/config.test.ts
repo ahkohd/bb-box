@@ -305,7 +305,7 @@ test("the first start moves BB's settings: secrets, then the copy, then the docu
   assert.equal(document.backends[0]!.id, "proxmox-lxc");
   assert.deepEqual(await kv.get<Secrets>(SECRETS_KEY), { "proxmox-lxc": { "token-secret": TOKEN, "ssh-private-key": KEY } });
   const copy = (await kv.get<MovedCopy>(COPY_KEY))!;
-  assert.equal(copy.version, "1.0.0");
+  assert.equal(copy.version, "0.1.0");
   assert.equal(copy.values["proxmox-lxc-url"], SAVED["proxmox-lxc-url"]);
   assert.deepEqual(copy.values["proxmox-lxc-token-secret"], { set: true });
   assert.deepEqual(copy.values["ssh-pool-ssh-private-key"], { set: false });
@@ -967,7 +967,7 @@ test("bb box config check and apply read a file from where bb runs, and migrated
   assert.equal(app().configuration.general().perThreadLimit, 5);
 
   const migrated = await harness.behavior.runCli(["config", "migrated"]);
-  assert.match(migrated.stdout ?? "", /^BB Box 1\.0\.0 moved these BB settings into its configuration on /);
+  assert.match(migrated.stdout ?? "", /^BB Box 0\.1\.0 moved these BB settings into its configuration on /);
   assert.match(migrated.stdout ?? "", /\nfake-enabled: true\n/);
   assert.match((await harness.behavior.runCli(["config", "migrated", "--remove"])).stdout ?? "", /Removed the copy/);
   assert.match((await harness.behavior.runCli(["config", "migrated"])).stdout ?? "", /There is no copy/);

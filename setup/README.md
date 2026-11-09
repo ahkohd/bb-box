@@ -24,17 +24,17 @@ The cloud backends join their machines to your tailnet when BB is on one: see [j
 
 ## Install the plugin
 
-Install BB Box from BB's plugin store. In BB, open Settings, then Installed plugins, search for **BB Box**, and install it. Or open the plugin store and install **BB Box**. BB updates a store install within 1.x.
+Install BB Box from BB's plugin store. In BB, open Settings, then Installed plugins, search for **BB Box**, and install it. Or open the plugin store and install **BB Box**. BB updates a store install to each new release before 1.0.
 
-To install from Git instead, open Settings, then Installed plugins. Select the arrow beside **New plugin**, then **Install from source**, and enter `git:https://github.com/ahkohd/bb-box.git@stable` for the latest release, or `git:https://github.com/ahkohd/bb-box.git@main` for new work. Or, with BB's command line:
+To install from Git instead, open Settings, then Installed plugins. Select the arrow beside **New plugin**, then **Install from source**, and enter `git:https://github.com/ahkohd/bb-box.git@main` for new work as it lands, or a release tag such as `git:https://github.com/ahkohd/bb-box.git@v0.1.0`. Or, with BB's command line:
 
 ```sh
-bb plugin install git:https://github.com/ahkohd/bb-box.git@stable
+bb plugin install git:https://github.com/ahkohd/bb-box.git@main
 ```
 
 It asks you to confirm; an agent or a script adds `--yes`. BB fetches and builds it, so you need no clone.
 
-A pinned tag, such as `git:https://github.com/ahkohd/bb-box.git@v1.0.0`, stays on that tag. `bb plugin update` refuses a plugin installed from a tag.
+A release tag, such as `git:https://github.com/ahkohd/bb-box.git@v0.1.0`, stays on that tag. Releases are tags on `main`. `bb plugin update` refuses a plugin installed from a tag.
 
 To change BB Box itself, clone it, run `npm install` and `bb plugin build`, then `bb plugin install .` in the clone.
 
@@ -69,10 +69,10 @@ A BB automation waits at most 15 minutes, but a run can take hours. When the aut
 
 Do not remove BB Box to upgrade it, or to switch where it was installed from. `bb plugin remove` deletes its configuration, secrets and storage. `bb plugin source bb-box` shows what it was installed from.
 
-- Installed from the plugin store: BB updates it within 1.x. `bb plugin update bb-box` installs the newest release in that range and keeps its settings and storage. `bb plugin outdated` shows whether there is one.
-- Installed from `@stable` or `@main`: `bb plugin update bb-box` moves it to that branch's newest commit and keeps its settings and storage.
+- Installed from the plugin store: BB updates it to each new release before 1.0. `bb plugin update bb-box` installs the newest release in that range and keeps its settings and storage. `bb plugin outdated` shows whether there is one.
+- Installed from `@main`: `bb plugin update bb-box` moves it to the newest commit on `main` and keeps its settings and storage.
 - Installed from a path: pull, run `npm install` and `bb plugin build`, then `bb plugin reload bb-box`.
-- Installed from a pinned tag: BB pins that tag, and `bb plugin update` refuses. A store install, and an install from `@stable` or `@main`, keep updating. A pinned tag does not.
+- Installed from a pinned tag: BB pins that tag, and `bb plugin update` refuses. A store install and an install from `@main` keep updating. A pinned tag does not.
 
 After an upgrade, run `bb box doctor`. Your backend's guide says, under **Update**, when its host needs a step too, such as running a setup script again.
 

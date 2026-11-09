@@ -29,18 +29,18 @@ You need a Linux machine that runs BB and Docker, with about 10 GB of disk free 
    To install from Git instead, open Settings, then Installed plugins, then the arrow beside **New plugin**, then **Install from source**, and enter:
 
    ```text
-   git:https://github.com/ahkohd/bb-box.git@stable
+   git:https://github.com/ahkohd/bb-box.git@main
    ```
 
    Or with BB's command line, `bb`, or `npx --package bb-app bb` where `bb` is not installed:
 
    ```sh
-   bb plugin install git:https://github.com/ahkohd/bb-box.git@stable
+   bb plugin install git:https://github.com/ahkohd/bb-box.git@main
    ```
 
    It asks you to confirm. An agent or a script adds `--yes`, as it cannot answer.
 
-   `stable` is the latest release. `main` is new work. Install `@main` only to try that work.
+   The store installs the latest release and updates within 0.x. `@main` follows new work as it lands. A release tag, such as `@v0.1.0`, stays on that release.
 
 2. Open a thread's **Box** panel, or BB Box in BB's settings, and select **Use Docker on this machine**, or have an agent run `bb box setup docker`. The Linux image usually builds in 5 to 12 minutes, depending on the machine. `bb box doctor` checks the setup.
 3. Select the plus, then **Create box**. Or ask the thread's agent: "Get a Linux box and run uname -a in it."

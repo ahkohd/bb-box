@@ -34,5 +34,5 @@ BB Box assumes one trusted user. It is not a sandbox for code you do not trust.
 
 ## Learn more
 
-- [User guide](https://github.com/ahkohd/bb-box/blob/stable/docs/guide/README.md)
-- [Setting up backends](https://github.com/ahkohd/bb-box/blob/stable/setup/README.md)
+- [User guide](https://github.com/ahkohd/bb-box/blob/main/docs/guide/README.md)
+- [Setting up backends](https://github.com/ahkohd/bb-box/blob/main/setup/README.md)
