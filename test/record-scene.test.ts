@@ -24,6 +24,7 @@ import {
   typingSpan,
   viewCovers,
   type Scene,
+  type ShapeSpan,
 } from "../src/core/record-motion.ts";
 import { GRID_COLUMNS, GRID_ROWS, areaOnClip, planScene, pointerVariants, sceneCommands, sceneHead, zoomFilter, type BrightnessGrid, type SceneFacts } from "../src/core/record-scene.ts";
 import { ringArt } from "../src/core/record-art.ts";
@@ -1437,6 +1438,27 @@ test("the pointer is dark over a light part of the screen and light over a dark 
   const commands = sceneCommands(plan);
   assert.match(commands, /overlay@arrowl enable 1;[\s\S]*overlay@arrowl enable 0;[\s\S]*overlay@arrowd enable 1;/, "one pointer shows at a time");
   assert.match(commands, /overlay@ringld0 x/);
+});
+
+test("a grab or a hand is white with a dark edge over a light or mid-grey surface, as a desktop's hand is, read where it sits, though it came off a dark desktop; the arrow keeps its ink there (081)", () => {
+  const titleBar = [0, 1, 2, 3].map((at) => grid(at, (column) => (column < GRID_COLUMNS / 2 ? 30 : 130)));
+  const frames = Array.from({ length: 120 }, (_, index) => ({ x: index < 60 ? 300 : 1500, y: 400 }));
+  const grabbing: ShapeSpan[] = [{ from: 0, to: 2, shape: "arrow" }, { from: 2, to: 4, shape: "grab" }];
+  const grabbed = pointerVariants(frames, titleBar, SCREEN, POINTER_HEIGHT, 40, grabbing);
+  assert.equal(grabbed.find((span) => span.from <= 90 && span.to > 90)!.variant, "dark", `the white hand with a dark edge: ${JSON.stringify(grabbed)}`);
+  assert.equal(grabbed[0]!.variant, "light", "the arrow over the dark desktop before it is white");
+  const grabArt = cursorArt("grab", "dark", CURSOR);
+  const palm = viewPixel(grabArt.png, grabArt.width, 16, 18);
+  assert.ok(palm[0]! > 200 && palm[3]! > 200, `that art's fill is white: ${palm.join(",")}`);
+  const pointing = pointerVariants(frames, titleBar, SCREEN, POINTER_HEIGHT, 40, [{ from: 0, to: 4, shape: "arrow" }]);
+  assert.deepEqual(pointing.map((span) => span.variant), ["light"], "an arrow over the same grey keeps its white fill");
+  const short: ShapeSpan[] = [{ from: 0, to: 3.6, shape: "arrow" }, { from: 3.6, to: 4, shape: "grab" }];
+  const brief = pointerVariants(Array.from({ length: 120 }, (_, index) => ({ x: index < 108 ? 300 : 1500, y: 400 })), titleBar, SCREEN, POINTER_HEIGHT, 40, short);
+  assert.equal(brief.at(-1)!.variant, "dark", "even a grab shorter than half a second");
+  const edge = [0, 1, 2].map((at) => grid(at, (column) => (column < 9 ? 220 : 30)));
+  const atEdge = Array.from({ length: 60 }, () => ({ x: 1075, y: 400 }));
+  const pointed = pointerVariants(atEdge, edge, SCREEN, POINTER_HEIGHT, 40, [{ from: 0, to: 2, shape: "hand" }]);
+  assert.deepEqual(pointed.map((span) => span.variant), ["dark"], "a hand is read at its fingertip, on the light side of the edge, not where an arrow's body would be");
 });
 
 test("a click's ring is drawn as the pointer is: a band of the pointer's fill between edges of its other ink, blue for a right click (073)", () => {

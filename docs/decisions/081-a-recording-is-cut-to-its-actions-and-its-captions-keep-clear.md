@@ -158,6 +158,19 @@ action is in another window, is that window going, whatever its size. The
 camera eases out as it goes, so the next window opens in full view rather
 than inside a zoom on bare desktop.
 
+### A hand is white over light and mid-grey surfaces
+
+The pointing hand and the open hand are drawn the other way round from the
+arrow: their light variant is a black hand. Over a mid-grey surface, such as
+a title bar averaged with the dark desktop around it, the pointer kept the
+variant it came in with, so a grab that came off the desktop was black. A
+hand or grab is now white with a dark outline unless the surface is dark,
+105 of 255 or less, with no band where it keeps the last one, and a run of
+it shorter than half a second keeps its own variant. Its surface is read
+where it sits, near its fingertip or at its centre, not where an arrow's
+body would be. The arrow is as before, white over that grey after a dark
+desktop, so both read alike.
+
 ### Chips hug their words
 
 A caption, warning, key or mark chip is 2.1 times its font size tall, with

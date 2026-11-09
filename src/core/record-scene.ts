@@ -197,23 +197,44 @@ function variantFor(under: number | null): PointerVariant | null {
   return under <= DIM_UNDER ? "light" : null;
 }
 
-export function pointerVariants(frames: readonly PointerFrame[], grids: readonly BrightnessGrid[], size: { readonly width: number; readonly height: number }, pointerHeight: number, luma: number | null): VariantSpan[] {
-  const wanted = frames.map((frame, index) => variantFor(brightnessUnder(grids, size, index / CLIP_FPS, frame.x + pointerHeight * 0.25, frame.y + pointerHeight * 0.45)));
+const WHITE_HANDS: readonly PointerShape[] = ["hand", "grab"];
+
+function sampledFrom(shape: PointerShape): readonly [number, number] {
+  if (shape === "hand") return [0.1, 0.3];
+  if (shape === "grab") return [0, 0];
+  return [0.25, 0.45];
+}
+
+function variantForShape(shape: PointerShape, under: number | null): PointerVariant | null {
+  if (!WHITE_HANDS.includes(shape) || under === null) return variantFor(under);
+  return under <= DIM_UNDER ? "light" : "dark";
+}
+
+export function pointerVariants(frames: readonly PointerFrame[], grids: readonly BrightnessGrid[], size: { readonly width: number; readonly height: number }, pointerHeight: number, luma: number | null, shapes: readonly ShapeSpan[] = []): VariantSpan[] {
+  const shapeOf = (index: number): PointerShape => (shapes.length ? shapeAt(shapes, index / CLIP_FPS) : "arrow");
+  const wanted = frames.map((frame, index) => {
+    const shape = shapeOf(index);
+    const [across, down] = sampledFrom(shape);
+    return variantForShape(shape, brightnessUnder(grids, size, index / CLIP_FPS, frame.x + pointerHeight * across, frame.y + pointerHeight * down));
+  });
   let current: PointerVariant = wanted.find((each) => each !== null) ?? (luma !== null && luma >= 128 ? "dark" : "light");
-  const runs: VariantSpan[] = [];
+  const runs: (VariantSpan & { readonly handBegins: boolean })[] = [];
   wanted.forEach((each, index) => {
     current = each ?? current;
     const last = runs.at(-1);
-    if (last && last.variant === current) runs[runs.length - 1] = { ...last, to: index + 1 };
-    else runs.push({ from: index, to: index + 1, variant: current });
+    const handBegins = index > 0 && WHITE_HANDS.includes(shapeOf(index)) !== WHITE_HANDS.includes(shapeOf(index - 1));
+    if (last && last.variant === current && !handBegins) runs[runs.length - 1] = { ...last, to: index + 1 };
+    else runs.push({ from: index, to: index + 1, variant: current, handBegins });
   });
   const least = Math.round(VARIANT_LEAST_S * CLIP_FPS);
-  return runs.reduce((kept: VariantSpan[], run) => {
-    const last = kept.at(-1);
-    if (last && (last.variant === run.variant || run.to - run.from < least)) kept[kept.length - 1] = { ...last, to: run.to };
-    else kept.push(run);
-    return kept;
-  }, []);
+  return runs
+    .reduce((kept: (VariantSpan & { readonly handBegins: boolean })[], run) => {
+      const last = kept.at(-1);
+      if (last && (last.variant === run.variant || (run.to - run.from < least && !run.handBegins))) kept[kept.length - 1] = { ...last, to: run.to };
+      else kept.push(run);
+      return kept;
+    }, [])
+    .map(({ from, to, variant }) => ({ from, to, variant }));
 }
 
 function variantAt(spans: readonly VariantSpan[], frame: number): PointerVariant {
@@ -254,8 +275,8 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
   const { content, inset } = contentSize(size, options.frame);
   const canvas = cursorCanvas(size.width, content.width);
   const pointerHeight = Math.max(16, Math.round((canvas * CURSOR_BODY) / CURSOR_VIEW));
-  const variants = pointerVariants(pointer.frames, facts.brightness ?? [], size, pointerHeight, facts.luma);
   const shapes = pointerShapes(scene, captionMoments);
+  const variants = pointerVariants(pointer.frames, facts.brightness ?? [], size, pointerHeight, facts.luma, shapes);
   const inks = inkSpans(shapes, variants, pointer.frames.length);
   const seen: PointerShape[] = [];
   for (const ink of inks) if (!seen.includes(ink.shape)) seen.push(ink.shape);
