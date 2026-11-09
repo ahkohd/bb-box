@@ -33,6 +33,13 @@ test("the site has the getting-started path and a page for every guide, backend 
   );
 });
 
+test("a page made from one section of a file starts its headings at level 2, as the README's Quick start does under its own heading", () => {
+  const quickStart = pages.find((page) => page.id === "start/quick-start")!;
+  const levels = [...blankedCode(quickStart.body).matchAll(/^(#{2,6}) /gm)].map((match) => match[1]!.length);
+  assert.ok(levels.length > 0, "the quick start has headings");
+  assert.equal(Math.min(...levels), 2);
+});
+
 test("the home page's demo can always be paused: each of its videos has controls, with JavaScript and without", () => {
   const demo = readFileSync(join(repoRoot, "site", "src", "components", "home", "DemoVideo.astro"), "utf8");
   const videos = [...demo.matchAll(/<video\b[^>]*>/g)].map((match) => match[0]);
