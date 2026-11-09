@@ -76,6 +76,18 @@ accessibility insert does, and a result follows within 0.5 seconds, its
 Typing pill is left out. It would arrive with the result and linger as a
 third row with nothing to accompany.
 
+### A click that closes its window rings before it goes
+
+A click's window goes on the click when a change covering most of it comes
+from 0.3 seconds before the click to 0.5 seconds after, and the agent's next
+action in a window is in another one, or there is none. A window that
+appears or is uncovered then, and is acted in next, is not going. The click
+is then placed so its ring ends a quarter of a second, one reading of the
+screen, before that change: at most 0.5 seconds earlier, and at least
+0.1 seconds after the action before it. The pointer's glide, the ring and
+the hand move with it. The ring's stages from the change on are not drawn,
+and a ring with none left is not drawn at all.
+
 ### The camera pans rather than pumps
 
 After a zoomed group, the camera stays in and pans to the next group when

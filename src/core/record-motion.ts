@@ -51,6 +51,8 @@ export interface PlacedClick {
   readonly area: InputArea | null;
   readonly role?: string | null;
   readonly window?: InputArea | null;
+  readonly windowGoneAt?: number;
+  readonly loggedAt?: number;
 }
 
 export interface PlacedScroll {
@@ -103,6 +105,51 @@ export interface Ring {
   readonly x: number;
   readonly y: number;
   readonly kind: "left" | "right";
+  readonly until?: number;
+}
+
+export const CLOSE_SEEN_BEFORE_S = 0.3;
+export const CLOSE_SEEN_AFTER_S = 0.5;
+export const ANALYSIS_STEP_S = 0.25;
+export const CLICK_EARLIER_MOST_S = 0.5;
+export const AFTER_PREVIOUS_ACTION_S = 0.1;
+
+export function ringStageShown(ring: Ring, stage: number): boolean {
+  return ring.until === undefined || ring.at + (stage * RING_FRAMES_PER_STAGE) / CLIP_FPS < ring.until - 0.001;
+}
+
+export const SAME_WINDOW_SHARE = 0.5;
+
+function sameWindow(a: InputArea, b: InputArea): boolean {
+  return overlap(a, b) > Math.max(areaOf(a), areaOf(b)) * SAME_WINDOW_SHARE;
+}
+
+function movesOnFrom(scene: Scene, click: PlacedClick, window: InputArea): boolean {
+  const later = [...scene.clicks, ...scene.scrolls, ...scene.typing]
+    .filter((action) => action.at > click.at + 0.001 && !!action.window && areaOf(action.window) > 0)
+    .sort((a, b) => a.at - b.at)[0];
+  return !later || !sameWindow(later.window!, window);
+}
+
+function windowGoneAfter(scene: Scene, click: PlacedClick): number | null {
+  const window = click.window;
+  if (!window || areaOf(window) <= 0) return null;
+  const gone = scene.changes.filter((change) => change.at >= click.at - CLOSE_SEEN_BEFORE_S && change.at <= click.at + CLOSE_SEEN_AFTER_S && overlap(change, window) > areaOf(window) / 2);
+  if (!gone.length || !movesOnFrom(scene, click, window)) return null;
+  return Math.min(...gone.map((change) => change.at));
+}
+
+export function clicksBeforeTheirWindowGoes(scene: Scene, keys: readonly { readonly at: number }[] = []): Scene {
+  const actions = [...scene.clicks.map((click) => click.at), ...scene.scrolls.map((scroll) => scroll.at), ...scene.typing.map((typing) => typing.at), ...keys.map((each) => each.at)];
+  const clicks = scene.clicks.map((click): PlacedClick => {
+    const goneAt = windowGoneAfter(scene, click);
+    if (goneAt === null) return click;
+    const previous = Math.max(0, ...actions.filter((at) => at < click.at - 0.001));
+    const wanted = goneAt - ANALYSIS_STEP_S - RING_S;
+    const at = Math.min(click.at, Math.max(wanted, click.at - CLICK_EARLIER_MOST_S, previous + AFTER_PREVIOUS_ACTION_S));
+    return { ...click, at: round3(at), windowGoneAt: goneAt, loggedAt: click.at };
+  });
+  return { ...scene, clicks };
 }
 
 export interface Span {
@@ -283,7 +330,8 @@ export function pressesOf(samples: readonly PointerSample[]): Press[] {
 
 function ringsOf(scene: Scene, sampled: readonly PlacedClick[]): Ring[] {
   const acted = scene.clicks;
-  const fromSamples = sampled.filter((click) => !acted.some((act) => Math.abs(act.at - click.at) <= SAME_CLICK_S && distance(act, click) <= SAME_CLICK_PX));
+  const sameMoment = (act: PlacedClick, click: PlacedClick) => Math.min(Math.abs(act.at - click.at), Math.abs((act.loggedAt ?? act.at) - click.at)) <= SAME_CLICK_S;
+  const fromSamples = sampled.filter((click) => !acted.some((act) => sameMoment(act, click) && distance(act, click) <= SAME_CLICK_PX));
   const merged: PlacedClick[] = [];
   for (const click of [...fromSamples].sort((a, b) => a.at - b.at)) {
     const last = merged.at(-1);
@@ -293,8 +341,9 @@ function ringsOf(scene: Scene, sampled: readonly PlacedClick[]): Ring[] {
   const clicks = [...acted, ...merged].sort((a, b) => a.at - b.at);
   return clicks.flatMap((click): Ring[] => {
     const kind = click.button === "right" ? "right" : "left";
-    const ring = { at: round3(click.at), x: Math.round(click.x), y: Math.round(click.y), kind } as const;
-    return click.count === 2 ? [ring, { ...ring, at: round3(click.at + DOUBLE_RING_GAP_S) }] : [ring];
+    const ring: Ring = { at: round3(click.at), x: Math.round(click.x), y: Math.round(click.y), kind, ...(click.windowGoneAt !== undefined ? { until: click.windowGoneAt } : {}) };
+    const rings = click.count === 2 ? [ring, { ...ring, at: round3(click.at + DOUBLE_RING_GAP_S) }] : [ring];
+    return rings.filter((each) => ringStageShown(each, 0));
   });
 }
 

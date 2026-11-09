@@ -16,6 +16,7 @@ import {
   planCamera,
   planPointer,
   pointerShapes,
+  ringStageShown,
   shapeAt,
   SHAPE_HOLD_S,
   MOVE_S,
@@ -464,6 +465,43 @@ test("the pointer's commands move it each frame it moves, show it from when it i
   const times = commands.map((line) => Number(line.split(" ")[0]));
   assert.deepEqual(times, [...times].sort((a, b) => a - b), "in time order");
   assert.ok(plan.frame && plan.art.some((art) => art.name === "corner.png"));
+});
+
+test("a click whose window goes on the click rings on the frames before it goes, or its ring ends there (076)", () => {
+  const dialog = { x: 600, y: 300, width: 500, height: 400 };
+  const cancel: InputEvent = { at: 1005, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 1000, y: 660, area: { x: 950, y: 640, width: 100, height: 40 }, role: "push button", window: dialog };
+  const planned = (keyAt: number) =>
+    planScene(
+      facts({
+        samples: [{ at: 1000, x: 200, y: 200, buttons: 0 }],
+        changes: [{ at: 3.2, ...dialog }, { at: 4.95, x: 590, y: 290, width: 520, height: 420 }],
+        inputs: [{ at: 1000 + keyAt, by: "agent", type: "keys", chord: normalChord("s", ["ctrl"]) }, cancel],
+      }),
+      SCREEN,
+      1000,
+      10,
+      { zoom: true, frame: true },
+    );
+  const early = planned(3);
+  const ring = early.pointer.rings[0]!;
+  assert.ok(ring.at < 5 && ring.at + RING_S <= 4.95 + 0.001, `the ring plays before the dialog goes: ${JSON.stringify(early.pointer.rings)}`);
+  assert.equal(ring.at, 4.5, "moved at most half a second");
+  assert.ok(Array.from({ length: 6 }, (_, stage) => stage).every((stage) => ringStageShown(ring, stage)), "the whole ring");
+  const frame = early.pointer.frames[Math.round(ring.at * CLIP_FPS)]!;
+  assert.deepEqual([frame.x, frame.y], [1000, 660], "the pointer has glided to the button as the ring starts");
+  assert.equal(shapeAt(early.shapes, ring.at + 0.05), "hand");
+  const short = planned(4.6).pointer.rings[0]!;
+  assert.equal(short.at, 4.7, "no earlier than just after the action before it");
+  const shown = Array.from({ length: 6 }, (_, stage) => stage).filter((stage) => ringStageShown(short, stage));
+  assert.ok(shown.length >= 3 && shown.length < 6, "shortened to the stages before the dialog goes");
+  for (const stage of shown) assert.ok(short.at + stage / 15 < 4.95);
+  assert.doesNotMatch(sceneHead(planned(4.6), 1).graph, /between\(t,4\.967/, "the stage after the dialog has gone is never switched on");
+  assert.equal(planned(4.9).pointer.rings.length, 0, "with no time before it goes, there is no ring over nothing");
+  const note = { x: 300, y: 200, width: 600, height: 330 };
+  const field: InputEvent = { at: 1005, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 600, y: 360, area: { x: 310, y: 230, width: 580, height: 290 }, role: "text", window: note };
+  const typedThere: InputEvent = { at: 1006, by: "agent", type: "typing", characters: 10, space: "screen", area: { x: 310, y: 230, width: 580, height: 290 }, secret: false, role: "text", window: note };
+  const opened = planScene(facts({ samples: [{ at: 1000, x: 200, y: 200, buttons: 0 }], changes: [{ at: 5.2, x: 100, y: 0, width: 900, height: 600 }], inputs: [field, typedThere] }), SCREEN, 1000, 10, { zoom: true, frame: true });
+  assert.equal(opened.pointer.rings[0]!.at, 5, "a window that appears or is uncovered around the click, and is acted in next, keeps its ring as it was");
 });
 
 test("a framed clip insets the screen on a background that matches its brightness, and its key pills move away from the pointer (073)", () => {

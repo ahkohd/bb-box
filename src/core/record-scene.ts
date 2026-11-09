@@ -10,10 +10,12 @@ import {
   RING_STAGES,
   cameraAt,
   cameraMoves,
+  clicksBeforeTheirWindowGoes,
   pillRegion,
   planCamera,
   planPointer,
   pointerShapes,
+  ringStageShown,
   shapeAt,
   typingSpan,
   type CameraKey,
@@ -226,7 +228,9 @@ function knowsIdle(facts: SceneFacts, options: SceneOptions): boolean {
 }
 
 export function planScene(facts: SceneFacts, size: { readonly width: number; readonly height: number }, start: number, length: number, options: SceneOptions): ScenePlan {
-  const { scene, keys, keyTyping } = sceneOf(facts, size, start, length);
+  const placed = sceneOf(facts, size, start, length);
+  const { keys, keyTyping } = placed;
+  const scene = clicksBeforeTheirWindowGoes(placed.scene, keys);
   const idle = knowsIdle(facts, options) ? idleStretches(activityMoments(scene, keys, (options.captions ?? []).map((at) => at - facts.lag)), length) : null;
   const pointer = planPointer(scene);
   const camera = options.zoom ? planCamera(scene, pointer, idle ?? []) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
@@ -313,6 +317,7 @@ export function sceneCommands(plan: ScenePlan): string {
   for (const ring of plan.pointer.rings) {
     const style: RingStyle = { kind: ring.kind, variant: ringInk(shapeAt(plan.shapes, ring.at), variantAt(plan.variants, Math.round(ring.at * CLIP_FPS))) };
     for (let stage = 0; stage < RING_STAGES; stage++) {
+      if (!ringStageShown(ring, stage)) continue;
       const image = art(`ring-${style.kind}-${style.variant}-${stage}.png`);
       const from = round3(ring.at + (stage * RING_FRAMES_PER_STAGE) / CLIP_FPS);
       const target = ringTarget(style, stage);
@@ -353,7 +358,7 @@ function ringShown(plan: ScenePlan, kind: string, variant: string, stage: number
   return shown(
     plan.pointer.rings.flatMap((ring) => {
       const ink = ringInk(shapeAt(plan.shapes, ring.at), variantAt(plan.variants, Math.round(ring.at * CLIP_FPS)));
-      if (ring.kind !== kind || ink !== variant) return [];
+      if (ring.kind !== kind || ink !== variant || !ringStageShown(ring, stage)) return [];
       const from = round3(ring.at + (stage * RING_FRAMES_PER_STAGE) / CLIP_FPS);
       const to = round3(from + RING_FRAMES_PER_STAGE / CLIP_FPS);
       return [`between(t,${from.toFixed(3)},${to.toFixed(3)})`];
