@@ -86,16 +86,25 @@ export function playCipher(element: HTMLElement, delayMs = Number(element.datase
   if (!ticking) ticking = requestAnimationFrame(tick);
 }
 
+const enteredOnce = new WeakSet<HTMLElement>();
+const enteredShare = 0.6;
+
 const seen = new IntersectionObserver(
   (entries) => {
     for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
       const element = entry.target as HTMLElement;
-      seen.unobserve(element);
-      playCipher(element);
+      const run = running.get(element);
+      if (!entry.isIntersecting) {
+        if (run) finish(run);
+        continue;
+      }
+      if (entry.intersectionRatio >= enteredShare && !enteredOnce.has(element)) {
+        enteredOnce.add(element);
+        playCipher(element);
+      }
     }
   },
-  { threshold: 0.6 },
+  { threshold: [0, enteredShare] },
 );
 
 export function watchCiphers(root: ParentNode = document): void {
