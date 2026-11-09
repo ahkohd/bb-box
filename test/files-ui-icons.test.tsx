@@ -83,3 +83,46 @@ test("new file and new folder use the file-plus and folder-plus icons, not the b
     expect(name === "FilePlus" || (name !== null && HOST_ICON_NAMES.has(name) && name !== ICON_FALLBACK)).toBe(true);
   }
 });
+
+function explorerWhile(isLoading: boolean) {
+  return render(
+    <Explorer
+      entries={[]}
+      activePath={null}
+      isLoading={isLoading}
+      error={null}
+      truncated={false}
+      hiddenSupported
+      includeHidden={false}
+      onToggleHidden={() => undefined}
+      onOpenFile={() => undefined}
+      onOpenMatch={() => undefined}
+      onRefresh={() => undefined}
+      onQuickOpen={() => undefined}
+      onCreate={async () => null}
+      onRename={async () => null}
+      onDelete={async () => null}
+      scope={null}
+      searchFocusRequest={0}
+      header={null}
+    />,
+  );
+}
+
+test("refresh uses the rotate icon and spins while a folder is read, with no reading line and no file count", () => {
+  const { container } = explorerWhile(true);
+  const refresh = screen.getByRole("button", { name: "Refresh files" });
+  const icon = refresh.querySelector("[data-icon]");
+  expect(icon?.getAttribute("data-icon")).toBe("RotateCcw");
+  expect(icon?.getAttribute("class") ?? "").toContain("animate-spin");
+  expect(container.textContent ?? "").not.toMatch(/Reading/);
+  expect(container.textContent ?? "").not.toMatch(/0 files/);
+});
+
+test("the search row never wraps, so New folder stays beside the other actions", () => {
+  explorerWhile(false);
+  const row = screen.getByRole("button", { name: "New folder" }).parentElement;
+  expect(row?.className ?? "").not.toContain("flex-wrap");
+  expect(screen.getByRole("button", { name: "Refresh files" }).parentElement).toBe(row);
+  expect(screen.getByText("This folder has no files yet.")).toBeTruthy();
+});
