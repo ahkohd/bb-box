@@ -11,6 +11,8 @@ You can open a box's files from:
 - the Boxes page: select **Files** on a box's page. On a desktop, select **Open files** in the toolbar's menu, beside **Open thread**. The files show on the page, with a back arrow to where you opened them
 - the Monitor: when it shows a box, select **Open** beside the box's name, then **Open files**
 
+![The Files tab of a thread, with the src folder open, README.md in Preview and format.ts in another tab](../media/files-view.png)
+
 The view opens at the box user's home. The path bar at the top of the tree goes anywhere that user can read. Type a path and press Enter. The up arrow opens the folder above. The reload button reads the folder again.
 
 Switching away and back restores your folder, open tabs, unsaved text, selection, scroll position, find and search. Open folders keep their rows while their names refresh. Quick open closes. This stays in app memory for at most eight hidden workspaces and 32 MiB in total. Save before reloading the app. When the limit is reached, the oldest snapshots without unsaved edits are dropped. Releasing a box drops its snapshots. File contents are never kept in browser storage.
@@ -25,6 +27,8 @@ Select a file to open it. A text file opens up to 4 MB, and BB's source view col
 
 A Markdown file has **Preview**, **Read** and **Edit**. Other text has **Read** and **Edit**. Select the check mark to save, or press Ctrl or Command with S. The check mark stays disabled until the text has changed.
 
+![format.ts in Edit, with an unsaved change and the find bar open on pence](../media/files-edit.png)
+
 If the file changed after you opened it, the save does not change it. The view says so, and offers **Reload** or **Overwrite**. The text you tried to save is put in a new file next to it. The name adds .conflict, or .conflict-2 when that name is taken. A link of that name is left as it is.
 
 The tree opens one level at a time, at most 5,000 entries per folder. Cached folders show at once, then refresh quietly. A folder opened for the first time shows row-height bars; one already listed keeps its rows while it refreshes; the refresh icon stays still. It skips `.git`, `node_modules` and `vendor`. A name that contains a newline is left out. Files whose names start with a dot stay hidden until you select the eye.
@@ -36,6 +40,8 @@ The create menu beside the path contains New file and New folder. They create in
 ## Search
 
 Search is the field across the tree. It looks under the folder in the path bar. Match case, whole word and a regular expression sit below the field while it has focus or contains text. It uses ripgrep when the box has it, and grep otherwise. Ripgrep is asked not to skip ignored files, so the two agree. On Windows, when ripgrep is absent, it reads each file in PowerShell. It skips `.git`, `node_modules` and `vendor`. It stops at 2,000 hits or 500 files.
+
+![A search for pence in the ledger folder, with the hits grouped by file and format.ts open at the first hit](../media/files-search.png)
 
 Go to a file by name with Ctrl or Command with P. Its name index starts after the tree appears and skips hidden folders unless dotfiles are shown. Quick open says when names are still filling or the 20,000-name limit was reached. Find in the open file with Ctrl or Command with F. The find bar sits above the file. Focus the search with Ctrl or Command with Shift and F. Escape closes go to file, then find in the file.
 
