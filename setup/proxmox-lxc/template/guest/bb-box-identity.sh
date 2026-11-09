@@ -147,7 +147,7 @@ devices_settled() {
 
 new_backend_macs() {
   local mac
-  for mac in $(live_macs "$marker_source"); do
+  for mac in "$@"; do
     listed "$mac" "${marker_macs[@]}" || printf '%s\n' "$mac"
   done
 }
@@ -158,7 +158,7 @@ look_for_marker_macs() {
   while :; do
     found_macs=$(live_macs "$marker_source")
     marker_mac_present && return 0
-    [ "$settled" = no ] || [ -z "$(new_backend_macs)" ] || return 1
+    [ "$settled" = no ] || [ -z "$(new_backend_macs $found_macs)" ] || return 1
     [ "$loop" -lt "$loops" ] || return 2
     loop=$((loop + 1))
     sleep 0.2

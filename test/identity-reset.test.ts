@@ -582,8 +582,8 @@ test("every Linux build turns the reset on, including desktops; finalizing clear
   assert.ok(check > 0 && check < start.indexOf("rm -f \"$home\"/.bb-machines/*/daemon.lock.lock") && check < start.indexOf(`touch "$run/ready"`), "a Docker box checks before it starts anything");
 });
 
-function settle(root: string, options: { readonly waitSeconds?: number } = {}) {
-  return spawn("bash", [SCRIPT, "settle"], { env: { PATH: TEST_PATH, BBBOX_IDENTITY_ROOT: root, BBBOX_IDENTITY_NIC_WAIT_SECONDS: String(options.waitSeconds ?? 0), BBBOX_IDENTITY_SETTLE_SECONDS: "0.1" } });
+function settle(root: string, options: { readonly waitSeconds?: number; readonly path?: string } = {}) {
+  return spawn("bash", [SCRIPT, "settle"], { env: { PATH: options.path ?? TEST_PATH, BBBOX_IDENTITY_ROOT: root, BBBOX_IDENTITY_NIC_WAIT_SECONDS: String(options.waitSeconds ?? 0), BBBOX_IDENTITY_SETTLE_SECONDS: "0.1" } });
 }
 
 function waitFor(root: string, unit: string) {
@@ -820,6 +820,30 @@ test("a card's peer is told by the namespace the kernel names, not by index: a v
   assert.match(settled.out, /kept, now that its cards are here/);
   assert.match(boot(root).out, /added this boot's interfaces \( bc:24:11:00:00:11 \) to the marker/);
   assert.deepEqual(identityOf(root), before);
+  assert.equal(read(root, "var/lib/bb-box/identity-resets"), null);
+});
+
+test("settle reads the cards once, so a second reading that arrives with a new card cannot turn the box into a copy", async () => {
+  const root = guest([LOOP, LXC_ETH0]);
+  boot(root);
+  written(root, "bxsource1", "eth");
+  const marker = read(root, "etc/bb-box/identity");
+  setNics(root, [LOOP]);
+  boot(root);
+  const full = [LOOP, LXC_ETH0, { name: "eth1", mac: "bc:24:11:00:00:11" }];
+  writeFileSync(join(root, "ip-empty.json"), JSON.stringify([LOOP].map(linkInfo)));
+  writeFileSync(join(root, "ip-full.json"), JSON.stringify(full.map(linkInfo)));
+  const bin = tempDir("one-reading");
+  writeFileSync(join(bin, "ip"), `#!/bin/sh
+n=0
+[ -f "$BBBOX_IDENTITY_ROOT/ip-calls" ] && n=$(cat "$BBBOX_IDENTITY_ROOT/ip-calls")
+printf '%s\\n' "$((n + 1))" > "$BBBOX_IDENTITY_ROOT/ip-calls"
+if [ "$n" -eq 0 ]; then cat "$BBBOX_IDENTITY_ROOT/ip-empty.json"; else cat "$BBBOX_IDENTITY_ROOT/ip-full.json"; fi
+`, { mode: 0o755 });
+  const settled = await ended(settle(root, { path: `${bin}:${TEST_PATH}` }));
+  assert.equal(settled.code, 0, settled.out);
+  assert.match(settled.out, /kept, now that its cards are here/);
+  assert.equal(read(root, "etc/bb-box/identity"), marker);
   assert.equal(read(root, "var/lib/bb-box/identity-resets"), null);
 });
 
