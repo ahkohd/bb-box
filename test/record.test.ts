@@ -128,33 +128,29 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
     { at: 1029, kind: "fail", text: "A second meeting appeared after the 404" },
   ];
   const plan = planClip({ ...PREPARED, events }, 2);
-  assert.deepEqual(plan.holds, [{ at: 1, seconds: 0.393 }, { at: 2.75, seconds: 1 }, { at: 9.75, seconds: 1 }], "the long step reads in its own time, and needs no hold; a result is held a second at most");
+  assert.deepEqual(plan.holds, [{ at: 2.75, seconds: 1 }, { at: 9.75, seconds: 1 }], "each step reads while it stays up, until the next step, and needs no hold; a result is held a second at most");
   assert.deepEqual(plan.captions.map((caption) => [caption.kind, caption.row, caption.from, caption.to]), [
-    ["step", 0, 1, 4.643],
-    ["pass", 1, 3.143, 4.643],
-    ["step", 0, 4.643, 12.643],
-    ["fail", 1, 11.143, 12.643],
+    ["step", 0, 1, 4.25],
+    ["pass", 1, 2.75, 4.25],
+    ["step", 0, 4.25, 12.25],
+    ["fail", 1, 10.75, 12.25],
   ]);
   assert.ok(plan.captions[3]!.to - plan.captions[3]!.from <= 2.5 + 0.001, "a result fades after about 2.5 s");
   assert.ok(plan.captions[2]!.to - plan.captions[2]!.from > 2.5, "a step caption stays until the next step");
-  assert.equal(plan.length, 12.643);
-  for (const [index, caption] of plan.captions.entries()) {
-    if (caption.kind !== "step") continue;
-    const next = plan.captions.slice(index + 1).find((later) => later.from > caption.from);
-    assert.ok((next?.from ?? plan.length) - caption.from >= readingSeconds(caption.text) - 0.001, `${caption.text} is on screen long enough to read`);
-  }
+  assert.equal(plan.length, 12.25);
+  for (const caption of plan.captions) assert.ok(caption.to - caption.from >= Math.min(readingSeconds(caption.text), 1.5) - 0.001, `${caption.text} is on screen long enough to read`);
   assert.deepEqual([plan.width, plan.height, plan.fontSize, plan.edge, plan.position], [1280, 720, 19, 25, "top"]);
   assert.deepEqual(plan.overlays.slice(4), [
-    { look: "mark", text: "2x", size: 13, x: "right", y: 614, from: 0, to: 12.643, fade: 0 },
-    { look: "mark", text: "10 s later", size: 13, x: "right", y: 581, from: 3.143, to: 4.343, fade: 0.2 },
+    { look: "mark", text: "2x", size: 13, x: "right", y: 614, from: 0, to: 12.25, fade: 0 },
+    { look: "mark", text: "10 s later", size: 13, x: "right", y: 581, from: 2.75, to: 3.95, fade: 0.2 },
   ], "the speed in the bottom corner all along, and the cut over it for a moment");
-  assert.match(clipGraph(plan, true), /\[v4\]\[5:v\]overlay=x=W-w-25:y=614:enable='between\(t,0,12\.643\)'\[v5\]/);
+  assert.match(clipGraph(plan, true), /\[v4\]\[5:v\]overlay=x=W-w-25:y=614:enable='between\(t,0,12\.25\)'\[v5\]/);
   const clock = "((T-STARTT)-(clip((T-STARTT)-5.500,0,9.5)))/2";
-  assert.ok(clipGraph(plan, true).includes(`setpts='(${clock}+0.393*gt(${clock},1)+1*gt(${clock},2.75)+1*gt(${clock},9.75))/TB'`), clipGraph(plan, true));
-  assert.match(clipGraph(plan, true), /\[2:v\]format=rgba,fade=t=in:st=3\.143:d=0\.2:alpha=1,fade=t=out:st=4\.643:d=0\.2:alpha=1\[q1\];\[v1\]\[q1\]overlay=x=\(W-w\)\/2:y=71:eof_action=pass:enable='between\(t,3\.143,4\.843\)'\[v2\]/);
+  assert.ok(clipGraph(plan, true).includes(`setpts='(${clock}+1*gt(${clock},2.75)+1*gt(${clock},9.75))/TB'`), clipGraph(plan, true));
+  assert.match(clipGraph(plan, true), /\[2:v\]format=rgba,fade=t=in:st=2\.75:d=0\.2:alpha=1,fade=t=out:st=4\.25:d=0\.2:alpha=1\[q1\];\[v1\]\[q1\]overlay=x=\(W-w\)\/2:y=71:eof_action=pass:enable='between\(t,2\.75,4\.45\)'\[v2\]/);
   assert.match(clipGraph(plan, true), /\[v5\]\[q5\]overlay=.*\[out\]$/);
   assert.doesNotMatch(clipGraph(plan, false), /overlay/);
-  assert.ok(clipGraph(plan, false).includes(",fps=15,tpad=stop_mode=clone:stop_duration=12.643,trim=duration=12.643,"), "a hold at the end lasts though no frame follows it");
+  assert.ok(clipGraph(plan, false).includes(",fps=15,tpad=stop_mode=clone:stop_duration=12.25,trim=duration=12.25,"), "a hold at the end lasts though no frame follows it");
 
   const quiet = planClip({ ...PREPARED, cuts: [], events: [{ at: 1001, kind: "step", text: "Short" }] }, 1);
   assert.deepEqual(quiet.holds, [], "a caption with time enough to read is not held");
@@ -167,7 +163,7 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
   assert.deepEqual(below.overlays.filter((overlay) => overlay.look === "mark").map((overlay) => `${overlay.text}:${overlay.y}`), ["10 s later:36"], "the mark in the top corner, away from the captions");
   assert.deepEqual(chaptersOf(plan.captions), [
     { at: 1, real: 2, text: "Open the meetings page", result: { passed: true, text: "It lists three meetings" } },
-    { at: 4.643, real: 16, text: "It should not recreate existing meetings on 404 or 403", result: { passed: false, text: "A second meeting appeared after the 404" } },
+    { at: 4.25, real: 16, text: "It should not recreate existing meetings on 404 or 403", result: { passed: false, text: "A second meeting appeared after the 404" } },
   ]);
   assert.equal(captionText("a ".repeat(80)).length, 90);
   assert.ok(captionText("a ".repeat(80)).endsWith("…"));
@@ -199,6 +195,29 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
   ] }, 1);
   assert.equal(realFailure.captions.some((caption) => caption.kind === "fail"), true, "a real failure stays a failure");
   assert.equal(realFailure.overlays.some((overlay) => overlay.look === "note"), false, "the note for that same moment is not a second caption");
+});
+
+test("a step's reading time runs while it stays up, through its result, so a quick result does not freeze the step before it (076)", () => {
+  const plan = planClip({ ...PREPARED, cuts: [], events: [
+    { at: 1001, kind: "step", text: "Type a line into the note" },
+    { at: 1001.3, kind: "pass", text: "The line is in" },
+    { at: 1003.8, kind: "step", text: "Save it" },
+  ] }, 1);
+  assert.equal(plan.holds.find((hold) => hold.at === 1), undefined, `the step is up 2.8 s, through its result: ${JSON.stringify(plan.holds)}`);
+  const quick = planClip({ ...PREPARED, cuts: [], events: [
+    { at: 1001, kind: "step", text: "Type a line into the note" },
+    { at: 1001.1, kind: "pass", text: "The line is in" },
+    { at: 1001.2, kind: "step", text: "Save it" },
+  ] }, 1);
+  const stepHold = quick.holds.find((hold) => hold.at === 1)!;
+  assert.ok(Math.abs(stepHold.seconds + 0.2 + 1 - readingSeconds("Type a line into the note")) < 0.01, `a step whose whole span is short still gets its reading time: ${JSON.stringify(quick.holds)}`);
+  const warned = planClip({ ...PREPARED, cuts: [], events: [
+    { at: 1001, kind: "step", text: "Cancel the save" },
+    { at: 1004, kind: "fail", text: "The save was cancelled at the last moment" },
+    { at: 1004.1, kind: "step", text: "Widen the window" },
+  ] }, 1);
+  assert.ok(warned.overlays.some((overlay) => overlay.look === "note"), "a cancel the step asked for is a warning");
+  assert.ok(warned.holds.every((hold) => hold.seconds <= 1 + 0.001), `a warning is held at most a second, as a result is: ${JSON.stringify(warned.holds)}`);
 });
 
 test("a result stays until the next step, and captions fade in and out over 0.2 s, so one step crossfades into the next (076)", () => {

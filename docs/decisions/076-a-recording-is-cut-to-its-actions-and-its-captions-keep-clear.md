@@ -32,7 +32,11 @@ comes next. Glides, rings, drags, pills' first second and camera moves are
 never cut, as before. This replaces the still stretches there; elsewhere,
 the still stretches are cut as before. `stills: "keep"` keeps both.
 
-A result is held for reading at most 1 second.
+A result, or a warning in its place, is held for reading at most 1 second.
+A step's caption stays up until the next step, so its reading time runs
+until then, through its result and that result's hold: a step is held only
+when that whole span is shorter than its reading time. A device's note of
+a lost stretch is still held for its full reading time.
 
 ### The clip starts on the first action and fades out after the last
 

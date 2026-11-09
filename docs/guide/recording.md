@@ -48,7 +48,7 @@ When an agent tests something, it captions each check:
 
 A key pill starts with a keyboard mark, and a warning uses an amber one. The marks are the same height as the letters beside them.
 
-The step caption and its result stay until the next step starts. Each caption and pill fades in and out over a fifth of a second, so one step crossfades into the next. One moment has one caption: a warning and a result for the same moment show as one, and a cancel the step asked for is not shown as a failure. Each caption stays up long enough to read, even where idle stretches are cut or the clip plays faster. To give a result time to read, the clip holds it still for at most a second.
+The step caption and its result stay until the next step starts. Each caption and pill fades in and out over a fifth of a second, so one step crossfades into the next. One moment has one caption: a warning and a result for the same moment show as one, and a cancel the step asked for is not shown as a failure. Each caption stays up long enough to read, even where idle stretches are cut or the clip plays faster. A step reads while it stays up, through its result. To give a result or a warning time to read, the clip holds it still for at most a second.
 
 ![The step "Cancel the save" and a warning, "The save was cancelled", over Mousepad. The typed line stays selected](../media/recording-step.png)
 

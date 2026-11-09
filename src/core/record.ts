@@ -497,20 +497,37 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
     }),
     ...(prepared.notes ?? []).map((note) => {
       const real = Math.min(prepared.recorded, Math.max(0, note.at));
-      return { kind: "note" as const, text: captionText(note.text), real, at: placed(real) };
+      return { kind: "note" as const, text: captionText(note.text), real, at: placed(real), lostStretch: true };
     }),
   ].sort((a, b) => a.at - b.at);
   const shownChanges = oneCaption(changes);
+  const isResult = (kind: StepKind | "note") => kind === "pass" || kind === "fail";
+  const nextStepIndex = (index: number) => {
+    const later = shownChanges.findIndex((change, other) => other > index && change.kind === "step");
+    return later < 0 ? shownChanges.length : later;
+  };
+  const atOf = (index: number) => shownChanges[index]?.at ?? base;
+  const held = shownChanges.map((change, index) => {
+    if (change.kind === "step") return 0;
+    if (!isResult(change.kind)) {
+      const reading = Math.max(0, readingSeconds(change.text) - (atOf(index + 1) - change.at));
+      return "lostStretch" in change ? reading : Math.min(RESULT_HOLD_MOST_S, reading);
+    }
+    const endsTheClip = ends?.end != null && change.real - (prepared.scene?.lag ?? 0) >= ends.end - END_HOLD_S - FADE_OUT_S - 0.05;
+    return endsTheClip ? 0 : Math.min(RESULT_HOLD_MOST_S, Math.max(0, readingSeconds(change.text) - (atOf(nextStepIndex(index)) - change.at)));
+  });
+  shownChanges.forEach((change, index) => {
+    if (change.kind !== "step") return;
+    const next = nextStepIndex(index);
+    const through = held.slice(index + 1, next).reduce((sum, seconds) => sum + seconds, 0);
+    held[index] = Math.max(0, readingSeconds(change.text) - (atOf(next) - change.at + through));
+  });
   const holds: Hold[] = [];
   const shownAt: number[] = [];
   let added = 0;
   shownChanges.forEach((change, index) => {
     shownAt.push(change.at + added);
-    const natural = (shownChanges[index + 1]?.at ?? base) - change.at;
-    const reading = Math.max(0, readingSeconds(change.text) - natural);
-    const result = change.kind === "pass" || change.kind === "fail";
-    const endsTheClip = result && ends?.end != null && change.real - (prepared.scene?.lag ?? 0) >= ends.end - END_HOLD_S - FADE_OUT_S - 0.05;
-    const hold = endsTheClip ? 0 : result ? Math.min(RESULT_HOLD_MOST_S, reading) : reading;
+    const hold = held[index]!;
     if (hold > 0) {
       holds.push({ at: round3(change.at), seconds: round3(hold) });
       added += hold;
