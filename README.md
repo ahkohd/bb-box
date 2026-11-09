@@ -27,7 +27,7 @@ Documentation: [bbbox.dev](https://bbbox.dev).
 Boxes run on the machine that runs BB to start with:
 
 - **Linux**: Docker, with about 10 GB of disk free and at least 8 GiB of memory for the server image. A desktop image needs about 18 GB of disk free, and at least 12 GiB of memory for a desktop box.
-- **A Mac with Apple silicon**: [microsandbox](setup/microsandbox/README.md#on-a-mac), which needs nothing installed and runs arm64 Linux boxes as microVMs. It needs about 80 GiB free while it builds its first image. [Tart](setup/tart/README.md) adds macOS, iOS and Windows boxes. Avoid Docker Desktop on a Mac: its images are x86_64, so boxes run emulated and slowly.
+- **A Mac with Apple silicon**: [microsandbox](setup/microsandbox/README.md#on-a-mac), which needs nothing installed and runs arm64 Linux boxes as microVMs. It needs about 80 GiB of free disk while it builds its first image, and keeps about 2.4 GiB after, or 6 GiB with the desktop image. [Tart](setup/tart/README.md) adds macOS, iOS and Windows boxes. Avoid Docker Desktop on a Mac: its images are x86_64, so boxes run emulated and slowly.
 - **Windows**: Docker in WSL 2. See [Docker on a Windows PC](setup/docker-wsl/README.md).
 
 <details open>
