@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { homePageHead, icons, shareImage, siteHead, type HeadTag } from "../site/src/head.ts";
 import { descriptions, entryData, fullTextPath, headingAnchors as anchorsInMarkdown, llmsFullTxt, llmsTxt, markdownCopies, markdownPath } from "../site/src/llms.ts";
 import { blankedCode, lightTwinOf, pagesByFile, readPages, repoRoot, repository, siteHref, withoutFrontmatter, type Page } from "../site/src/repo.ts";
+import { cipherFrame, letterGlyphsFor, revealTimes } from "../site/src/effects/cipher-text.ts";
 import { installCommand, setupPrompt } from "../site/src/setup-prompt.ts";
 import { sidebar } from "../site/src/sidebar.ts";
 import { repositoryFiles } from "./repository-files.ts";
@@ -45,6 +46,22 @@ test("the home page's demo can always be paused: each of its videos has controls
   const videos = [...demo.matchAll(/<video\b[^>]*>/g)].map((match) => match[0]);
   assert.equal(videos.length, 2);
   assert.deepEqual(videos.filter((video) => !/\scontrols\s/.test(video)), []);
+});
+
+test("a cipher heading keeps its words' length and spaces while it scrambles, and shows the words once every glyph is revealed", () => {
+  const text = "Any provider, one interface";
+  const revealAt = revealTimes(text, 1000, () => 0.5);
+  const scrambled = cipherFrame(text, 0, revealAt, letterGlyphsFor, () => 0.3);
+  assert.equal(scrambled.length, text.length);
+  assert.deepEqual(
+    scrambled.map((piece, index) => (text[index] === " " ? piece.glyph : " ")).join(""),
+    text.replace(/\S/g, " "),
+  );
+  assert.ok(scrambled.some((piece) => !piece.settled));
+  assert.ok("ijlt1!|:;".includes(scrambled[text.indexOf("i")]!.glyph), "a narrow letter scrambles to a narrow glyph, so the heading keeps its shape");
+  const resolved = cipherFrame(text, 1000, revealAt, letterGlyphsFor, Math.random);
+  assert.equal(resolved.map((piece) => piece.glyph).join(""), text);
+  assert.ok(resolved.every((piece) => piece.settled));
 });
 
 test("every page of the site is in its sidebar once a section lists it", () => {
