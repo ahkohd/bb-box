@@ -212,7 +212,7 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
   const { scene, keys, keyTyping } = sceneOf(facts, size, start, length);
   const idle = knowsIdle(facts, options) ? idleStretches(activityMoments(scene, keys, (options.captions ?? []).map((at) => at - facts.lag)), length) : null;
   const pointer = planPointer(scene);
-  const camera = options.zoom ? planCamera(scene, pointer) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
+  const camera = options.zoom ? planCamera(scene, pointer, idle ?? []) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
   const zooms = camera.some((key) => key.view.zoom > 1);
   const pills = planKeyPills(keys, keyTyping, facts.keys, length).map((pill) => ({ ...pill, avoid: pillRegion(scene, pointer, pill.from, pill.to) }));
   const drawsPointer = facts.pointer === "drawn" && pointer.frames.length > 0 && pointer.visibleFrom !== null;

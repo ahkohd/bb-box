@@ -154,6 +154,28 @@ test("the view stays on the screen, and two groups close together pan from one t
   for (let t = 4.5; t < 6.5; t += 0.1) assert.ok(cameraAt(keys, t).zoom > 1.5, `no zoom out between the two, at ${t.toFixed(1)} s`);
 });
 
+test("the camera pans instead of easing out and back in when the next view overlaps this one within the group gap, counting only time that is not cut (076)", () => {
+  const window = { x: 600, y: 300, width: 500, height: 300 };
+  const at = (t: number, x: number) => ({ at: t, x, y: 450, button: "left" as const, count: 1 as const, area: { x: x - 40, y: 430, width: 80, height: 40 }, role: "push button", window });
+  const near = camera({ clicks: [at(2, 700), at(7.4, 1000)], length: 14 });
+  for (let t = 3.6; t < 7.4; t += 0.1) assert.ok(cameraAt(near, t).zoom > 1.3, `stays in over the same window at ${t.toFixed(1)} s: ${JSON.stringify(near)}`);
+  assert.ok(cameraAt(near, 7.4).x > cameraAt(near, 3).x, "and pans to the second click");
+  const far = camera({ clicks: [at(2, 300), { ...at(7.4, 1700), x: 1700, y: 950, area: { x: 1660, y: 930, width: 80, height: 40 } }], length: 14 });
+  assert.equal(cameraAt(far, 5.5).zoom, 1, "views that do not overlap still zoom out between");
+  const later = camera({ clicks: [at(2, 700), at(14, 1000)], length: 20 });
+  assert.equal(cameraAt(later, 8).zoom, 1, "a long gap of real work zooms out");
+  const planned = scene({ clicks: [at(2, 700), at(14, 1000)], length: 20 });
+  const idle = planCamera(planned, planPointer(planned), [{ from: 4, to: 12 }]);
+  assert.ok(cameraAt(idle, 8).zoom > 1.3, "the same gap, mostly idle and cut, pans instead");
+  const blank = camera({
+    clicks: [at(2, 700), at(7.4, 1000)],
+    changes: [{ at: 7, ...window }],
+    brightness: [7, 8, 9, 10, 11].map((t) => ({ at: t, cells: new Array(144).fill(250) })),
+    length: 14,
+  });
+  assert.equal(cameraAt(blank, 10).zoom, 1, `when the next view is left out, as a window that never paints, the camera still zooms out: ${JSON.stringify(blank)}`);
+});
+
 test("a big change outside the view zooms out early, and zoom off keeps the whole screen (073)", () => {
   const clicks = [{ at: 4, x: 300, y: 300, button: "left" as const, count: 1 as const, area: null }];
   const changes = [{ at: 4.6, x: 900, y: 100, width: 900, height: 800 }];

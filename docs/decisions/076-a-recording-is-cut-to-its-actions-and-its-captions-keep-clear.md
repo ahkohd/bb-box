@@ -48,6 +48,15 @@ neither pumps nor keeps the camera out for the next one. The paint check
 reads the screen from the window's opening, so a window that painted at
 once is zoomed without waiting for a later reading.
 
+### The camera pans rather than pumps
+
+After a zoomed group, the camera stays in and pans to the next group when
+the next view overlaps this one and the time between them, less the idle
+stretches that are cut, is at most the group gap of 3 seconds. Views that do
+not overlap still pan only within 1.5 seconds, as before. If the camera
+stays in for a group that is then left out, such as a window that never
+paints, it zooms out from where it would have.
+
 ### Each step's captions take the clearer side
 
 The captions of a step, from its step caption to the next one, go where

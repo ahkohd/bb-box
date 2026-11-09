@@ -718,7 +718,17 @@ function sameView(a: View, b: View): boolean {
   return a.zoom === b.zoom && a.x === b.x && a.y === b.y;
 }
 
-export function planCamera(scene: Scene, pointer: PointerPlan): CameraKey[] {
+function viewsOverlap(scene: Scene, a: View, b: View): boolean {
+  return overlap(viewArea(scene, a), viewArea(scene, b)) > 0;
+}
+
+function activeBetween(idle: readonly Span[], from: number, to: number): number {
+  if (to <= from) return 0;
+  const cut = idle.reduce((sum, span) => sum + Math.max(0, Math.min(to, span.to) - Math.max(from, span.from)), 0);
+  return to - from - cut;
+}
+
+export function planCamera(scene: Scene, pointer: PointerPlan, idle: readonly Span[] = []): CameraKey[] {
   const full = FULL(scene);
   const keys: CameraKey[] = [{ at: 0, view: full }];
   const groups = splitAtOutsideChanges(scene, closeGroups(scene, focusesOf(scene, pointer)), actionsOf(scene, pointer));
@@ -732,17 +742,23 @@ export function planCamera(scene: Scene, pointer: PointerPlan): CameraKey[] {
     keys.push({ at: round3(to), view });
   };
   let outsideShownUntil = -Infinity;
+  let stayedFor: number | null = null;
+  const zoomOutStayed = () => {
+    if (stayedFor !== null && stayedFor + MOVE_S <= scene.length && last().view.zoom > 1) keys.push({ at: round3(Math.max(stayedFor, last().at) + MOVE_S), view: full });
+    stayedFor = null;
+  };
   groups.forEach((group, index) => {
     const nextGroup = groups[index + 1];
     const natural = Math.max(group.first - SETTLE_S, outsideShownUntil + MOVE_S);
     const typedField = group.fieldClickAt !== null;
-    if (group.view.zoom > 1 && natural > group.last && !typedField) return;
+    if (group.view.zoom > 1 && natural > group.last && !typedField) return zoomOutStayed();
     const ready = group.view.zoom === 1 ? natural : typedField ? settledBefore(scene, group.area, group.fieldClickAt!, natural) : paintReady(scene, group.area, group.first, natural);
-    if (ready === null) return;
+    if (ready === null) return zoomOutStayed();
     const arrive = ready > natural + 0.02 ? ready + MOVE_S : natural;
     const seen = Math.max(group.last, arrive);
     const hold = Math.min(scene.length, seen + LINGER_S, group.outsideAt ?? Infinity);
-    if (group.view.zoom > 1 && hold - arrive < ZOOM_SEEN_LEAST_S) return;
+    if (group.view.zoom > 1 && hold - arrive < ZOOM_SEEN_LEAST_S) return zoomOutStayed();
+    stayedFor = null;
     moveTo(arrive, group.view);
     if (group.view.zoom === 1) return;
     if (hold > last().at) keys.push({ at: round3(hold), view: group.view });
@@ -754,8 +770,12 @@ export function planCamera(scene: Scene, pointer: PointerPlan): CameraKey[] {
       return;
     }
     const nextMove = nextGroup ? nextGroup.first - SETTLE_S - MOVE_S : Infinity;
-    if (nextMove > leave + MOVE_S + PAN_INSTEAD_S && zoomsOut) keys.push({ at: round3(leave + MOVE_S), view: full });
+    const gap = activeBetween(idle, leave, nextMove);
+    const pans = !!nextGroup && (gap <= MOVE_S + PAN_INSTEAD_S || (gap <= GROUP_GAP_S && nextGroup.view.zoom > 1 && viewsOverlap(scene, group.view, nextGroup.view)));
+    if (pans) stayedFor = leave;
+    else if (zoomsOut) keys.push({ at: round3(leave + MOVE_S), view: full });
   });
+  zoomOutStayed();
   return keys;
 }
 
