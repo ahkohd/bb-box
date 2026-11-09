@@ -27,7 +27,7 @@ Documentation: [bbbox.dev](https://bbbox.dev).
 Boxes run on the machine that runs BB to start with:
 
 - **Linux**: Docker, with about 10 GB of disk free and at least 8 GiB of memory for the server image. A desktop image needs about 18 GB of disk free, and at least 12 GiB of memory for a desktop box.
-- **A Mac with Apple silicon**: [microsandbox](setup/microsandbox/README.md#on-a-mac), which needs nothing installed and runs arm64 Linux boxes as microVMs. It needs about 80 GiB of free disk while it builds its first image, and keeps about 2.4 GiB after, or 6 GiB with the desktop image. [Tart](setup/tart/README.md) adds macOS, iOS and Windows boxes. Avoid Docker Desktop on a Mac: its images are x86_64, so boxes run emulated and slowly.
+- **A Mac with Apple silicon**: [microsandbox](setup/microsandbox/README.md#on-a-mac), which needs nothing installed and runs arm64 Linux boxes as microVMs, each counted at its full memory size. It needs about 80 GiB of free disk while it builds its first image, and keeps about 2.4 GiB after, or 6 GiB with the desktop image. [Tart](setup/tart/README.md) adds macOS, iOS and Windows boxes. Avoid Docker Desktop on a Mac: its images are x86_64, so boxes run emulated and slowly.
 - **Windows**: Docker in WSL 2. See [Docker on a Windows PC](setup/docker-wsl/README.md).
 
 <details open>
@@ -40,9 +40,9 @@ Set up BB Box for me: the BB plugin that gives threads computers of their own, c
 
 1. Install it: bb plugin install git:https://github.com/ahkohd/bb-box.git@main --yes
 2. Follow its bb-box-setup skill. If your skills do not list it yet, find it with bb skill list and read it with bb skill show <id>.
-3. Ask me first whether Docker boxes may be privileged containers, which can take over the machine they run on, and before anything that needs root or changes BB's settings.
-4. Set up boxes on the machine that runs BB: run bb box doctor, then on Linux bb box setup docker, which needs Docker, about 10 GB of free disk and 8 GiB of memory, and takes 5 to 12 minutes to build its Linux image. On a Mac with Apple silicon, use the microsandbox backend instead, not Docker.
-5. Prove it: bb box acquire linux, or linux-arm64 on a Mac, then bb box run <box> "uname -a", then bb box release <box>.
+3. Look at the machine that runs BB with bb box doctor, and set up the backend the skill suggests for it: Docker on Linux or in WSL 2 on Windows, microsandbox on a Mac with Apple silicon.
+4. Ask me first before anything that needs root, changes BB's settings, or makes Docker boxes privileged containers, which can take over the machine they run on.
+5. Prove it: bb box kinds, then bb box acquire with the Linux kind it lists, then bb box run <box> "uname -a", then bb box release <box>.
 6. Tell me what you set up, what bb box doctor says, and what is left for me to do.
 ```
 

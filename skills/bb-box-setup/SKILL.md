@@ -39,9 +39,9 @@ backend's own checks.
    and `bb machine list` show what is there. Do not add a second backend for
    something that is already set up.
 2. **Choose a backend.** Use the table below. When the request is plain,
-   such as "set up boxes here", suggest Docker on the machine that runs BB
-   when it runs Linux, and microsandbox when it is a Mac with Apple silicon,
-   where Docker's x86_64 images run emulated.
+   such as "set up boxes here", suggest a backend on the machine that runs
+   BB: Docker on Linux, Docker in WSL 2 on a Windows PC, and microsandbox on
+   a Mac with Apple silicon, where Docker's x86_64 images run emulated.
 3. **Ask what only the person knows.** Ask about the machine, its address,
    what it may cost, and whether privileged boxes are acceptable. Their
    backend's reference file lists what to ask.

@@ -3,7 +3,6 @@ import { test } from "node:test";
 import { anchor } from "../scripts/reference.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { KIND_INFO } from "../src/backends/kinds.ts";
 import { descriptions, fullTextPath, headingAnchors as anchorsInMarkdown, llmsFullTxt, llmsTxt, markdownCopies, markdownPath } from "../site/src/llms.ts";
 import { blankedCode, lightTwinOf, pagesByFile, readPages, repoRoot, repository, siteHref, withoutFrontmatter, type Page } from "../site/src/repo.ts";
 import { installCommand, setupPrompt } from "../site/src/setup-prompt.ts";
@@ -135,7 +134,7 @@ test("each page's Markdown copy is served at its address with .md and with index
   assert.deepEqual(pages.filter((page) => !full.includes(`\n# ${page.title}\n\nSource: /${page.id}/\n`)).map((page) => page.id), [], "pages missing from llms-full.txt");
 });
 
-test("the home page's setup prompt installs BB Box as the quick start does, with only bb box commands the CLI has, its setup skill and the quick start's numbers", () => {
+test("the home page's setup prompt installs BB Box as the quick start does, with only bb box commands the CLI has, its setup skill, and a backend for each platform", () => {
   const command = installCommand(pages);
   const quickStart = pages.find((page) => page.id === "start/quick-start")!.markdown.replace(/\s+/g, " ");
   assert.match(command, /^bb plugin install git:\S+$/);
@@ -152,13 +151,10 @@ test("the home page's setup prompt installs BB Box as the quick start does, with
   assert.ok(named.length >= 5);
   assert.deepEqual(named.filter((words) => !commands.some((usage) => words === usage || words.startsWith(`${usage} `))), [], "commands the CLI does not have");
   assert.ok(commands.includes("bb box setup docker"));
-  assert.ok(/bb box acquire (\S+),/.exec(prompt)![1]! in KIND_INFO);
+  assert.ok(prompt.includes("bb box acquire"), "the prompt proves the setup with a box");
 
   const skill = withoutFrontmatter(readFileSync(join(repoRoot, "skills", "bb-box-setup", "SKILL.md"), "utf8")).frontmatter.name!;
   assert.ok(prompt.includes(`its ${skill} skill`));
 
-  const minutes = /(\d+ to \d+ minutes)/.exec(prompt)![1]!;
-  assert.ok(quickStart.includes(`Linux image usually builds in ${minutes}`));
-  const [, disk, memory] = /about (\d+ GB) of free disk and (\d+ GiB) of memory/.exec(prompt)!;
-  assert.ok(quickStart.includes(`about ${disk} of disk free and at least ${memory} of memory`));
+  for (const backend of ["Docker", "microsandbox"]) assert.ok(prompt.includes(backend), `the prompt names ${backend}, as the quick start's platforms do`);
 });
