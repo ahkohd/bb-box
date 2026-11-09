@@ -158,7 +158,7 @@ export function llmsTxt(pages: Page[], site: SiteAddress): string {
   const intro = [
     `# ${projectName}`,
     `> ${summary(pages)}`,
-    `bb-box is a plugin for [BB](https://getbb.app). An agent installs it with \`${installCommand(pages)} --yes\`, then sets up a backend as the quick start says: Docker on the machine that runs BB is the quickest. ${trustNote}`,
+    `BB Box is a plugin for [BB](https://getbb.app). An agent installs it with \`${installCommand(pages)} --yes\`, then sets up a backend on the machine that runs BB as the quick start says: Docker on Linux or in WSL 2 on Windows, microsandbox on a Mac with Apple silicon. ${trustNote}`,
     `Each link below is a page of this site in Markdown. [llms-full.txt](${absoluteAddress(fullTextPath(site.base), site)}) has every page in one file. The decision records, under ${skippableHeading}, say why bb-box is built as it is.`,
   ];
   const lists = sections(pages).map((section) => [`## ${section.heading}`, section.pages.map(linkTo).join("\n")].join("\n\n"));
