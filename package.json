@@ -1,7 +1,9 @@
 {
   "name": "bb-plugin-bb-box",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "private": true,
+  "repository": "github:ahkohd/bb-box",
+  "homepage": "https://github.com/ahkohd/bb-box",
   "type": "module",
   "engines": {
     "bb": ">=0.45.0 <1.0.0",
