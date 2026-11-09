@@ -5,7 +5,12 @@ import "../styles/theme.css";
 import BoxFrame from "../components/home/BoxFrame.astro";
 import CopyButton from "../components/home/CopyButton.astro";
 import DemoVideo from "../components/home/DemoVideo.astro";
-import DitherField from "../components/home/DitherField.astro";
+import AsciiWordmark from "../components/home/AsciiWordmark.astro";
+import CipherText from "../components/home/CipherText.astro";
+import GlyphRain from "../components/home/GlyphRain.astro";
+import GlyphRule from "../components/home/GlyphRule.astro";
+import HeroField from "../components/home/HeroField.astro";
+import PointerBox from "../components/home/PointerBox.astro";
 import HomeHead from "../components/home/HomeHead.astro";
 import MotionToggle from "../components/home/MotionToggle.astro";
 import ThemedShot from "../components/home/ThemedShot.astro";
@@ -25,6 +30,7 @@ const page = {
 };
 const docs = pageUrl(base, "start");
 const acquire = "bb box acquire linux-desktop-cpu";
+const markDelay = (row: number, column: number) => row * 70 + column * 35;
 ---
 
 <html lang="en" dir="ltr">
@@ -34,6 +40,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
   <body>
     <a class="skip" href="#main">Skip to content</a>
     <header class="bar">
+      <div class="bar-inner">
       <a class="brand" href={base}>
         <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"></path><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"></path></svg>
         BB Box
@@ -42,13 +49,15 @@ const acquire = "bb box acquire linux-desktop-cpu";
         <a href={docs}>Docs</a>
         <a href={pageUrl(base, "reference")}>Reference</a>
         <a href={data.repository}>GitHub</a>
+        <MotionToggle />
         <ThemeToggle />
       </nav>
+      </div>
     </header>
 
     <main id="main">
       <section class="hero" aria-labelledby="headline">
-        <div class="dither"><DitherField /></div>
+        <div class="field"><HeroField /></div>
         <div class="hero-copy">
           <p class="session">
             <span class="line"><span class="prompt-sign" aria-hidden="true">$</span> <span class="typed" style={`--chars: ${acquire.length}`}>{acquire}</span></span>
@@ -60,7 +69,6 @@ const acquire = "bb box acquire linux-desktop-cpu";
             <CopyButton source="setup-prompt" class="button primary" label="Copy setup prompt" />
             <a class="button secondary" href={data.quickStart}>Quick start</a>
           </div>
-          <MotionToggle class="hero-motion" />
         </div>
       </section>
 
@@ -71,10 +79,15 @@ const acquire = "bb box acquire linux-desktop-cpu";
         <p class="caption">A thread's agent gets a Linux desktop, then a server box, a snapshot and an undo.</p>
       </section>
 
+      <GlyphRule seed={1} />
+
       <section class="section" aria-labelledby="platforms">
-        <p class="heading-mark" aria-hidden="true">## what it is</p>
-        <h2 id="platforms">A computer of its own for every thread</h2>
+<div class="section-head" data-cipher-hover>
+          <a class="heading-mark" href="#platforms"><CipherText text="# platforms" /></a>
+          <h2 id="platforms"><CipherText text="A computer of its own for every thread" glyphs="letters" /></h2>
+        </div>
         <p class="section-lead">Boxes have the thread's Git access, its variables and BB itself. You and the agent share them: the agent works in the box, and you can open its desktop or terminal at any time.</p>
+        <div class="platforms-grid">
         <ul class="tree">
           <li class="tree-root">boxes/</li>
           {platformNames.map((name, index) => (
@@ -85,11 +98,19 @@ const acquire = "bb box acquire linux-desktop-cpu";
             </li>
           ))}
         </ul>
+        <BoxFrame title="box.txt" class="box-figure">
+          <div class="box-stage"><PointerBox /></div>
+        </BoxFrame>
+        </div>
       </section>
 
+      <GlyphRule seed={2.4} />
+
       <section class="section" aria-labelledby="features">
-        <p class="heading-mark" aria-hidden="true">## why bb box</p>
-        <h2 id="features">Made for the way agents work</h2>
+<div class="section-head" data-cipher-hover>
+          <a class="heading-mark" href="#features"><CipherText text="# features" /></a>
+          <h2 id="features"><CipherText text="Made for the way agents work" glyphs="letters" /></h2>
+        </div>
         <ul class="shots">
           {shown.map((feature, index) => (
             <li class:list={{ wide: index === 0 }}>
@@ -117,9 +138,14 @@ const acquire = "bb box acquire linux-desktop-cpu";
         </ul>
       </section>
 
-      <section class="section" aria-labelledby="backends">
-        <p class="heading-mark" aria-hidden="true">## backends</p>
-        <h2 id="backends">Any provider, one interface</h2>
+      <GlyphRule seed={3.9} />
+
+      <section class="section backends" aria-labelledby="backends">
+<div class="rain"><GlyphRain /></div>
+        <div class="section-head" data-cipher-hover>
+          <a class="heading-mark" href="#backends"><CipherText text="# backends" /></a>
+          <h2 id="backends"><CipherText text="Any provider, one interface" glyphs="letters" /></h2>
+        </div>
         <p class="section-lead">Docker on the machine that runs BB to start with. Add Proxmox, microsandbox, Macs with Tart, machines over SSH, or rent from Hetzner Cloud, Namespace and boat.dev.</p>
         <div class="table-scroll" role="region" aria-labelledby="backends" tabindex="0">
           <table class="listing">
@@ -131,17 +157,21 @@ const acquire = "bb box acquire linux-desktop-cpu";
               </tr>
             </thead>
             <tbody>
-              {data.backends.map((backend) => (
+              {data.backends.map((backend, row) => (
                 <tr>
                   <th scope="row">
                     <a href={backend.href}>{backend.name}</a>
                     <span class="where">{backend.where}</span>
                     <span class="runs-on">{platformNames.filter((name) => backend.runs[name]).join(" · ")}{backend.takesSnapshots ? " · snapshots" : ""}</span>
                   </th>
-                  {platformNames.map((name) => (
-                    <td class="mark-col">{backend.runs[name] ? <span class="yes"><span aria-hidden="true">[x]</span><span class="sr-only">Yes</span></span> : <span class="no"><span aria-hidden="true">[ ]</span><span class="sr-only">No</span></span>}</td>
+                  {[...platformNames.map((name) => backend.runs[name]), backend.takesSnapshots].map((yes, column) => (
+                    <td class="mark-col">
+                      <span class:list={[yes ? "yes" : "no"]}>
+                        <span aria-hidden="true"><CipherText text={yes ? "[x]" : "[ ]"} delay={markDelay(row, column)} duration={460} decorative /></span>
+                        <span class="sr-only">{yes ? "Yes" : "No"}</span>
+                      </span>
+                    </td>
                   ))}
-                  <td class="mark-col">{backend.takesSnapshots ? <span class="yes"><span aria-hidden="true">[x]</span><span class="sr-only">Yes</span></span> : <span class="no"><span aria-hidden="true">[ ]</span><span class="sr-only">No</span></span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -149,9 +179,13 @@ const acquire = "bb box acquire linux-desktop-cpu";
         </div>
       </section>
 
+      <GlyphRule seed={5.3} />
+
       <section class="section" aria-labelledby="install">
-        <p class="heading-mark" aria-hidden="true">## install</p>
-        <h2 id="install">Set it up with an agent</h2>
+<div class="section-head" data-cipher-hover>
+          <a class="heading-mark" href="#install"><CipherText text="# install" /></a>
+          <h2 id="install"><CipherText text="Set it up with an agent" glyphs="letters" /></h2>
+        </div>
         <p class="section-lead">Paste this into a BB thread. Its agent installs BB Box, sets up a backend and proves it with a box.</p>
         <div class="install">
           <BoxFrame title="setup prompt" class="prompt-frame">
@@ -182,6 +216,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
     <footer class="foot">
       <div class="dither-strip" aria-hidden="true"></div>
       <div class="foot-inner">
+        <AsciiWordmark />
         <ul class="ways">
           {data.links.map((link) => (
             <li>
@@ -198,6 +233,13 @@ const acquire = "bb box acquire linux-desktop-cpu";
         </p>
       </div>
     </footer>
+    <script>
+      const bar = document.querySelector<HTMLElement>("header.bar");
+      const topOfPage = document.createElement("div");
+      topOfPage.style.cssText = "position:absolute;top:0;height:1px;width:1px";
+      document.body.prepend(topOfPage);
+      if (bar) new IntersectionObserver(([entry]) => bar.toggleAttribute("data-scrolled", !entry!.isIntersecting)).observe(topOfPage);
+    </script>
   </body>
 </html>
 
@@ -260,9 +302,20 @@ const acquire = "bb box acquire linux-desktop-cpu";
   }
 
   .bar {
-    position: absolute;
+    position: fixed;
     inset: 0 0 auto;
-    z-index: 5;
+    z-index: 20;
+    border-bottom: 1px solid transparent;
+    transition: background-color 200ms ease, border-color 200ms ease;
+  }
+
+  .bar[data-scrolled] {
+    border-bottom-color: var(--border);
+    background-color: color-mix(in srgb, var(--background) 82%, transparent);
+    backdrop-filter: blur(10px);
+  }
+
+  .bar-inner {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -308,10 +361,10 @@ const acquire = "bb box acquire linux-desktop-cpu";
     padding: 10rem 1.5rem 5rem;
   }
 
-  .dither {
+  .field {
     position: absolute;
     inset: 0;
-    mask-image: linear-gradient(to bottom, var(--foreground) 30%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0, var(--foreground) 6.5rem, var(--foreground) 55%, transparent 100%);
   }
 
   .hero-copy {
@@ -374,6 +427,10 @@ const acquire = "bb box acquire linux-desktop-cpu";
     .reply {
       animation: none;
     }
+
+    .bar {
+      transition: none;
+    }
   }
 
   :global([data-motion="paused"]) .typed,
@@ -381,11 +438,6 @@ const acquire = "bb box acquire linux-desktop-cpu";
     animation: none;
   }
 
-  .hero-copy :global(.hero-motion) {
-    position: absolute;
-    right: 0;
-    bottom: -2.5rem;
-  }
 
   h1 {
     max-width: 52rem;
@@ -483,14 +535,57 @@ const acquire = "bb box acquire linux-desktop-cpu";
   }
 
   .section {
-    padding-top: 7rem;
+    position: relative;
+    padding-top: 3.5rem;
+  }
+
+  main > :global(.glyph-rule) {
+    margin-top: 5rem;
+  }
+
+  .section-head {
+    position: relative;
   }
 
   .heading-mark {
-    margin: 0 0 0.75rem;
+    display: inline-block;
+    margin: 0 0 0.875rem;
     font-family: var(--sl-font-mono);
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
     color: var(--accent);
+    text-decoration: none;
+  }
+
+  .heading-mark:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  h2 {
+    scroll-margin-top: 6rem;
+  }
+
+  .platforms-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    gap: 2.5rem;
+    align-items: center;
+  }
+
+  .platforms-grid :global(.box-figure) {
+    margin-top: 2.5rem;
+  }
+
+  .box-stage {
+    height: 17rem;
+  }
+
+  .rain {
+    position: absolute;
+    inset: 0 0 auto auto;
+    width: 68%;
+    height: 26rem;
+    mask-image: radial-gradient(ellipse 72% 85% at 72% 32%, var(--foreground) 18%, transparent 78%);
   }
 
   h2 {
@@ -827,9 +922,25 @@ const acquire = "bb box acquire linux-desktop-cpu";
     }
   }
 
+  @media (max-width: 64rem) {
+    .platforms-grid {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
+
+    .box-stage {
+      height: 13rem;
+    }
+  }
+
   @media (max-width: 40rem) {
-    .bar {
+    .bar-inner {
       padding: 0 0.75rem 0 1rem;
+    }
+
+    .rain {
+      width: 100%;
+      opacity: 0.6;
     }
 
     nav a:nth-child(2) {

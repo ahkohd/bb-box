@@ -33,7 +33,7 @@ export function onMotionChange(listener: () => void): void {
   reducedMotionQuery.addEventListener("change", listener);
 }
 
-export function animateWhileSeen(element: Element, animation: Animation, framesPerSecond = 24): void {
+export function animateWhileSeen(element: Element, animation: Animation, framesPerSecond = 24, alwaysStill = false): void {
   const frameMs = 1000 / framesPerSecond;
   let onScreen = false;
   let frame = 0;
@@ -41,8 +41,8 @@ export function animateWhileSeen(element: Element, animation: Animation, framesP
   let sinceLastFrame = frameMs;
   let seconds = 0;
 
-  const moving = () => onScreen && !document.hidden && !reducedMotion() && !pausedByPerson();
-  const shownSeconds = () => (reducedMotion() ? 0 : seconds);
+  const moving = () => !alwaysStill && onScreen && !document.hidden && !reducedMotion() && !pausedByPerson();
+  const shownSeconds = () => (reducedMotion() || alwaysStill ? 0 : seconds);
 
   const tick = (now: number) => {
     frame = 0;

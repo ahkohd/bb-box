@@ -1,0 +1,175 @@
+---
+interface Props {
+  class?: string;
+}
+
+const { class: className } = Astro.props;
+---
+
+<canvas class:list={["pointer-box", className]} data-motion aria-hidden="true"></canvas>
+
+<script>
+  import { cssValue, deviceScale } from "../../effects/gl.ts";
+  import { animateWhileSeen } from "../../motion.ts";
+
+  type Vector = [number, number, number];
+
+  const ramp = ".:-=+*%";
+  const fontPx = 13;
+  const linePx = 15;
+  const edgeWidth = 0.075;
+  const restingTilt = 0.52;
+  const restingTurn = 0.62;
+  const idleTurnPerSecond = 0.25;
+  const steerEase = 0.08;
+  const idleAfterSeconds = 1.6;
+  const quarterTurn = Math.PI / 2;
+  const light = normalise([-0.3, 0.85, 0.45]);
+
+  function normalise([x, y, z]: Vector): Vector {
+    const length = Math.hypot(x, y, z);
+    return [x / length, y / length, z / length];
+  }
+
+  const rotateY = ([x, y, z]: Vector, angle: number): Vector => [x * Math.cos(angle) + z * Math.sin(angle), y, -x * Math.sin(angle) + z * Math.cos(angle)];
+  const rotateX = ([x, y, z]: Vector, angle: number): Vector => [x, y * Math.cos(angle) - z * Math.sin(angle), y * Math.sin(angle) + z * Math.cos(angle)];
+
+  interface Pose {
+    turn: number;
+    tilt: number;
+  }
+
+  interface Hit {
+    shade: number;
+    edge: boolean;
+  }
+
+  function castThrough(x: number, y: number, pose: Pose): Hit | undefined {
+    const toBox = (point: Vector) => rotateY(rotateX(point, -pose.tilt), -pose.turn);
+    const origin = toBox([x, y, 4]);
+    const direction = toBox([0, 0, -1]);
+    let near = -Infinity;
+    let far = Infinity;
+    let normal: Vector = [0, 0, 0];
+    for (let axis = 0; axis < 3; axis++) {
+      const o = origin[axis]!;
+      const d = direction[axis]!;
+      if (Math.abs(d) < 1e-9) {
+        if (Math.abs(o) > 1) return undefined;
+        continue;
+      }
+      let enter = (-1 - o) / d;
+      let leave = (1 - o) / d;
+      let sign = -1;
+      if (enter > leave) {
+        [enter, leave] = [leave, enter];
+        sign = 1;
+      }
+      if (enter > near) {
+        near = enter;
+        normal = [0, 0, 0];
+        normal[axis] = sign;
+      }
+      far = Math.min(far, leave);
+      if (near > far) return undefined;
+    }
+    const hit = origin.map((value, axis) => value + direction[axis]! * near) as Vector;
+    const nearEdges = hit.filter((value) => Math.abs(value) > 1 - edgeWidth).length;
+    const worldNormal = rotateX(rotateY(normal, pose.turn), pose.tilt);
+    const diffuse = Math.max(0, worldNormal[0] * light[0] + worldNormal[1] * light[1] + worldNormal[2] * light[2]);
+    return { shade: 0.2 + diffuse * 0.8, edge: nearEdges >= 2 };
+  }
+
+  function startBox(canvas: HTMLCanvasElement): void {
+    const pen = canvas.getContext("2d");
+    if (!pen) return;
+    const area = canvas.closest("section") ?? canvas;
+    let columns = 0;
+    let rows = 0;
+    let cellWidth = 7.8;
+    let ink = "";
+    let edgeInk = "";
+    let pose: Pose = { turn: restingTurn, tilt: restingTilt };
+    let aim: Pose | undefined;
+    let lastAimAt = -Infinity;
+    let lastSeconds = 0;
+
+    const restyle = () => {
+      ink = cssValue(canvas, "--box-ink");
+      edgeInk = cssValue(canvas, "--accent");
+    };
+
+    const resize = () => {
+      const scale = deviceScale();
+      const { width, height } = canvas.getBoundingClientRect();
+      canvas.width = Math.round(width * scale);
+      canvas.height = Math.round(height * scale);
+      pen.setTransform(scale, 0, 0, scale, 0, 0);
+      pen.font = `${fontPx}px "JetBrains Mono Variable", ui-monospace, monospace`;
+      pen.textBaseline = "top";
+      cellWidth = pen.measureText("0").width;
+      columns = Math.floor(width / cellWidth);
+      rows = Math.floor(height / linePx);
+    };
+
+    const steer = (seconds: number) => {
+      const step = Math.max(0, seconds - lastSeconds);
+      lastSeconds = seconds;
+      if (aim && seconds - lastAimAt < idleAfterSeconds) {
+        pose = { turn: pose.turn + (aim.turn - pose.turn) * steerEase, tilt: pose.tilt + (aim.tilt - pose.tilt) * steerEase };
+      } else {
+        pose = { turn: pose.turn + idleTurnPerSecond * step, tilt: pose.tilt + (restingTilt - pose.tilt) * steerEase };
+      }
+    };
+
+    const draw = (seconds: number) => {
+      if (!columns) resize();
+      if (seconds > 0) steer(seconds);
+      else pose = { turn: restingTurn, tilt: restingTilt };
+      const { width, height } = canvas.getBoundingClientRect();
+      const scale = 4.2 / Math.min(width, height);
+      pen.clearRect(0, 0, width, height);
+      for (let row = 0; row < rows; row++) {
+        let faces = "";
+        let edges = "";
+        for (let column = 0; column < columns; column++) {
+          const x = (column * cellWidth + cellWidth / 2 - width / 2) * scale;
+          const y = -(row * linePx + linePx / 2 - height / 2) * scale;
+          const hit = castThrough(x, y, pose);
+          faces += !hit || hit.edge ? " " : ramp[Math.min(ramp.length - 1, Math.floor(hit.shade * ramp.length))];
+          edges += hit?.edge ? "#" : " ";
+        }
+        pen.fillStyle = ink;
+        pen.fillText(faces, 0, row * linePx);
+        pen.fillStyle = edgeInk;
+        pen.fillText(edges, 0, row * linePx);
+      }
+    };
+
+    area.addEventListener("pointermove", (event) => {
+      const pointerEvent = event as PointerEvent;
+      if (pointerEvent.pointerType !== "mouse") return;
+      const box = canvas.getBoundingClientRect();
+      const across = (pointerEvent.clientX - (box.left + box.width / 2)) / Math.max(1, window.innerWidth / 2);
+      const down = (pointerEvent.clientY - (box.top + box.height / 2)) / Math.max(1, window.innerHeight / 2);
+      const nearestQuarter = Math.round((pose.turn - restingTurn) / quarterTurn) * quarterTurn;
+      aim = { turn: restingTurn + nearestQuarter + across * 0.9, tilt: restingTilt + down * 0.45 };
+      lastAimAt = lastSeconds;
+    });
+
+    restyle();
+    document.fonts.ready.then(resize);
+    animateWhileSeen(canvas, { draw, resize, restyle }, 24);
+  }
+
+  for (const canvas of document.querySelectorAll<HTMLCanvasElement>("canvas.pointer-box")) startBox(canvas);
+</script>
+
+<style>
+  .pointer-box {
+    display: block;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+</style>

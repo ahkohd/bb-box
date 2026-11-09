@@ -1,0 +1,39 @@
+---
+import { glyphRule } from "../../effects/glyph-rule.ts";
+import CipherText from "./CipherText.astro";
+
+interface Props {
+  seed: number;
+}
+
+const ruleLength = 220;
+const { seed } = Astro.props;
+---
+
+<div class="glyph-rule" aria-hidden="true">
+  <CipherText text={glyphRule(seed, ruleLength)} duration={1100} decorative />
+</div>
+
+<style>
+  .glyph-rule {
+    max-width: 72rem;
+    margin: 0 auto;
+    padding: 0 1.5rem;
+    overflow: hidden;
+    white-space: pre;
+    font-family: var(--sl-font-mono);
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: var(--frame-ink);
+  }
+
+  .glyph-rule :global(.cipher) {
+    display: block;
+  }
+
+  @media (max-width: 40rem) {
+    .glyph-rule {
+      padding: 0 1rem;
+    }
+  }
+</style>
