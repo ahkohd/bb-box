@@ -554,6 +554,39 @@ test("the pointer's commands move it each frame it moves, show it from when it i
   assert.ok(plan.frame && plan.art.some((art) => art.name === "corner.png"));
 });
 
+test("after pressing a button the pointer rests on it, then glides to a far place, and a press long after its logged click is still that click's one ring (081)", () => {
+  const dialog = { x: 700, y: 500, width: 300, height: 200 };
+  const note = { x: 100, y: 100, width: 500, height: 400 };
+  const plan = planScene(
+    facts({
+      samples: [
+        { at: 1000, x: 100, y: 100, buttons: 0 },
+        { at: 1004.9, x: 800, y: 600, buttons: 0 },
+        { at: 1005.45, x: 800, y: 600, buttons: 1 },
+        { at: 1005.48, x: 800, y: 600, buttons: 0 },
+        { at: 1005.51, x: 300, y: 300, buttons: 0 },
+      ],
+      changes: [{ at: 5.5, x: 690, y: 490, width: 320, height: 220 }],
+      inputs: [
+        { at: 1004.8, by: "agent", type: "keys", chord: normalChord("s", ["ctrl"]) },
+        { at: 1005, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 800, y: 600, area: { x: 760, y: 585, width: 80, height: 30 }, role: "push button", window: dialog },
+        { at: 1006.2, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 300, y: 300, area: { x: 110, y: 130, width: 480, height: 360 }, role: "text", window: note },
+      ],
+    }),
+    SCREEN,
+    1000,
+    10,
+    { zoom: true, frame: true },
+  );
+  const at = (t: number) => plan.pointer.frames[Math.round(t * CLIP_FPS)]!;
+  assert.deepEqual([at(5.65).x, at(5.65).y], [800, 600], "still on the button a moment after it is let go");
+  assert.deepEqual([at(6.2).x, at(6.2).y], [300, 300], "then at the far place");
+  assert.ok(plan.pointer.glides.some((glide) => glide.from >= 5.7 && glide.to <= 6.2 && glide.to - glide.from >= 0.15), `a glide, not a jump: ${JSON.stringify(plan.pointer.glides)}`);
+  const onButton = plan.pointer.rings.filter((ring) => Math.abs(ring.x - 800) < 40 && Math.abs(ring.y - 600) < 40);
+  assert.equal(onButton.length, 1, `one ring for the click, though its press came 0.45 s after it was logged: ${JSON.stringify(plan.pointer.rings)}`);
+  assert.equal(onButton[0]!.until, 5.5, "and it ends as the dialog goes");
+});
+
 test("a click whose window goes on the click rings on the frames before it goes, or its ring ends there (081)", () => {
   const dialog = { x: 600, y: 300, width: 500, height: 400 };
   const cancel: InputEvent = { at: 1005, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 1000, y: 660, area: { x: 950, y: 640, width: 100, height: 40 }, role: "push button", window: dialog };

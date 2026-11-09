@@ -137,7 +137,13 @@ change: at most 0.5 seconds earlier, and at least
 0.1 seconds after the action or caption before it, and a frame after the
 window last opened or changed size. The pointer's glide, the ring and
 the hand move with it. The ring's stages from the change on are not drawn,
-and a ring with none left is not drawn at all.
+and a ring with none left is not drawn at all. A press the sampler sees
+within 1 second of such a click, at its place, is that click, not a second
+ring.
+
+A far move of the pointer within 0.1 seconds of a press, a release or a
+click rests on the button for 0.25 seconds, then glides there over at least
+0.15 seconds, rather than jumping as the driver moves the real pointer on.
 
 ### A zoomed window that goes takes the zoom with it
 

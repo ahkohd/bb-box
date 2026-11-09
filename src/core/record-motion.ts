@@ -175,7 +175,13 @@ interface Keyframe {
   readonly x: number;
   readonly y: number;
   readonly jump: boolean;
+  readonly restUntil?: number;
 }
+
+export const PRESS_FOLLOWED_S = 0.1;
+export const REST_AFTER_PRESS_S = 0.25;
+export const GLIDE_LEAST_S = 0.15;
+export const GONE_PRESS_MATCH_S = 1;
 
 const round3 = (value: number) => Math.round(value * 1000) / 1000;
 const distance = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -215,23 +221,53 @@ export function easeInOutCubic(u: number): number {
   return v < 0.5 ? 4 * v * v * v : 1 - (-2 * v + 2) ** 3 / 2;
 }
 
+interface PointerPoint {
+  readonly at: number;
+  readonly x: number;
+  readonly y: number;
+  readonly act: boolean;
+  readonly press: boolean;
+}
+
+function withSampledPresses(samples: readonly PointerSample[]): (PointerSample & { readonly press: boolean })[] {
+  return samples.map((sample, index) => ({ ...sample, press: index > 0 && sample.buttons !== samples[index - 1]!.buttons }));
+}
+
+function restedAfterPresses(points: readonly PointerPoint[]): Keyframe[] {
+  const keyframes: Keyframe[] = [];
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index]!;
+    const before = points[index - 1];
+    const far = !!before && distance(before, point) > JUMP_PX;
+    const gap = before ? point.at - before.at : 0;
+    if (before && far && !point.act && (before.press || before.act) && gap <= PRESS_FOLLOWED_S) {
+      const next = points[index + 1];
+      const restUntil = before.at + REST_AFTER_PRESS_S;
+      const at = Math.max(point.at, Math.min(restUntil + GLIDE_S, next ? next.at - SAMPLE_S : Infinity));
+      keyframes.push({ at: round3(at), x: point.x, y: point.y, jump: true, restUntil: round3(restUntil) });
+      continue;
+    }
+    keyframes.push({ at: point.at, x: point.x, y: point.y, jump: !!before && far && (point.act || gap > 2 / CLIP_FPS) });
+  }
+  return keyframes;
+}
+
 function pointerKeyframes(scene: Scene): Keyframe[] {
   const acts = scene.agentCursor ? [] : [...scene.clicks.map((click) => ({ at: click.at, x: click.x, y: click.y })), ...scene.scrolls.map((scroll) => ({ at: scroll.at, x: scroll.x, y: scroll.y }))];
   const sameMove = (sample: PointerSample) => acts.some((act) => Math.abs(act.at - sample.at) <= SAME_MOVE_S && distance(act, sample) <= SAME_MOVE_PX);
-  const real = scene.samples.filter((sample, index) => index === 0 || !sameMove(sample)).map((sample) => ({ at: sample.at, x: sample.x, y: sample.y, act: false }));
-  const all = [...real, ...acts.map((act) => ({ ...act, act: true }))].sort((a, b) => a.at - b.at);
-  return all.map((point, index): Keyframe => {
-    const before = all[index - 1];
-    const far = !!before && distance(before, point) > JUMP_PX;
-    const gap = before ? point.at - before.at : 0;
-    return { at: point.at, x: point.x, y: point.y, jump: !!before && far && (point.act || gap > 2 / CLIP_FPS) };
-  });
+  const real = withSampledPresses(scene.samples)
+    .filter((sample, index) => index === 0 || !sameMove(sample))
+    .map((sample): PointerPoint => ({ at: sample.at, x: sample.x, y: sample.y, act: false, press: sample.press }));
+  const all = [...real, ...acts.map((act): PointerPoint => ({ ...act, act: true, press: false }))].sort((a, b) => a.at - b.at);
+  return restedAfterPresses(all);
 }
 
 function glideStart(keyframes: readonly Keyframe[], index: number): number {
   const keyframe = keyframes[index]!;
   const before = keyframes[index - 1];
-  return before ? Math.max(before.at, keyframe.at - GLIDE_S) : keyframe.at;
+  if (!before) return keyframe.at;
+  const rested = keyframe.restUntil === undefined ? before.at : Math.min(keyframe.restUntil, keyframe.at - GLIDE_LEAST_S);
+  return Math.max(before.at, rested, keyframe.at - GLIDE_S);
 }
 
 function frameCount(length: number): number {
@@ -335,7 +371,10 @@ export function pressesOf(samples: readonly PointerSample[]): Press[] {
 
 function ringsOf(scene: Scene, sampled: readonly PlacedClick[]): Ring[] {
   const acted = scene.clicks;
-  const sameMoment = (act: PlacedClick, click: PlacedClick) => Math.min(Math.abs(act.at - click.at), Math.abs((act.loggedAt ?? act.at) - click.at)) <= SAME_CLICK_S;
+  const sameMoment = (act: PlacedClick, click: PlacedClick) => {
+    const apart = Math.min(Math.abs(act.at - click.at), Math.abs((act.loggedAt ?? act.at) - click.at));
+    return apart <= (act.windowGoneAt !== undefined ? GONE_PRESS_MATCH_S : SAME_CLICK_S);
+  };
   const fromSamples = sampled.filter((click) => !acted.some((act) => sameMoment(act, click) && distance(act, click) <= SAME_CLICK_PX));
   const merged: PlacedClick[] = [];
   for (const click of [...fromSamples].sort((a, b) => a.at - b.at)) {
