@@ -74,12 +74,9 @@ const platformPatterns: Record<PlatformName, RegExp> = {
 export interface Backend {
   name: string;
   href: string;
-  boxes: string;
   where: string;
-  snapshots: string;
   takesSnapshots: boolean;
   runs: Record<PlatformName, boolean>;
-  desktops: boolean;
 }
 
 const sentenceCase = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
@@ -91,12 +88,9 @@ function backendOf(cells: string[]): Backend {
   return {
     name: plainText(link?.[2] ?? cells[0]!),
     href: link?.[1] ?? "",
-    boxes,
     where: sentenceCase(plainText(cells[2] ?? "")),
-    snapshots,
     takesSnapshots: !/^none\b/i.test(snapshots),
     runs: Object.fromEntries(platformNames.map((platform) => [platform, platformPatterns[platform].test(boxes)])) as Record<PlatformName, boolean>,
-    desktops: /desktop/i.test(boxes),
   };
 }
 
