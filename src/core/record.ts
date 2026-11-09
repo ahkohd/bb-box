@@ -630,7 +630,7 @@ function pillWeight(os: GuestOs): FontWeight {
 
 export function clipGraph(plan: ClipPlan, withOverlays: boolean): string {
   const select = plan.cuts.length ? `select='not(${plan.cuts.map(([from, to]) => `between(t,${from.toFixed(3)},${to.toFixed(3)})`).join("+")})',` : "";
-  const since = "(T-STARTT)";
+  const since = "T";
   const removed = plan.cuts.map(([from, to]) => `clip(${since}-${from.toFixed(3)},0,${round3(to - from)})`).join("+");
   const clock = removed ? `(${since}-(${removed}))/${plan.speed}` : `${since}/${plan.speed}`;
   const pts = `'(${clock}${plan.holds.map((hold) => `+${hold.seconds}*gt(${clock},${hold.at})`).join("")})/TB'`;
@@ -648,7 +648,7 @@ export function clipGraph(plan: ClipPlan, withOverlays: boolean): string {
     last = framed.last;
     firstPill = 1 + scene.art.length;
   } else {
-    parts.push(`[0:v]${timing},scale='min(${CLIP_WIDTH},iw)':-2[v0]`);
+    parts.push(`[0:v]setpts=PTS-STARTPTS,${timing},scale='min(${CLIP_WIDTH},iw)':-2[v0]`);
     last = "v0";
   }
   const fadeOut = plan.fadeOut ? `fade=t=out:st=${plan.fadeOut.at}:d=${plan.fadeOut.seconds}:color=0x${plan.fadeOut.color}` : "null";

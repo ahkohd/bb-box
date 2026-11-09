@@ -53,7 +53,7 @@ test("box_record starts once, refuses no display, and stop makes the clip with s
   assert.deepEqual(result, { ended: "stopped", recorded: 10, clip: 4.2, bytes: 7, size: "1280x720", captions: true });
   assert.ok(drawing! >= 0 && encoding! >= 0, "the time each part took");
   const encoded = readFileSync(join(home, "ffmpeg-args"), "utf8").trim().split("\n").pop()!;
-  assert.ok(encoded.includes("select='not(between(t,1.500,6.000)+between(t,8.500,10.000))',setpts='(((T-STARTT)-(clip((T-STARTT)-1.500,0,4.5)+clip((T-STARTT)-8.500,0,1.5)))/2)/TB',fps=15,tpad=stop_mode=clone:stop_duration=2,trim=duration=2,scale='min(1280,iw)':-2[v0]"), encoded);
+  assert.ok(encoded.includes("setpts=PTS-STARTPTS,select='not(between(t,1.500,6.000)+between(t,8.500,10.000))',setpts='((T-(clip(T-1.500,0,4.5)+clip(T-8.500,0,1.5)))/2)/TB',fps=15,tpad=stop_mode=clone:stop_duration=2,trim=duration=2,scale='min(1280,iw)':-2[v0]"), encoded);
   assert.match(encoded, /-i \S+\/pill-0\.png -itsoffset [\d.]+ -loop 1 -framerate 15 -t [\d.]+ -i \S+\/pill-1\.png -filter_complex /, "the speed and the cut drawn as marks, the cut fading in and out");
   assert.match(encoded, /-c:v libx264 .*-crf 28 -tune animation -pix_fmt yuv420p -movflags \+faststart/);
   assert.ok(!existsSync(join(home, RECORD_DIR, "capture.mkv")), "the capture goes once the clip is made");
@@ -152,7 +152,7 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
     { look: "mark", text: "10 s later", size: 13, x: "right", y: 581, from: 2.75, to: 3.95, fade: 0.2 },
   ], "the speed in the bottom corner all along, and the cut over it for a moment");
   assert.match(clipGraph(plan, true), /\[v4\]\[5:v\]overlay=x=W-w-25:y=614:enable='between\(t,0,12\.25\)'\[v5\]/);
-  const clock = "((T-STARTT)-(clip((T-STARTT)-5.500,0,9.5)))/2";
+  const clock = "(T-(clip(T-5.500,0,9.5)))/2";
   assert.ok(clipGraph(plan, true).includes(`setpts='(${clock}+1*gt(${clock},2.75)+1*gt(${clock},9.75))/TB'`), clipGraph(plan, true));
   assert.match(clipGraph(plan, true), /\[2:v\]format=rgba,fade=t=in:st=2\.75:d=0\.2:alpha=1,fade=t=out:st=4\.25:d=0\.2:alpha=1\[q1\];\[v1\]\[q1\]overlay=x=\(W-w\)\/2:y=71:eof_action=pass:enable='between\(t,2\.75,4\.45\)'\[v2\]/);
   assert.match(clipGraph(plan, true), /\[v5\]\[q5\]overlay=.*\[out\]$/);

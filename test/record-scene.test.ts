@@ -47,6 +47,7 @@ function camera(parts: Partial<Scene>) {
 function evaluate(expression: string, it: number): number {
   const functions: Record<string, (...args: number[]) => number> = {
     gte: (a, b) => (a! >= b! ? 1 : 0),
+    gt: (a, b) => (a! > b! ? 1 : 0),
     lt: (a, b) => (a! < b! ? 1 : 0),
     max: (a, b) => Math.max(a!, b!),
     pow: (a, b) => a! ** b!,
@@ -451,6 +452,9 @@ test("a dressed recording starts on its first action and ends a second after its
   const result = plan.captions.find((caption) => caption.kind === "pass")!;
   assert.ok(Math.abs(plan.length - result.from - 1.5) < 0.05, `a second held after the result, then half a second's fade: ${plan.length - result.from}`);
   assert.deepEqual(plan.overlays.filter((overlay) => overlay.look === "mark"), [], "trimming the ends shows no skip mark");
+  const timing = /setpts='\((.*)\)\/TB'/.exec(clipGraph(plan, true))![1]!;
+  const shownAt = (captured: number) => evaluate(timing.replace(/\bT\b/g, `(${captured})`), 0);
+  assert.ok(Math.abs(shownAt(5.5) - result.from) < 0.001, `the frame captured with the result is shown with it, though the clip's first frames are cut: ${shownAt(5.5)} against ${result.from}`);
   assert.ok(clipGraph(plan, true).endsWith(`[end]fade=t=out:st=${round(plan.length - 0.5)}:d=0.5:color=0x161618[out]`), clipGraph(plan, true).slice(-200));
   const stopped = planClip(recording(5.6), 1);
   const last = stopped.captions.find((caption) => caption.kind === "pass")!;
