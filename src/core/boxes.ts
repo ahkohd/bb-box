@@ -552,7 +552,7 @@ export function ownedByThread(threadId: string): boolean {
 export { isMachineName };
 
 export function forkNameProblem(name: string): string | null {
-  return isMachineName(name) ? null : `Name a fork with a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". "${name}" is not one.`;
+  return isMachineName(name) ? null : `Name a fork with a lower-case letter first, then letters, digits and "-", up to 32 characters, not ending in "-". "${name}" is not one.`;
 }
 
 /**
@@ -1422,7 +1422,7 @@ export class Boxes {
     const yours = input.threadId === OPERATOR;
     if (yours) {
       if (input.name !== undefined && !isMachineName(input.name)) {
-        throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". "${input.name}" is not one.`);
+        throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32 characters, not ending in "-". "${input.name}" is not one.`);
       }
       const kind = withDevice[0]!.kind;
       if (!kind.capabilities.enrol) throw new BoxError("unsupported", `A ${kind.label} box cannot become a BB machine, so it cannot be one of your machines.`);
@@ -1579,7 +1579,7 @@ export class Boxes {
     const { backend, kind } = offered;
     const yours = request.threadId === OPERATOR;
     if (yours && request.name !== undefined && !isMachineName(request.name)) {
-      throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". "${request.name}" is not one.`);
+      throw new BoxError("invalid_name", `Name a machine with a lower-case letter first, then letters, digits and "-", up to 32 characters, not ending in "-". "${request.name}" is not one.`);
     }
     if (yours && !kind.capabilities.enrol) throw new BoxError("unsupported", `A ${kind.label} box cannot become a BB machine, so a fork of it cannot be one of your machines.`);
     const size = request.size ?? defaultSize(kindSizes(kind.id, (await this.#deps.general()).sizes));

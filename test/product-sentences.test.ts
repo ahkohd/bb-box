@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { missingBackendWords } from "../src/backends/index.ts";
 import { BY_OUTSIDE, byBbBox } from "../src/core/box-log.ts";
+import { forkNameProblem } from "../src/core/boxes.ts";
 import { byWords } from "../src/core/snapshot.ts";
 import { reasonAfterColon } from "../src/app/settings-drafts.ts";
 import { screenAround } from "../src/app/snapshot-words.ts";
@@ -198,6 +199,15 @@ test("a reason after a colon lower-cases a leading common word and leaves a prov
   const kindPage = readFileSync(join(ROOT, "app/settings-kind-page.tsx"), "utf8");
   assert.match(kindPage, /reasonAfterColon\(/);
   assert.equal(kindPage.includes("/^[A-Z][a-z]/"), false);
+});
+
+test("a name says its limit is 32 characters", () => {
+  assert.match(forkNameProblem("A") ?? "", /up to 32 characters/);
+  for (const path of ["core/boxes.ts", "plugin/snapshot-tools.ts", "app/snapshots-card.tsx"]) {
+    const source = readFileSync(join(ROOT, path), "utf8");
+    assert.equal(source.includes('up to 32, not ending'), false, path);
+    assert.match(source, /up to 32 characters/);
+  }
 });
 
 test("a picture's label is built from the day, and a thread loss uses the shared phrase", () => {

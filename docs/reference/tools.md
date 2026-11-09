@@ -101,7 +101,7 @@ Make a new box of this thread from a snapshot of one of its boxes, or from the b
 | --- | --- | --- | --- |
 | `box` | string | yes | The box to fork, by its name or ID: one of this thread's boxes, not one it runs on. |
 | `snapshot` | string | no | The snapshot's name or ID, from box_snapshots. Left out, bb-box takes one of the box now, named "for a fork", and forks that. |
-| `name` | string | no | The new box's name: a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-". One is made up when left out. |
+| `name` | string | no | The new box's name: a lower-case letter first, then letters, digits and "-", up to 32 characters, not ending in "-". One is made up when left out. |
 | `gpu` | `none`, `shared`, `whole` | no | The fork's GPU. none, the default, starts it with no card. shared places a shared card, and whole a card to itself where this install has whole cards on, before anything is copied; only a desktop can take either. |
 
 ## box_grant

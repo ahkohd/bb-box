@@ -12,7 +12,7 @@ import { agentErrorText, boxParam, failure, ready, runsOnBox, thread, using, wit
 import { boxDetail, startingWords } from "./views.ts";
 import { forkedFromWords, isAcquiring, isMachineName } from "../core/boxes.ts";
 
-const FORK_NAME_RULE = 'a lower-case letter first, then letters, digits and "-", up to 32, not ending in "-".';
+const FORK_NAME_RULE = 'a lower-case letter first, then letters, digits and "-", up to 32 characters, not ending in "-".';
 import { next } from "./views.ts";
 
 const QUIET_WAIT_MS = 60_000;

@@ -549,7 +549,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
   };
   const named = check && !check.asMachine ? threadTitles[check.threadId] : undefined;
   const thread = named && named !== THIS_BOX_THREAD ? named : null;
-  const nameWhy = name.trim() && !isMachineName(name.trim()) ? 'A lower-case letter first, then letters, digits and "-", up to 32, not ending in "-".' : null;
+  const nameWhy = name.trim() && !isMachineName(name.trim()) ? 'A lower-case letter first, then letters, digits and "-", up to 32 characters, not ending in "-".' : null;
   const space = check?.bytes != null ? ` and ${gbWords(check.bytes)} on ${check.host ? `${check.host}'s ` : ""}${check.storage}` : "";
   return (
     <Shell
