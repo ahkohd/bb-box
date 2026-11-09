@@ -42,7 +42,7 @@ import appIcon from "../assets/app-icon.png";
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>
-    <header class="bar">
+    <header class="bar dither-screen">
       <div class="bar-inner">
       <a class="brand" href={base}>
         <Image class="mark" src={appIcon} alt="" width={24} height={24} densities={[1, 2, 3]} format="png" loading="eager" />
@@ -61,7 +61,7 @@ import appIcon from "../assets/app-icon.png";
       <section class="hero" aria-labelledby="headline">
         <div class="field"><HeroField /></div>
         <div class="hero-copy">
-          <p class="session">
+          <p class="session dither-screen">
             <span class="line"><span class="prompt-sign" aria-hidden="true">$</span> <span class="typed" style={`--chars: ${acquire.length}`}>{acquire}</span></span>
             <span class="line reply"><span class="ready" aria-hidden="true">●</span> Ready in seconds, and a warm box at once.</span>
           </p>
@@ -310,11 +310,44 @@ import appIcon from "../assets/app-icon.png";
     transition: background-color 200ms ease, border-color 200ms ease;
   }
 
-  .bar[data-scrolled] {
-    border-bottom-color: var(--border);
+  .bar.dither-screen::before {
+    opacity: 0;
+    transition: opacity 200ms ease;
+  }
+
+  .bar[data-scrolled]::before {
+    opacity: 1;
+  }
+
+  .dither-screen {
+    isolation: isolate;
+  }
+
+  .dither-screen::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
     background-color: color-mix(in srgb, var(--background) 72%, transparent);
     background-image: repeating-conic-gradient(var(--background) 0 25%, transparent 0 50%);
     background-size: 2px 2px;
+    mask-image: linear-gradient(90deg, #000, rgb(0 0 0 / 0.7) 30%, #000 55%, rgb(0 0 0 / 0.78) 80%, #000);
+    mask-size: 50% 100%;
+    mask-repeat: repeat-x;
+    animation: dither-drift 14s linear infinite;
+  }
+
+  @keyframes dither-drift {
+    from {
+      mask-position: 0% 0;
+    }
+    to {
+      mask-position: 200% 0;
+    }
+  }
+
+  :global([data-motion="paused"]) .dither-screen::before {
+    animation: none;
   }
 
   .bar-inner {
@@ -382,8 +415,8 @@ import appIcon from "../assets/app-icon.png";
     gap: 0.25rem;
     margin: 0 0 2.5rem;
     padding: 0.75rem 1rem;
+    position: relative;
     border-radius: 0;
-    background: color-mix(in oklab, var(--background) 62%, transparent);
     box-shadow: inset 0 0 0 1px var(--border);
     font-family: var(--sl-font-mono);
     font-size: 0.8125rem;
