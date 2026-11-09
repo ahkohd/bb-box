@@ -33,6 +33,13 @@ test("the site has the getting-started path and a page for every guide, backend 
   );
 });
 
+test("the home page's demo can always be paused: each of its videos has controls, with JavaScript and without", () => {
+  const demo = readFileSync(join(repoRoot, "site", "src", "components", "home", "DemoVideo.astro"), "utf8");
+  const videos = [...demo.matchAll(/<video\b[^>]*>/g)].map((match) => match[0]);
+  assert.equal(videos.length, 2);
+  assert.deepEqual(videos.filter((video) => !/\scontrols\s/.test(video)), []);
+});
+
 test("every page of the site is in its sidebar once a section lists it", () => {
   const listed = new Set(sidebar(pages).flatMap((group) => group.items.map((item) => item.slug)));
   assert.deepEqual(

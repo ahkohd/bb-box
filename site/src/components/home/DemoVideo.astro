@@ -13,33 +13,30 @@ const { class: className } = Astro.props;
 const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`;
 ---
 
-<video class={className} style={reservedShape} autoplay muted loop playsinline width={darkPoster.width} height={darkPoster.height} data-dark-src={darkVideo} data-dark-poster={darkPoster.src} data-light-src={lightVideo} data-light-poster={lightPoster.src} aria-label={demoDescription}></video>
+<video class={className} style={reservedShape} controls muted loop playsinline width={darkPoster.width} height={darkPoster.height} data-dark-src={darkVideo} data-dark-poster={darkPoster.src} data-light-src={lightVideo} data-light-poster={lightPoster.src} aria-label={demoDescription}></video>
 <script is:inline>
   (() => {
     const video = document.currentScript.previousElementSibling;
     const stillPlease = matchMedia("(prefers-reduced-motion: reduce)");
-    const waitForPlay = () => {
-      video.removeAttribute("autoplay");
-      video.autoplay = false;
-      video.controls = true;
-      video.pause();
-    };
-    if (stillPlease.matches) waitForPlay();
-    stillPlease.addEventListener("change", () => (stillPlease.matches ? waitForPlay() : video.play().catch(() => {})));
+    const playsByItself = () => !stillPlease.matches;
     const show = () => {
       const theme = document.documentElement.dataset.theme === "light" ? "light" : "dark";
       if (video.dataset.shown === theme) return;
+      const firstShowing = !video.dataset.shown;
+      const keepPlaying = firstShowing ? playsByItself() : !video.paused;
       const playedTo = video.currentTime;
       video.dataset.shown = theme;
       video.poster = video.dataset[`${theme}Poster`];
-      const wasPlaying = !video.paused;
       video.src = playedTo ? `${video.dataset[`${theme}Src`]}#t=${playedTo.toFixed(2)}` : video.dataset[`${theme}Src`];
-      if (!stillPlease.matches || wasPlaying) video.play().catch(() => {});
+      if (keepPlaying) video.play().catch(() => {});
     };
     show();
+    stillPlease.addEventListener("change", () => {
+      if (stillPlease.matches) video.pause();
+    });
     new MutationObserver(show).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   })();
 </script>
 <noscript>
-  <video class={className} style={reservedShape} autoplay muted loop playsinline width={darkPoster.width} height={darkPoster.height} poster={darkPoster.src} src={darkVideo} aria-label={demoDescription}></video>
+  <video class={className} style={reservedShape} autoplay controls muted loop playsinline width={darkPoster.width} height={darkPoster.height} poster={darkPoster.src} src={darkVideo} aria-label={demoDescription}></video>
 </noscript>
