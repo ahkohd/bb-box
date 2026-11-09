@@ -23,9 +23,16 @@
   --muted: #1c1c1c;
   --surface: #111111;
   --border: rgb(255 255 255 / 0.1);
+  --muted-strong: #262626;
   --accent: #ffb224;
+  --accent-fill: #ffb224;
+  --accent-ink: #0a0a0a;
   --accent-soft: rgb(255 178 36 / 0.14);
   --frame-ink: #4d4d4d;
+  --dither-ink: #ffb224;
+  --dither-paper: var(--background);
+  --dither-strength: 0.38;
+  --dither-floor: 0.3;
 
   --sl-color-white: var(--foreground);
   --sl-color-gray-1: #e5e5e5;
@@ -64,9 +71,14 @@
   --muted: #f4f3f0;
   --surface: #faf9f7;
   --border: #e8e6e1;
+  --muted-strong: #ebe8e2;
   --accent: #a85000;
+  --accent-fill: #f5a524;
   --accent-soft: rgb(245 165 36 / 0.16);
   --frame-ink: #c9c5bd;
+  --dither-ink: #f5a524;
+  --dither-strength: 0.5;
+  --dither-floor: 0.46;
 
   --sl-color-gray-1: #171717;
   --sl-color-gray-4: #a1a1a1;
@@ -490,26 +502,6 @@ body,
 .expressive-code .copy button:hover::after,
 .expressive-code .copy button:focus-visible::after {
   background-color: var(--accent);
-}
-
-.sl-link-button {
-  height: 2.25rem;
-  padding: 0 1rem;
-  border: 0;
-  border-radius: 6px;
-  font-size: 0.875rem;
-}
-
-.sl-link-button.primary,
-.sl-link-button.primary:hover {
-  background-color: var(--accent);
-  color: #0a0a0a;
-}
-
-.sl-link-button.secondary,
-.sl-link-button.secondary:hover {
-  background-color: var(--muted);
-  color: var(--foreground);
 }
 
 .pagination-links a {

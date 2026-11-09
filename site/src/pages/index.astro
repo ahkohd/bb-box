@@ -1,6 +1,7 @@
 ---
 import "@fontsource-variable/inter";
 import "@fontsource-variable/jetbrains-mono";
+import "../styles/theme.css";
 import BoxFrame from "../components/home/BoxFrame.astro";
 import CopyButton from "../components/home/CopyButton.astro";
 import DemoVideo from "../components/home/DemoVideo.astro";
@@ -199,51 +200,14 @@ const acquire = "bb box acquire linux-desktop-cpu";
 </html>
 
 <style is:global>
-  :root {
-    --background: #0a0a0a;
-    --foreground: #fafafa;
-    --muted-foreground: #a1a1a1;
-    --muted: #151515;
-    --muted-strong: #262626;
-    --border: rgb(255 255 255 / 0.1);
-    --accent: #ffb224;
-    --accent-fill: #ffb224;
-    --accent-ink: #0a0a0a;
-    --frame-ink: #4d4d4d;
-    --dither-ink: #ffb224;
-    --dither-paper: #0a0a0a;
-    --dither-strength: 0.38;
-    --dither-floor: 0.3;
-    --mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    color-scheme: dark;
-  }
-
-  :root[data-theme="light"] {
-    --background: #ffffff;
-    --foreground: #0a0a0a;
-    --muted-foreground: #6b6b6b;
-    --muted: #f4f3f0;
-    --muted-strong: #ebe8e2;
-    --border: #e8e6e1;
-    --accent: #a85000;
-    --accent-fill: #f5a524;
-    --accent-ink: #0a0a0a;
-    --frame-ink: #c9c5bd;
-    --dither-ink: #f5a524;
-    --dither-paper: #ffffff;
-    --dither-strength: 0.5;
-    --dither-floor: 0.46;
-    color-scheme: light;
-  }
-
   *,
   *::before,
   *::after {
     box-sizing: border-box;
-    font-weight: 400 !important;
   }
 
   html {
+    scrollbar-gutter: auto;
     background: var(--background);
     color: var(--foreground);
     font-family: "Inter Variable", system-ui, sans-serif;
@@ -255,15 +219,6 @@ const acquire = "bb box acquire linux-desktop-cpu";
 
   body {
     margin: 0;
-  }
-
-  ::selection {
-    background-color: color-mix(in oklab, var(--accent) 35%, transparent);
-  }
-
-  :focus-visible {
-    outline: 1px solid var(--accent);
-    outline-offset: 2px;
   }
 
   .sr-only {
@@ -354,7 +309,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
   .dither {
     position: absolute;
     inset: 0;
-    mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);
+    mask-image: linear-gradient(to bottom, var(--foreground) 30%, transparent 100%);
   }
 
   .hero-copy {
@@ -372,7 +327,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
     border-radius: 6px;
     background: var(--background);
     box-shadow: inset 0 0 0 1px var(--border);
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.8125rem;
     line-height: 1.5;
     color: var(--foreground);
@@ -471,7 +426,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
     padding: 0;
     border: 0;
     background: transparent;
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.8125rem;
     color: var(--accent);
     cursor: pointer;
@@ -509,7 +464,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
 
   .caption {
     margin: 0.75rem 0 0 1.2em;
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.75rem;
     color: var(--muted-foreground);
   }
@@ -520,7 +475,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
 
   .heading-mark {
     margin: 0 0 0.75rem;
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.8125rem;
     color: var(--accent);
   }
@@ -559,14 +514,14 @@ const acquire = "bb box acquire linux-desktop-cpu";
 
   .tree-root {
     display: block !important;
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.8125rem;
     color: var(--muted-foreground);
   }
 
   .branch::before {
     content: "├──" / "";
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.8125rem;
     color: var(--frame-ink);
   }
@@ -634,7 +589,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
   }
 
   .trust {
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.75rem;
     color: var(--muted-foreground);
   }
@@ -652,7 +607,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
   }
 
   main :global(code) {
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.875em;
   }
 
@@ -678,7 +633,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
   .listing thead th {
     padding-bottom: 0.5rem;
     border-bottom: 1px solid var(--border);
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.75rem;
     color: var(--muted-foreground);
   }
@@ -709,7 +664,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
 
   .mark-col {
     text-align: center !important;
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.8125rem;
     white-space: nowrap;
   }
@@ -731,7 +686,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
 
   .prompt {
     margin: 0.5rem 0 0.75rem;
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.8125rem;
     line-height: 1.65;
     white-space: pre-wrap;
@@ -751,7 +706,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
     padding: 0.75rem 1rem;
     background: var(--muted);
     border-radius: 6px;
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.8125rem;
   }
 
@@ -788,7 +743,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
     background-image: radial-gradient(var(--dither-ink) 0.75px, transparent 1px);
     background-size: 6px 6px;
     opacity: 0.35;
-    mask-image: linear-gradient(to top, #000, transparent);
+    mask-image: linear-gradient(to top, var(--foreground), transparent);
   }
 
   .foot-inner {
@@ -819,7 +774,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
   }
 
   .arrow {
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     color: var(--accent);
   }
 
@@ -836,7 +791,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
     flex-wrap: wrap;
     gap: 0.5rem 1.25rem;
     margin: 3rem 0 0;
-    font-family: var(--mono);
+    font-family: var(--sl-font-mono);
     font-size: 0.75rem;
   }
 
@@ -917,7 +872,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
     .runs-on {
       display: block;
       margin-top: 0.375rem;
-      font-family: var(--mono);
+      font-family: var(--sl-font-mono);
       font-size: 0.75rem;
       color: var(--accent);
     }
