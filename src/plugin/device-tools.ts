@@ -9,6 +9,8 @@ import { toolsForPurposes } from "./purposes.ts";
 import type { BbBox } from "./setup.ts";
 import { boxParam, failure, thread } from "./tools.ts";
 import { next } from "./views.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 const HINTS: Partial<Record<DeviceErrorCode, string>> = {
   unsupported: "Call box_device with one of the actions it names.",
@@ -18,7 +20,7 @@ const HINTS: Partial<Record<DeviceErrorCode, string>> = {
   busy: "Call box_status, and try again once it says the device has booted.",
   "outcome-unknown": "Read the device's state with box_status before trying again.",
   "person-has-control": "Leave the device alone until the person hands control back, or until they ask you to continue: then call computer_take_control.",
-  superseded: "Try again in a few seconds: another bb-box instance holds the box's device server.",
+  superseded: `Try again in a few seconds: another ${PRODUCT} instance holds the box's device server.`,
   failed: "Call box_status to see the device's state.",
 };
 

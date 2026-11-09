@@ -32,8 +32,10 @@ import {
   type Stored,
 } from "./settings-paths.ts";
 
+const LEADING_COMMON_WORD = /^(The|Its|It|This|There|An|A|Nothing)\b/;
+
 export function reasonAfterColon(text: string): string {
-  return text.replace(/^([A-Z])(?=[a-z])/, (letter) => letter.toLowerCase());
+  return text.replace(LEADING_COMMON_WORD, (word) => word.toLowerCase());
 }
 
 export const MOST_TRIES = 3;

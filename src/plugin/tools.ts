@@ -30,6 +30,7 @@ import { snapshotStatusLine } from "./snapshot-words.ts";
 import { adminText, boxDetail, deviceLines, devicesText, joinAgainWords, placementText, kindResizeText, kindSnapshotText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
 
 /** Output kept per stream; beyond it, the head and tail are kept. */
+import { PRODUCT } from "../brand.ts";
 export const RUN_OUTPUT_BYTES = 32 * 1024;
 /** Largest file box_copy moves through BB's file API; a larger one streams through the worker on the thread's machine (#492). */
 export const COPY_MAX_BYTES = 16 * 1024 * 1024;
@@ -64,9 +65,9 @@ const HINTS: Record<BoxErrorCode, string> = {
   memory_in_use: "Give the box at least the memory this names, or end what uses memory in it first. box_resize with check says what a size would change.",
   needs_restart: "Call box_resize again with restart true only if ending everything running in the box is fine; otherwise pick parts that change live, or ask the user.",
   in_use: "Leave the box while that thread works, and ask the user if it should go anyway.",
-  restarting: "Run the command again in a few seconds, once bb-box is back.",
-  reconnecting: "Wait about 30 s and try again: bb-box is usually back within a minute. Do not release the box: it, and the commands and jobs in it, go on.",
-  locked: "Ask the user to run the command this names on the host: bb-box cannot unlock a guest itself.",
+  restarting: `Run the command again in a few seconds, once ${PRODUCT} is back.`,
+  reconnecting: `Wait about 30 s and try again: ${PRODUCT} is usually back within a minute. Do not release the box: it, and the commands and jobs in it, go on.`,
+  locked: `Ask the user to run the command this names on the host: ${PRODUCT} cannot unlock a guest itself.`,
   failed: "Call box_status to see the box, then try again.",
   reused_request: "Make a new request ID for a new take, delete or restore; repeat one only to repeat the same call.",
   try_again: "This holds only for now, not for good: try again in a few minutes, or once what it names has changed.",
@@ -103,8 +104,8 @@ export function seenByAgent(box: BoxRecord): BoxRecord {
 function restarted(box: BoxRecord, job: string, sure: boolean, jobless: boolean): PluginAgentToolResult {
   const text =
     jobless
-      ? `bb-box restarted, as for an update, while the command ran in box ${box.name}. A Windows command in the desktop session ends with bb-box's connection, so it stopped.${next("Run it again.")}`
-      : `bb-box restarted, as for an update, while the command ran in box ${box.name}. It ${sure ? "goes" : "may go"} on there as job ${job}.${next(`Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is usually back within seconds; until then the box may not answer.`)}`;
+      ? `${PRODUCT} restarted, as for an update, while the command ran in box ${box.name}. A Windows command in the desktop session ends with ${PRODUCT}'s connection, so it stopped.${next("Run it again.")}`
+      : `${PRODUCT} restarted, as for an update, while the command ran in box ${box.name}. It ${sure ? "goes" : "may go"} on there as job ${job}.${next(`Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. ${PRODUCT} is usually back within seconds; until then the box may not answer.`)}`;
   return { content: [{ type: "text", text }], isError: true };
 }
 
@@ -118,7 +119,7 @@ export async function runsOnBox(app: Pick<BbBox, "workspace">, threadId: string,
 }
 
 export function thread(threadId: string | undefined): string {
-  if (!threadId) throw new BoxError("unsupported", "bb-box tools work only inside a BB thread.");
+  if (!threadId) throw new BoxError("unsupported", `${PRODUCT} tools work only inside a BB thread.`);
   return threadId;
 }
 
@@ -242,7 +243,7 @@ function deviceText(app: BbBox, box: BoxRecord): string {
       : view.is === "waiting"
         ? `not known while its device server waits for version ${view.for}`
         : view.is === "superseded"
-          ? "not known here: another bb-box instance holds its device server"
+          ? `not known here: another ${PRODUCT} instance holds its device server`
           : null;
   const lines = deviceLines(box, state, server, app.devices.encoderWords(box));
   return lines.length ? `\n${lines.join("\n")}` : "";
@@ -607,7 +608,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   bb.onDispose(async () => {
     const began = Date.now();
     const { running, stopped } = await drain.close(options.drainMs ?? DRAIN_MS);
-    if (running) bb.log.info(`Stopping, bb-box waited ${((Date.now() - began) / 1000).toFixed(2)} s for ${running} box_run ${running === 1 ? "command" : "commands"}, and stopped ${stopped}, which go on as jobs.`);
+    if (running) bb.log.info(`Stopping, ${PRODUCT} waited ${((Date.now() - began) / 1000).toFixed(2)} s for ${running} box_run ${running === 1 ? "command" : "commands"}, and stopped ${stopped}, which go on as jobs.`);
   });
 
   registerTool({
@@ -712,7 +713,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           ready: using(box),
           acquiring: [`Call box_status again in a few seconds.`],
           starting: [`Call box_status again in a few seconds.`],
-          stopped: [inSlot(box) ? `bb-box starts its shared host again by itself; call box_status again in a minute, or box_release if you no longer need it.` : `Call box_start with box "${box.name}" to start it.`],
+          stopped: [inSlot(box) ? `${PRODUCT} starts its shared host again by itself; call box_status again in a minute, or box_release if you no longer need it.` : `Call box_start with box "${box.name}" to start it.`],
           failed: [`Release it with box_release, then box_acquire another.`],
           gone: [`Release it with box_release, then box_acquire another.`],
         };
@@ -845,7 +846,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_job",
     description:
-      "Get the exit code and output of a box_run command that went on in its box as a job: one still running after 270 s, or when bb-box restarted, as for an update. box_run's answer names the job.",
+      `Get the exit code and output of a box_run command that went on in its box as a job: one still running after 270 s, or when ${PRODUCT} restarted, as for an update. box_run's answer names the job.`,
     presentation: { label: { pending: "Reading a job", completed: "Read a job" } },
     parameters: z.object({
       box: boxParam,
@@ -872,7 +873,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_copy",
     description:
-      "Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. Every copy's size and SHA-256 are checked at both ends, and one that does not match fails. A file over 16 MiB streams through bb-box's worker on the thread's machine. A relative path on this side is under the workspace; a path under the storage folder, absolute or starting with $BB_THREAD_STORAGE/, is there. A relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.",
+      `Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. Every copy's size and SHA-256 are checked at both ends, and one that does not match fails. A file over 16 MiB streams through ${PRODUCT}'s worker on the thread's machine. A relative path on this side is under the workspace; a path under the storage folder, absolute or starting with $BB_THREAD_STORAGE/, is there. A relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.`,
     presentation: { label: { pending: "Copying a file", completed: "Copied a file" } },
     parameters: z.object({
       box: boxParam,
@@ -956,7 +957,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_record",
     description:
-      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. The clip draws a larger pointer that glides to each click, a ring where each click lands, a pill for each shortcut or special key and one "Typing" pill for typing into an element by its ref, never the text typed; nothing shows for a password, or for typing whose field bb-box cannot tell, as into a window, single keys, or a person's typing. It zooms in gently where you click, drag and type by ref, and shows the screen inset on a plain background (073): zoom false or frame false at stop turns either off. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops. On an ios or android box it records the device's own screen, not the host's: the device in its frame, turning as it turns, with touches shown as circles and the captions in a band above or below it; a stretch the device or its server lost is captioned in the clip.`,
+      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. The clip draws a larger pointer that glides to each click, a ring where each click lands, a pill for each shortcut or special key and one "Typing" pill for typing into an element by its ref, never the text typed; nothing shows for a password, or for typing whose field ${PRODUCT} cannot tell, as into a window, single keys, or a person's typing. It zooms in gently where you click, drag and type by ref, and shows the screen inset on a plain background (073): zoom false or frame false at stop turns either off. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops. On an ios or android box it records the device's own screen, not the host's: the device in its frame, turning as it turns, with touches shown as circles and the captions in a band above or below it; a stretch the device or its server lost is captioned in the clip.`,
     presentation: { label: { pending: "Recording the screen", completed: "Recorded the screen" } },
     parameters: z.object({
       box: boxParam,
@@ -1166,7 +1167,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const answer = await app.joinAgain(owner, found.id, { waitMs: TOOL_JOIN_WAIT_MS, ...(signal ? { signal } : {}) });
         const said = joinAgainWords(answer, `box_status with box "${answer.box.name}"`);
         if (!said.failed) return said.text;
-        return { content: [{ type: "text", text: `${said.text}${next(`bb-box tries again by itself when the failure can pass. Call box_enrol again to try at once.`)}` }], isError: true };
+        return { content: [{ type: "text", text: `${said.text}${next(`${PRODUCT} tries again by itself when the failure can pass. Call box_enrol again to try at once.`)}` }], isError: true };
       } catch (error) {
         return failure(error, "Adding the box to BB");
       }
@@ -1238,7 +1239,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const idle = await app.checkInUse(box, "Releasing");
         const left = await boxes.release(id, box.id, "its thread released it with box_release", byAgent(id));
         if (left) {
-          return `Box ${box.name} is still being released: ${left.error ?? "the backend has not finished"}. bb-box keeps trying in the background.${next("Carry on; nothing else is needed.")}`;
+          return `Box ${box.name} is still being released: ${left.error ?? "the backend has not finished"}. ${PRODUCT} keeps trying in the background.${next("Carry on; nothing else is needed.")}`;
         }
         return `Released box ${box.name}.${idleWords(idle, false)}${next("Call box_acquire when you need another box.")}`;
       } catch (error) {
@@ -1252,7 +1253,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     description:
       "Draft a project image's script (049) from the project's own files, for you to finish, try with box_image_try and register with box_image_set. Read these from the repository and pass each one's path and text: " +
       ".devcontainer/devcontainer.json (or .devcontainer.json, or one in a subfolder of .devcontainer) and the Dockerfile it names; a Dockerfile; .tool-versions; mise.toml; .nvmrc or .node-version; .python-version; rust-toolchain.toml or rust-toolchain; flake.nix with flake.lock, or shell.nix. " +
-      "It returns a script for .bb/box-setup.sh, each part commented with the file it came from, a check for .bb/box-check.sh, and what it could not translate. The script runs as root on bb-box's standard Ubuntu 24.04 image, with no checkout of the repository: what needs one, such as npm ci, stays in the thread. " +
+      `It returns a script for .bb/box-setup.sh, each part commented with the file it came from, a check for .bb/box-check.sh, and what it could not translate. The script runs as root on ${PRODUCT}'s standard Ubuntu 24.04 image, with no checkout of the repository: what needs one, such as npm ci, stays in the thread. ` +
       "With `box`, it also reads what a Linux box of this thread has that its image had not, for a box someone set up by hand: packages, package sources, npm globals, mise's tools, the Rust toolchain, uv tools, and what is new in /usr/local, /opt and ~/.local/bin.",
     presentation: { label: { pending: "Drafting the image's script", completed: "Drafted the image's script" } },
     parameters: z.object({

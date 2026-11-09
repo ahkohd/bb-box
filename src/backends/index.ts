@@ -29,11 +29,11 @@ import { testDeviceOffer, testDevicePlatformFor } from "../core/device.ts";
 
 export const DRIVERS: readonly BackendDriver<any>[] = [proxmoxLxcDriver, proxmoxQemuDriver, sshPoolDriver, tartDriver, dockerDriver, microsandboxDriver, hetznerDriver, namespaceDriver, boatDriver];
 
-/** What a backend's boxes are, from its ID, which starts with its driver's type (029). Null for a driver bb-box no longer has. */
 export function missingBackendWords(type: string): string {
-  return `This ${PRODUCT} has no ${type} backend.`;
+  return `${PRODUCT} has no ${type} backend. Update ${PRODUCT}, or remove this backend.`;
 }
 
+/** What a backend's boxes are, from its ID, which starts with its driver's type (029). Null for a driver bb-box no longer has. */
 export function boxForm(backendId: string, drivers: readonly BackendDriver<any>[] = DRIVERS): BoxForm | null {
   const type = backendId.split(":")[0];
   return drivers.find((driver) => driver.type === type)?.form ?? null;

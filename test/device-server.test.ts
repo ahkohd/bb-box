@@ -163,7 +163,7 @@ describe("the device server", () => {
     await control.close();
   });
 
-  test("a settings request reads the device's settings at once and answers with them, so a change made outside bb-box shows with no viewer watching (F-7)", async () => {
+  test("a settings request reads the device's settings at once and answers with them, so a change made outside BB Box shows with no viewer watching (F-7)", async () => {
     class OutsideDriver extends TestDriver {
       changedOutside = false;
       seen = false;
@@ -586,7 +586,7 @@ describe("the device server's reports to the encoder ledger (064, unit 6)", () =
     await eventually("a new viewer told at once", () => told.includes(`later: ${words}`));
     assert.equal((await control.request({ type: "cap", most: null, words: null })).ok, true);
     await eventually("the words cleared", () => told.includes(null));
-    assert.equal((await control.request({ type: "cap", most: null })).ok, true, "a cap with no words, as an older bb-box sends, still reads");
+    assert.equal((await control.request({ type: "cap", most: null })).ok, true, "a cap with no words, as an older BB Box sends, still reads");
     await later.close();
     await viewer.close();
     await eventually("no want reported", () => reports.at(-1)?.wants.length === 0);

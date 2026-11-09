@@ -15,6 +15,8 @@ import { inSlot, sharedBoxWords } from "./device-host.ts";
 import { driverCommand } from "./in-box.ts";
 import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
 import { typingKeptSecret, type ActedInput, type InputArea, type TypedField } from "./record-input.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export const PAUSED =
   "Paused: a person has taken control of this box's desktop in BB. The computer tools will work again when they hand control back. " +
@@ -89,7 +91,7 @@ const MAX_REFS = 20_000;
 
 /** How bb-box names itself to the driver. Cua does not read it. */
 const CLIENT = { name: "bb-box", version: "1" };
-const PAUSED_WHILE_RUNNING = "A person took control of the box's desktop while this ran, so bb-box closed its session with the driver.";
+const PAUSED_WHILE_RUNNING = `A person took control of the box's desktop while this ran, so ${PRODUCT} closed its session with the driver.`;
 const AFTER_PAUSE = "Wait until they hand control back, or take it back with computer_take_control once they ask you to continue; then call computer_observe.";
 const FORGOTTEN = "The box stopped or was released while this ran.";
 
@@ -472,7 +474,7 @@ export function explain(result: McpResult): string {
     case "foreground_unavailable":
       return `${window ? `Window ${Number(window[1])}` : "The window"} could not be made the active window, so nothing was sent to it.`;
     case "stale_element_token":
-      return "The element changed since bb-box last read its window, so nothing was done.";
+      return `The element changed since ${PRODUCT} last read its window, so nothing was done.`;
   }
   if (/^capture error\b/i.test(raw)) return `The desktop could not take an image of ${window ? `window ${Number(window[1])}` : "it"}.`;
   const text = raw
@@ -503,7 +505,7 @@ function adviceFor(code: string | undefined): string {
         'For a menu or popup, give its window ID, or window "desktop" for keys.'
       );
     case "stale_element_token":
-      return "Try again: bb-box reads the window first.";
+      return `Try again: ${PRODUCT} reads the window first.`;
     default:
       return "Call computer_observe to see the window, then try another way.";
   }
@@ -823,7 +825,7 @@ function namedLine(named: readonly { readonly id: number; readonly title: string
   if (!shown.length) return null;
   const which = shown.map((window) => `window ${window.id} the title "${window.title}"`);
   const list = which.length === 1 ? which[0] : `${which.slice(0, -1).join(", ")} and ${which.at(-1)}`;
-  return `bb-box gave ${list}, as ${shown.length === 1 ? "it had" : "they had"} none, and Cua on Windows reaches only windows with a title.`;
+  return `${PRODUCT} gave ${list}, as ${shown.length === 1 ? "it had" : "they had"} none, and Cua on Windows reaches only windows with a title.`;
 }
 
 export function windowLine(window: WindowInfo): string {
@@ -859,7 +861,7 @@ function whole(structured: Json): boolean {
 
 /** Why Cua stopped reading a tree early, in words. */
 function cutShort(reason: string): string {
-  return /time|deadline|long/i.test(reason) ? `Reading the tree took longer than ${WALK_MS / 1000} s` : "bb-box read only part of the tree";
+  return /time|deadline|long/i.test(reason) ? `Reading the tree took longer than ${WALK_MS / 1000} s` : `${PRODUCT} read only part of the tree`;
 }
 
 /** One line of the tree, for a list of changes: no indent, no list marker, on one line. */
@@ -1083,9 +1085,9 @@ export class Computer {
     return this.#run(box, signal, async (use) => {
       if (window === "desktop") {
         const { result, live } = await this.#call(use, "get_desktop_state", { max_image_dimension: IMAGE_MAX_EDGE }, { readOnly: true });
-        if (result.isError) throw new ComputerError("driver", `bb-box could not take an image of the desktop: ${explain(result)}`, "Try again in a few seconds.");
+        if (result.isError) throw new ComputerError("driver", `${PRODUCT} could not take an image of the desktop: ${explain(result)}`, "Try again in a few seconds.");
         const image = imageOf(result);
-        if (!image) throw new ComputerError("driver", "bb-box got no image of the desktop.", "Try again in a few seconds.");
+        if (!image) throw new ComputerError("driver", `${PRODUCT} got no image of the desktop.`, "Try again in a few seconds.");
         const structured = obj(result.structuredContent);
         for (const raw of arr(structured.windows)) {
           const found = windowOf(raw);
@@ -1100,7 +1102,7 @@ export class Computer {
         };
       }
       const { snapshot, image } = await this.#read(use, window, true);
-      if (!image) throw new ComputerError("driver", `bb-box got no image of window ${window}.`, "Try again in a few seconds.");
+      if (!image) throw new ComputerError("driver", `${PRODUCT} got no image of window ${window}.`, "Try again in a few seconds.");
       const source = { width: snapshot.window.width, height: snapshot.window.height };
       use.state.images.set(window, { width: image.width, height: image.height, source });
       return {
@@ -1299,7 +1301,7 @@ export class Computer {
         if (!refusedInBackground(result)) {
           if (result.isError) {
             if (codeOf(result) === "stale_element_token") this.#outdated(use.state, id);
-            throw new ComputerError("refused", `bb-box could not do it: ${explain(result)}`, adviceFor(codeOf(result)));
+            throw new ComputerError("refused", `${PRODUCT} could not do it: ${explain(result)}`, adviceFor(codeOf(result)));
           }
           return this.#typed(use, `${what} into ${label}.`, before, readBack, args);
         }
@@ -1373,16 +1375,16 @@ export class Computer {
       }
       if (result.isError) {
         const reason = sentence(explain(result).replace(/^failed to launch:\s*/i, ""));
-        if (input.app === undefined) throw new ComputerError("refused", `bb-box could not open ${what}: ${reason}`, "Check the URL.");
+        if (input.app === undefined) throw new ComputerError("refused", `${PRODUCT} could not open ${what}: ${reason}`, "Check the URL.");
         const apps = await this.#apps(use);
         if (!apps.length) {
-          throw new ComputerError("refused", `bb-box could not open ${what}: ${reason}`, "Check the app's name or path with box_run, for example command -v <name>.");
+          throw new ComputerError("refused", `${PRODUCT} could not open ${what}: ${reason}`, "Check the app's name or path with box_run, for example command -v <name>.");
         }
         const shown = apps.slice(0, APPS_SHOWN).join(", ");
         const more = apps.length > APPS_SHOWN ? `, and ${apps.length - APPS_SHOWN} more` : "";
         throw new ComputerError(
           "refused",
-          `bb-box could not open ${what}: ${reason} Apps installed in the box: ${shown}${more}.`,
+          `${PRODUCT} could not open ${what}: ${reason} Apps installed in the box: ${shown}${more}.`,
           "Give app as one of these names, or the path of a program in the box.",
         );
       }
@@ -1515,7 +1517,7 @@ export class Computer {
       states.map((state) => {
         state.forgotten = true;
         this.#stopIdle(state);
-        return this.#close(state, "bb-box stopped while this ran.").catch(() => {});
+        return this.#close(state, `${PRODUCT} stopped while this ran.`).catch(() => {});
       }),
     );
   }
@@ -1654,9 +1656,9 @@ export class Computer {
   async screenPicture(box: BoxRecord, longestEdge: number, signal?: AbortSignal): Promise<{ readonly data: string; readonly mimeType: string }> {
     return this.#queued(box, signal, async (use) => {
       const { result } = await this.#call(use, "get_desktop_state", { max_image_dimension: longestEdge }, { readOnly: true, whileAPersonHasControl: true });
-      if (result.isError) throw new ComputerError("driver", `bb-box could not take an image of the desktop: ${explain(result)}`, "Try again in a few seconds.");
+      if (result.isError) throw new ComputerError("driver", `${PRODUCT} could not take an image of the desktop: ${explain(result)}`, "Try again in a few seconds.");
       const image = imageOf(result);
-      if (!image) throw new ComputerError("driver", "bb-box got no image of the desktop.", "Try again in a few seconds.");
+      if (!image) throw new ComputerError("driver", `${PRODUCT} got no image of the desktop.`, "Try again in a few seconds.");
       return { data: image.data, mimeType: image.mimeType };
     });
   }
@@ -1686,7 +1688,7 @@ export class Computer {
     if (!driver) {
       throw new ComputerError("unsupported", `Box ${box.name} has no computer use: its kind, ${box.kind}, has no desktop the computer tools can drive.`, "Acquire a desktop kind from box_list for computer use, or use box_run in this box.");
     }
-    if (driver.driver !== "cua") throw new ComputerError("unsupported", `bb-box cannot drive box ${box.name}'s computer-use driver, ${driver.driver}.`, "Use box_run in this box.");
+    if (driver.driver !== "cua") throw new ComputerError("unsupported", `${PRODUCT} cannot drive box ${box.name}'s computer-use driver, ${driver.driver}.`, "Use box_run in this box.");
   }
 
   #gate(use: Use): void {
@@ -1788,7 +1790,7 @@ export class Computer {
     const reason = failure instanceof Error ? failure.message : String(failure);
     throw new ComputerError(
       "driver",
-      `bb-box could not reach the computer-use driver in box ${box.name}: ${sentence(reason)}`,
+      `${PRODUCT} could not reach the computer-use driver in box ${box.name}: ${sentence(reason)}`,
       "The driver runs in the box's desktop session. If the desktop just restarted, try again in a few seconds; otherwise call box_status.",
     );
   }
@@ -1803,7 +1805,7 @@ export class Computer {
       gate();
       const live = await this.#live(use);
       gate();
-      const unsure = options.readOnly ? "" : " bb-box cannot tell whether it was done.";
+      const unsure = options.readOnly ? "" : ` ${PRODUCT} cannot tell whether it was done.`;
       let result: McpResult;
       const session = use.state.driverSession;
       const sessioned = session && live.sessionTools?.has(name) ? { ...args, session: session.name } : args;
@@ -1811,7 +1813,7 @@ export class Computer {
         result = await live.mcp.call(name, sessioned, { timeoutMs: this.#deps.callTimeoutMs ?? CALL_TIMEOUT_MS, signal: use.signal });
       } catch (error) {
         if (error instanceof McpError) {
-          throw new ComputerError("driver", `bb-box's request to the desktop failed: ${sentence(error.message)}`, "This is probably a bb-box bug: tell the user.");
+          throw new ComputerError("driver", `${PRODUCT}'s request to the desktop failed: ${sentence(error.message)}`, `This is probably a ${PRODUCT} bug: tell the user.`);
         }
         if (error instanceof McpClosedError) {
           if (live.reason === null && options.readOnly && attempt === 0) continue;
@@ -1820,7 +1822,7 @@ export class Computer {
               ? AFTER_PAUSE
               : live.reason === FORGOTTEN
                 ? "Call box_status to see the box."
-                : "Call computer_observe to see the window; bb-box opens a new session with the driver.";
+                : `Call computer_observe to see the window; ${PRODUCT} opens a new session with the driver.`;
           throw new ComputerError("interrupted", `${sentence(error.message)}${unsure}`, hint);
         }
         if (use.signal?.aborted) throw error;
@@ -1842,7 +1844,7 @@ export class Computer {
       throw new ComputerError(
         "interrupted",
         `The computer-use driver had ended its session, as it can after a while idle, so this was not done.`,
-        "Call it again: bb-box opens a new session with the driver.",
+        `Call it again: ${PRODUCT} opens a new session with the driver.`,
       );
     }
   }
@@ -1881,7 +1883,7 @@ export class Computer {
       const code = codeOf(result);
       const id = num(args.window_id);
       if (code === "stale_element_token" && id !== undefined) this.#outdated(use.state, id);
-      throw new ComputerError("refused", `bb-box could not do it: ${explain(result)}`, adviceFor(code));
+      throw new ComputerError("refused", `${PRODUCT} could not do it: ${explain(result)}`, adviceFor(code));
     }
     return { result, foreground };
   }
@@ -1902,7 +1904,7 @@ export class Computer {
       element = found;
     }
     const { window, screenshot } = snapshot;
-    if (!screenshot) throw new ComputerError("driver", `bb-box got no image of window ${window.id}, which it needs to click ${element.ref} by position.`, "Try again in a few seconds.");
+    if (!screenshot) throw new ComputerError("driver", `${PRODUCT} got no image of window ${window.id}, which it needs to click ${element.ref} by position.`, "Try again in a few seconds.");
     const frame = element.frame!;
     const x = Math.round(((frame.x + frame.width / 2 - window.x) * screenshot.width) / window.width);
     const y = Math.round(((frame.y + frame.height / 2 - window.y) * screenshot.height) / window.height);
@@ -1926,8 +1928,8 @@ export class Computer {
     if (!window) return null;
     // Bringing a window to the front again does no harm, so a lost connection may retry it.
     const { result } = await this.#call(use, "bring_to_front", { pid: window.pid, window_id: window.id }, { readOnly: true });
-    const lines = [`${app} was already open, and opening it again opened no new window. ${result.isError ? "Its window" : "bb-box brought its window to the front"}:\n- ${windowLine(window)}`];
-    if (result.isError) lines.push(`bb-box could not bring it to the front: ${sentence(explain(result))}`);
+    const lines = [`${app} was already open, and opening it again opened no new window. ${result.isError ? "Its window" : `${PRODUCT} brought its window to the front`}:\n- ${windowLine(window)}`];
+    if (result.isError) lines.push(`${PRODUCT} could not bring it to the front: ${sentence(explain(result))}`);
     const was = before.get(window.id)!.title;
     if (was !== window.title) lines.push(`Its title was "${was}" before, so it may show a new document.`);
     return { text: lines.join("\n\n"), hints: [`Call computer_observe with window ${window.id} to read it.`] };
@@ -2002,7 +2004,7 @@ export class Computer {
 
   async #listWindows(use: Use): Promise<Map<number, WindowInfo>> {
     const { result } = await this.#call(use, "list_windows", {}, { readOnly: true });
-    if (result.isError) throw new ComputerError("driver", `bb-box could not list the windows: ${explain(result)}`, "Try again in a few seconds.");
+    if (result.isError) throw new ComputerError("driver", `${PRODUCT} could not list the windows: ${explain(result)}`, "Try again in a few seconds.");
     const windows = new Map<number, WindowInfo>();
     for (const raw of arr(obj(result.structuredContent).windows)) {
       const window = windowOf(raw);
@@ -2064,7 +2066,7 @@ export class Computer {
         this.#lost(use.state, id);
         throw new ComputerError("stale", `Window ${id} has closed.`, "Call computer_windows to see the windows open now.");
       }
-      throw new ComputerError("driver", `bb-box could not read window ${id}: ${explain(result)}`, "Call computer_windows to check the window, then try again.");
+      throw new ComputerError("driver", `${PRODUCT} could not read window ${id}: ${explain(result)}`, "Call computer_windows to check the window, then try again.");
     }
     const structured = obj(result.structuredContent);
     // Cua on Sway reads a window it no longer lists as another of its app's,
@@ -2077,7 +2079,7 @@ export class Computer {
       this.#outdated(use.state, id);
       throw new ComputerError(
         "driver",
-        `bb-box cannot read the items of ${popup.what ?? "the popup"} (window ${id}): the desktop gives another window's instead.`,
+        `${PRODUCT} cannot read the items of ${popup.what ?? "the popup"} (window ${id}): the desktop gives another window's instead.`,
         'Call computer_screenshot with window "desktop" to see it, then click its items by pixels.',
       );
     }
@@ -2087,7 +2089,7 @@ export class Computer {
       if (moved) {
         throw new ComputerError(
           "driver",
-          `bb-box cannot read window ${id}: the desktop gives the tree of window ${twin.id}, "${twin.title}", instead.`,
+          `${PRODUCT} cannot read window ${id}: the desktop gives the tree of window ${twin.id}, "${twin.title}", instead.`,
           `Call computer_screenshot with window ${id} and act on it by pixels, or close window ${twin.id}.`,
         );
       }
@@ -2130,12 +2132,12 @@ export class Computer {
       const why = result.isError ? `: ${explain(result)}` : ", as when it is maximised.";
       throw new ComputerError(
         "driver",
-        `bb-box cannot read window ${window.id}: the desktop gives the tree of window ${twin.id}, "${twin.title}", which lies within a few pixels of it, and window ${window.id} would not move${why}`,
+        `${PRODUCT} cannot read window ${window.id}: the desktop gives the tree of window ${twin.id}, "${twin.title}", which lies within a few pixels of it, and window ${window.id} would not move${why}`,
         `Un-maximise or close one of the two windows, for example by double-clicking its title bar, then observe it again. Or act on window ${window.id} by pixels: call computer_screenshot with window ${window.id}.`,
       );
     }
     use.state.windows.set(window.id, { ...window, x, y });
-    return `bb-box moved window ${window.id} to (${x}, ${y}) on the screen: it lay within a few pixels of window ${twin.id}, another window of its app, and the desktop gave that window's tree for both.`;
+    return `${PRODUCT} moved window ${window.id} to (${x}, ${y}) on the screen: it lay within a few pixels of window ${twin.id}, another window of its app, and the desktop gave that window's tree for both.`;
   }
 
   #snapshot(use: Use, window: WindowInfo, generation: number, structured: Json, image: Size | null): Snapshot {
@@ -2405,7 +2407,7 @@ export class Computer {
     if (!entry) {
       throw new ComputerError(
         "stale",
-        `bb-box has no reference ${name} for box ${use.box.name}. References last until a person takes control of the desktop or the box stops.`,
+        `${PRODUCT} has no reference ${name} for box ${use.box.name}. References last until a person takes control of the desktop or the box stops.`,
         "Call computer_observe to get references.",
       );
     }
@@ -2429,7 +2431,7 @@ export class Computer {
     if (shown !== null && shown !== now) {
       throw new ComputerError(
         "stale",
-        `${name} is now ${now}, but bb-box last showed it as ${shown}, so nothing was done.`,
+        `${name} is now ${now}, but ${PRODUCT} last showed it as ${shown}, so nothing was done.`,
         `Act on ${name} again if it is the one you want; otherwise call computer_observe.`,
       );
     }
@@ -2474,7 +2476,7 @@ export class Computer {
     if (!held) {
       throw new ComputerError(
         "stale",
-        `You have no current image of ${name}, so bb-box cannot tell what x and y mean.`,
+        `You have no current image of ${name}, so ${PRODUCT} cannot tell what x and y mean.`,
         `Call computer_screenshot with window ${window === "desktop" ? '"desktop"' : window}, then give pixels of that image.`,
       );
     }
@@ -2527,9 +2529,9 @@ export class Computer {
   async #mapped(use: Use, held: Held): Promise<void> {
     if (held.generation === (await this.#live(use)).generation) return;
     const { result, live } = await this.#call(use, "get_desktop_state", { max_image_dimension: IMAGE_MAX_EDGE }, { readOnly: true });
-    if (result.isError) throw new ComputerError("driver", `bb-box could not take an image of the desktop: ${explain(result)}`, "Try again in a few seconds.");
+    if (result.isError) throw new ComputerError("driver", `${PRODUCT} could not take an image of the desktop: ${explain(result)}`, "Try again in a few seconds.");
     const image = imageOf(result);
-    if (!image) throw new ComputerError("driver", "bb-box got no image of the desktop.", "Try again in a few seconds.");
+    if (!image) throw new ComputerError("driver", `${PRODUCT} got no image of the desktop.`, "Try again in a few seconds.");
     const structured = obj(result.structuredContent);
     const screen = { width: num(structured.screen_width) ?? image.width, height: num(structured.screen_height) ?? image.height };
     if (!sameSize(image, held) || !sameSize(screen, held.source)) {
@@ -2800,7 +2802,7 @@ export class Computer {
     if (!parts.length) {
       const under = watch.under;
       if (under && !watch.tree && use.state.large.has(under.id)) {
-        parts.push(`No window opened, closed or changed. bb-box did not read the tree of window ${under.id}, which is under that point, as it is too large to read quickly.`);
+        parts.push(`No window opened, closed or changed. ${PRODUCT} did not read the tree of window ${under.id}, which is under that point, as it is too large to read quickly.`);
         hints.push(`Call computer_observe with window ${under.id} to see what changed in it, or computer_screenshot with window "desktop".`);
       } else {
         const tree = watch.tree ? ` and nothing changed in the tree of window ${watch.tree.window.id}, which is under that point` : "";
@@ -2852,7 +2854,7 @@ export class Computer {
         continue;
       }
       if (!snapshot) {
-        parts.push(`${opened}, whose items bb-box cannot read.`);
+        parts.push(`${opened}, whose items ${PRODUCT} cannot read.`);
         hints.push('Call computer_screenshot with window "desktop" to see it, then click its items by pixels.');
         continue;
       }
@@ -2872,21 +2874,21 @@ export class Computer {
 function unread(error: unknown, hint: string): Changes {
   if (error instanceof ComputerError && (error.code === "paused" || error.code === "interrupted")) {
     return {
-      parts: ["A person took control of the desktop before bb-box could read what changed."],
+      parts: [`A person took control of the desktop before ${PRODUCT} could read what changed.`],
       hints: [AFTER_PAUSE],
       changed: true,
       after: null,
     };
   }
   const message = error instanceof Error ? error.message : String(error);
-  return { parts: [`bb-box could not read what changed: ${message}`], hints: [hint], changed: true, after: null };
+  return { parts: [`${PRODUCT} could not read what changed: ${message}`], hints: [hint], changed: true, after: null };
 }
 
 /** Said of an action Cua could not do in the background, or that has no background. */
 const POINTER = ", with the real pointer (the desktop's focus may have moved)";
 const KEYBOARD = ", with the real keyboard (the desktop's focus may have moved)";
 /** Said of a click on an element at its centre (048). */
-const BY_POSITION = "The desktop could not click it as an element, so bb-box clicked where it is drawn.";
+const BY_POSITION = `The desktop could not click it as an element, so ${PRODUCT} clicked where it is drawn.`;
 
 /** A line of text that cannot be acted on: `- static = "Hello"`. */
 const PASSIVE = /^(\s*)- ([^"\n]+?) = "([\s\S]*)"$/;

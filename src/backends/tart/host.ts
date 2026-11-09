@@ -27,6 +27,7 @@ import type { StopReason } from "../types.ts";
 import { VNC_HOLDER_PY } from "./vnc-holder.ts";
 
 /** Where `tart` may be on a Mac: Homebrew on Apple silicon and Intel, Nix. */
+import { PRODUCT } from "../../brand.ts";
 const PATHS = ["/opt/homebrew/bin", "/usr/local/bin", "$HOME/.nix-profile/bin", "/run/current-system/sw/bin", "/nix/var/nix/profiles/default/bin"];
 
 /** The prefix of every VM bb-box clones for a box. */
@@ -257,7 +258,7 @@ done
  */
 export function stateScript(tart = true, extra = ""): string {
   const tartPart = `command -v tart >/dev/null 2>&1 || { echo "tart is not installed, or not on the PATH of $(id -un)'s SSH sessions." >&2; exit 3; }
-command -v perl >/dev/null 2>&1 || { echo "perl is not on the PATH of $(id -un)'s SSH sessions: bb-box reads Tart's run locks with it. macOS has it in /usr/bin." >&2; exit 3; }
+command -v perl >/dev/null 2>&1 || { echo "perl is not on the PATH of $(id -un)'s SSH sessions: ${PRODUCT} reads Tart's run locks with it. macOS has it in /usr/bin." >&2; exit 3; }
 echo @version; tart --version
 home="\${TART_HOME:-$HOME/.tart}"
 held=$(run_lock_holders "$tart_vms"/*/config.json) || exit 1
@@ -612,7 +613,7 @@ export function startScript(vm: string, waitSeconds: number): string {
   return script(String.raw`vm=${quote(vm)}; out="$d/run/$vm.out"; x="$d/run/$vm.exit"
 ${HOLD}
 started() { rm -f "$d/run/$vm.restored"; [ "$(os_of "$vm")" = linux ] || hold || :; echo started; }
-if rollback_running "$vm"; then echo "bb-box is putting a snapshot in the place of $vm on the Mac, so it does not start it until that has ended." >&2; exit 1; fi
+if rollback_running "$vm"; then echo "BB Box is putting a snapshot in the place of $vm on the Mac, so it does not start it until that has ended." >&2; exit 1; fi
 heal_rollback "$vm" || { echo "The folder of $vm is missing after a restore cut short, and the Mac has nothing whole to put back." >&2; exit 1; }
 case "$(state "$vm")" in
   running) echo running; exit 0 ;;
@@ -690,7 +691,7 @@ ${HOLD}
 hold
 case $? in
   1) echo "Tart's VNC server for $vm is not running: the VM may be stopped." >&2; exit 1 ;;
-  2) echo "The Mac has no python3 for bb-box's VNC holder: install Xcode's command line tools there (xcode-select --install)." >&2; exit 5 ;;
+  2) echo "The Mac has no python3 for BB Box's VNC holder: install Xcode's command line tools there (xcode-select --install)." >&2; exit 5 ;;
 esac
 i=0
 while [ "$i" -lt 150 ]; do
@@ -701,7 +702,7 @@ while [ "$i" -lt 150 ]; do
   esac
   sleep 0.1; i=$((i + 1))
 done
-echo "bb-box's VNC holder for $vm did not start within 15 s." >&2; tail -n 5 "$run/log" >&2; exit 1
+echo "BB Box's VNC holder for $vm did not start within 15 s." >&2; tail -n 5 "$run/log" >&2; exit 1
 `);
 }
 
@@ -1111,7 +1112,7 @@ echo forgotten
 export function deleteScript(vm: string, installId: string, boxId: string | null): string {
   return script(String.raw`vm=${quote(vm)}
 if [ -f "$d/owners/$vm" ] && ! mine "$vm" ${quote(installId)} ${quote(boxId ?? "")}; then echo gone; exit 0; fi
-if rollback_running "$vm"; then echo "bb-box is putting a snapshot in the place of $vm on the Mac, so it deletes it once that has ended." >&2; exit 1; fi
+if rollback_running "$vm"; then echo "BB Box is putting a snapshot in the place of $vm on the Mac, so it deletes it once that has ended." >&2; exit 1; fi
 heal_rollback "$vm" || :
 if [ -n "$(state "$vm")" ]; then
   tart stop "$vm" --timeout 0 >/dev/null 2>&1

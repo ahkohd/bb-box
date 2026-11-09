@@ -12,7 +12,7 @@ import { InUseDialog, ProblemLine, type InUse } from "./box-actions.tsx";
 import { EmptyPanel, forThread, message, SETTINGS_PATH, useLive, useNow } from "./common.tsx";
 import { leaveModifiedClick } from "./modified-click.ts";
 import { BoxRowsSkeleton, LoadFailed, WhileLoading } from "./loading-states.tsx";
-import { useThreadTitles } from "./desktop.tsx";
+import { threadGroupHeading, useThreadTitles } from "./desktop.tsx";
 import { useBoxesNav } from "./box-nav.tsx";
 import { boxPage } from "./box-route.ts";
 import { IMAGE_REQUEST, NewBox, useDesktopOnDemand, useDesktopProblemShownOnce, type SizeRequest } from "./new-box.tsx";
@@ -42,7 +42,7 @@ export function BoxesPanel({ threadId }: { threadId: string }) {
   const now = useNow(boxes.some(isMoving) || (runsOn !== null && isMoving(runsOn.box)));
   // One list (the operator, 4 October 2026): the box this thread runs on first, with a "This thread" badge, then the thread's own.
   const rows: { box: BoxView; held: Held | null }[] = [
-    ...(runsOn ? [{ box: runsOn.box, held: { owner: runsOn.owner, threadId: runsOn.threadId, threadTitle: runsOn.threadId ? (titles[runsOn.threadId] ?? null) : null } }] : []),
+    ...(runsOn ? [{ box: runsOn.box, held: { owner: runsOn.owner, threadId: runsOn.threadId, threadTitle: runsOn.threadId ? (runsOn.threadId in titles ? threadGroupHeading(titles[runsOn.threadId]) : null) : null } }] : []),
     ...boxes.map((box) => ({ box, held: null })),
   ];
 

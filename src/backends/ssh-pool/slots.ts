@@ -10,6 +10,8 @@ import { DEVICE_HOST_EXITS, SLOT_INSTALLER_ENVIRONMENT, claimantInput, keepServe
 import { BackendError, type AcquireHooks, type BoxIdentity, type BoxTransports, type DoctorCheck, type Guest, type HeldGuest, type PoolMember, type PowerState } from "../types.ts";
 import { SLOT_KIND, type PoolSlotsConfig, type SshPoolMachine } from "./config.ts";
 import { SLOTS_HELPER_VERSION, fields, slotsBusy, type MachineStatus, type SlotsSummary } from "./protocol.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const SLOT_MAC_KEY = "slotMac";
 export const NEXT_POOL_SLOT_WORDS = "The next slot is likely free when a box on the pool's Mac is released.";
@@ -164,7 +166,7 @@ export class PoolSlots implements SlotLender {
 
   #machineOf(name: string): SshPoolMachine {
     const machine = this.#access.machine(name);
-    if (!machine) throw new Error(`The pool's Mac ${name} is not in the SSH host pool's settings now, so bb-box cannot reach its ios boxes. Put its line back in ssh-pool-machines.`);
+    if (!machine) throw new Error(`The pool's Mac ${name} is not in the SSH host pool's settings now, so ${PRODUCT} cannot reach its ios boxes. Put its line back in ssh-pool-machines.`);
     return machine;
   }
 
@@ -182,7 +184,7 @@ export class PoolSlots implements SlotLender {
     if (status.marker === "owner") return `The pool's Mac ${name} is lent whole to a box, so it lends no iOS slot until that box is released.`;
     if (status.marker === "resetting") return `The pool's Mac ${name} is resetting after a box it was lent whole to, so it lends no iOS slot until its reset ends.`;
     if (view.state === "out-of-service") return `The pool's Mac ${name} is out of service: ${view.reason ?? "a reset failed."}`;
-    if (!slotsSetUp(status)) return `The pool's Mac ${name} has no iOS slots set up. Run this bb-box's setup-mac.sh on it, with the whole setup folder and Xcode's iOS platform.`;
+    if (!slotsSetUp(status)) return `The pool's Mac ${name} has no iOS slots set up. Run this ${PRODUCT}'s setup-mac.sh on it, with the whole setup folder and Xcode's iOS platform.`;
     return null;
   }
 
@@ -455,7 +457,7 @@ export class PoolSlots implements SlotLender {
       ? await this.#access.helper(machine, ["slot", "release", ref.slot], claimant, RELEASE_MS, signal)
       : await this.#access.helper(machine, ["slot", "unpromise"], claimant, QUICK_MS, signal);
     if (result.exitCode === DEVICE_HOST_EXITS.notOurs) return { last: false };
-    if (unreached(result)) throw new Error(`The pool's Mac ${machine.name} cannot release box ${ref.box}'s iOS slot now: ${said(result)} bb-box tries again later.`);
+    if (unreached(result)) throw new Error(`The pool's Mac ${machine.name} cannot release box ${ref.box}'s iOS slot now: ${said(result)} ${PRODUCT} tries again later.`);
     if (result.exitCode !== DEVICE_HOST_EXITS.done) throw new Error(`The pool's Mac ${machine.name} could not release box ${ref.box}'s ${ref.slot ? `iOS slot ${ref.slot}` : "promise"}: ${said(result)}`);
     return { last: fields(result.stdout).get("last") === "yes" };
   }
@@ -629,7 +631,7 @@ export class PoolSlots implements SlotLender {
     const slots = await this.#status(view.machine, signal).catch(() => null);
     const swept = slots ? sweepWords(slots) : "";
     if (status.marker === "owner") return { status: "ok", detail: `Lent whole to a box now, so it lends no iOS slot until that box is released. Its slots: ${runtime}.${sized}${swept}`, fix: null };
-    if (summary.closedSince !== null) return { status: "ok", detail: `Closed: it lends no iOS slot until bb-box opens it, at its next upkeep while it is not lent whole. Its slots: ${runtime}.${sized}${swept}`, fix: null };
+    if (summary.closedSince !== null) return { status: "ok", detail: `Closed: it lends no iOS slot until ${PRODUCT} opens it, at its next upkeep while it is not lent whole. Its slots: ${runtime}.${sized}${swept}`, fix: null };
     return { status: "ok", detail: `Lends iOS slots, ${counts}: ${runtime}.${sized}${slotsBusy(summary) ? ` While any is held it is not lent whole.` : ""}${slots ? heldLoadWords(slots) : ""}${swept}`, fix: null };
   }
 }

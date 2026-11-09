@@ -118,7 +118,7 @@ async function forked(state: World, box: BoxRecord | null): Promise<BoxRecord> {
   return settled;
 }
 
-test("070 unit 7, G14: a fork resets at its first boot, bb-box checks that before it is ready, writes its own marker, and its source keeps its identity", async () => {
+test("070 unit 7, G14: a fork resets at its first boot, BB Box checks that before it is ready, writes its own marker, and its source keeps its identity", async () => {
   const forks = forkWorld();
   const { state, source } = forks;
   const box = await readyBox(state);
@@ -153,7 +153,7 @@ test("070 unit 7, G14: a fork resets at its first boot, bb-box checks that befor
   assert.match(fileOf(root, "etc/bb-box/identity") ?? "", new RegExp(`^bb-box identity 1\\nbox ${fork.id}\\nsource eth\\nmac bc:24:11:0f:01:2c\\n$`), "its own marker, written once the check passed");
   assert.equal(fileOf(root, "home/box/.bb-machines/bb.example/host-id"), null);
   assert.equal(fileOf(root, "home/box/.bb-machines/bb.example/auth.json"), null);
-  assert.equal(fileOf(root, "home/box/.config/bb-box/env"), null, "the source's access file is gone, and bb-box writes none before the check");
+  assert.equal(fileOf(root, "home/box/.config/bb-box/env"), null, "the source's access file is gone, and BB Box writes none before the check");
   assert.notEqual(fileOf(root, "etc/machine-id"), `${SOURCE_MACHINE_ID}\n`);
   assert.notEqual(fileOf(root, "etc/ssh/ssh_host_ed25519_key.pub"), `${SOURCE_HOST_KEY}\n`);
   assert.match(fileOf(root, "var/lib/bb-box/identity-resets") ?? "", /BB machines removed: host_source$/m);
@@ -187,7 +187,7 @@ test("070 unit 7, G14: a fork is never handed over when its first boot did not r
     assert.equal(fork.fork?.source.address, SOURCE_ADDRESS);
     assert.equal(fork.state, "failed", each.firstBoot);
     assert.match(fork.error ?? "", each.why, each.firstBoot);
-    assert.match(fork.error ?? "", /bb-box released it, so nothing of it acts as /);
+    assert.match(fork.error ?? "", /BB Box released it, so nothing of it acts as /);
     assert.equal(fork.guest, null);
     assert.equal(state.backend.identities.size, 1);
     const [ref] = [...state.backend.identities.keys()];
@@ -213,7 +213,7 @@ test("where addresses are leased, a fork on its stopped source's last address is
     { name: "running, on its recorded address", source: { power: "running", leased: "10.0.0.8" }, held: true, fork: FORK_CLIENT_ID, why: /it holds \S+'s address 10\.0\.0\.5, so it would take/ },
     { name: "running, on its lease", source: { power: "running", leased: SOURCE_ADDRESS }, recorded: "10.0.0.8", held: true, fork: FORK_CLIENT_ID, why: /it holds \S+'s address 10\.0\.0\.5, so it would take/ },
     { name: "suspended, on its recorded address", source: { power: "suspended", leased: null }, held: true, fork: FORK_CLIENT_ID, why: /it holds \S+'s address 10\.0\.0\.5, so it would take/ },
-    { name: "unreadable", source: "unreadable", held: true, fork: FORK_CLIENT_ID, why: /it could not read the address \S+ holds now, so it cannot tell that the fork does not take it: Reading it failed: the Mac did not answer\. bb-box released it/ },
+    { name: "unreadable", source: "unreadable", held: true, fork: FORK_CLIENT_ID, why: /it could not read the address \S+ holds now, so it cannot tell that the fork does not take it: Reading it failed: the Mac did not answer\. BB Box released it/ },
     { name: "static", source: "static", held: true, fork: FORK_CLIENT_ID, why: /it holds \S+'s address 10\.0\.0\.5, so it would take/ },
   ];
   for (const each of cases) {
@@ -315,7 +315,7 @@ test("a fork that asked for its address with its source's DHCP client ID is refu
   const same = forkVerdict(parseForkSeen(seenLines([...WHOLE, `dhcp_client_id=${sourceClientId}`]), 0), expected);
   assert.equal(same.is, "refused");
   assert.match((same as { why: string }).why, /^it asked for its address with amber-fox's DHCP client ID, so a DHCP server takes it for amber-fox and may give it amber-fox's address$/);
-  assert.deepEqual(forkVerdict(parseForkSeen(seenLines([...WHOLE, `dhcp_client_id=${sourceClientId}`]), 0), EXPECTED), { is: "ready" }, "a snapshot that held no client ID, from before bb-box read them, is checked as before");
+  assert.deepEqual(forkVerdict(parseForkSeen(seenLines([...WHOLE, `dhcp_client_id=${sourceClientId}`]), 0), EXPECTED), { is: "ready" }, "a snapshot that held no client ID, from before BB Box read them, is checked as before");
   const unreadable = forkVerdict(parseForkSeen(seenLines([...WHOLE, "unreadable=/run/systemd/netif/leases/2"]), 0), expected);
   assert.match((unreadable as { why: string }).why, /could not read \/run\/systemd\/netif\/leases\/2 in it/);
 });
@@ -363,7 +363,7 @@ test("070 unit 7, G14: a snapshot taken without a working identity reset never f
   assert.equal(taken.identity, null);
   const refused = await rejection(state.snapshots.fork(COMMAND, box, standing(box), "unarmed"));
   assert.equal(refused.code, "unsupported");
-  assert.equal(refused.message, `${box.name} had no working identity reset when "unarmed" was taken, so bb-box does not fork it: a copy of it would not give up ${box.name}'s identity, and could act as ${box.name}.`);
+  assert.equal(refused.message, `${box.name} had no working identity reset when "unarmed" was taken, so BB Box does not fork it: a copy of it would not give up ${box.name}'s identity, and could act as ${box.name}.`);
   assert.equal(state.provider.order.some((step) => step.startsWith("fork")), false);
   assert.deepEqual(state.store.operations({ box: box.id, kind: "fork" }), []);
   assert.deepEqual((await state.boxes.all()).map((each) => each.id), [box.id]);
@@ -476,7 +476,7 @@ test("070 unit 7 reviews: the check before ready needs every observation read, i
     ["no address of its own", WHOLE.filter((line) => line !== "address=10.0.0.6"), /it does not hold its own address 10\.0\.0\.6, nor any other/],
     ["another box's address", [...WHOLE, "address=10.0.0.7"], /it holds 10\.0\.0\.7, another box's address/],
     ["a marker not armed", WHOLE.map((line) => line.replace("armed=yes", "armed=no")), /its identity marker is not armed/],
-    ["an older version", WHOLE.map((line) => line.replace("version=7", "version=6")), /it has version 6 of the identity reset, and bb-box forks only from version 7 there/],
+    ["an older version", WHOLE.map((line) => line.replace("version=7", "version=6")), /it has version 6 of the identity reset, and BB Box forks only from version 7 there/],
     ["the reset off", WHOLE.map((line) => line.replace("enabled=yes", "enabled=no")), /its identity reset is off/],
   ];
   for (const [name, lines, why] of cases) {
@@ -504,11 +504,11 @@ test("070 unit 7 reviews: a snapshot from an identity reset older than its backe
   (state.backend as unknown as Record<string, unknown>).snapshotting = () => ({ ...offered, forkSafeFrom: 10 });
   const refused = await rejection(state.snapshots.fork(COMMAND, box, standing(box), "older"));
   assert.equal(refused.code, "unsupported");
-  assert.match(refused.message, new RegExp(`^${box.name} had version 9 of the identity reset when "older" was taken, and bb-box forks .+ only from version 10`));
+  assert.match(refused.message, new RegExp(`^${box.name} had version 9 of the identity reset when "older" was taken, and BB Box forks .+ only from version 10`));
   assert.equal(state.provider.order.some((step) => step.startsWith("fork")), false);
   assert.match(forkWhyOf(state.store.record(taken.id)!, backend.snapshotting!(box.kind)) ?? "", /had an identity reset older than version 10 when it was taken/);
   const ofBox = await rejection(state.snapshots.checkForkOfBox(COMMAND, box, standing(box)));
-  assert.match(ofBox.message, /has version 9 of the identity reset, and bb-box forks .+ only from version 10/);
+  assert.match(ofBox.message, /has version 9 of the identity reset, and BB Box forks .+ only from version 10/);
 });
 
 test("070 unit 7 reviews: a fork whose guest cannot be deleted keeps its guest and its operation unsettled, says so, and the sweep deletes it later", async () => {
@@ -522,7 +522,7 @@ test("070 unit 7 reviews: a fork whose guest cannot be deleted keeps its guest a
   const fork = await forked(state, answer.box);
   assert.equal(fork.state, "failed");
   assert.ok(fork.guest, "the guest is kept on the record, so it is not lost");
-  assert.match(fork.error ?? "", /bb-box could not delete its guest \S+ yet \(CT is locked \(clone\)\), so it stopped it\. It tries again at each sweep, and never hands the fork over\.$/);
+  assert.match(fork.error ?? "", /BB Box could not delete its guest \S+ yet \(CT is locked \(clone\)\), so it stopped it\. It tries again at each sweep, and never hands the fork over\.$/);
   assert.doesNotMatch(fork.error ?? "", /released it/);
   assert.equal(await state.backend.power(fork.guest!), "stopped");
   assert.equal(state.store.operation(answer.operation.id)?.state, "unknown");
@@ -532,7 +532,7 @@ test("070 unit 7 reviews: a fork whose guest cannot be deleted keeps its guest a
   await state.boxes.sweep();
   const after = (await state.boxes.find(fork.id))!;
   assert.equal(after.guest, null);
-  assert.match(after.error ?? "", /bb-box released it, so nothing of it acts as /);
+  assert.match(after.error ?? "", /BB Box released it, so nothing of it acts as /);
   assert.equal(await state.backend.power(fork.guest!), null);
   assert.equal(state.store.operation(answer.operation.id)?.state, "failed");
   assert.equal(state.store.pins().has(taken.id), false);
@@ -624,7 +624,7 @@ test("070 unit 7 re-review: a probe that fails to read the fork's Tailscale stat
   }
 });
 
-test("070 unit 7 re-review: a fork cut off by bb-box stopping during its first start keeps its guest on its record, and recovery deletes that guest before it copies the snapshot again", async () => {
+test("070 unit 7 re-review: a fork cut off by BB Box stopping during its first start keeps its guest on its record, and recovery deletes that guest before it copies the snapshot again", async () => {
   const forks = forkWorld();
   const { state } = forks;
   const box = await readyBox(state);
@@ -651,7 +651,7 @@ test("070 unit 7 re-review: a fork cut off by bb-box stopping during its first s
   assert.equal(await state.backend.power(cut), "running");
   await state.restart();
   forks.macsAfterRestart();
-  assert.equal(await state.backend.power(cut), "running", "bb-box's restart leaves the guest as it was");
+  assert.equal(await state.backend.power(cut), "running", "BB Box's restart leaves the guest as it was");
   const copy = state.provider.onForked!;
   let cutAtCopy: string | null = "not copied again";
   state.provider.onForked = async (made, ref) => {
@@ -683,7 +683,7 @@ test("070 unit 7 re-review: box_fork's check before its take refuses a fork with
   for (const caller of [agent, COMMAND]) {
     state.backend.capacity = async () => ({ ok: false, message: "Every GPU is full. Release a desktop box, or raise the desktops per GPU.", warm: null, hosts: [] });
     const full = await rejection(state.snapshots.checkForkOfBox(caller, box, standing(box), { gpu: "shared" }));
-    assert.match(full.message, /^Not forked: .*Every GPU is full\. Fork it with gpu none, or ask the user\. bb-box copied nothing\.$/);
+    assert.match(full.message, /^Not forked: .*Every GPU is full\. Fork it with gpu none, or ask the user\. BB Box copied nothing\.$/);
     assert.doesNotMatch(full.message, /Release|raise|settings/);
   }
   state.backend.capacity = capacity;
@@ -703,15 +703,15 @@ test("071 unit 8: a fork's room refused by its provider reaches an agent in the 
     return {
       ok: false,
       message: 'No card on pve is free for a whole card now: card 0 has lone-pine (in thread "Train the model") running. Release a box on one of the cards, ask for gpu shared, or ask for gpu none.',
-      agentMessage: "Not made: no card on pve is free for a whole card now: card 0 has lone-pine running. Ask for gpu shared, or ask the user. bb-box changed nothing.",
+      agentMessage: "Not made: no card on pve is free for a whole card now: card 0 has lone-pine running. Ask for gpu shared, or ask the user. BB Box changed nothing.",
       warm: null,
       hosts: [],
     };
   };
   const refused = await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box), { gpu: "whole" }));
   assert.equal(refused.code, "no_capacity");
-  assert.match(refused.message, /lone-pine \(in thread "Train the model"\) running\. Fork it with gpu shared or none, or ask the user\. bb-box copied nothing\.$/);
-  assert.equal((refused as BoxError).agentMessage, "Not forked: Fake host has no room for the fork: no card on pve is free for a whole card now: card 0 has lone-pine running. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.");
+  assert.match(refused.message, /lone-pine \(in thread "Train the model"\) running\. Fork it with gpu shared or none, or ask the user\. BB Box copied nothing\.$/);
+  assert.equal((refused as BoxError).agentMessage, "Not forked: Fake host has no room for the fork: no card on pve is free for a whole card now: card 0 has lone-pine running. Fork it with gpu shared or none, or ask the user. BB Box copied nothing.");
   assert.deepEqual(asked, [THREAD]);
   const person = await rejection(state.snapshots.checkForkOfBox(COMMAND, box, standing(box), { gpu: "whole" }));
   assert.equal((person as BoxError).agentMessage, null, "the person's refusal carries no agent's words");
@@ -725,13 +725,13 @@ test("071 unit 8, lead: a fork with a whole card is refused while whole cards ar
   const records = state.store.records().length;
   const live = await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box), { gpu: "whole" }));
   assert.equal(live.code, "unsupported");
-  assert.equal(live.message, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or turn Whole cards on in the backend's GPUs section in BB Box's settings, or with bb box backend set <backend> --field whole-cards=true. bb-box copied nothing.");
-  assert.equal((live as BoxError).agentMessage, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.");
+  assert.equal(live.message, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or turn Whole cards on in the backend's GPUs section in BB Box's settings, or with bb box backend set <backend> --field whole-cards=true. BB Box copied nothing.");
+  assert.equal((live as BoxError).agentMessage, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. BB Box copied nothing.");
   assert.equal(state.store.records().length, records, "nothing was taken");
   assert.equal((await state.boxes.list(THREAD)).length, 1, "no fork's record was made");
   await state.snapshots.take(agent, box, standing(box), { name: "set up" });
   const ofSnapshot = await rejection(state.snapshots.checkFork(agent, box, standing(box), "set up", { gpu: "whole" }));
-  assert.equal(ofSnapshot.message, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.");
+  assert.equal(ofSnapshot.message, "Not forked: whole cards are off on this install. Fork it with gpu shared or none, or ask the user. BB Box copied nothing.");
 });
 
 test("070 unit 7 re-review: a fork's guest is disarmed before each attempt to delete it, when the fork fails and at each sweep after", async () => {
@@ -813,7 +813,7 @@ test("070 unit 11b: on a backend whose identity source is a value, the check bef
     ["a tailnet node", whole.map((line) => line.replace("tailnet_node=no", "tailnet_node=yes")), /its Tailscale state still holds a tailnet node/],
     ["the source's machine ID", whole.map((line) => line.replace(`machine_id=${HASH_B}`, `machine_id=${HASH_A}`)), /its machine ID is amber-fox's/],
     ["the source's host key", whole.map((line) => line.replace(`host_key=${HASH_B}`, `host_key=${HASH_A}`)), /it has amber-fox's SSH host keys/],
-    ["version 7", whole.map((line) => line.replace("version=8", "version=7")), /it has version 7 of the identity reset, and bb-box forks only from version 8 there/],
+    ["version 7", whole.map((line) => line.replace("version=8", "version=7")), /it has version 7 of the identity reset, and BB Box forks only from version 8 there/],
   ];
   for (const [name, lines, why] of cases) {
     const verdict = forkVerdict(parseForkSeen(seenLines(lines), 0), expected);
@@ -855,12 +855,12 @@ test("071 unit 7 round 2, Astra 4: a fork whose card the backend refuses keeps t
   const box = await readyBox(state);
   await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" });
   (state.backend as unknown as Record<string, unknown>).placeForkGpu = async () => {
-    throw new BackendError("no_capacity", "Not forked: no card has room. Release a desktop box. bb-box copied nothing.", "Not forked: no card has room. Fork it with gpu none, or ask the user. bb-box copied nothing.");
+    throw new BackendError("no_capacity", "Not forked: no card has room. Release a desktop box. BB Box copied nothing.", "Not forked: no card has room. Fork it with gpu none, or ask the user. BB Box copied nothing.");
   };
   const answer = await state.snapshots.fork(COMMAND, box, standing(box), "set up");
   const fork = await forked(state, answer.box);
   assert.equal(fork.state, "failed");
   assert.match(fork.error ?? "", /^Not forked: no card has room\. Release a desktop box\./);
-  assert.match(errorForAgent(fork) ?? "", /^Not forked: no card has room\. Fork it with gpu none, or ask the user\. bb-box copied nothing\. bb-box released it, so nothing of it acts as /);
+  assert.match(errorForAgent(fork) ?? "", /^Not forked: no card has room\. Fork it with gpu none, or ask the user\. BB Box copied nothing\. BB Box released it, so nothing of it acts as /);
   assert.doesNotMatch(errorForAgent(fork) ?? "", /release a desktop/i);
 });

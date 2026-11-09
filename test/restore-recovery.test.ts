@@ -106,7 +106,7 @@ test("review A1: recovery does not roll back once its undo is gone; it starts th
   assert.equal(await state.snapshots.recover(), 1);
   assert.equal(readIn(state, box, "work.txt"), "latest", "nothing on its disk changed");
   assert.equal(state.store.operation(operation.id)!.state, "failed");
-  assert.match(state.store.operation(operation.id)!.error!, /Its undo "before the restore at 10:43" was not there when bb-box went on with the restore/);
+  assert.match(state.store.operation(operation.id)!.error!, /Its undo "before the restore at 10:43" was not there when BB Box went on with the restore/);
   assert.equal(state.store.record(operation.undo!)!.state, "lost");
   assert.equal((await current(state, box)).state, "ready");
   assert.equal((await current(state, box)).restoring ?? null, null);
@@ -246,7 +246,7 @@ test("review A7: a box that was a thread's own machine, with no thread on it now
   assert.equal(answer.operation.state, "done");
 });
 
-test("review A8: no take while a restore bb-box could not confirm holds the box", async () => {
+test("review A8: no take while a restore BB Box could not confirm holds the box", async () => {
   const state = world();
   const box = await targetBox(state);
   state.provider.rollback = "unknown";

@@ -4,6 +4,8 @@
 import type { TLSSocket } from "node:tls";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
 import type { FetchLike } from "./api.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export interface ProxmoxHttp {
   fetch: FetchLike;
@@ -44,7 +46,7 @@ export function proxmoxFetch(tls: { ca: string | null; fingerprint: string | nul
           socket!.destroy();
           callback(
             new Error(
-              `the API's certificate has SHA-256 fingerprint ${actual || "(none)"}, not the one in bb-box's settings. ` +
+              `the API's certificate has SHA-256 fingerprint ${actual || "(none)"}, not the one in ${PRODUCT}'s settings. ` +
                 "If the certificate was renewed, set the new fingerprint.",
             ),
             null,

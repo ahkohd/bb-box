@@ -115,10 +115,10 @@ test("a stop and a start are logged with who asked: the person, an agent, a comm
 
   await state.guestPower(box, "running");
   await state.boxes.sweep();
-  assert.deepEqual(state.log.view(box.id).lastStart?.by, { is: "outside" }, "a start outside bb-box is the outside's");
+  assert.deepEqual(state.log.view(box.id).lastStart?.by, { is: "outside" }, "a start outside BB Box is the outside's");
 });
 
-test("bb-box's own stops say why: a spare is made, then waits stopped (069)", async () => {
+test("BB Box's own stops say why: a spare is made, then waits stopped (069)", async () => {
   const state: ReturnType<typeof world> = world({
     enrol: async (box) => {
       await state.boxes.update(box, () => ({ enrol: { state: "enrolled", hostId: `host-${box.id}`, error: null } }));
@@ -135,11 +135,11 @@ test("bb-box's own stops say why: a spare is made, then waits stopped (069)", as
   assert.equal(spare?.state, "stopped");
   const made = state.log.events(spare!.id)[0]!;
   assert.equal(made.kind, "made");
-  assert.deepEqual(made.by, { is: "bb-box", why: "bb-box keeps 1 spare linux box" });
+  assert.deepEqual(made.by, { is: "bb-box", why: "BB Box keeps 1 spare linux box" });
   assert.deepEqual(state.log.view(spare!.id).lastStop?.by, { is: "bb-box", why: "a spare waits stopped until a thread claims it" });
 });
 
-test("a stop that fails records what bb-box then saw, and a stop that times out and then succeeds is stopped from the confirmed time, by its asker (069 G6)", async () => {
+test("a stop that fails records what BB Box then saw, and a stop that times out and then succeeds is stopped from the confirmed time, by its asker (069 G6)", async () => {
   const state = world();
   const box = await readyBox(state);
   const stop = state.backend.stop!.bind(state.backend);
@@ -161,8 +161,8 @@ test("a stop that fails records what bb-box then saw, and a stop that times out 
   await state.boxes.sweep();
   const after = await state.boxes.find(box.id);
   assert.equal(after?.state, "stopped");
-  assert.equal(after?.unrequestedStop ?? null, null, "not a stop bb-box did not ask for");
-  assert.deepEqual(state.log.view(box.id).lastStop, { at: 1_060_000, by: { is: "person" }, asked: true }, "stopped from when bb-box confirmed it");
+  assert.equal(after?.unrequestedStop ?? null, null, "not a stop BB Box did not ask for");
+  assert.deepEqual(state.log.view(box.id).lastStop, { at: 1_060_000, by: { is: "person" }, asked: true }, "stopped from when BB Box confirmed it");
   assert.equal(state.log.view(box.id).lastFailed, null);
   assert.ok(!state.kinds(box.id).includes("stopped-unasked"));
 });
@@ -188,7 +188,7 @@ test("a VM that boots but never answers SSH is logged as running, or as unconfir
   const power = state.backend.power.bind(state.backend);
   state.backend.power = async () => "unknown";
   await assert.rejects(state.boxes.start(THREAD, box.id, undefined, BY_PERSON));
-  assert.equal(state.log.view(box.id).lastFailed?.observed?.state, "unknown", "bb-box could not confirm its state");
+  assert.equal(state.log.view(box.id).lastFailed?.observed?.state, "unknown", "BB Box could not confirm its state");
   state.backend.power = power;
 });
 
@@ -204,7 +204,7 @@ test("a resize refused after its memory changed names memory as changed (069 G6)
   assert.equal(failed.operation, "resize");
   assert.deepEqual(failed.parts, ["memory"]);
   assert.match(failed.words ?? "", /Its memory changed/);
-  assert.equal((await state.boxes.find(box.id))?.guest?.size?.memoryMiB, 8192, "the record has the size bb-box read back");
+  assert.equal((await state.boxes.find(box.id))?.guest?.size?.memoryMiB, 8192, "the record has the size BB Box read back");
   assert.deepEqual(state.kinds(box.id).slice(-2), ["resize-asked", "resize-failed"]);
 });
 
@@ -227,7 +227,7 @@ test("released is written only once the backend confirms; a failed release keeps
   assert.equal(state.log.ended(box.id)?.how, "released");
 });
 
-test("bb-box restarted after the backend deleted a guest but before the record went finishes the release at start, by observing (069 G5)", async () => {
+test("BB Box restarted after the backend deleted a guest but before the record went finishes the release at start, by observing (069 G5)", async () => {
   const state = world();
   const box = await readyBox(state);
   await state.boxes.update(box, () => ({ state: "releasing", releaseRequestedAt: Date.now(), enrol: { state: "enrolled", hostId: "host-gone", error: null } }));
@@ -453,7 +453,7 @@ test("a box that still does not answer once it has rejoined BB is said not to an
   reach.dispose();
 });
 
-test("a box whose BB machine bb-box reconnects, as a restore's last step does, is rejoining until the reconnect ends, and the reach check waits for it", async () => {
+test("a box whose BB machine BB Box reconnects, as a restore's last step does, is rejoining until the reconnect ends, and the reach check waits for it", async () => {
   const clock = rejoinClock();
   const reconnect = rejoin();
   let attempts = 0;
@@ -489,7 +489,7 @@ test("a box whose BB machine bb-box reconnects, as a restore's last step does, i
   reach.dispose();
 });
 
-test("a VM that crashes after a failed stop is a stop bb-box did not ask for, and is started again (069 G6)", async () => {
+test("a VM that crashes after a failed stop is a stop BB Box did not ask for, and is started again (069 G6)", async () => {
   const state = world();
   const box = await readyBox(state);
   const stop = state.backend.stop!.bind(state.backend);
@@ -504,7 +504,7 @@ test("a VM that crashes after a failed stop is a stop bb-box did not ask for, an
   await state.boxes.idle();
   assert.deepEqual(state.log.latest(box.id, ["stopped", "stopped-unasked"])?.kind, "stopped-unasked");
   assert.deepEqual(state.log.latest(box.id, ["stopped-unasked"])?.by, { is: "outside" });
-  assert.equal(state.log.latest(box.id, ["start-asked"])?.by.is, "bb-box", "bb-box starts a crashed VM again");
+  assert.equal(state.log.latest(box.id, ["start-asked"])?.by.is, "bb-box", "BB Box starts a crashed VM again");
   assert.equal((await state.boxes.find(box.id))?.state, "ready");
 });
 
@@ -521,5 +521,5 @@ test("a claimed spare names who asked for the box, and when it was ready (069)",
   assert.deepEqual(start.by, { is: "agent", threadId: THREAD });
   assert.equal(start.first, true);
   assert.ok(start.readyAt !== null);
-  assert.match(state.log.latest(box.id, ["made"])?.words ?? "", new RegExp(`Claimed from bb-box's spare boxes, as ${spare!.name}\\.`));
+  assert.match(state.log.latest(box.id, ["made"])?.words ?? "", new RegExp(`Claimed from BB Box's spare boxes, as ${spare!.name}\\.`));
 });

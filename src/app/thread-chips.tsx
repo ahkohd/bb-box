@@ -6,6 +6,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { cn } from "@/lib/utils";
 import type { ThreadOnBox } from "../plugin/contract.ts";
 import { PRODUCT } from "./product.ts";
+import { THIS_BOX_THREAD, threadName, threadTitle, UNTITLED_THREAD } from "./thread-title.ts";
+
+export { THIS_BOX_THREAD, threadInSentence, threadName, threadTitle, UNTITLED_THREAD } from "./thread-title.ts";
 
 export const SHOWN_CHIPS = 3;
 export const SEARCH_FROM = 8;
@@ -13,16 +16,9 @@ export const SEARCH_FROM = 8;
 const ONLY_WHERE_CHIPS_FIT = "@max-md:hidden";
 const ONLY_WHERE_CHIPS_STACK = "@md:hidden";
 
-const REPLY_PREFIX = /^\s*Replying to this earlier message in the conversation:\s*/i;
-
-export function threadTitle(thread: ThreadOnBox): string {
-  const title = (thread.title ?? "").replace(REPLY_PREFIX, "").replace(/^[\s>"“]+/, "").trim();
-  return title || "this box's thread";
-}
-
 function quotedThread(thread: ThreadOnBox): string {
-  const title = threadTitle(thread);
-  return title === "this box's thread" ? title : `"${title}"`;
+  const title = threadName(thread);
+  return title ? `"${title}"` : THIS_BOX_THREAD;
 }
 
 export function workingOnWords(threads: readonly ThreadOnBox[], boxName: string): string {

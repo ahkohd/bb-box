@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { BulkCheck, BulkDone, BulkItem, Contract, SnapshotRowView, SnapshotsTabView, TabGroup, TabRow } from "../plugin/contract.ts";
 import { Badge, EmptyPanel, message, StatusDot } from "./common.tsx";
-import { useThreadTitles } from "./desktop.tsx";
+import { threadGroupHeading, useThreadTitles } from "./desktop.tsx";
 import { useBoxesNav } from "./box-nav.tsx";
 import { Refused, Shell, SnapshotRow, type RowPlace } from "./snapshots-card.tsx";
 import { gbWords, holdsWords, keepDay, snapshotDay, utcDate } from "./snapshot-words.ts";
@@ -47,9 +47,10 @@ function valuesOf(row: SnapshotRowView, group: TabGroup, now: number): Record<Fi
   };
 }
 
-export function matches(row: SnapshotRowView, group: TabGroup, search: string, filters: SnapshotFilters, title: string | null, now: number): boolean {
+export function matches(row: SnapshotRowView, group: TabGroup, search: string, filters: SnapshotFilters, title: string | null | undefined, now: number): boolean {
   const words = search.trim().toLowerCase();
-  if (words && ![row.name, row.note ?? "", group.box.name, title ?? ""].some((text) => text.toLowerCase().includes(words))) return false;
+  const heading = group.box.yours || !group.box.threadId ? "" : threadGroupHeading(title);
+  if (words && ![row.name, row.note ?? "", group.box.name, heading].some((text) => text.toLowerCase().includes(words))) return false;
   const values = valuesOf(row, group, now);
   return FILTER_GROUPS.every((key) => !filters[key].length || filters[key].some((value) => values[key].includes(value)));
 }
@@ -275,7 +276,7 @@ function systemWords(system: string): string {
   return system === "linux" ? "Linux" : system === "windows" ? "Windows" : system === "macos" ? "macOS" : system;
 }
 
-function GroupHead({ group, title, onThread }: { group: TabGroup; title: string | null; onThread: (threadId: string) => void }) {
+function GroupHead({ group, title, onThread }: { group: TabGroup; title: string | null | undefined; onThread: (threadId: string) => void }) {
   const nav = useBoxesNav();
   const box = group.box;
   const where = `${box.backend}`;
@@ -301,7 +302,7 @@ function GroupHead({ group, title, onThread }: { group: TabGroup; title: string 
           <span className="text-xs text-muted-foreground">Found again on its host; its thread is not known</span>
         ) : (
           <button type="button" className="inline-flex max-w-56 items-center gap-1 truncate rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={() => onThread(box.threadId!)}>
-            <span className="truncate">{title ?? box.threadId}</span>
+            <span className="truncate">{threadGroupHeading(title)}</span>
             <Icon name="ArrowUpRight" className="size-3" aria-hidden />
           </button>
         )}
@@ -328,7 +329,7 @@ export function SnapshotsTabPanel({ view, now, onChanged, scroller }: { view: Sn
   const titles = useThreadTitles(threadIds);
   const agentThreads = useThreadTitles([...new Set(view.groups.flatMap((group) => group.rows.flatMap((row) => (row.by.is === "agent" ? [row.by.threadId] : []))))]);
   const all = useMemo(() => view.groups.flatMap((group) => group.rows.map((row) => ({ row, group }))), [view]);
-  const titleOf = (group: TabGroup) => (group.box.yours || !group.box.threadId ? null : (titles[group.box.threadId] ?? null));
+  const titleOf = (group: TabGroup): string | null | undefined => (group.box.yours || !group.box.threadId ? null : group.box.threadId in titles ? titles[group.box.threadId] : undefined);
   const offered = useMemo(() => {
     const seen: Record<FilterGroup, Set<string>> = { where: new Set(), holds: new Set(), by: new Set(), kept: new Set(), undos: new Set(), soon: new Set() };
     for (const { row, group } of all) for (const key of FILTER_GROUPS) for (const value of valuesOf(row, group, now)[key]) seen[key].add(value);

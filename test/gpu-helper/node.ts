@@ -273,7 +273,7 @@ export class FakeNode {
     const byPool = new Map<string, number[]>();
     for (const [vmid, pool] of this.pools) byPool.set(pool, [...(byPool.get(pool) ?? []), vmid]);
     if (!byPool.has(POOL)) byPool.set(POOL, []);
-    const lines = ["user:root@pam:1:0:::root@localhost:::", ...[...byPool].map(([pool, vmids]) => `pool:${pool}:bb-box boxes:${vmids.sort((a, b) => a - b).join(",")}::`)];
+    const lines = ["user:root@pam:1:0:::root@localhost:::", ...[...byPool].map(([pool, vmids]) => `pool:${pool}:BB Box boxes:${vmids.sort((a, b) => a - b).join(",")}::`)];
     writeFileSync(join(this.root, "etc/pve/user.cfg"), `${lines.join("\n")}\n`);
   }
 

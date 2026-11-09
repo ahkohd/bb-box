@@ -183,7 +183,7 @@ export function NavRow({ icon, title, chips, value, tone, onClick, outward = fal
 
 export function SettingRow({ label, description, problem, problemId, children, htmlFor, path }: { label: string; description?: ReactNode; problem?: string | null; problemId?: string; children: ReactNode; htmlFor?: string; path?: string }) {
   return (
-    <SideLabelField label={label} htmlFor={htmlFor} path={path} help={description} problem={problem} problemId={problemId} controlClassName="items-start sm:items-end">
+    <SideLabelField label={label} htmlFor={htmlFor} path={path} help={description ? <p className="mt-0.5 text-xs leading-snug text-subtle-foreground">{description}</p> : null} problem={problem} problemId={problemId} controlClassName="items-start sm:items-end">
       <div className="flex items-center gap-2">{children}</div>
     </SideLabelField>
   );

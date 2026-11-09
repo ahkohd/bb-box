@@ -9,6 +9,8 @@ import type { Ssh } from "../../transports/ssh.ts";
 import type { SshAccess } from "../../transports/types.ts";
 import type { AcquireHooks, BackendContext, BoxIdentity, BoxKind, MachineSize, Guest } from "../types.ts";
 import { LINUX_IMAGE_TARGETS, type LinuxImageKind, type LinuxImages } from "./linux-images.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const LINUX_KINDS = Object.keys(LINUX_IMAGE_TARGETS) as LinuxImageKind[];
 const LINUX_CORES = [1, 2, 4, 8, 10, 12, 16, 32];
@@ -39,7 +41,7 @@ export function linuxShapeFor(size: MachineSize): { readonly cores: number; read
 
 export function linuxDockerConfig(): DockerConfig {
   const parsed = parseDockerPart({ id: "namespace-linux", hosts: [], fields: { [DOCKER_KEYS.host]: "", [DOCKER_KEYS.gpus]: false, [DOCKER_KEYS.reserveMemoryMiB]: 0 } });
-  if (!parsed.ok) throw new Error(`bb-box's Docker settings for Namespace's Linux boxes are wrong: ${parsed.problems.map((each) => each.message).join("; ")}`);
+  if (!parsed.ok) throw new Error(`${PRODUCT}'s Docker settings for Namespace's Linux boxes are wrong: ${parsed.problems.map((each) => each.message).join("; ")}`);
   return parsed.config;
 }
 

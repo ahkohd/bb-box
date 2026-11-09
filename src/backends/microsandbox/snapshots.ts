@@ -1,6 +1,8 @@
 import type { BoxOwner, Guest, HeldSnapshot, HeldSnapshotState, Holds, Snapshotting, SnapshotStorage } from "../types.ts";
 import { endOfUtcDay } from "../../core/snapshot.ts";
 import { MSB_VERSION } from "./release.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const SNAPSHOTS_CHECKED_WITH = "0.7.7";
 export const MSB_FORK_SAFE_FROM = 7;
@@ -174,7 +176,7 @@ export function msbOffer(): Snapshotting {
 
 export function versionRefusal(installed: string | null): string | null {
   if (installed === SNAPSHOTS_CHECKED_WITH && MSB_VERSION === SNAPSHOTS_CHECKED_WITH) return null;
-  return `bb-box takes and deletes microsandbox snapshots only with msb ${SNAPSHOTS_CHECKED_WITH}, whose snapshots its checks measured, and this host has ${installed ? `msb ${installed}` : "no msb installed yet"}${MSB_VERSION === SNAPSHOTS_CHECKED_WITH ? "" : `, while this bb-box pins ${MSB_VERSION}`}`;
+  return `${PRODUCT} takes and deletes microsandbox snapshots only with msb ${SNAPSHOTS_CHECKED_WITH}, whose snapshots its checks measured, and this host has ${installed ? `msb ${installed}` : "no msb installed yet"}${MSB_VERSION === SNAPSHOTS_CHECKED_WITH ? "" : `, while this ${PRODUCT} pins ${MSB_VERSION}`}`;
 }
 
 export function msbVersionOf(stdout: string): string | null {
@@ -182,7 +184,7 @@ export function msbVersionOf(stdout: string): string | null {
 }
 
 export const HOST_FILE_DOCKER =
-  "it was made before bb-box could snapshot a box's Docker disk: its Docker data is on a file of the host's, which msb leaves out of a snapshot and cannot give a restored box. A new box can";
+  `it was made before ${PRODUCT} could snapshot a box's Docker disk: its Docker data is on a file of the host's, which msb leaves out of a snapshot and cannot give a restored box. A new box can`;
 
 export function storageOf(host: string, totalKiB: number, freeKiB: number): SnapshotStorage {
   const totalBytes = totalKiB > 0 ? totalKiB * 1024 : null;

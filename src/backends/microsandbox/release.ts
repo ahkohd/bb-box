@@ -11,6 +11,8 @@
 // conformance suite first.
 
 import { quote } from "../../transports/process.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const MSB_VERSION = "0.7.7";
 
@@ -68,7 +70,7 @@ msb=$dir/bin/msb
  */
 function wrapper(): string {
   return `#!/bin/sh
-# bb-box's msb ${MSB_VERSION} (053). Written by bb-box's install script.
+# ${PRODUCT}'s msb ${MSB_VERSION} (053). Written by ${PRODUCT}'s install script.
 dir=$(cd "$(dirname "$0")/.." && pwd)
 home=$dir/home
 mkdir -p "$home"
@@ -99,7 +101,7 @@ const SCRIPTS: Readonly<Record<MsbScript, () => string>> = {
   install: () => `${PRELUDE}platform=$(uname -s)-$(uname -m)
 case $platform in
 ${Object.entries(MSB_ARCHIVES).map(([platform, { file, sha256 }]) => `  ${platform}) file=${file}; sha256=${sha256} ;;`).join("\n")}
-  *) echo "msb ${MSB_VERSION} has no release bb-box can use for $platform." >&2; exit 2 ;;
+  *) echo "msb ${MSB_VERSION} has no release ${PRODUCT} can use for $platform." >&2; exit 2 ;;
 esac
 if [ ! -x "$dir/$version/msb" ] || ! "$dir/$version/msb" --version >/dev/null 2>&1; then
   for tool in curl tar; do
@@ -111,7 +113,7 @@ if [ ! -x "$dir/$version/msb" ] || ! "$dir/$version/msb" --version >/dev/null 2>
   curl -fsSL --retry 3 -o "$work/$file" "${MSB_DOWNLOAD}/$file"
   if command -v sha256sum >/dev/null; then got=$(sha256sum "$work/$file" | cut -d' ' -f1); else got=$(shasum -a 256 "$work/$file" | cut -d' ' -f1); fi
   if [ "$got" != "$sha256" ]; then
-    echo "The msb ${MSB_VERSION} archive's SHA-256 is $got, not $sha256 as bb-box was tested with, so bb-box did not install it." >&2
+    echo "The msb ${MSB_VERSION} archive's SHA-256 is $got, not $sha256 as ${PRODUCT} was tested with, so ${PRODUCT} did not install it." >&2
     exit 3
   fi
   mkdir "$work/$version"

@@ -6,7 +6,7 @@ import type { BoxPageState, Contract, ThreadOnBox } from "../plugin/contract.ts"
 import type { BoxView } from "../plugin/views.ts";
 import { Badge, boxTitleBadges, deviceModelOf, EmptyPanel, OPERATOR, osName, SETTINGS_PATH, StatusDot, systemName, useLive, useNow } from "./common.tsx";
 import { BoxGlyph } from "./glyphs.tsx";
-import { ThreadChips, threadTitle, WorkingMark } from "./thread-chips.tsx";
+import { ThreadChips, threadName, threadTitle, WorkingMark } from "./thread-chips.tsx";
 import { JoinHelp, joinAdvice } from "./first-run.tsx";
 import { tryWords } from "../core/join-tries.ts";
 import { BoxMenu, type MenuAsk } from "./box-menu.tsx";
@@ -26,7 +26,7 @@ import { GpuCard, GpuNotices } from "./gpu-card.tsx";
 import { PageNotice } from "./page-notice.tsx";
 import { gpuFactLines } from "../plugin/gpu-page.ts";
 import { SnapshotNotices, SnapshotsCard, TakeSnapshotDialog, useSnapshotTitles } from "./snapshots-card.tsx";
-import { snapshotWhen, whenInSentence } from "./snapshot-words.ts";
+import { whenInSentence } from "./snapshot-words.ts";
 import { boxViews, viewGlyph, type ViewChoice } from "./view-bar.tsx";
 import { PRODUCT } from "./product.ts";
 import {
@@ -626,7 +626,7 @@ function Facts({ box, mates, now }: { box: BoxView; mates: BoxPageState["gpuMate
           second={
             <>
               {dayAndClock(box.createdAt, now)}
-              {box.forkedFrom ? <span className="block">Forked from {box.forkedFrom.name}, "{box.forkedFrom.snapshot}" ({snapshotWhen(box.forkedFrom.takenAt, now).replace(/^[TY]/, (first) => first.toLowerCase())})</span> : null}
+              {box.forkedFrom ? <span className="block">Forked from {box.forkedFrom.name}, "{box.forkedFrom.snapshot}" ({whenInSentence(box.forkedFrom.takenAt, now)})</span> : null}
             </>
           }
         >
@@ -871,7 +871,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
 
 function useActorTitles(threadIds: readonly string[], holder: ThreadOnBox | null): ThreadTitles {
   const fetched = useThreadTitles(threadIds.filter((id) => id !== holder?.id));
-  return holder ? { ...fetched, [holder.id]: threadTitle(holder) } : fetched;
+  return holder ? { ...fetched, [holder.id]: threadName(holder) } : fetched;
 }
 
 function actorThreads(box: BoxView | null): string[] {

@@ -14,6 +14,8 @@ import type { Boxes } from "../core/boxes.ts";
 import { clampSize } from "../transports/terminal.ts";
 import type { Terminal, TerminalSize } from "../transports/types.ts";
 import { TERMINAL_ROUTE, terminalPath } from "./contract.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export { TERMINAL_ROUTE };
 const SESSION_ID = /^[A-Za-z0-9_-]{8,64}$/;
@@ -253,7 +255,7 @@ export class TerminalSessions {
   }
 
   async dispose(): Promise<void> {
-    await Promise.all([...this.#sessions.values()].map((session) => session.end("bb-box stopped.")));
+    await Promise.all([...this.#sessions.values()].map((session) => session.end(`${PRODUCT} stopped.`)));
   }
 }
 
@@ -286,7 +288,7 @@ export function registerTerminals(bb: BbPluginApi, deps: { boxes: Boxes; logErro
     log: (message) => bb.log.info(message),
     async open(boxId, size) {
       const box = await deps.boxes.find(boxId);
-      if (!box) throw new Error("bb-box has no such box. It may have been released.");
+      if (!box) throw new Error(`${PRODUCT} has no such box. It may have been released.`);
       if (box.state !== "ready") throw new Error(`Box ${box.name} is not running, so it has no terminal.`);
       const { command } = await deps.boxes.transports(box);
       if (!command?.terminal) throw new Error(`Box ${box.name} has no terminal: its transport cannot open a shell on a PTY.`);

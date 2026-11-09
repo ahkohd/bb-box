@@ -16,6 +16,7 @@ import { parseOfferedDevices } from "../core/device-parse.ts";
  * Duplication then leaves the pointer out of the image, so bb-box-stream can
  * leave it out of the video while a person holds control.
  */
+import { PRODUCT } from "../brand.ts";
 export const WINDOWS_HARDWARE_CURSOR = "hardware-cursor";
 
 /** The contract an image must keep (049); a record with an older one fails the doctor. */
@@ -330,14 +331,14 @@ export function judgeImage(
   if (!record) {
     return {
       status: "warn",
-      detail: "It has no image record, as images built before bb-box recorded them do not, so bb-box cannot tell how old it is or what is in it.",
+      detail: `It has no image record, as images built before ${PRODUCT} recorded them do not, so ${PRODUCT} cannot tell how old it is or what is in it.`,
       fix: rebuild,
     };
   }
   const failures: string[] = [];
   const warnings: string[] = [];
   if (record.contract < IMAGE_CONTRACT) {
-    failures.push(`It keeps image contract ${record.contract}, and this bb-box needs ${IMAGE_CONTRACT}, so its boxes may not work.`);
+    failures.push(`It keeps image contract ${record.contract}, and this ${PRODUCT} needs ${IMAGE_CONTRACT}, so its boxes may not work.`);
   }
   const host = facts.hostNvidia;
   if (record.nvidia && host && host.version !== record.nvidia) {
@@ -355,13 +356,13 @@ export function judgeImage(
     );
   }
   if (facts.pins && record.pins !== facts.pins) {
-    warnings.push("It was built with other pins than this bb-box's, so it lacks what a bb-box update brought.");
+    warnings.push(`It was built with other pins than this ${PRODUCT}'s, so it lacks what a ${PRODUCT} update brought.`);
   }
   const chrome = record.tools.chrome;
   let chromeNewerThanPin = false;
   if (chrome && facts.pinChrome && !atLeast(facts.pinChrome, chrome)) {
     chromeNewerThanPin = true;
-    warnings.push(`Its Chrome is ${chrome}, newer than this bb-box's pin ${facts.pinChrome}, so a rebuild from the pins would go backwards. The pin is what a failed version check kept.`);
+    warnings.push(`Its Chrome is ${chrome}, newer than this ${PRODUCT}'s pin ${facts.pinChrome}, so a rebuild from the pins would go backwards. The pin is what a failed version check kept.`);
   }
   if (facts.os === "android" && (!record.devices || record.devices[0].runtime.platform !== "android")) {
     failures.push("It offers no Android devices in its record, so no android box can boot one from it.");

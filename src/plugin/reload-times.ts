@@ -6,6 +6,8 @@
 // the times each version started and stopped, kept in bb-box's storage.
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { PRODUCT } from "../brand.ts";
+
 
 export const STOPPED_AT_KEY = "reload/stopped-at";
 export const STARTED_AT_KEY = "reload/started-at";
@@ -42,7 +44,7 @@ export class ReloadTimes {
     await this.#kv.set(STARTED_AT_KEY, this.#began).catch(() => undefined);
     const stoppedFirst = stoppedAt !== null && stoppedAt <= this.#began && (lastStartedAt === null || stoppedAt >= lastStartedAt);
     const gap = stoppedFirst ? `; BB began it ${seconds(this.#began - stoppedAt)} after the last version stopped` : "";
-    this.#log(`bb-box started in ${seconds(total)}: ${this.#phases.map(([phase, ms]) => `${phase} ${seconds(ms)}`).join(", ")}${gap}.`);
+    this.#log(`${PRODUCT} started in ${seconds(total)}: ${this.#phases.map(([phase, ms]) => `${phase} ${seconds(ms)}`).join(", ")}${gap}.`);
   }
 
   /** The first dispose hook runs. */
@@ -55,7 +57,7 @@ export class ReloadTimes {
     const now = this.#now();
     const startedAt = await this.#read(STARTED_AT_KEY);
     const before = startedAt !== null && startedAt > this.#began ? `, ${seconds((this.#stopping ?? now) - startedAt)} after BB began the next version` : "";
-    if (this.#stopping !== null) this.#log(`bb-box stopped in ${seconds(now - this.#stopping)}${before}.`);
+    if (this.#stopping !== null) this.#log(`${PRODUCT} stopped in ${seconds(now - this.#stopping)}${before}.`);
     await this.#kv.set(STOPPED_AT_KEY, now).catch(() => undefined);
   }
 

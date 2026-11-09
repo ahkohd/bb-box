@@ -51,7 +51,7 @@ test("a placement is written into guest.data once and read back; no slot keys is
   assert.deepEqual(readPlacement({ ...placementData(slot), slotHostOn: "docker" }), { ok: false, words: 'guest.data.slotHostOn must be "pool-mac", "tart" or "namespace", not "docker".' });
 });
 
-test("a slot's host is named by its Mac where bb-box knows it, never by the shared host VM's name or a Namespace tag; a VM of its own has none (069 unit 5)", () => {
+test("a slot's host is named by its Mac where BB Box knows it, never by the shared host VM's name or a Namespace tag; a VM of its own has none (069 unit 5)", () => {
   const tart: SlotPlacement = { on: "slot", host: "bb-box-host-0a1b2c3d4e", hostOn: "tart", carried: false, generation: 3, place: 1, most: 3 };
   assert.equal(slotHostName({ guest: { ref: "bb-box-host-0a1b2c3d4e/3", host: "mac-1", address: null, size: null, data: placementData(tart) } }), "mac-1");
   const pool: SlotPlacement = { ...tart, host: "mac-2", hostOn: "pool-mac" };

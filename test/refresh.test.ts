@@ -298,7 +298,7 @@ test("the build script runs the guest scripts as build.sh does for each kind", (
   const linux = buildScript("linux", null, "build.x");
   assert.doesNotMatch(linux, /customize-desktop|DESKTOP_/);
   assert.match(linux, /finalize\.sh \S+ linux$/m);
-  assert.throws(() => buildScript("macos", null, "build.x"), /bb-box refreshes no macos image/);
+  assert.throws(() => buildScript("macos", null, "build.x"), /BB Box refreshes no macos image/);
   const android = buildScript("android", null, "build.x");
   assert.match(android, /fetch-artifacts\.sh \S+ linux "\$arch"/);
   assert.doesNotMatch(android, /customize-desktop|DESKTOP_/);

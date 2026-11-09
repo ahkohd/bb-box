@@ -212,7 +212,7 @@ test("a box can start from a given build, as a tried image's kept one, on the ba
   assert.deepEqual(started, ["try-build"]);
 });
 
-test("an image's script at start finds bb-box's own commands first on its PATH, such as bb-box-feature (049)", async () => {
+test("an image's script at start finds BB Box's own commands first on its PATH, such as bb-box-feature (049)", async () => {
   const image = { kinds: ["linux"], script: 'hello-tool > "$HOME/tool"\n', projects: ["prj"] };
   const world = setup({}, {
     image: (projectId, kind) => (projectId === "prj" && kind === "linux" ? { name: "tools", image } : null),
@@ -243,7 +243,7 @@ test("a box can choose its image, another project's or the standard one, and a t
   assert.deepEqual([theirs.state, theirs.image?.name, await which(theirs)], ["ready", "theirs", "theirs"], theirs.error ?? "");
   const standard = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux", image: "standard" }));
   assert.deepEqual([standard.image, await which(standard)], [undefined, "none"]);
-  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux", image: "nope" }), /There is no image nope for linux boxes\. box_list names each kind's images; "standard" is bb-box's own\./);
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux", image: "nope" }), /There is no image nope for linux boxes\. box_list names each kind's images; "standard" is BB Box's own\./);
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: "prj", kind: "linux-desktop", image: "mine" }), /There is no image mine for linux-desktop boxes/);
 
   // A thread on a box of its own (033) gets its project's image as any box does.
@@ -288,7 +288,7 @@ test("a kind's ID from before 027 is taken in an acquire, a stored record and a 
   }
   assert.equal((await world.boxes.run(THREAD, box.name, "echo still")).result.stdout, "still\n");
 
-  // A guest whose owner names the earlier ID, after bb-box lost the record.
+  // A guest whose owner names the earlier ID, after BB Box lost the record.
   const guestKey = `backend/fake/guest/${box.guest!.ref}`;
   const guest = (await world.kv.get<{ owner: Record<string, unknown> }>(guestKey))!;
   await world.kv.set(guestKey, { ...guest, owner: { ...guest.owner, kind: "linux-headless" } });
@@ -532,9 +532,9 @@ test("box details say who has control of a device box's device, and of a desktop
   const ios = showing([desktop, DEVICE_DISPLAY]);
   assert.match(boxDetail(android, { owner: "agent", holder: null }), /\nDevice control: the agent\n/);
   assert.match(boxDetail(ios, { owner: "agent", holder: null }), /\nDevice control: the agent\n/);
-  assert.match(boxDetail(android, { owner: "human", holder: null }), /\nDevice control: the user, in bb-box's panel\. Leave the device alone until they hand control back/);
+  assert.match(boxDetail(android, { owner: "human", holder: null }), /\nDevice control: the user, in BB Box's panel\. Leave the device alone until they hand control back/);
   assert.doesNotMatch(boxDetail(android, { owner: "agent", holder: null }), /Desktop control/);
-  assert.match(boxDetail(showing([desktop]), { owner: "human", holder: null }), /\nDesktop control: the user, in bb-box's panel\. Leave the desktop's windows alone until/);
+  assert.match(boxDetail(showing([desktop]), { owner: "human", holder: null }), /\nDesktop control: the user, in BB Box's panel\. Leave the desktop's windows alone until/);
 });
 
 test("box details and kind lists say whether the box user can become root", async () => {
@@ -659,7 +659,7 @@ test("box details promise a restored box enrols again only when its kind can enr
     enrol: { state: "off", hostId: null, error: null },
     capabilities: { ...box.capabilities, enrol },
   });
-  assert.match(boxDetail(restored(true)), /\nBB machine: not enrolled since bb-box restored its lost record\. It enrols again once it runs and answers/);
+  assert.match(boxDetail(restored(true)), /\nBB machine: not enrolled since BB Box restored its lost record\. It enrols again once it runs and answers/);
   assert.match(boxDetail(restored(false)), /\nBB machine: not enrolled(\n|$)/, "a kind that never enrols, such as linux-docker");
 });
 
@@ -674,7 +674,7 @@ test("box details say a box still being made joins BB once it is ready, not that
     capabilities: { ...box.capabilities, enrol: true },
   });
   for (const state of ["acquiring", "starting"] as const) {
-    assert.match(boxDetail(making(state)), /\nBB machine: not yet: it joins BB once it is ready, if bb-box enrols boxes(\n|$)/, state);
+    assert.match(boxDetail(making(state)), /\nBB machine: not yet: it joins BB once it is ready, if BB Box enrols boxes(\n|$)/, state);
   }
   assert.match(boxDetail(making("failed")), /\nBB machine: not enrolled(\n|$)/, "a failed box is not about to join");
   assert.match(boxDetail({ ...making("starting"), readyAt: Date.now() }), /\nBB machine: not enrolled: it was made while boxes of its kind did not join BB/, "a box that was ready before");
@@ -1007,7 +1007,7 @@ test("in a macOS box, the env file takes a project's variables from the agent of
   assert.equal(out, "value-token|value-project|");
 });
 
-test("when bb-box cannot tell which variables to take, commands keep the env file they had", async () => {
+test("when BB Box cannot tell which variables to take, commands keep the env file they had", async () => {
   let fail = false;
   const world = setup(
     {},
@@ -1099,7 +1099,7 @@ test("a macOS command unlocks the box user's signing keychain in its own session
   assert.equal(execFileSync("sh", ["-c", command("macos", "echo ok")], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: tempDir("home") } }), "ok\n");
 });
 
-test("bb-box's commands start with the mark, in each shell they start (#100)", () => {
+test("BB Box's commands start with the mark, in each shell they start (#100)", () => {
   const marked = (script: string) => script.startsWith(LOADS_ENV);
   assert.ok(marked(command("linux", "true")));
   assert.ok(marked(command("macos", "true")));
@@ -1109,7 +1109,7 @@ test("bb-box's commands start with the mark, in each shell they start (#100)", (
   assert.ok(command("macos", "true", { timeoutMs: 1_000 }).includes(inner));
   assert.ok(command("macos", "true", { session: "desktop" }).includes(inner));
   // The login shell gets the mark only when the script has it: one that is
-  // not bb-box's command leaves the hook to load the env file.
+  // not BB Box's command leaves the hook to load the env file.
   assert.ok(marked(endMarked(command("linux", "true"), "MARK", false)));
   assert.ok(!marked(endMarked("true", "MARK", false)));
 });
@@ -1191,8 +1191,8 @@ test("the macOS timeout passes a command's exit on, and kills one that ignores T
   assert.ok(!command("macos", "true").includes("perl"), "no timeout, no wrapper");
 });
 
-test("a box that stops answering while bb-box reconnects to its machine, as after an update, is to be waited for, not released (#415)", async () => {
-  let reconnecting: string | null = "bb-box is reconnecting to devpc, which runs its Docker, as after an update.";
+test("a box that stops answering while BB Box reconnects to its machine, as after an update, is to be waited for, not released (#415)", async () => {
+  let reconnecting: string | null = "BB Box is reconnecting to devpc, which runs its Docker, as after an update.";
   const world = setup({}, { reconnecting: () => reconnecting });
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   const lose = async () => {
@@ -1206,7 +1206,7 @@ test("a box that stops answering while bb-box reconnects to its machine, as afte
   };
   const waited = await lose();
   assert.equal(waited.code, "reconnecting");
-  assert.equal(waited.message, `Box ${box.name} does not answer yet: bb-box is reconnecting to devpc, which runs its Docker, as after an update.`);
+  assert.equal(waited.message, `Box ${box.name} does not answer yet: BB Box is reconnecting to devpc, which runs its Docker, as after an update.`);
   // Otherwise, a box that does not answer is unreachable, as before.
   reconnecting = null;
   assert.equal((await lose()).code, "unreachable");
@@ -1216,7 +1216,7 @@ test("a Windows command with a job starts outside sshd's job, through WMI and cm
   const env = "$env:FOO = 'bar'";
   const script = command("windows", "Get-Process", { cwd: "C:\\work", env, timeoutMs: 1_500, job: { id: "0123456789ab", forget: ["ba9876543210"], prune: true } });
   assert.ok(!script.includes("ping -n"), "no watchdog in the session: the job's own keeps the timeout");
-  assert.match(script, /Remove-Item -Recurse -Force -LiteralPath \(Join-Path \$HOME '\.local\\state\\bb-box\\jobs\\ba9876543210'\)/, "a job whose result bb-box has goes");
+  assert.match(script, /Remove-Item -Recurse -Force -LiteralPath \(Join-Path \$HOME '\.local\\state\\bb-box\\jobs\\ba9876543210'\)/, "a job whose result BB Box has goes");
   assert.match(script, /Where-Object LastWriteTime -lt \(Get-Date\)\.AddDays\(-7\)/, "old jobs go");
   assert.match(script, /\$bbCl='cmd \/d \/v:on \/s \/c '.*' <'\+\$q\+\(Join-Path \$bbJob 'in'\).*' & echo !errorlevel!>'/);
   assert.match(script, /\$bbR=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @\{CommandLine=\$bbCl;.*if\(\$bbR\.ReturnValue -ne 0 -or -not \$bbR\.ProcessId\)\{.*exit 1\}/, "a job Windows did not start fails at once, not waits for ever");
@@ -1425,7 +1425,7 @@ test("a box that is not enrolled is not reconnected after a start", async () => 
   assert.deepEqual(world.reconnected, []);
 });
 
-test("a box stopped behind bb-box's back is found when a command cannot reach it", async () => {
+test("a box stopped behind BB Box's back is found when a command cannot reach it", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.backend.stop!(box.guest!);
@@ -1433,19 +1433,19 @@ test("a box stopped behind bb-box's back is found when a command cannot reach it
   assert.equal((await world.boxes.get(THREAD, box.name)).state, "stopped");
 });
 
-test("a box that stopped by itself says why, and a stop bb-box makes forgets it (#406)", async () => {
+test("a box that stopped by itself says why, and a stop BB Box makes forgets it (#406)", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   world.backend.stopReason = { reason: "tart run exited with status 0: the guest shut itself down", crashed: false, at: Date.UTC(2026, 9, 2, 23, 33, 5) };
   await world.backend.stop!(box.guest!);
   await assert.rejects(
     world.boxes.run(THREAD, box.name, "true"),
-    new RegExp(`^BoxError: Box ${box.name} is stopped\\. It stopped without a request from bb-box at 2026-10-02 23:33:05 UTC\\. tart run exited with status 0: the guest shut itself down\\. Start it first\\.$`),
+    new RegExp(`^BoxError: Box ${box.name} is stopped\\. It stopped without a request from BB Box at 2026-10-02 23:33:05 UTC\\. tart run exited with status 0: the guest shut itself down\\. Start it first\\.$`),
   );
   const stopped = await world.boxes.settled(box);
   assert.equal(stopped!.state, "stopped");
   assert.equal(stopped!.unrequestedStop?.restart, null);
-  assert.match(boxDetail(stopped!), /\nLast unrequested stop: It stopped without a request from bb-box at 2026-10-02 23:33:05 UTC\. tart run exited/);
+  assert.match(boxDetail(stopped!), /\nLast unrequested stop: It stopped without a request from BB Box at 2026-10-02 23:33:05 UTC\. tart run exited/);
   assert.match(boxView(stopped!, true, { owner: "agent" } as never).stopped!, /the guest shut itself down/);
 
   await world.boxes.start(THREAD, box.name);
@@ -1467,17 +1467,17 @@ test("a box whose VM crashed is started again, but not twice in 10 minutes (#406
   assert.ok(found.unrequestedStop!.restart);
   const restarted = await world.boxes.settled(box);
   assert.equal(restarted!.state, "ready");
-  assert.match(boxDetail(restarted!), /Last unrequested stop: It stopped without a request from bb-box at .* UTC\. tart run ended on signal 5 \(SIGTRAP\)\. bb-box started it again at .* UTC\./);
+  assert.match(boxDetail(restarted!), /Last unrequested stop: It stopped without a request from BB Box at .* UTC\. tart run ended on signal 5 \(SIGTRAP\)\. BB Box started it again at .* UTC\./);
 
-  // It crashes again at once: bb-box leaves it stopped, and says so.
+  // It crashes again at once: BB Box leaves it stopped, and says so.
   await world.backend.stop!(box.guest!);
-  await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /SIGTRAP\)\. bb-box left it stopped, as it had started it again after a stop less than 10 minutes before\. Start it first\.$/);
+  await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /SIGTRAP\)\. BB Box left it stopped, as it had started it again after a stop less than 10 minutes before\. Start it first\.$/);
   const left = await world.boxes.settled(box);
   assert.equal(left!.state, "stopped");
   assert.equal(left!.unrequestedStop!.restart, null);
 });
 
-test("a guest deleted outside bb-box marks the box gone, and release still works", async () => {
+test("a guest deleted outside BB Box marks the box gone, and release still works", async () => {
   const world = setup();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux" }));
   await world.backend.release(box.guest!, QUIET);
@@ -1668,7 +1668,7 @@ test("the sweep releases guests no box owns and adopts guests of live threads", 
     await world.kv.delete(`index/${box.id}`);
   }
   world.threads.set("thr_gone", "ended");
-  // A restored box enrols only when bb-box enrols boxes.
+  // A restored box enrols only when BB Box enrols boxes.
   world.general = { ...world.general, enrol: false };
   const enrolled = world.enrolled.length;
   const report = await world.boxes.sweep();
@@ -1713,7 +1713,7 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   const unsure = await acquire("thr_unsure");
   await world.boxes.stop("thr_live", stopped.name);
   await world.boxes.run("thr_live", running.name, "echo work > file.txt");
-  // Every record and index entry goes, as when bb-box loses its storage; the backend's own keys stay.
+  // Every record and index entry goes, as when BB Box loses its storage; the backend's own keys stay.
   for (const key of [...(await world.kv.list("box/")), ...(await world.kv.list("index/"))]) await world.kv.delete(key);
   const boxes = world.restart();
   assert.deepEqual(await boxes.all(), []);
@@ -1741,7 +1741,7 @@ test("after its records are wiped, the sweep restores the boxes of live threads,
   }
   const quiet = await boxes.find(silent.id);
   assert.equal(quiet?.state, "ready", "its guest runs");
-  assert.match(quiet?.error ?? "", /did not answer when bb-box restored/);
+  assert.match(quiet?.error ?? "", /did not answer when BB Box restored/);
   assert.ok(quiet?.restoredAt, "it enrols once it answers");
   assert.equal(quiet?.enrol.state, "off");
   // A sweep while it is still silent leaves it, and releases the guest whose thread BB says ended again.
@@ -2224,7 +2224,7 @@ test("an image's spare goes when its build changes or the image is not in use, a
   assert.equal(started.filter((from) => from === "broken").length, 1, "made once, not in a loop");
   const [check] = await world.boxes.imageSpareChecks();
   assert.deepEqual([check?.name, check?.status], ["Spare of rust for linux on fake", "warn"]);
-  assert.match(check!.detail, /^A spare from its build broken failed to start at \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC, so bb-box keeps none of that build until .* UTC\. Its boxes start from the build meanwhile\.$/);
+  assert.match(check!.detail, /^A spare from its build broken failed to start at \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC, so BB Box keeps none of that build until .* UTC\. Its boxes start from the build meanwhile\.$/);
   build.ref = "rust-3";
   await world.boxes.keepSpares();
   await world.boxes.idle();
@@ -2616,8 +2616,8 @@ test("a box whose backend is off can be seen but says what to fix, and is kept",
     (thrown: unknown) => thrown,
   );
   assert.ok(error instanceof BoxError);
-  const person = `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, or its settings need fixing. Fix them in bb-box's settings.`;
-  const agent = `The ${box.backendLabel} backend that holds box ${box.name} is not in bb-box's settings, or its settings need fixing, so ask the user. The box stays as it is until the backend is back.`;
+  const person = `The ${box.backendLabel} backend that holds box ${box.name} is not in BB Box's settings, or its settings need fixing. Fix them in BB Box's settings.`;
+  const agent = `The ${box.backendLabel} backend that holds box ${box.name} is not in BB Box's settings, or its settings need fixing, so ask the user. The box stays as it is until the backend is back.`;
   assert.equal(error.message, person);
   assert.equal(error.agentMessage, agent);
   const said = failure(error, "Running the command") as { readonly content: readonly { readonly text: string }[] };
@@ -2786,7 +2786,7 @@ exec env -i HOME="$HOME" PATH="$PATH" BBX_SESSION=Aqua "$@"
     assert.deepEqual(ran.calls[0], [...wrapper, "/usr/bin/true"], `${shell}: a no-op checks the wrapper first`);
     assert.deepEqual(ran.calls[1]!.slice(0, -1), [...wrapper, shell, "-c"], `${shell}: the command runs through the wrapper`);
 
-    // Where the box has bb-box's launcher (#628), the command goes through it, with the same result.
+    // Where the box has BB Box's launcher (#628), the command goes through it, with the same result.
     const launcher = join(dir, "launcher");
     writeFileSync(launcher, '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
     const launched = run({}, script.replaceAll(MAC_LAUNCHER, launcher));
@@ -2869,14 +2869,14 @@ test("a box gains what a release adds to its kind, where its backend says the gu
   assert.equal(await boxes.refreshCapabilities(), 0, "once is enough");
 });
 
-test("a job's command outlives its connection and leaves its exit status and output, which the next job removes once bb-box has them (#405)", async () => {
+test("a job's command outlives its connection and leaves its exit status and output, which the next job removes once BB Box has them (#405)", async () => {
   const home = tempDir("jobs");
   const env = { PATH: process.env.PATH, HOME: home };
   const run = (script: string, job: { id: string; forget: string[]; prune: boolean }) =>
     spawnSync("sh", ["-c", command("linux", script, { timeoutMs: 10_000, job })], { env, encoding: "utf8" });
   const read = (id: string) => spawnSync("sh", ["-c", jobScript(id, 4)], { env, encoding: "utf8" });
 
-  // As when bb-box goes mid-command: its end of the connection closes, and
+  // As when BB Box goes mid-command: its end of the connection closes, and
   // the command runs on.
   const id = newJobId();
   const child = spawn("sh", ["-c", command("linux", "echo started; sleep 0.5; echo out; echo err >&2; exit 3", { timeoutMs: 10_000, job: { id, forget: [], prune: false } })], { env, stdio: ["ignore", "pipe", "pipe"] });
@@ -2888,13 +2888,13 @@ test("a job's command outlives its connection and leaves its exit status and out
   assert.deepEqual([read(id).stdout, read(id).stderr], ["3\nstarted\nout\n", "err\n"], "its exit status, then its output, as often as it is read");
 
   // A job passes its result on as a command does, and leaves it too; the
-  // next job removes the jobs bb-box has the results of.
+  // next job removes the jobs BB Box has the results of.
   const next = newJobId();
   const ran = run("echo next; exit 2", { id: next, forget: [id], prune: false });
   assert.deepEqual([ran.status, ran.stdout, ran.stderr], [2, "next\n", ""]);
   assert.deepEqual([read(id).status, read(next).status], [3, 0]);
 
-  // Once per box after bb-box starts, a job removes those older than a week.
+  // Once per box after BB Box starts, a job removes those older than a week.
   const old = join(home, JOBS_DIR, newJobId());
   mkdirSync(old);
   utimesSync(old, new Date(Date.now() - 8 * 86_400_000), new Date(Date.now() - 8 * 86_400_000));
@@ -3056,7 +3056,7 @@ test("a spare that waits stopped stays running until its device has booted, then
   assert.deepEqual(await world.boxes.list(SPARES), [], "no spare of the kind is made again at once");
   const [check] = (await world.boxes.spareChecks()).filter((each) => each.id === "spares.linux");
   assert.equal(check!.status, "warn");
-  assert.match(check!.detail, /^bb-box keeps 1 spare linux box: 0 ready, 0 being made\. A spare waits stopped with its session saved: it holds no memory, and its saved memory takes disk, at most a little over its 4 GiB of memory, besides its own disk\. It has too few: its Pixel 8 did not boot: the emulator exited\.$/);
+  assert.match(check!.detail, /^BB Box keeps 1 spare linux box: 0 ready, 0 being made\. A spare waits stopped with its session saved: it holds no memory, and its saved memory takes disk, at most a little over its 4 GiB of memory, besides its own disk\. It has too few: its Pixel 8 did not boot: the emulator exited\.$/);
   assert.deepEqual(world.errors, []);
 });
 
@@ -3100,7 +3100,7 @@ test("the doctor says spares are off for a kind with a device, and what one cost
   world.testDevice = false;
   world.general = { ...world.general, spares: { linux: 2 } };
   const [kept] = await world.boxes.spareChecks();
-  assert.equal(kept!.detail, "bb-box keeps 2 spare linux boxes: 0 ready, 0 being made. A spare waits stopped with its session saved: it holds no memory, and its saved memory takes disk, at most a little over its 4 GiB of memory, besides its own disk.");
+  assert.equal(kept!.detail, "BB Box keeps 2 spare linux boxes: 0 ready, 0 being made. A spare waits stopped with its session saved: it holds no memory, and its saved memory takes disk, at most a little over its 4 GiB of memory, besides its own disk.");
 });
 
 test("a claim of a spare tells the plugin once the box is the thread's, after a spare that waited stopped has started (063)", async () => {
@@ -3280,7 +3280,7 @@ test("box_list's kinds wait, as acquire does, for a backend's read of a kind it 
 
   declared = false;
   read = () => new Promise(() => undefined);
-  assert.deepEqual(await world.boxes.withheldKinds(50), [{ kind: "ios", label: "iOS Simulator", words: "Being checked: bb-box is still reading whether its backends can make them now. Call box_list again in a few seconds" }]);
+  assert.deepEqual(await world.boxes.withheldKinds(50), [{ kind: "ios", label: "iOS Simulator", words: "Being checked: BB Box is still reading whether its backends can make them now. Call box_list again in a few seconds" }]);
   read = async () => [{ kind: "ios", why: "mac1 did not answer: ssh timed out.", passing: true }];
   assert.deepEqual(await world.boxes.withheldKinds(1_000), [{ kind: "ios", label: "iOS Simulator", words: "Not now: Fake host on mac1 offers them, but not now: mac1 did not answer: ssh timed out." }]);
 });
@@ -3507,7 +3507,7 @@ test("a take that loses its race is asked again, three times, then the box is re
   world.backend.takeLosses = 3;
   await assert.rejects(
     world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "ios", shared: true }),
-    refusedWith("no_capacity", /^Every shared iOS host bb-box asked had its room taken first, 3 times, so this ios box has no slot: Another box claimed it first\. Another box claimed it first\. Another box claimed it first\. Ask again\.$/),
+    refusedWith("no_capacity", /^Every shared iOS host BB Box asked had its room taken first, 3 times, so this ios box has no slot: Another box claimed it first\. Another box claimed it first\. Another box claimed it first\. Ask again\.$/),
   );
 });
 
@@ -3533,7 +3533,7 @@ test("a box in a slot whose host's VM stopped, as after its Mac restarted, is st
   assert.ok(found.unrequestedStop!.restart);
   const restarted = await world.boxes.settled(box);
   assert.equal(restarted!.state, "ready");
-  assert.match(boxDetail(restarted!), /bb-box started it again at .* UTC\./);
+  assert.match(boxDetail(restarted!), /BB Box started it again at .* UTC\./);
   await world.backend.stop!(box.guest!);
   await assert.rejects(world.boxes.start(THREAD, box.name), refusedWith("unsupported", /^A shared ios box cannot be stopped on its own/));
 });
@@ -3736,7 +3736,7 @@ test("071 unit 7: a GPU no provider gives is refused before any box, never turne
   const world = gpuWorld(false);
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }), (error: unknown) => {
     assert.ok(error instanceof BoxError && error.code === "unsupported");
-    assert.equal(error.message, "Not made: no provider here gives linux boxes a shared GPU: Fake host gives linux boxes no GPU. Ask for gpu none, or ask the user. bb-box changed nothing.");
+    assert.equal(error.message, "Not made: no provider here gives linux boxes a shared GPU: Fake host gives linux boxes no GPU. Ask for gpu none, or ask the user. BB Box changed nothing.");
     return true;
   });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: { is: "person" } }), {
@@ -3745,7 +3745,7 @@ test("071 unit 7: a GPU no provider gives is refused before any box, never turne
   assert.deepEqual(await world.boxes.list(THREAD), [], "no box was made");
   const desktops = setup({ id: "fake:gpu", kinds: [{ ...FAKE_KINDS[1]!, id: "linux-desktop", capabilities: { ...FAKE_KINDS[1]!.capabilities, gpu: true } }] });
   await assert.rejects(desktops.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop", gpu: "none", who: AGENT }), {
-    message: "Not made: no provider here gives linux-desktop boxes no GPU: linux-desktop boxes from Fake host always have a GPU. Ask for linux-desktop-cpu for a desktop drawn by the CPU, or ask the user. bb-box changed nothing.",
+    message: "Not made: no provider here gives linux-desktop boxes no GPU: linux-desktop boxes from Fake host always have a GPU. Ask for linux-desktop-cpu for a desktop drawn by the CPU, or ask the user. BB Box changed nothing.",
   });
 });
 
@@ -3780,7 +3780,7 @@ test("071 unit 8, lead: gpu whole is refused while whole cards are off on this i
   world.backend = new Counting({ root: tempDir("gpu-whole-off"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:plain", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared", "whole"] }], cards: GPU_CARDS });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: AGENT }), {
     code: "unsupported",
-    message: "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.",
+    message: "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. BB Box changed nothing.",
   });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: { is: "person" } }), {
     message: "Whole cards are off on this install, so no box gets a card to itself. Ask for gpu shared, or turn Whole cards on in the backend's GPUs section in BB Box's settings, or with bb box backend set <backend> --field whole-cards=true.",
@@ -3797,7 +3797,7 @@ test("071 unit 8: a whole card no provider gives is refused before any box, and 
   world.backend = new FakeBackend({ root: tempDir("gpu-shared-whole"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:plain", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] }], cards: GPU_CARDS });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: AGENT }), {
     code: "unsupported",
-    message: "Not made: no provider here gives linux boxes a whole card: Fake host gives linux boxes a shared GPU, not a whole card. Ask for gpu shared, or ask the user. bb-box changed nothing.",
+    message: "Not made: no provider here gives linux boxes a whole card: Fake host gives linux boxes a shared GPU, not a whole card. Ask for gpu shared, or ask the user. BB Box changed nothing.",
   });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: { is: "person" } }), {
     message: "No provider gives linux boxes a whole card: Fake host gives linux boxes a shared GPU, not a whole card. Ask for gpu shared.",
@@ -3808,19 +3808,19 @@ test("071 unit 8: a whole card no provider gives is refused before any box, and 
 test("071 unit 7: a provider's own refusal reaches an agent in the words it gives an agent, and the person in theirs", async () => {
   class Refusing extends FakeBackend {
     override async capacity() {
-      return { ok: false, message: "No card has room. Release a box on a card.", agentMessage: "Not made: no card has room. Ask for gpu none, or ask the user. bb-box changed nothing.", warm: null, hosts: [] };
+      return { ok: false, message: "No card has room. Release a box on a card.", agentMessage: "Not made: no card has room. Ask for gpu none, or ask the user. BB Box changed nothing.", warm: null, hosts: [] };
     }
   }
   const world = setup({ id: "fake:plain" });
   world.backend = new Refusing({ root: tempDir("gpu-refusing"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:plain", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] }] });
-  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }), { code: "no_capacity", message: "Not made: no card has room. Ask for gpu none, or ask the user. bb-box changed nothing." });
+  await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }), { code: "no_capacity", message: "Not made: no card has room. Ask for gpu none, or ask the user. BB Box changed nothing." });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: { is: "person" } }), { code: "no_capacity", message: "No card has room. Release a box on a card." });
 });
 
 test("071 unit 7, Astra 8 and Fable 4: a box whose acquire is refused keeps the person's words and the agent's, and an agent's tools show the agent's", async () => {
   class RefusedLate extends FakeBackend {
     override async acquire(): Promise<never> {
-      throw new BackendError("no_capacity", "No card has room. Release a box on a card.", "Not made: no card has room. Ask for gpu none, or ask the user. bb-box changed nothing.");
+      throw new BackendError("no_capacity", "No card has room. Release a box on a card.", "Not made: no card has room. Ask for gpu none, or ask the user. BB Box changed nothing.");
     }
   }
   const world = setup({ id: "fake:plain" });
@@ -3828,7 +3828,7 @@ test("071 unit 7, Astra 8 and Fable 4: a box whose acquire is refused keeps the 
   const failed = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
   assert.equal(failed.state, "failed");
   assert.equal(failed.error, "No card has room. Release a box on a card.");
-  assert.equal(errorForAgent(failed), "Not made: no card has room. Ask for gpu none, or ask the user. bb-box changed nothing.");
+  assert.equal(errorForAgent(failed), "Not made: no card has room. Ask for gpu none, or ask the user. BB Box changed nothing.");
   assert.match(boxDetail(seenByAgent(failed)), /State: failed\. Not made: no card has room\./);
   assert.match(boxLine(seenByAgent(failed)), /Not made: no card has room\./);
   assert.match(boxDetail(failed), /Release a box on a card\./, "the person's page keeps the person's words");
@@ -3853,7 +3853,7 @@ class SwitchingCards extends FakeBackend {
     const from = this.#partOf(guest);
     if (to.gpu === undefined || to.gpu === from) return plan;
     const fixed = from === "none" || to.gpu === "none";
-    const refusal = fixed ? { person: `${guest.ref} cannot change its GPU here.`, agent: `Not resized: ${guest.ref} cannot change its GPU here. bb-box changed nothing.` } : to.gpu === "whole" ? this.wholeRefusal : null;
+    const refusal = fixed ? { person: `${guest.ref} cannot change its GPU here.`, agent: `Not resized: ${guest.ref} cannot change its GPU here. BB Box changed nothing.` } : to.gpu === "whole" ? this.wholeRefusal : null;
     return { ...plan, gpu: { from, to: to.gpu, way: fixed ? "no" : "live", card: null, fromCard: null, toCard: null, stopped: false, installs: null, others: [], words: `GPU: ${from} → ${to.gpu} · Live.`, refusal } };
   }
 
@@ -3905,10 +3905,10 @@ test("071 unit 11: box_resize refuses, for each audience and changing nothing, a
   await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "none" }, {}), (error: unknown) => {
     assert.ok(error instanceof BoxError && error.code === "unsupported");
     assert.equal(error.message, `${box.guest!.ref} cannot change its GPU here.`);
-    assert.equal(error.agentMessage, `Not resized: ${box.guest!.ref} cannot change its GPU here. bb-box changed nothing.`);
+    assert.equal(error.agentMessage, `Not resized: ${box.guest!.ref} cannot change its GPU here. BB Box changed nothing.`);
     return true;
   });
-  cards.wholeRefusal = { person: "No card is free for it alone.", agent: "Not resized: no card is free for it alone. Keep the GPU shared, or ask the user. bb-box changed nothing." };
+  cards.wholeRefusal = { person: "No card is free for it alone.", agent: "Not resized: no card is free for it alone. Keep the GPU shared, or ask the user. BB Box changed nothing." };
   const shown = await world.boxes.resize(THREAD, box.name, { gpu: "whole" }, { check: true, reportPlan: true });
   assert.equal(shown.changed, false);
   assert.equal(shown.plan?.gpu?.refusal?.person, "No card is free for it alone.");
@@ -3919,15 +3919,15 @@ test("071 unit 11: box_resize refuses, for each audience and changing nothing, a
   world.general = { ...world.general, wholeCards: false };
   await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "whole" }, {}), {
     code: "unsupported",
-    message: "Not resized: whole cards are off on this install. Keep the GPU shared, or turn Whole cards on in the backend's GPUs section in BB Box's settings, or with bb box backend set <backend> --field whole-cards=true. bb-box changed nothing.",
-    agentMessage: "Not resized: whole cards are off on this install. Keep the GPU shared, or ask the user. bb-box changed nothing.",
+    message: "Not resized: whole cards are off on this install. Keep the GPU shared, or turn Whole cards on in the backend's GPUs section in BB Box's settings, or with bb box backend set <backend> --field whole-cards=true. BB Box changed nothing.",
+    agentMessage: "Not resized: whole cards are off on this install. Keep the GPU shared, or ask the user. BB Box changed nothing.",
   });
   const plain = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
   assert.equal(plain.backend, "fake:plain");
   await assert.rejects(world.boxes.resize(THREAD, plain.name, { gpu: "shared" }, {}), {
     code: "unsupported",
     message: `Fake host cannot change the GPU of its linux boxes, so box ${plain.name} keeps its GPU. Make a new box with the GPU it needs.`,
-    agentMessage: `Not resized: Fake host cannot change the GPU of its linux boxes, so box ${plain.name} keeps its GPU. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`,
+    agentMessage: `Not resized: Fake host cannot change the GPU of its linux boxes, so box ${plain.name} keeps its GPU. Acquire a new box with the GPU it needs, or ask the user. BB Box changed nothing.`,
   });
   assert.deepEqual(world.backend.resized, []);
   world.general = { ...world.general, wholeCards: true };
@@ -3995,7 +3995,7 @@ class RestartingCards extends FakeBackend {
     const changed = this.changesUnderLock;
     if (changed) {
       this.changesUnderLock = null;
-      throw new GpuPlanChanged("The plan changed under the lock.", "Not resized: the plan changed under the lock. bb-box changed nothing.", changed);
+      throw new GpuPlanChanged("The plan changed under the lock.", "Not resized: the plan changed under the lock. BB Box changed nothing.", changed);
     }
     const failing = this.stopsThenFails;
     if (failing) {
@@ -4040,8 +4040,8 @@ test("071 unit 9: a GPU change that needs a restart is refused without restart t
   assert.equal(box.backend, "fake:restarting");
   await assert.rejects(world.boxes.resize(THREAD, box.name, { cores: 4, gpu: "shared" }, {}), (error: unknown) => {
     assert.ok(error instanceof BoxError && error.code === "needs_restart");
-    assert.match(error.message, new RegExp(`^Resizing box ${box.name} to 4 cores, 4 GiB memory, GPU shared needs a restart for its cores and GPU: the box shuts down and starts again, for about \\d+ s, which ends everything running in it\\. bb-box changed nothing\\.$`));
-    assert.match(error.agentMessage ?? "", new RegExp(`^Not resized: Resizing box ${box.name} to 4 cores, 4 GiB memory, GPU shared needs a restart for its cores and GPU: .* Call box_resize with restart true to do that, or ask the user\\. bb-box changed nothing\\.$`));
+    assert.match(error.message, new RegExp(`^Resizing box ${box.name} to 4 cores, 4 GiB memory, GPU shared needs a restart for its cores and GPU: the box shuts down and starts again, for about \\d+ s, which ends everything running in it\\. BB Box changed nothing\\.$`));
+    assert.match(error.agentMessage ?? "", new RegExp(`^Not resized: Resizing box ${box.name} to 4 cores, 4 GiB memory, GPU shared needs a restart for its cores and GPU: .* Call box_resize with restart true to do that, or ask the user\\. BB Box changed nothing\\.$`));
     return true;
   });
   assert.equal(cards.agreedSeen.length, 0, "nothing was asked of the backend");
@@ -4072,7 +4072,7 @@ test("071 unit 9, the plan made again: a resize whose GPU plan changed since its
   cards.moveNow = true;
   await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "whole" }, {}), (error: unknown) => {
     assert.ok(error instanceof BoxError && error.code === "needs_restart");
-    assert.equal(error.agentMessage, `Not resized: when you checked, ${box.guest!.ref} could change to a whole card live, on card 0; now it would move to card 1 with a restart. Call box_resize with restart true to do that, or ask the user. bb-box changed nothing.`);
+    assert.equal(error.agentMessage, `Not resized: when you checked, ${box.guest!.ref} could change to a whole card live, on card 0; now it would move to card 1 with a restart. Call box_resize with restart true to do that, or ask the user. BB Box changed nothing.`);
     return true;
   });
   assert.equal(cards.agreedSeen.length, 0, "nothing changed");
@@ -4080,7 +4080,7 @@ test("071 unit 9, the plan made again: a resize whose GPU plan changed since its
   cards.moveTo = 2;
   await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "whole" }, { restart: true }), (error: unknown) => {
     assert.ok(error instanceof BoxError && error.code === "try_again");
-    assert.equal(error.agentMessage, `Not resized: when you checked, ${box.guest!.ref} would move to card 1 with a restart; now it would move to card 2 with a restart. Call box_resize with restart true to do that, or ask the user. bb-box changed nothing.`);
+    assert.equal(error.agentMessage, `Not resized: when you checked, ${box.guest!.ref} would move to card 1 with a restart; now it would move to card 2 with a restart. Call box_resize with restart true to do that, or ask the user. BB Box changed nothing.`);
     return true;
   });
   assert.equal(cards.agreedSeen.length, 0, "a plan that changed again since it was told is asked again");
@@ -4106,7 +4106,7 @@ test("071 unit 9: a restart for the GPU that leaves the box stopped is recorded 
   });
   const after = await world.boxes.get(THREAD, box.name);
   assert.equal(after.state, "stopped");
-  assert.equal(after.unrequestedStop ?? null, null, "bb-box stopped it, as part of the resize");
+  assert.equal(after.unrequestedStop ?? null, null, "BB Box stopped it, as part of the resize");
   assert.equal(after.size?.gpu, "shared");
   assert.equal(after.guest?.claim?.part, "shared");
   assert.equal(after.resize?.state, "failed");
@@ -4135,7 +4135,7 @@ test("071 unit 9, review 3: the plan a check said is kept through a refusal for 
   cards.addTo = 2;
   await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true }), (error: unknown) => {
     assert.ok(error instanceof BoxError && error.code === "try_again");
-    assert.equal(error.agentMessage, `Not resized: when you checked, ${box.guest!.ref} would get card 1 with a restart; now it would get card 2 with a restart. Call box_resize with restart true to do that, or ask the user. bb-box changed nothing.`);
+    assert.equal(error.agentMessage, `Not resized: when you checked, ${box.guest!.ref} would get card 1 with a restart; now it would get card 2 with a restart. Call box_resize with restart true to do that, or ask the user. BB Box changed nothing.`);
     return true;
   });
   assert.equal(cards.agreedSeen.length, 0, "nothing was carried out");
@@ -4182,7 +4182,7 @@ test("071 unit 9, review 5: a restart cancelled after it stopped the box is reco
 test("071 unit 9, Fable low 2: a refusal that changed nothing on a running box, whose power cannot be read after it, keeps the box ready; one the backend left stopped is stopped", async () => {
   const { world, cards } = restartingWorld();
   const box = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
-  cards.stopsThenFails = { error: new BackendError("no_capacity", "No card has room for it now. bb-box changed nothing."), running: true, thenUnreadable: true };
+  cards.stopsThenFails = { error: new BackendError("no_capacity", "No card has room for it now. BB Box changed nothing."), running: true, thenUnreadable: true };
   await assert.rejects(world.boxes.resize(THREAD, box.name, { gpu: "shared" }, { restart: true }), /No card has room/);
   cards.powerUnreadable = false;
   assert.equal((await world.boxes.get(THREAD, box.name)).state, "ready", "the box it did not stop is not recorded stopped");
@@ -4246,7 +4246,7 @@ test("071 unit 15: a request that leaves gpu out gets its kind's GPU when not as
   world.general = { ...world.general, wholeCards: true, gpuWhenNotAsked: { linux: "shared" } };
   world.backend = new FakeBackend({ root: tempDir("gpu-default"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:cards", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared", "whole"] }], cards: GPU_CARDS, boxesPerCard: 10 });
   const left = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
-  assert.equal(left.size?.gpu, "shared", "the kind's setting, not bb-box's own none");
+  assert.equal(left.size?.gpu, "shared", "the kind's setting, not BB Box's own none");
   const asked = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "none", who: AGENT }));
   assert.equal(asked.size?.gpu, "none");
   world.general = { ...world.general, gpuWhenNotAsked: { linux: "whole" } };
@@ -4262,7 +4262,7 @@ test("071 unit 15, review: a kind's configured GPU is a requirement: a provider 
   world.general = { ...world.general, gpuWhenNotAsked: { linux: "shared" } };
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }), {
     code: "unsupported",
-    message: "Not made: no provider here gives linux boxes a shared GPU, the GPU the user set for linux boxes that do not ask for one: Fake host gives linux boxes no GPU. Ask for gpu none, or ask the user. bb-box changed nothing.",
+    message: "Not made: no provider here gives linux boxes a shared GPU, the GPU the user set for linux boxes that do not ask for one: Fake host gives linux boxes no GPU. Ask for gpu none, or ask the user. BB Box changed nothing.",
   });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: { is: "person" } }), {
     message: "No provider gives linux boxes a shared GPU, linux's GPU when not asked for in BB Box's settings: Fake host gives linux boxes no GPU. Ask for gpu none, or change linux's GPU when not asked for in BB Box's settings, or with bb box kind set linux --gpu <none|shared|whole>.",
@@ -4276,5 +4276,5 @@ test("071 unit 15, review: a kind's configured GPU is a requirement: a provider 
   assert.equal(asked.size?.gpu, "none", "a part asked for wins over the setting");
   world.general = { ...world.general, gpuWhenNotAsked: {} };
   const shipped = await ready(world.boxes, await world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }));
-  assert.equal(shipped.size?.gpu, "none", "with no setting, bb-box's own default is as before");
+  assert.equal(shipped.size?.gpu, "none", "with no setting, BB Box's own default is as before");
 });

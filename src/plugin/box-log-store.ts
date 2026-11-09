@@ -15,6 +15,8 @@ import {
   type ObservedState,
 } from "../core/box-log.ts";
 import { SCHEMA, type AttachedFile } from "./attached-files.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export const BOX_LOG_GAPS_KEY = "box-log/gaps";
 const WHY_BYTES = 256;
@@ -372,7 +374,7 @@ export class BoxLogStore implements BoxLog {
 
   checks(): DoctorCheck[] {
     const file = this.#file;
-    const where = file.attached ? `${file.spec.file}, attached to bb-box's database` : `bb-box's database, as ${file.refusal ? `its handle refused to attach ${file.spec.file}: ${file.refusal}` : "it could not attach its own file"}`;
+    const where = file.attached ? `${file.spec.file}, attached to ${PRODUCT}'s database` : `${PRODUCT}'s database, as ${file.refusal ? `its handle refused to attach ${file.spec.file}: ${file.refusal}` : "it could not attach its own file"}`;
     const failures = this.#failures;
     if (failures) {
       return [
@@ -380,13 +382,13 @@ export class BoxLogStore implements BoxLog {
           id: "box-log",
           name: "Box log",
           status: "fail",
-          detail: `bb-box could not write ${failures.count} ${failures.count === 1 ? "event" : "events"} to its box log in ${where}, from ${new Date(failures.firstAt).toISOString()} to ${new Date(failures.lastAt).toISOString()}: ${sentence(failures.lastError)} Boxes, stops, starts and releases still work, and pages say nothing the log would have said about those boxes.`,
-          fix: "Check that BB's data folder has room and that bb-box's files in it are writable, then restart bb-box.",
+          detail: `${PRODUCT} could not write ${failures.count} ${failures.count === 1 ? "event" : "events"} to its box log in ${where}, from ${new Date(failures.firstAt).toISOString()} to ${new Date(failures.lastAt).toISOString()}: ${sentence(failures.lastError)} Boxes, stops, starts and releases still work, and pages say nothing the log would have said about those boxes.`,
+          fix: `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart bb-box.`,
         },
       ];
     }
     if (file.problem) {
-      return [{ id: "box-log", name: "Box log", status: "fail", detail: `bb-box could not set up its box log in ${where}: ${sentence(file.problem)}`, fix: "Check that BB's data folder has room and that bb-box's files in it are writable, then restart bb-box." }];
+      return [{ id: "box-log", name: "Box log", status: "fail", detail: `${PRODUCT} could not set up its box log in ${where}: ${sentence(file.problem)}`, fix: `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart bb-box.` }];
     }
     let rows: number | null = null;
     try {
@@ -410,7 +412,7 @@ export class BoxLogStore implements BoxLog {
         name: "Box log",
         status: file.attached ? "ok" : "warn",
         detail: `Who stopped, started and released each box, and when, in ${where}: ${rows ?? "an unknown number of"} events${size}.`,
-        fix: file.attached ? null : "Nothing is lost: the box log keeps fewer events in bb-box's database.",
+        fix: file.attached ? null : `Nothing is lost: the box log keeps fewer events in ${PRODUCT}'s database.`,
       },
     ];
   }

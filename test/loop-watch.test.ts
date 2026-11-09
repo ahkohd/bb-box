@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { LoopWatch } from "../src/plugin/loop-watch.ts";
 import { forPurpose, spawnTotals, timedSpawn, withPurposes } from "../src/transports/spawns.ts";
 
-test("the event loop watch tells, once a minute, how often bb-box's loop stood still and how much of it was garbage collection", () => {
+test("the event loop watch tells, once a minute, how often BB Box's loop stood still and how much of it was garbage collection", () => {
   let now = 1_000;
   const lines: string[] = [];
   const watch = new LoopWatch({ log: (line) => lines.push(line), now: () => now, manual: true });
@@ -33,7 +33,7 @@ test("the event loop watch tells, once a minute, how often bb-box's loop stood s
   watch.dispose();
 });
 
-test("the minute's line tells the processes bb-box started and how long their spawn calls held the loop, and each hour the server's memory", () => {
+test("the minute's line tells the processes BB Box started and how long their spawn calls held the loop, and each hour the server's memory", () => {
   let now = 1_000;
   const lines: string[] = [];
   let spawned = { count: 10, ms: 50 };
@@ -69,13 +69,13 @@ test("the minute's line tells the processes bb-box started and how long their sp
   for (let i = 0; i < 2_400; i++) tick(100);
   assert.equal(
     lines.at(-1),
-    "BB's server, which runs bb-box: its heap held 2100 MiB of 2300 MiB, 400 MiB more was outside it, and the process 3500 MiB in all; bb-box started 3 processes in the last 5 minutes, the spawn calls taking 240 ms in all.",
+    "BB's server, which runs bb-box: its heap held 2100 MiB of 2300 MiB, 400 MiB more was outside it, and the process 3500 MiB in all; BB Box started 3 processes in the last 5 minutes, the spawn calls taking 240 ms in all.",
   );
   spawned = { count: 14, ms: 300 };
   for (let i = 0; i < 36_000; i++) tick(100);
   assert.equal(
     lines.at(-1),
-    "BB's server, which runs bb-box: its heap held 2100 MiB of 2300 MiB, 400 MiB more was outside it, and the process 3500 MiB in all; bb-box started 1 process in the last hour, the spawn calls taking 10 ms in all.",
+    "BB's server, which runs bb-box: its heap held 2100 MiB of 2300 MiB, 400 MiB more was outside it, and the process 3500 MiB in all; BB Box started 1 process in the last hour, the spawn calls taking 10 ms in all.",
   );
   watch.dispose();
 });
@@ -92,7 +92,7 @@ test("the memory line tells how many children the helper started and which calle
   }
   assert.equal(
     lines.at(-1),
-    "BB's server, which runs bb-box: bb-box started 10 processes in the last 5 minutes, the spawn calls taking 1 ms in all, 9 of them by the helper; the most: c (7), a < b (3), d (1).",
+    "BB's server, which runs bb-box: BB Box started 10 processes in the last 5 minutes, the spawn calls taking 1 ms in all, 9 of them by the helper; the most: c (7), a < b (3), d (1).",
   );
   watch.dispose();
 });

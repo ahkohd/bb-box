@@ -4,6 +4,8 @@
 // talks to it with this.
 
 import type { ByteChannel } from "../transports/types.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
 /** The longest line bb-box reads: a screenshot is one line of base64. */
@@ -203,7 +205,7 @@ export class McpSession {
       const answer =
         message.method === "ping"
           ? { jsonrpc: "2.0", id: message.id, result: {} }
-          : { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: `bb-box does not handle ${message.method}.` } };
+          : { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: `${PRODUCT} does not handle ${message.method}.` } };
       void this.#send(answer).catch(() => {});
       return;
     }

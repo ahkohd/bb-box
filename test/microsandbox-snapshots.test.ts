@@ -65,7 +65,7 @@ test("070 unit 10: msb 0.7.7's recorded answers parse: a full snapshot that depe
   assert.deepEqual(parseInspect("Source Sandbox:       bbbox-bx6shhmycajhqm-k3j9\nLabels:               bbbox.box=bx6shhmycajhqm, bbbox.install=inst-1a2b\n").labels, { "bbbox.box": "bx6shhmycajhqm", "bbbox.install": "inst-1a2b" });
 });
 
-test("070 unit 10: bb-box's microsandbox snapshots are pinned to the msb whose snapshots its checks measured, and any other msb turns them off with words", async () => {
+test("070 unit 10: BB Box's microsandbox snapshots are pinned to the msb whose snapshots its checks measured, and any other msb turns them off with words", async () => {
   assert.equal(SNAPSHOTS_CHECKED_WITH, MSB_VERSION, "moving msb past the release the snapshot checks measured needs them run again (docs/research/box-snapshots/microsandbox-unit-10.sh), then this constant moved");
   assert.ok(readFileSync(new URL("../docs/research/box-snapshots/microsandbox-unit-10.sh", import.meta.url), "utf8").includes(`msb ${SNAPSHOTS_CHECKED_WITH}`));
   assert.equal(versionRefusal("0.7.7"), null);
@@ -128,7 +128,7 @@ test("070 close-out: a Mac host's microsandbox boxes take and delete snapshots, 
   await assert.rejects(backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal()), (error: unknown) => error instanceof SnapshotFailed && /this host has msb 0\.8\.0/.test(error.message));
 });
 
-test("070 close-out: where msb's home is reached through a link, as bb-box's wrapper reaches a long one and a Mac's /tmp always is, msb refuses a snapshot's ID, so bb-box names each by group and member to inspect, restore, fork and delete it", async () => {
+test("070 close-out: where msb's home is reached through a link, as BB Box's wrapper reaches a long one and a Mac's /tmp always is, msb refuses a snapshot's ID, so BB Box names each by group and member to inspect, restore, fork and delete it", async () => {
   const { fake, backend } = setup();
   fake.set({ homeThroughLink: true });
   const box = identity();
@@ -209,7 +209,7 @@ test("070 unit 10: a box made before, whose Docker disk is a file of the host's,
   const guest: Guest = { ref: name, host: null, address: null, size: SMALL, data: { box: box.boxId } };
   const plan = await backend.planSnapshots(guest, "linux", null, signal());
   assert.equal(plan.take.ok, false);
-  assert.equal(plan.take.why, "It was made before bb-box could snapshot a box's Docker disk: its Docker data is on a file of the host's, which msb leaves out of a snapshot and cannot give a restored box. A new box can.");
+  assert.equal(plan.take.why, "It was made before BB Box could snapshot a box's Docker disk: its Docker data is on a file of the host's, which msb leaves out of a snapshot and cannot give a restored box. A new box can.");
   assert.ok(plan.take.why!.includes(HOST_FILE_DOCKER.slice(1)));
   assert.equal(plan.busy, null, "a refusal, not a wait");
   await assert.rejects(backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false }, QUIET, signal()), (error: unknown) => error instanceof SnapshotFailed && error.message.includes(HOST_FILE_DOCKER.slice(1)));
@@ -239,7 +239,7 @@ test("070 unit 10: a delete removes a snapshot others depend on with --force, as
   assert.deepEqual(fake.calls().filter((call) => call[0] === "snapshot" && call[1] === "remove").at(-1), ["snapshot", "remove", "--quiet", `bbbox-${box}:${snapshotName("test", ids[2]!, 7)}`], "no --force for a snapshot nothing depends on");
   await backend.deleteSnapshot({ id: ids[2]!, ref: taken[2]!.ref, guest }, QUIET, signal());
   const other = new MsbBackend(msbConfig(), testContext(undefined, "other"), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
-  await assert.rejects(other.deleteSnapshot({ id: ids[1]!, ref: taken[1]!.ref, guest }, QUIET, signal()), (error: unknown) => error instanceof SnapshotFailed && /is not bb-box's snapshot .* of this install's/.test(error.message));
+  await assert.rejects(other.deleteSnapshot({ id: ids[1]!, ref: taken[1]!.ref, guest }, QUIET, signal()), (error: unknown) => error instanceof SnapshotFailed && /is not BB Box's snapshot .* of this install's/.test(error.message));
   assert.deepEqual(await other.heldSnapshots(signal()), []);
 });
 
@@ -278,7 +278,7 @@ test("070 unit 10: a restore makes the box a new microVM from the snapshot, with
   assert.equal(fake.inspect(back.ref).config.labels["bbbox.box"], box.boxId);
 });
 
-test("070 unit 10: a part-made restored microVM, before bb-box labelled it, is deleted by a release and counted by power, and a fork's leftover is made again", async () => {
+test("070 unit 10: a part-made restored microVM, before BB Box labelled it, is deleted by a release and counted by power, and a fork's leftover is made again", async () => {
   const { fake, backend } = setup();
   const box = identity();
   const guest = await backend.acquire(box, null, acquiring(), signal());
@@ -317,7 +317,7 @@ test("070 unit 10: a fork boots a new microVM from the snapshot's disk only, nev
   assert.equal(config.labels["bbbox.box"], fork.boxId);
   assert.ok(config.env.includes(`BBBOX_IDENTITY=${fork.boxId}`), "a value new to the fork, which its marker does not hold, so it resets");
   assert.ok(!config.env.includes(`BBBOX_IDENTITY=${source.boxId}`));
-  assert.ok(!existsSync(join(fake.dir, "..", "sandboxes", made.ref, "run", "bb-box", "ready")), "no memory, so nothing of the source runs: bb-box starts it");
+  assert.ok(!existsSync(join(fake.dir, "..", "sandboxes", made.ref, "run", "bb-box", "ready")), "no memory, so nothing of the source runs: BB Box starts it");
   assert.equal(readFileSync(join(fake.home(made.ref), "work.txt"), "utf8"), "set up");
   const taken = identity();
   await new MsbCli(null, null, undefined, { dir: fake.dir }).ok(["create", "bbbox/linux:1", "--name", sandboxName(taken.boxId), "--label", "bbbox.backend=microsandbox", "--label", "bbbox.install=test", "--label", "bbbox.box=bx999999999998", "--cpus", "1", "--memory", "512M", "--root-disk", "8G"]);
@@ -374,7 +374,7 @@ test("070 unit 10: each start puts /run in memory again and the box's own hostna
   assert.match(OWN_HOSTNAME, /hostname "\$h"; printf '%s\\n' "\$h" >\/etc\/hostname/);
 });
 
-test("070 unit 10: through bb-box's own snapshots, a restore swaps the box to a new microVM that keeps its ID and records, the old one goes, the snapshots outlive it, and a release deletes those nobody kept", async () => {
+test("070 unit 10: through BB Box's own snapshots, a restore swaps the box to a new microVM that keeps its ID and records, the old one goes, the snapshots outlive it, and a release deletes those nobody kept", async () => {
   const fake = fakeMsbHost();
   const state = world({ markersOn: false, backend: (storage) => new MsbBackend(msbConfig(), testContext(storage, "test", { id: "fake" }), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 }) });
   const box = await readyBox(state);
@@ -418,7 +418,7 @@ test("070 unit 10: through bb-box's own snapshots, a restore swaps the box to a 
   assert.deepEqual(fake.snapshots(), []);
 });
 
-test("070 unit 10 review (Astra 1): bb-box restarting after a restore's new microVM took its access file, before its image's command ran, starts it again on recovery, and deletes the old microVM only once the new one is ready", async () => {
+test("070 unit 10 review (Astra 1): BB Box restarting after a restore's new microVM took its access file, before its image's command ran, starts it again on recovery, and deletes the old microVM only once the new one is ready", async () => {
   const fake = fakeMsbHost();
   const state = world({ markersOn: false, backend: (storage) => new MsbBackend(msbConfig(), testContext(storage, "test", { id: "fake" }), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 }) });
   const box = await readyBox(state);
@@ -454,7 +454,7 @@ test("070 unit 10 review (Astra 1): bb-box restarting after a restore's new micr
   assert.equal(state.store.operation(cut.id)!.state, "done");
 });
 
-test("070 unit 10 review (Opus 4): the upkeep removes the Docker disk template an earlier bb-box made on a host without mkfs.ext4, and the status script no longer counts it", () => {
+test("070 unit 10 review (Opus 4): the upkeep removes the Docker disk template an earlier BB Box made on a host without mkfs.ext4, and the status script no longer counts it", () => {
   const dir = join(tempDir("msb-templates"), "microsandbox");
   mkdirSync(join(dir, "templates"), { recursive: true });
   writeFileSync(join(dir, "templates", "docker-64G.ext4"), Buffer.alloc(4 * 1024 * 1024, 1));

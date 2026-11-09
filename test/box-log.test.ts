@@ -186,7 +186,7 @@ test("the log keeps a box's last 7 days and its latest event of each kind, and a
   assert.equal(log.view("bxone").lastStop?.by?.is, "agent");
 });
 
-test("the view gives the last start, the last stop and the last failed operation with what bb-box observed (069 G6)", () => {
+test("the view gives the last start, the last stop and the last failed operation with what BB Box observed (069 G6)", () => {
   const folder = tempDir("box-log-view");
   const { files } = opened(folder);
   const log = new BoxLogStore({ file: files.log });

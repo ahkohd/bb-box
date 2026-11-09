@@ -1,12 +1,11 @@
 import { experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { snapshotConfig, type BackendConfig } from "../core/document.ts";
 import type { Contract } from "../plugin/contract.ts";
 import type { DriverView } from "../plugin/configuration.ts";
-import { message, relativeTime } from "./common.tsx";
 import { PRODUCT } from "./product.ts";
 import { effectiveKind, inheritSource, sourceName, withBackend } from "./config.ts";
 import { switchKey, useSettings } from "./settings-context.tsx";
@@ -58,6 +57,7 @@ function SnapshotPicturesSwitch() {
 }
 
 function BoxesOptions() {
+  const defaultKindProblemId = useId();
   const { state, instant, writes } = useSettings();
   const draft = useDraft(BOXES_PART, "Boxes");
   const general = { ...state.defaults.general, ...state.document.general };
@@ -70,16 +70,17 @@ function BoxesOptions() {
     return info ? kindName(state.kinds, info) : String(value);
   };
   const problem = (path: string) => state.problems.find((candidate) => candidate.path === path)?.message ?? null;
+  const defaultKindProblem = problem("general.defaultKind");
   return (
     <div className="space-y-6">
       <RestoredNote draft={draft} />
       <Card>
         <Rows>
           <div>
-            <SettingRow label="Default kind" description="What a thread gets when it does not say." problem={problem("general.defaultKind")} path="general/defaultKind">
+            <SettingRow label="Default kind" description="What a thread gets when it does not say." problem={defaultKindProblem} problemId={defaultKindProblem ? defaultKindProblemId : undefined} path="general/defaultKind">
               <SavedTick show={instant.isSaved(defaultKey)} />
               <Select value={pendingDefault ?? general.defaultKind} onValueChange={(kind) => void instant.run(writes.general(state, "defaultKind", kind, "The default kind", nameOf))}>
-                <SelectTrigger className="h-8 w-56 text-xs" aria-label="Default kind" data-draft-path="general/defaultKind">
+                <SelectTrigger className="h-8 w-56 text-xs" aria-label="Default kind" aria-describedby={defaultKindProblem ? defaultKindProblemId : undefined} data-draft-path="general/defaultKind">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -166,21 +167,23 @@ function hasSharedIosHosts(state: ReturnType<typeof useSettings>["state"], confi
 }
 
 function DevicesOptions() {
+  const encoderProblemId = useId();
   const { state, nav, instant, writes } = useSettings();
   const general = { ...state.defaults.general, ...state.document.general };
   const encoderKey = switchKey.general("iosEncoder");
   const sharing = state.document.backends.filter((config) => !isMachineDocker(config) && hasSharedIosHosts(state, config));
   const deviceKinds = state.kinds.filter((kind) => kind.device);
+  const encoderProblem = state.problems.find((problem) => problem.path === "general.iosEncoder")?.message ?? null;
   return (
     <div className="space-y-6">
       <Group title="Streaming">
         <Card>
           <Rows>
             <div>
-              <SettingRow label="iOS video encoding" description="Automatic uses a Mac's hardware encoder, and software where it has none or its encoder fails. A box takes a change when its device server is next delivered." problem={state.problems.find((problem) => problem.path === "general.iosEncoder")?.message ?? null} path="general/iosEncoder">
+              <SettingRow label="iOS video encoding" description="Automatic uses a Mac's hardware encoder, and software where it has none or its encoder fails. A box takes a change when its device server is next delivered." problem={encoderProblem} problemId={encoderProblem ? encoderProblemId : undefined} path="general/iosEncoder">
                 <SavedTick show={instant.isSaved(encoderKey)} />
                 <Select value={instant.pendingValue<string>(encoderKey) ?? general.iosEncoder} onValueChange={(choice) => void instant.run(writes.general(state, "iosEncoder", choice, "iOS video encoding", (value) => iosEncoderWords(String(value))))}>
-                  <SelectTrigger className="h-8 w-full text-xs sm:w-44" aria-label="iOS video encoding" data-draft-path="general/iosEncoder">
+                  <SelectTrigger className="h-8 w-full text-xs sm:w-44" aria-label="iOS video encoding" aria-describedby={encoderProblem ? encoderProblemId : undefined} data-draft-path="general/iosEncoder">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

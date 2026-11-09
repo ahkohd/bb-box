@@ -116,7 +116,7 @@ async function start(
     threads,
     hosts,
     backend: null as FakeBackend | null,
-    /** The context bb-box gave each fake backend it made. */
+    /** The context BB Box gave each fake backend it made. */
     contexts: [] as BackendContext[],
     /** Keys BB's bootstrap ran with, in order. */
     bootstraps: [] as string[],
@@ -128,7 +128,7 @@ async function start(
     windowsConnects: false,
     /** BB's machine calls never answer, as for a plugin that is stopping. */
     silent: false,
-    /** How many more machine creates BB refuses, not knowing bb-box's provider, as while the plugin restarts. */
+    /** How many more machine creates BB refuses, not knowing BB Box's provider, as while the plugin restarts. */
     unknownProvider: 0,
     /** BB's built-in Git: "logged in" when it gives machines GH_TOKEN. */
     git: "logged in" as "logged in" | "not logged in" | "disabled" | "overridden",
@@ -154,7 +154,7 @@ async function start(
     models: { "claude-code": ["claude-opus-5-5", "claude-sonnet-5-5"], codex: ["gpt-5.5"] } as Record<string, string[]>,
     /** Calls for the names of BB's machine variables: "system", or the project's ID. */
     names: [] as string[],
-    /** Threads bb-box asked BB to start. */
+    /** Threads BB Box asked BB to start. */
     spawned: [] as unknown[],
     /** The machine the thread's workspace is on. */
     workspaceHost: "host-workspace",
@@ -165,7 +165,7 @@ async function start(
     bbRemovals: new Map<string, () => Promise<unknown>>(),
     /** The resource BB keeps for each machine a provider made, by host ID. */
     resources: new Map<string, { boxId: string }>(),
-    /** Changes bb-box made to threads. */
+    /** Changes BB Box made to threads. */
     updated: [] as unknown[],
     /** Threads that run on each BB machine, by host ID. */
     onHost: new Map<string, { id: string; title: string | null; status: string; hasPendingInteraction: boolean; archivedAt: number | null; deletedAt: number | null }[]>(),
@@ -182,9 +182,9 @@ async function start(
     hostThreads: new Map<string, number>(),
     /** BB's terminal sessions, by ID. */
     terminals: new Map<string, { id: string; hostId: string; title: string; command: string; status: "starting" | "running" | "exited"; createdAt: number; threadId?: string; environmentId?: string }>(),
-    /** Calls of bb-box's host entry, by method, with the machine and input. */
+    /** Calls of BB Box's host entry, by method, with the machine and input. */
     hostCalls: [] as { method: string; hostId: string; input: unknown }[],
-    /** Answers a call of bb-box's host entry, as its worker on the machine would. */
+    /** Answers a call of BB Box's host entry, as its worker on the machine would. */
     hostEntry: null as ((method: string, hostId: string, input: unknown) => unknown) | null,
   };
   const terminalStarted = new Map<string, () => boolean>();
@@ -650,7 +650,7 @@ test("a deploy lets box_run's commands finish and takes no new ones, and a comma
 
   const refused = await tool("box_run", { box: box.name, command: "echo new" });
   assert.equal(isError(refused), true);
-  assert.equal(text(refused), "bb-box is restarting, as for an update, and takes no new commands until it is back, usually within seconds.\n\nNext: Run the command again in a few seconds, once bb-box is back.");
+  assert.equal(text(refused), "BB Box is restarting, as for an update, and takes no new commands until it is back, usually within seconds.\n\nNext: Run the command again in a few seconds, once BB Box is back.");
   const finished = await short;
   assert.equal(isError(finished), false, text(finished));
   assert.match(text(finished), /^Exit code 0 in box .*\n\nstdout:\nshort\n/);
@@ -659,7 +659,7 @@ test("a deploy lets box_run's commands finish and takes no new ones, and a comma
   assert.equal(isError(stopped), true);
   const job = /It goes on there as job ([0-9a-f]{12})\./.exec(text(stopped))?.[1];
   assert.ok(job, text(stopped));
-  assert.ok(text(stopped).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is usually back within seconds; until then the box may not answer.`), text(stopped));
+  assert.ok(text(stopped).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. BB Box is usually back within seconds; until then the box may not answer.`), text(stopped));
   await disposing;
   assert.equal(readFileSync(join(home, ".local/state/bb-box/jobs", job, "out"), "utf8"), "long\n", "the command's output is in the box");
 });
@@ -687,7 +687,7 @@ test("box_run returns before BB ends a tool call: a Linux command goes on as a j
   assert.match(text(detached), /^The command still runs in box \S+ after 1 s, and goes on there as job [0-9a-f]{12}: BB ends a tool call at about five minutes/);
 });
 
-test("a command whose box stops answering as bb-box stops for a deploy, as a Docker box on a BB machine does when BB stops the relay first, names its job (#415)", async (t) => {
+test("a command whose box stops answering as BB Box stops for a deploy, as a Docker box on a BB machine does when BB stops the relay first, names its job (#415)", async (t) => {
   const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false }, { drainMs: 1_500 });
   let disposing: Promise<void> | null = null;
   t.after(() => disposing ?? harness.lifecycle.dispose());
@@ -696,7 +696,7 @@ test("a command whose box stops answering as bb-box stops for a deploy, as a Doc
   const deploy = new AbortController();
   const long = harness.behavior.callAgentTool("box_run", { box: box.name, command: "echo long; sleep 5" }, { threadId: THREAD, projectId: PROJECT, signal: deploy.signal });
   await new Promise((resolve) => setTimeout(resolve, 300));
-  // BB stops bb-box's worker on the machine, and the relay with it, then aborts the calls and runs the dispose hooks.
+  // BB stops BB Box's worker on the machine, and the relay with it, then aborts the calls and runs the dispose hooks.
   world.backend!.loseCommands(box.guest!.ref);
   await new Promise((resolve) => setTimeout(resolve, 500));
   deploy.abort("plugin-disposed");
@@ -705,7 +705,7 @@ test("a command whose box stops answering as bb-box stops for a deploy, as a Doc
   assert.equal(isError(answer), true);
   const job = /It may go on there as job ([0-9a-f]{12})\./.exec(text(answer))?.[1];
   assert.ok(job, text(answer));
-  assert.ok(text(answer).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. bb-box is usually back within seconds; until then the box may not answer.`), text(answer));
+  assert.ok(text(answer).endsWith(`Next: Call box_job with box "${box.name}" and job "${job}" for its exit code and output once it ends. BB Box is usually back within seconds; until then the box may not answer.`), text(answer));
 });
 
 test("box_job gives a job's output while it runs and its exit code once it ends, and the box's next command removes it (#405)", async (t) => {
@@ -729,7 +729,7 @@ test("box_job gives a job's output while it runs and its exit code once it ends,
   writeFileSync(join(dir, "status"), "0\n");
   const ended = await tool("box_job", { box: box.name, job });
   assert.equal(text(ended), `Job ${job} ended with exit code 0 in box ${box.name}.\n\nstdout:\nbuilding\nbuilt\n\n\nstderr:\na warning\n\n\nNext: Run more with box_run.`);
-  assert.ok(existsSync(dir), "kept until bb-box's next command");
+  assert.ok(existsSync(dir), "kept until BB Box's next command");
   assert.match(text(await tool("box_run", { box: box.name, command: "true" })), /Exit code 0/);
   assert.equal(existsSync(dir), false);
 
@@ -933,7 +933,7 @@ test("box_copy streams a file too large for BB's file API through the thread's m
   const saved = process.env.BB_SERVER_URL;
   process.env.BB_SERVER_URL = "https://bb.example.com";
   t.after(() => (saved === undefined ? delete process.env.BB_SERVER_URL : (process.env.BB_SERVER_URL = saved)));
-  // bb-box's worker on the thread's machine, its WebSocket joined to bb-box's route in memory.
+  // BB Box's worker on the thread's machine, its WebSocket joined to BB Box's route in memory.
   const { urls, connectTo } = joined(() => app.files);
   const worker = experimental_createHostEntryHarness(hostEntry({ files: { connect: connectTo } }));
   t.after(() => worker.experimental_dispose());
@@ -958,7 +958,7 @@ test("box_copy streams a file too large for BB's file API through the thread's m
   assert.match(text(back), new RegExp(`^Copied setup\\.bin \\(${content.length} bytes, SHA-256 ${sha}\\) from box ${name} to ${join(world.workspace, "back.bin")} in the workspace, streamed through the thread's machine\\.`));
   assert.equal(createHash("sha256").update(readFileSync(join(world.workspace, "back.bin"))).digest("hex"), sha);
   assert.ok(!existsSync(join(world.workspace, "back.bin.bb-box-part")));
-  // The worker's lease goes once bb-box closes the link.
+  // The worker's lease goes once BB Box closes the link.
   await until("the lease to go", async () => worker.experimental_getRetainedWorkerLeaseCount() === 0);
 });
 
@@ -975,7 +975,7 @@ test("a kind a backend changes by itself, as when a Mac reports Windows video re
   await until("the box to take the kind's displays", async () => (await app.boxes.find(box.id))?.capabilities.displays.some((display) => display.id === "video") ?? false);
 });
 
-test("after a Windows box enrols, and after it reconnects, bb-box hides the windows of BB's daemon's consoles, which BB starts in front (bb-requests 27)", async (t) => {
+test("after a Windows box enrols, and after it reconnects, BB Box hides the windows of BB's daemon's consoles, which BB starts in front (bb-requests 27)", async (t) => {
   const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
   const shell = join(tempDir("windows-shell"), "pwsh");
   // Each run in the desktop session, BB's installer and the hide alike, says it found and hid one console window.
@@ -995,7 +995,7 @@ test("after a Windows box enrols, and after it reconnects, bb-box hides the wind
   await until("the hide after the reconnect", async () => hid(box.name) === 2);
 });
 
-test("a Windows box on trial enrols as a machine of BB's manual provider, which bb-box owns: release, a failure and the sweep remove it, and a start reconnects only a disconnected one (#539)", async (t) => {
+test("a Windows box on trial enrols as a machine of BB's manual provider, which BB Box owns: release, a failure and the sweep remove it, and a start reconnects only a disconnected one (#539)", async (t) => {
   const kind: BoxKind = { ...FAKE_WINDOWS_KIND, capabilities: { ...FAKE_WINDOWS_KIND.capabilities, enrol: true } };
   // A box's PowerShell that runs the desktop session's command as BB's installer would, and exits 0.
   // Its access check finds no BB daemon (#560); anything else fails.
@@ -1027,7 +1027,7 @@ test("a Windows box on trial enrols as a machine of BB's manual provider, which 
   assert.ok(!isError(await tool("box_start", { box: box.name })));
   assert.ok(world.events.includes(`reconnect command ${hostId}`), world.events.join("\n"));
   assert.equal((await app.boxes.find(box.id))?.enrol.error, null);
-  // After a boot, BB's logon entry starts the daemon: bb-box waits for it to connect, and starts no second supervisor (#917).
+  // After a boot, BB's logon entry starts the daemon: BB Box waits for it to connect, and starts no second supervisor (#917).
   const reconnects = () => world.events.filter((event) => event === `reconnect command ${hostId}`).length;
   const before = reconnects();
   writeFileSync(daemon, "logon\n");
@@ -1043,7 +1043,7 @@ test("a Windows box on trial enrols as a machine of BB's manual provider, which 
   await tool("box_stop", { box: box.name });
   assert.ok(!isError(await tool("box_start", { box: box.name })));
   await until("the reconnect after the wait", async () => reconnects() === before + 1);
-  // Releasing the box removes its machine, and bb-box's record of it.
+  // Releasing the box removes its machine, and BB Box's record of it.
   assert.ok(!isError(await tool("box_release", { box: box.name })));
   assert.equal(world.hosts.has(hostId), false);
   assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
@@ -1130,7 +1130,7 @@ test("a Windows box's release ends its threads' processes, waits for BB to finis
   assert.ok(harness.inspection.logEntries.some((entry) => entry.message === `Ended 2 processes of threads in box ${first.box.name} before its BB machine's removal, so that BB can remove their worktrees.`));
   assert.deepEqual(await bb.storage.kv.list("manual-machine/"), []);
 
-  // BB is still removing it when the wait ends, as when the box went first: the box goes, and bb-box keeps its record and logs it once.
+  // BB is still removing it when the wait ends, as when the box went first: the box goes, and BB Box keeps its record and logs it once.
   const second = await acquire();
   world.bbRemovals.set(second.hostId, async () => removing(second.hostId, "Host is not connected"));
   assert.ok(!isError(await tool("box_release", { box: second.box.name })));
@@ -1241,13 +1241,13 @@ test("a ready box becomes a BB machine, and its machine goes before the box", as
   const logged = harness.inspection.logEntries.map((entry) => entry.message).find((line) => line.startsWith(`Enrolled box ${box.name} `));
   assert.ok(logged, "the enrolment is logged");
   const s = String.raw`\d+\.\d\d s`;
-  for (const step of ["BB calling bb-box's create", "reaching the box", "BB preparing the enrolment", "BB's installer in the box", "BB waiting for the daemon"]) {
+  for (const step of ["BB calling BB Box's create", "reaching the box", "BB preparing the enrolment", "BB's installer in the box", "BB waiting for the daemon"]) {
     assert.match(logged, new RegExp(`, ${step} ${s},`), step);
   }
-  assert.match(logged, new RegExp(`^Enrolled box ${box.name} ${s} after it was ready: asking BB ${s} alongside, BB calling bb-box's create ${s}, .*, finishing ${s}\\.$`));
+  assert.match(logged, new RegExp(`^Enrolled box ${box.name} ${s} after it was ready: asking BB ${s} alongside, BB calling BB Box's create ${s}, .*, finishing ${s}\\.$`));
   const parts = ["fetching the variable names", "reaching the box and back", "running the script"].map((part) => `${part} ${s}`);
   assert.match(logged, new RegExp(`, setting up the thread's access ${s} alongside \\(${parts.join(", ")}\\), `));
-  // Once bootstrap returns, bb-box notices the machine connected at once rather than at its next 500 ms poll.
+  // Once bootstrap returns, BB Box notices the machine connected at once rather than at its next 500 ms poll.
   assert.match(logged, /, BB showing the machine connected 0\.[0-2]\d s,/);
 
   // BB's installer ran in the box, and commands see the box's identity.
@@ -1336,17 +1336,17 @@ test("box_start waits for the box's BB daemon to start again with a worker with 
   assert.match(text(run), /stdout:\ntoken\|value-machine\n/);
 });
 
-test("commands in an enrolled box keep the thread's access when BB's workers that had it are gone, from bb-box's host entry, and its old terminal is closed", async (t) => {
+test("commands in an enrolled box keep the thread's access when BB's workers that had it are gone, from BB Box's host entry, and its old terminal is closed", async (t) => {
   // No worker has the variables, as after a plugin reload stopped BB's plugin workers in the box.
   const daemon = await fakeDaemon([{ UNLISTED: "value-unlisted" }]);
   t.after(daemon.stop);
   const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent, variablesWaitMs: 300 });
   t.after(() => harness.lifecycle.dispose());
-  // BB's worker for bb-box's host entry starts a process with the daemon's variables, below the daemon.
+  // BB's worker for BB Box's host entry starts a process with the daemon's variables, below the daemon.
   let started: (() => boolean) | null = null;
   world.hostEntry = (_method, hostId) => {
     if (!started) {
-      // The terminal bb-box kept for this before (#217), there before the first call.
+      // The terminal BB Box kept for this before (#217), there before the first call.
       world.terminals.set("term_old", { id: "term_old", hostId, title: RETIRED_TITLE, command: "sleep 2147483647", status: "running", createdAt: 1 });
       started = daemon.start({ GH_TOKEN: "value-token", MACHINE_VAR: "value-machine" });
     }
@@ -1447,7 +1447,7 @@ test("box_start waits for BB to show the box's machine connected again, but only
   assert.ok(messages.includes(`BB did not show box ${box.name}'s machine connected 0.3 s after its daemon started again.`), messages.join("\n"));
 });
 
-test("a box whose machine BB removes while bb-box waits for the variables is not enrolled", async (t) => {
+test("a box whose machine BB removes while BB Box waits for the variables is not enrolled", async (t) => {
   const daemon = await fakeDaemon([{ UNLISTED: "value-unlisted" }]);
   t.after(daemon.stop);
   const { harness, app, world, tool } = await start(undefined, { daemonParent: daemon.parent, variablesWaitMs: 1_500 });
@@ -1682,7 +1682,7 @@ test("an enrolment fails, and says why, when BB does not show the machine connec
   assert.deepEqual((await app.boxes.find(box.id))?.enrol, { state: "failed", hostId: `host-${box.id}`, error: reason });
 });
 
-test("the nightly rebuilds run on bb-box's own schedule at 03:00 while General's switch is on, and not while it is off", async (t) => {
+test("the nightly rebuilds run on BB Box's own schedule at 03:00 while General's switch is on, and not while it is off", async (t) => {
   const { harness, app } = await start();
   t.after(() => harness.lifecycle.dispose());
   assert.deepEqual(
@@ -1709,7 +1709,7 @@ test("a box BB could not add as a machine says why, after BB removes the machine
     const [current] = await app.boxes.list(THREAD);
     return current && world.hosts.get(`host-${current.id}`)?.lifecycle.phase === "destroyed" ? current : null;
   });
-  // As BB does then: it removes the machine through bb-box's provider, and says it is deleted.
+  // As BB does then: it removes the machine through BB Box's provider, and says it is deleted.
   const hostId = `host-${box.id}`;
   const host = world.hosts.get(hostId)!;
   await harness.inspection.registrations.machineProviders.get("bb-box")!.remove({ hostId, resource: { boxId: box.id } } as never);
@@ -1850,7 +1850,7 @@ test("a box that cannot reach BB while other boxes on its backend joined says wh
   assert.equal(box.joinTries?.setup, false);
   assert.equal(
     box.enrol.error,
-    `This box could not look up BB's address in time (${DNS_TIMEOUT}). It failed 5 tries. Other boxes on ${box.backendLabel} joined BB, so BB's setup is fine: the fault is in this box's network. bb-box tries again every 30 minutes for up to 24 hours; Join BB again tries at once.`,
+    `This box could not look up BB's address in time (${DNS_TIMEOUT}). It failed 5 tries. Other boxes on ${box.backendLabel} joined BB, so BB's setup is fine: the fault is in this box's network. BB Box tries again every 30 minutes for up to 24 hours; Join BB again tries at once.`,
   );
   assert.ok(box.joinTries!.next! - Date.now() > 25 * 60_000, "it keeps trying every 30 minutes");
   assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /tailnet|not reachable from/);
@@ -1871,7 +1871,7 @@ test("a box whose connection to BB is refused while no box on its backend reache
     assert.equal(box.joinTries?.setup, true);
     assert.equal(
       box.enrol.error,
-      `This box found BB's address, but nothing there accepted the connection: it was refused (${REFUSED}). It failed 1 try. No box on ${box.backendLabel} can reach BB, so BB's address is likely one its boxes cannot reach: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). bb-box tries again every 30 minutes for up to 24 hours; Join BB again tries at once.`,
+      `This box found BB's address, but nothing there accepted the connection: it was refused (${REFUSED}). It failed 1 try. No box on ${box.backendLabel} can reach BB, so BB's address is likely one its boxes cannot reach: turn the tailnet on in BB Box's settings, or give BB a URL its boxes can reach (docs/guide/tailnet.md). BB Box tries again every 30 minutes for up to 24 hours; Join BB again tries at once.`,
     );
   }
   assert.deepEqual((await joinChecksOf(harness)).map((check) => check.status), ["fail", "fail"]);
@@ -1905,7 +1905,7 @@ test("Check now tries again at once to add a box waiting for its next try, and a
   await until("the box to join", async () => (await app.boxes.find(gaveUp.id))?.enrol.state === "enrolled");
 });
 
-test("after 24 hours of failed tries bb-box gives up: the box says so, the sweep tries no more, and Join BB again starts a new round (clock set ahead)", async (t) => {
+test("after 24 hours of failed tries BB Box gives up: the box says so, the sweep tries no more, and Join BB again starts a new round (clock set ahead)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
   const broken = join(tempDir("dns"), "broken");
@@ -1919,23 +1919,23 @@ test("after 24 hours of failed tries bb-box gives up: the box says so, the sweep
     await app.enrolment.sweep();
     box = await failedTries(app, box.id, failed);
   }
-  assert.match(box.enrol.error ?? "", /bb-box tries again every 30 minutes for up to 24 hours; Join BB again tries at once\.$/);
+  assert.match(box.enrol.error ?? "", /BB Box tries again every 30 minutes for up to 24 hours; Join BB again tries at once\.$/);
 
   t.mock.timers.enable({ apis: ["Date"], now: since + 24 * 3_600_000 });
   await dueNow(app, box);
   await app.enrolment.sweep();
-  const gaveUp = await until("bb-box to give up", async () => {
+  const gaveUp = await until("BB Box to give up", async () => {
     const current = await app.boxes.find(box.id);
     return current?.joinTries?.failed === 6 ? current : null;
   });
   assert.deepEqual([gaveUp.enrol.state, gaveUp.joinTries?.next], ["failed", null]);
-  assert.match(gaveUp.enrol.error ?? "", /It failed 6 tries\. .* bb-box gave up after 24 hours of tries; Join BB again starts a new round\.$/);
-  assert.match(text(await tool("box_status", { box: box.name })), /BB machine: enrolment failed: .*bb-box gave up after 24 hours of tries/);
+  assert.match(gaveUp.enrol.error ?? "", /It failed 6 tries\. .* BB Box gave up after 24 hours of tries; Join BB again starts a new round\.$/);
+  assert.match(text(await tool("box_status", { box: box.name })), /BB machine: enrolment failed: .*BB Box gave up after 24 hours of tries/);
   const bootstraps = world.bootstraps.length;
   t.mock.timers.setTime(since + 48 * 3_600_000);
   await app.enrolment.sweep();
   await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal(world.bootstraps.length, bootstraps, "no try after bb-box gave up");
+  assert.equal(world.bootstraps.length, bootstraps, "no try after BB Box gave up");
 
   rmSync(broken);
   const again = await app.checkNow(THREAD, box.name);
@@ -1964,7 +1964,7 @@ function untouched(app: Awaited<ReturnType<typeof start>>["app"], before: BoxRec
   assert.deepEqual(powerEvents(app, after.id), powered, "the box was not started, stopped, restarted or resized");
 }
 
-test("a box whose join failed on a DNS timeout before bb-box tried such failures again is picked up by the sweep, says what failed without setup advice, and joins", async (t) => {
+test("a box whose join failed on a DNS timeout before BB Box tried such failures again is picked up by the sweep, says what failed without setup advice, and joins", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
   assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
@@ -2128,7 +2128,7 @@ test("bb box enrol adds a ready box that is not a BB machine without restarting 
   assert.equal(added.exitCode, 0, added.stderr);
   const joined = (await app.boxes.find(off.id))!;
   assert.equal(joined.enrol.state, "enrolled");
-  assert.equal(added.stdout, `Box ${off.name} joined BB as machine ${joined.enrol.hostId}. bb-box ran BB's installer in it as its user, and did not restart, stop or resize it.\n`);
+  assert.equal(added.stdout, `Box ${off.name} joined BB as machine ${joined.enrol.hostId}. BB Box ran BB's installer in it as its user, and did not restart, stop or resize it.\n`);
   assert.equal(world.bootstraps.length, bootstraps + 1);
   untouched(app, off, powered, joined);
 
@@ -2162,14 +2162,14 @@ test("bb box enrol tries at once on a box that could not join, says why when it 
   const answer = text(await tool("box_enrol", { box: waiting.name }));
   const joined = (await app.boxes.find(waiting.id))!;
   assert.equal(joined.enrol.state, "enrolled");
-  assert.equal(answer, `Box ${waiting.name} joined BB as machine ${joined.enrol.hostId}. bb-box ran BB's installer in it as its user, and did not restart, stop or resize it.`);
+  assert.equal(answer, `Box ${waiting.name} joined BB as machine ${joined.enrol.hostId}. BB Box ran BB's installer in it as its user, and did not restart, stop or resize it.`);
   untouched(app, waiting, powered, joined);
   assert.match(text(await tool("box_enrol", { box: waiting.name })), /is a BB machine already, as machine .*\. Nothing changed\.$/);
 
   assert.match(text(await tool("box_stop", { box: waiting.name })), /is stopped/);
   const refused = await harness.behavior.runCli(["enrol", waiting.name, "--thread", THREAD]);
   assert.equal(refused.exitCode, 1);
-  assert.match(refused.stderr ?? "", /is stopped, and only a ready box can join BB\. bb-box does not start a box to add it to BB: start it first\./);
+  assert.match(refused.stderr ?? "", /is stopped, and only a ready box can join BB\. BB Box does not start a box to add it to BB: start it first\./);
   assert.equal((await app.boxes.find(waiting.id))?.state, "stopped");
 });
 
@@ -2225,7 +2225,7 @@ test("the enrolment's log lists its steps in the order they started, with the ac
   const marks = { called: 20, prepared: 20, install: 40, requested: 100, access: 110, names: 500, env: 800, accessed: 3_730, installed: 5_020, bootstrapped: 5_050, connected: 5_150 };
   assert.equal(
     timeline({ ...marks, enrolled: 5_150 }),
-    "Enrolled box b 5.15 s after it was ready: asking BB 0.10 s alongside, BB calling bb-box's create 0.02 s, reaching the box 0.00 s, " +
+    "Enrolled box b 5.15 s after it was ready: asking BB 0.10 s alongside, BB calling BB Box's create 0.02 s, reaching the box 0.00 s, " +
       "BB preparing the enrolment 0.02 s, BB's installer in the box 4.98 s, setting up the thread's access 3.62 s alongside " +
       "(fetching the variable names 0.39 s, reaching the box and back 0.30 s, running the script 2.93 s), " +
       "BB waiting for the daemon 0.03 s, BB showing the machine connected 0.10 s, finishing 0.00 s.",
@@ -2243,7 +2243,7 @@ test("an enrolment followed again after a restart is timed from then, not from w
   t.after(() => harness.lifecycle.dispose());
   await tool("box_acquire", {});
   const box = await only(app);
-  // As if bb-box restarted while BB installed its daemon, an hour after the box was ready.
+  // As if BB Box restarted while BB installed its daemon, an hour after the box was ready.
   const hostId = `host-${box.id}`;
   const host = makeHostResponse({ id: hostId, status: "connected", machineProviderId: "bb-box" });
   world.hosts.set(hostId, { ...host, lifecycle: { ...host.lifecycle, phase: "active" } });
@@ -2255,7 +2255,7 @@ test("an enrolment followed again after a restart is timed from then, not from w
   });
   assert.equal(enrolled.timings.enrol, undefined, "the box shows no enrolment time");
   const logged = harness.inspection.logEntries.map((entry) => entry.message).find((line) => line.startsWith(`Enrolled box ${box.name} `));
-  assert.match(logged ?? "", new RegExp(`^Enrolled box ${box.name} [0-4]\\.\\d\\d s after bb-box resumed following it: `));
+  assert.match(logged ?? "", new RegExp(`^Enrolled box ${box.name} [0-4]\\.\\d\\d s after BB Box resumed following it: `));
 });
 
 test("a stopped box starts again and BB's daemon is started with the same key", async (t) => {
@@ -2688,7 +2688,7 @@ test("a box made before its kind's boxes joined BB stays a box only, and box_sta
 
   assert.match(
     text(await tool("box_status", { box: box.name })),
-    /BB machine: not enrolled: it was made while boxes of its kind did not join BB, and stays so until it is released\. A new one joins BB when bb-box enrols boxes/,
+    /BB machine: not enrolled: it was made while boxes of its kind did not join BB, and stays so until it is released\. A new one joins BB when BB Box enrols boxes/,
   );
   const refused = await tool("box_thread", { box: box.name, prompt: "Run Get-Date" });
   assert.ok(isError(refused));
@@ -2703,7 +2703,7 @@ test("a box that is not a BB machine cannot run a thread, and says why (#55)", a
   const { boxes } = (await harness.behavior.callRpc("state", { threadId: THREAD })) as { boxes: { name: string }[] };
   const refused = await tool("box_thread", { box: boxes[0]!.name, prompt: "Run uname -a" });
   assert.ok(isError(refused));
-  assert.match(text(refused), /A thread cannot run on box \S+: it is not a BB machine\. Its kind does not enrol, or enrolment is off in bb-box's settings\./);
+  assert.match(text(refused), /A thread cannot run on box \S+: it is not a BB machine\. Its kind does not enrol, or enrolment is off in BB Box's settings\./);
   assert.deepEqual(world.spawned, []);
 });
 
@@ -2779,7 +2779,7 @@ test("New box: archiving the thread removes its box without waiting on itself (0
   const { removal, hostId } = await newBox(harness, world);
   assert.deepEqual(await within(removal(), "BB's removal"), { status: "removed" });
   assert.deepEqual(await app.boxes.list(THREAD), []);
-  assert.ok(!world.events.includes(`delete ${hostId}`), "bb-box leaves BB's machine to BB");
+  assert.ok(!world.events.includes(`delete ${hostId}`), "BB Box leaves BB's machine to BB");
 });
 
 test("New box: the sweep releases the box of a thread that ended, and BB's removal after it finds nothing left (033)", async (t) => {
@@ -2791,11 +2791,11 @@ test("New box: the sweep releases the box of a thread that ended, and BB's remov
   assert.equal((await app.boxes.list(THREAD)).length, 1, "BB has said so at one sweep");
   await within(app.boxes.sweep(), "the next sweep");
   assert.deepEqual(await app.boxes.list(THREAD), []);
-  assert.ok(!world.events.includes(`delete ${hostId}`), "bb-box leaves BB's machine to BB");
+  assert.ok(!world.events.includes(`delete ${hostId}`), "BB Box leaves BB's machine to BB");
   assert.deepEqual(await within(removal(), "BB's removal"), { status: "removed" });
 });
 
-test("New box: after bb-box loses its storage, the sweep restores the thread's box as BB's machine for the thread, which does not enrol again (#127)", async (t) => {
+test("New box: after BB Box loses its storage, the sweep restores the thread's box as BB's machine for the thread, which does not enrol again (#127)", async (t) => {
   const { harness, bb, app, world } = await start({ "fake-enabled": true });
   t.after(() => harness.lifecycle.dispose());
   // Another thread's New box machine, which BB lists first, is not this box's.
@@ -2810,7 +2810,7 @@ test("New box: after bb-box loses its storage, the sweep restores the thread's b
   assert.equal(restored?.projectId, PROJECT);
   assert.deepEqual(restored?.enrol, { state: "enrolled", hostId, error: null });
   assert.equal(restored?.restoredAt, null, "it is not waiting to enrol");
-  assert.deepEqual(world.events, [], "bb-box makes no other machine for the box");
+  assert.deepEqual(world.events, [], "BB Box makes no other machine for the box");
 });
 
 test("New box: a retry makes a new box rather than reuse one that failed (033)", async (t) => {
@@ -2862,7 +2862,7 @@ test("your machines: added in settings under a name, BB machines whatever the en
   const bad = (await harness.behavior.callRpc("machines.add", { kind: "linux", name: "Build_1" })) as { error: string };
   assert.match(bad.error, /"Build_1" is not one\./);
   const named = await addMachine(harness, app, { kind: "linux" });
-  assert.match(named.name, /^[a-z]+-[a-z]+$/, "bb-box picks a name");
+  assert.match(named.name, /^[a-z]+-[a-z]+$/, "BB Box picks a name");
 
   // No thread exists, and BB says so: the sweep keeps them all.
   world.threads.clear();
@@ -3042,7 +3042,7 @@ test("box_resize refuses a live shrink of memory below what the box uses, with a
   assert.ok(isError(refused));
   assert.match(
     text(refused),
-    new RegExp(`^Box ${box.name} uses 3\\.6 GiB of memory now, so 4 GiB would leave less than 512 MiB free, and the kernel could end its processes\\. Give it at least 5 GiB, or free memory in it first\\. bb-box changed nothing\\.\\n\\nNext: Give the box at least the memory this names`),
+    new RegExp(`^Box ${box.name} uses 3\\.6 GiB of memory now, so 4 GiB would leave less than 512 MiB free, and the kernel could end its processes\\. Give it at least 5 GiB, or free memory in it first\\. BB Box changed nothing\\.\\n\\nNext: Give the box at least the memory this names`),
   );
   assert.equal(world.backend!.resized.length, 0);
   assert.equal((await app.boxes.find(box.id))?.resize ?? null, null, "nothing was recorded");
@@ -3061,7 +3061,7 @@ test("box_resize makes a change that needs a restart only when asked, and never 
   assert.ok(isError(asked));
   assert.match(
     text(asked),
-    new RegExp(`^Resizing box ${box.name} to 4 cores, 4 GiB memory needs a restart for its cores: the box shuts down and starts again, for about 8 s, which ends everything running in it\\. bb-box changed nothing\\.\\n\\nNext: Call box_resize again with restart true`),
+    new RegExp(`^Resizing box ${box.name} to 4 cores, 4 GiB memory needs a restart for its cores: the box shuts down and starts again, for about 8 s, which ends everything running in it\\. BB Box changed nothing\\.\\n\\nNext: Call box_resize again with restart true`),
   );
   // The disk alone is live.
   assert.match(text(await tool("box_resize", { box: box.name, disk_gib: 40 })), /^Resized box .* to 2 cores, 4 GiB memory, 40 GiB disk in /);
@@ -3232,7 +3232,7 @@ test("after a live change of a BB machine's cores, box_resize says BB keeps the 
     busy,
     new RegExp(
       `\\nBB still counts 2 processors on machine ${box.name}, and its automatic thread limit stays at 2, until BB's daemon there restarts, as it does when the box next starts\\. ` +
-        `bb-box does not restart it while thread "Build" \\(thr_worker\\) works on the machine, as that would end its turn\\. ` +
+        `BB Box does not restart it while thread "Build" \\(thr_worker\\) works on the machine, as that would end its turn\\. ` +
         `To raise the limit now: bb concurrency-limit host ${box.name} 4, and then bb concurrency-limit host ${box.name} auto once BB counts the new cores\\.\\n\\nNext:`,
     ),
   );
@@ -3241,10 +3241,10 @@ test("after a live change of a BB machine's cores, box_resize says BB keeps the 
   const session = { hostId: box.enrol.hostId!, command: "sh", status: "running" as const, createdAt: 1 };
   world.terminals.set("term_thread", { ...session, id: "term_thread", title: "Shell", threadId: "thr_worker" });
   world.terminals.set("term_machine", { ...session, id: "term_machine", title: "Shell" });
-  assert.match(text(await tool("box_resize", { box: box.name, cores: 6 })), /\nBB still counts 4 processors .*\. bb-box does not restart it while 2 BB terminals are open on the machine, as that would end them\. To raise the limit now: bb concurrency-limit host .* 6,/);
+  assert.match(text(await tool("box_resize", { box: box.name, cores: 6 })), /\nBB still counts 4 processors .*\. BB Box does not restart it while 2 BB terminals are open on the machine, as that would end them\. To raise the limit now: bb concurrency-limit host .* 6,/);
   world.terminals.get("term_thread")!.status = "exited";
-  assert.match(text(await tool("box_resize", { box: box.name, cores: 7 })), /bb-box does not restart it while a BB terminal is open on the machine, as that would end it\./);
-  // No thread works there and no terminal is open, so bb-box tries the restart: a test's fake box has no daemon of BB's to restart.
+  assert.match(text(await tool("box_resize", { box: box.name, cores: 7 })), /BB Box does not restart it while a BB terminal is open on the machine, as that would end it\./);
+  // No thread works there and no terminal is open, so BB Box tries the restart: a test's fake box has no daemon of BB's to restart.
   world.terminals.get("term_machine")!.status = "exited";
   const idle = text(await tool("box_resize", { box: box.name, cores: 8 }));
   assert.match(idle, /\nBB still counts 7 processors on machine .*, as it does when the box next starts\. To raise the limit now: bb concurrency-limit host .* 8,/);
@@ -3276,7 +3276,7 @@ test("box_resize refuses a size with no room, and a failed resize is recorded, w
   assert.match(text(await tool("box_status", { box: box.name })), /\nSize: 2 cores, 4 GiB memory\n[\s\S]*\nLast resize: to 2 cores, 8 GiB memory, at .* UTC, failed: The provider said no\./);
 });
 
-test("a resize bb-box restarted in the middle of ends at the next sweep with the size the guest says (061)", async (t) => {
+test("a resize BB Box restarted in the middle of ends at the next sweep with the size the guest says (061)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
   const backend = world.backend!;
@@ -3284,12 +3284,12 @@ test("a resize bb-box restarted in the middle of ends at the next sweep with the
   await tool("box_acquire", { kind: "linux" });
   const box = await only(app);
   await tool("box_resize", { box: box.name, memory_gib: 6 });
-  // As if bb-box stopped after recording a resize to 8 GiB: the guest still has 6 GiB.
+  // As if BB Box stopped after recording a resize to 8 GiB: the guest still has 6 GiB.
   await app.boxes.update(box, (current) => ({ resize: { ...current.resize!, to: { cores: 2, memoryMiB: 8192, diskGiB: null }, state: "resizing", ms: null } }));
   await app.boxes.sweep();
   const record = (await app.boxes.find(box.id))!;
   assert.equal(record.resize?.state, "failed");
-  assert.match(record.resize?.error ?? "", /^bb-box restarted before the resize finished/);
+  assert.match(record.resize?.error ?? "", /^BB Box restarted before the resize finished/);
   assert.equal(record.guest?.size?.memoryMiB, 6144);
   assert.equal(record.size?.memoryMiB, 6144);
 });
@@ -3419,7 +3419,7 @@ test("the sweep releases boxes of threads that are gone, but not when BB does no
   assert.deepEqual(await app.boxes.list(THREAD), []);
 });
 
-test("after bb-box loses its storage, the sweep restores a live thread's box from its guest and leaves it running", async (t) => {
+test("after BB Box loses its storage, the sweep restores a live thread's box from its guest and leaves it running", async (t) => {
   const { harness, bb, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
   world.threads.set("thr_two", makeThreadResponse({ id: "thr_two", projectId: PROJECT }));
@@ -3509,7 +3509,7 @@ test("a box the sweep restores enrols again with its box ID once it answers, tim
   assert.equal(again.enrol.hostId, hostId);
   assert.deepEqual(world.bootstraps, [box.id, box.id]);
   assert.ok(again.timings.enrol! < 60_000, "timed from the restore, not from when the box was made");
-  assert.match(logged().at(-1) ?? "", /^Enrolled box \S+ \d+\.\d\d s after bb-box found the restored box answering: .*BB waiting for the daemon /);
+  assert.match(logged().at(-1) ?? "", /^Enrolled box \S+ \d+\.\d\d s after BB Box found the restored box answering: .*BB waiting for the daemon /);
   assert.deepEqual(world.events, [`create ${hostId}`, `create ${hostId}`], "the same key, and BB's machine is kept");
   assert.equal(world.hosts.get(hostId)?.status, "connected");
 
@@ -3529,13 +3529,13 @@ test("a box the sweep restores enrols again with its box ID once it answers, tim
   assert.equal(stopped?.enrol.state, "off");
   assert.ok(stopped?.restoredAt, "marked to enrol later");
   assert.equal(world.events.length, 3);
-  assert.match(text(await tool("box_status", { box: box.name })), /BB machine: not enrolled since bb-box restored its lost record/);
+  assert.match(text(await tool("box_status", { box: box.name })), /BB machine: not enrolled since BB Box restored its lost record/);
   assert.ok(!isError(await tool("box_start", { box: box.name })));
   const started = await enrolled();
   assert.equal(started.enrol.hostId, madeAgain, "BB gives back the machine it still has");
   assert.equal(started.restoredAt, null);
   assert.deepEqual(world.events, [`create ${hostId}`, `create ${hostId}`, `create ${madeAgain}`, `create ${madeAgain}`]);
-  assert.match(logged().at(-1) ?? "", /^Enrolled box \S+ \d+\.\d\d s after bb-box found the restored box answering: /);
+  assert.match(logged().at(-1) ?? "", /^Enrolled box \S+ \d+\.\d\d s after BB Box found the restored box answering: /);
 
   // Once enrolled, it reconnects when it starts again rather than enrolling.
   const bootstraps = world.bootstraps.length;
@@ -3668,7 +3668,7 @@ test("a box-sizes entry with a mistake is left out of the configuration, and the
   assert.equal(kinds.find((kind) => kind.id === "linux")!.defaultPreset, "small");
   assert.equal(kinds.find((kind) => kind.id === "linux-desktop")!.defaultPreset, "large", "a good entry still counts");
   const copy = await app.configuration.migrated();
-  assert.deepEqual(copy!.notes, ["Box sizes: linux.default must be small, medium or large. bb-box ignored it, so it was left out."]);
+  assert.deepEqual(copy!.notes, ["Box sizes: linux.default must be small, medium or large. BB Box ignored it, so it was left out."]);
   assert.equal(copy!.values["box-sizes"], '{"linux":{"default":"huge"},"linux-desktop":{"default":"large"}}', "the copy keeps the setting as it was");
 });
 test("wrong settings are named in the status and the doctor", async (t) => {
@@ -3692,7 +3692,7 @@ test("the doctor warns, and does not fail, when a Linux preset has less than 2 G
   assert.equal(doctor.exitCode, 0);
   assert.match(
     doctor.stdout ?? "",
-    /Sizes: Some presets of Linux kinds have less than 2 GiB memory.\n {2}\[warn\] Box sizes: The small linux preset, 2 cores, 1 GiB memory, has less than 2 GiB memory, so its boxes can run out of memory as they become BB machines.\n {8}Fix: Give it at least 2 GiB memory in bb-box's settings, under Kinds./,
+    /Sizes: Some presets of Linux kinds have less than 2 GiB memory.\n {2}\[warn\] Box sizes: The small linux preset, 2 cores, 1 GiB memory, has less than 2 GiB memory, so its boxes can run out of memory as they become BB machines.\n {8}Fix: Give it at least 2 GiB memory in BB Box's settings, under Kinds./,
   );
 });
 
@@ -4115,7 +4115,7 @@ test("a video display told a size first, as Selkies on Sway, hears it before the
 });
 
 test("a box whose image has bb-box-cursor gives each video viewer its pointer's shape and where it is, and a later viewer the last of each; Selkies' own arrow goes no further (060)", async (t) => {
-  // The helper as a test drives it: each run, the events it is given, until bb-box ends it.
+  // The helper as a test drives it: each run, the events it is given, until BB Box ends it.
   const runs: { emit: (event: BoxPointer) => void; ended: boolean }[] = [];
   const pointer = (onEvent: (event: BoxPointer) => void, signal: AbortSignal) =>
     new Promise<void>((resolve) => {
@@ -4213,7 +4213,7 @@ test("a VNC viewer's pointer stream gets the box's pointer from the same helper 
   assert.deepEqual(none.closeCalls[0], { code: 1000, reason: POINTER_NONE });
 });
 
-test("a box whose image has no bb-box-cursor, as every Wayland box of a 24.04 image, keeps Selkies' own cursor messages and gets no pointer of bb-box's (#707, 060)", async (t) => {
+test("a box whose image has no bb-box-cursor, as every Wayland box of a 24.04 image, keeps Selkies' own cursor messages and gets no pointer of BB Box's (#707, 060)", async (t) => {
   const { harness, app, world } = await start(undefined, { kinds: [FAKE_SELKIES_KIND] });
   t.after(() => harness.lifecycle.dispose());
   await harness.behavior.callRpc("acquire", { threadId: THREAD, kind: FAKE_SELKIES_KIND.id });
@@ -4226,7 +4226,7 @@ test("a box whose image has no bb-box-cursor, as every Wayland box of a 24.04 im
   await until("Selkies' cursor", async () => one.sent.includes('cursor,{"curdata":"QVJST1c=","hotx":0,"hoty":0}'));
   await selkies.frame(1, true);
   await until("a frame", async () => one.sent.some((message) => typeof message !== "string"));
-  assert.ok(!one.sent.some((message) => typeof message === "string" && message.startsWith("BB_POINTER")), "no pointer of bb-box's");
+  assert.ok(!one.sent.some((message) => typeof message === "string" && message.startsWith("BB_POINTER")), "no pointer of BB Box's");
   await one.close();
 });
 
@@ -4364,17 +4364,17 @@ test("a reload keeps a person's control and the desktop's size for their viewer,
   await new Promise((resolve) => setTimeout(resolve, 1_000));
   assert.deepEqual(await control(), { owner: "human", holder: viewer }, "the viewer connected again in time");
 
-  // Its tab closed while bb-box restarted.
+  // Its tab closed while BB Box restarted.
   await reload();
   await until("control to go back", async () => ((await control()) as { owner: string }).owner === "agent");
   assert.deepEqual([world.backend!.rfb.width, world.backend!.rfb.height], [1280, 800], "the agent's size");
   const logged = (level: string) => hosts.flatMap((each) => each.inspection.logEntries.filter((entry) => entry.level === level).map((entry) => entry.message));
   assert.deepEqual(logged("error"), []);
-  const stopping = `bb-box is stopping, as for an update or a reload. The viewer with control of box ${box.name}'s desktop keeps it if it connects again within 0.5 s.`;
+  const stopping = `BB Box is stopping, as for an update or a reload. The viewer with control of box ${box.name}'s desktop keeps it if it connects again within 0.5 s.`;
   assert.deepEqual(logged("warn"), [stopping, stopping], "the log says why the viewer's connection dropped, and how long it has");
-  const started = `The viewer with control of box ${box.name}'s desktop as bb-box restarted keeps it if it connects again within 0.5 s.`;
+  const started = `The viewer with control of box ${box.name}'s desktop as BB Box restarted keeps it if it connects again within 0.5 s.`;
   assert.deepEqual(
-    logged("info").filter((message) => message.includes("as bb-box restarted")),
+    logged("info").filter((message) => message.includes("as BB Box restarted")),
     [started, started],
   );
 
@@ -4388,15 +4388,15 @@ test("a reload keeps a person's control and the desktop's size for their viewer,
   await until("storage to be cleared", async () => (await api.storage.kv.get("desktop-control")) === undefined);
   assert.deepEqual(await control(), { owner: "agent", holder: null });
   assert.deepEqual(logged("error"), []);
-  assert.equal(logged("info").filter((message) => message.includes("as bb-box restarted")).length, 2);
+  assert.equal(logged("info").filter((message) => message.includes("as BB Box restarted")).length, 2);
 
-  // Nor for a box that stopped while bb-box was away.
+  // Nor for a box that stopped while BB Box was away.
   assert.match(text(await host.behavior.callAgentTool("box_stop", { box: box.name }, { threadId: THREAD, projectId: PROJECT })), /is stopped/);
   await api.storage.kv.set("desktop-control", [{ boxId: box.id, holder: viewer, size: null, resized: null }]);
   await reload();
   await until("storage to be cleared again", async () => (await api.storage.kv.get("desktop-control")) === undefined);
   assert.deepEqual(logged("error"), []);
-  assert.equal(logged("info").filter((message) => message.includes("as bb-box restarted")).length, 2);
+  assert.equal(logged("info").filter((message) => message.includes("as BB Box restarted")).length, 2);
 });
 
 test("a take in the last instance after the next one started holds when the viewer connects to the next one (#318)", async (t) => {
@@ -4560,12 +4560,12 @@ test("bb box snapshot takes, lists and deletes a thread's box's snapshots; box_s
 
   const doctor = JSON.parse((await harness.behavior.runCli(["doctor", "--json"])).stdout ?? "{}") as { sections: { title: string; report: { checks: { id: string; status: string }[] } }[] };
   assert.deepEqual(doctor.sections.find((section) => section.title === "Snapshots")?.report.checks.map((check) => [check.id, check.status]), [["snapshots", "ok"]]);
-  assert.equal((await harness.behavior.runCli(["snapshot", "forget", "fake"])).stdout, "bb-box records no snapshots on backend fake.\n");
+  assert.equal((await harness.behavior.runCli(["snapshot", "forget", "fake"])).stdout, "BB Box records no snapshots on backend fake.\n");
   assert.equal((await harness.behavior.runCli(["snapshot", "hold-next"])).exitCode !== 0, true, "the live checks' hold is not there without BB_BOX_LIVE_CHECKS");
 });
 
 for (const via of ["bb box acquire", "box_acquire"] as const) {
-  test(`${via} says when bb-box restarts before the box is ready, and the next bb-box goes on with it (#533)`, async (t) => {
+  test(`${via} says when BB Box restarts before the box is ready, and the next BB Box goes on with it (#533)`, async (t) => {
     const { harness, app, world, tool } = await start();
     let disposing: Promise<void> | null = null;
     t.after(() => disposing ?? harness.lifecycle.dispose());
@@ -4574,10 +4574,10 @@ for (const via of ["bb box acquire", "box_acquire"] as const) {
     const acquiring = via === "box_acquire" ? tool("box_acquire", { kind: "linux" }).then(text) : harness.behavior.runCli(["acquire", "linux", "--thread", THREAD]).then((ran) => ran.stdout ?? "");
     const box = await until("the box's guest", async () => (await app.boxes.list(THREAD)).find((box) => box.guest));
     disposing = harness.lifecycle.dispose();
-    await until("bb-box to stop", async () => app.boxes.stopping);
+    await until("BB Box to stop", async () => app.boxes.stopping);
     open();
     const said = await acquiring;
-    const restarted = `bb-box restarted, as for an update, before box ${box.name} was ready. It goes on starting once bb-box is back, usually within seconds.`;
+    const restarted = `BB Box restarted, as for an update, before box ${box.name} was ready. It goes on starting once BB Box is back, usually within seconds.`;
     if (via === "box_acquire") assert.equal(said, `${restarted}\n\nNext: Call box_status with box "${box.name}" to see when it is ready.`);
     else assert.ok(said.startsWith(`Box ${box.name} (`) && said.endsWith(`\n\n${restarted} Follow it with: bb box status ${box.name} --thread ${THREAD}\n`), said);
   });
@@ -4731,7 +4731,7 @@ test("High resolution on Windows: twice the pixels, then 200%, and 100% before t
   const dir = tempDir("pwsh");
   const shell = join(dir, "pwsh");
   const scales = join(dir, "scale.log");
-  // bb-box's scripts reach PowerShell in base64, a desktop command's within its own, so the shell reads through each.
+  // BB Box's scripts reach PowerShell in base64, a desktop command's within its own, so the shell reads through each.
   writeFileSync(
     shell,
     String.raw`#!/usr/bin/env node
@@ -4807,7 +4807,7 @@ test("High resolution is as large as every viewer's browser decodes: smaller whi
   // It goes: twice the tab's size again.
   await two.close();
   await until("twice the tab's size again", async () => rfb.width === 5200 && rfb.height === 3000);
-  assert.ok(!selkies.pages.some((page) => page.received.some((message) => typeof message === "string" && message.startsWith("BB_DECODES"))), "Selkies never sees bb-box's own message");
+  assert.ok(!selkies.pages.some((page) => page.received.some((message) => typeof message === "string" && message.startsWith("BB_DECODES"))), "Selkies never sees BB Box's own message");
   // A viewer that does not say, as a page from before this, counts as one that decodes level 5.2.
   const three = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-three-0003&stream=selkies`);
   await until("the third viewer", async () => three.sent.includes("MODE websockets"));
@@ -4844,7 +4844,7 @@ test("a box streams in 4:4:4 while every viewer's browser decodes it, and in 4:2
   await two.close();
   await until("4:4:4 again, with that viewer gone", async () => settings().length === 3);
   assert.deepEqual(settings(), [colour(true), colour(false), colour(true)]);
-  assert.ok(!selkies.pages.some((page) => page.received.some((message) => typeof message === "string" && message.startsWith("BB_FULLCOLOR"))), "Selkies never sees bb-box's own message");
+  assert.ok(!selkies.pages.some((page) => page.received.some((message) => typeof message === "string" && message.startsWith("BB_FULLCOLOR"))), "Selkies never sees BB Box's own message");
   await one.close();
 });
 
@@ -5339,12 +5339,12 @@ test("a desktop click whose after-read and its retry both fail still reports the
   assert.equal(isError(result), false, text(result));
   const said = text(result);
   assert.match(said, /^Right-clicked \(327, 196\) on the desktop/);
-  assert.match(said, /bb-box could not read what changed/);
+  assert.match(said, /BB Box could not read what changed/);
   assert.match(said, /Call computer_screenshot with window "desktop"/);
 });
 
 test("on Sway, text an element refuses in the background is pasted with Cua's paste key, and the clipboard's text put back (#707)", async (t) => {
-  // wtype's own keys lose characters in Chrome: bb-box puts the text on the clipboard, Cua presses the paste key.
+  // wtype's own keys lose characters in Chrome: BB Box puts the text on the clipboard, Cua presses the paste key.
   const bin = tempDir("sway");
   const shims: Record<string, string> = {
     "wl-paste": `case "$*" in *-l*) echo text/plain ;; *) printf 'old\nclip' ;; esac`,
@@ -5482,7 +5482,7 @@ test("an agent reads a desktop box's window, acts on references and is told what
   assert.match(limited, /Partial: showing 2 of 10 lines \(1 of 9 elements\); 8 lines cut\. Pass query to see only the lines you need, or a larger limit \(at most 2000\)\./);
 
   const unknown = await tool("computer_act", { box: box.name, action: "click", ref: "e999" });
-  assert.match(text(unknown), /^bb-box has no reference e999 for box .*\n\nNext: Call computer_observe to get references\./);
+  assert.match(text(unknown), /^BB Box has no reference e999 for box .*\n\nNext: Call computer_observe to get references\./);
   const noTarget = await tool("computer_act", { box: box.name, action: "click" });
   assert.match(text(noTarget), /^Give ref, or window with x and y\./);
   assert.match(text(await tool("computer_type", { box: box.name, window: 100, keys: "ctrl+" })), /"ctrl\+" is not a key chord/);
@@ -5576,15 +5576,15 @@ test("on Windows, computer_windows and computer_launch give a window with no tit
 
   // computer_windows answers at once with Cua's list, and names in the background, one namer at a time.
   const first = await Promise.all([tool("computer_windows", { box: box.name }), tool("computer_windows", { box: box.name })]);
-  for (const listed of first) assert.doesNotMatch(text(listed), new RegExp(`window ${untitled}|bb-box gave`));
+  for (const listed of first) assert.doesNotMatch(text(listed), new RegExp(`window ${untitled}|BB Box gave`));
   assert.equal(most, 1, "one namer at a time");
   await new Promise((resolve) => setTimeout(resolve, 300));
   const listed = text(await tool("computer_windows", { box: box.name }));
   assert.match(listed, new RegExp(`\\n- window ${untitled}: gpui-example "gpui-example \\(untitled\\)", 640 by 480\\n`));
-  assert.match(listed, new RegExp(`\\n\\nbb-box gave window ${untitled} the title "gpui-example \\(untitled\\)", as it had none, and Cua on Windows reaches only windows with a title\\.\\n\\nNext:`));
+  assert.match(listed, new RegExp(`\\n\\nBB Box gave window ${untitled} the title "gpui-example \\(untitled\\)", as it had none, and Cua on Windows reaches only windows with a title\\.\\n\\nNext:`));
   assert.match(text(await tool("computer_observe", { box: box.name, window: untitled })), new RegExp(`^Window ${untitled}: gpui-example "gpui-example \\(untitled\\)"`));
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.doesNotMatch(text(await tool("computer_windows", { box: box.name })), /bb-box gave/, "said once, and a title the window has is left alone");
+  assert.doesNotMatch(text(await tool("computer_windows", { box: box.name })), /BB Box gave/, "said once, and a title the window has is left alone");
   // Within 15 s, the namer runs again only when Cua's window list changed. Each check waits for the namer before to end.
   await new Promise((resolve) => setTimeout(resolve, 300));
   let calls = asked;
@@ -5600,7 +5600,7 @@ test("on Windows, computer_windows and computer_launch give a window with no tit
 
   // An app whose window has no title, launched: Cua lists it once it has one.
   const launched = text(await tool("computer_launch", { box: box.name, app: "untitled" }));
-  assert.match(launched, /^Opened untitled\. Its window:\n- window \d+: untitled "untitled \(untitled\)", 640 by 480\n\nbb-box gave window \d+ the title "untitled \(untitled\)", as it had none, and Cua on Windows reaches only windows with a title\./);
+  assert.match(launched, /^Opened untitled\. Its window:\n- window \d+: untitled "untitled \(untitled\)", 640 by 480\n\nBB Box gave window \d+ the title "untitled \(untitled\)", as it had none, and Cua on Windows reaches only windows with a title\./);
   const before = asked;
   await tool("computer_observe", { box: box.name, window: untitled });
   assert.equal(asked, before, "only computer_windows and computer_launch name windows");
@@ -5637,7 +5637,7 @@ test("pixels count only against the agent's latest image of the window or the de
 
   const blind = await tool("computer_act", { box: box.name, action: "click", window: 100, x: 745, y: 140 });
   assert.equal(isError(blind), true);
-  assert.match(text(blind), /^You have no current image of window 100, so bb-box cannot tell what x and y mean\.\n\nNext: Call computer_screenshot with window 100/);
+  assert.match(text(blind), /^You have no current image of window 100, so BB Box cannot tell what x and y mean\.\n\nNext: Call computer_screenshot with window 100/);
 
   const shot = await tool("computer_screenshot", { box: box.name, window: 100 });
   assert.match(text(shot), /^window 100: tasks "Tasks", 800 by 600\. Image 800x600 of window 800x600, scale 1; x and y are image pixels\./);
@@ -5689,7 +5689,7 @@ test("a click on an element the desktop cannot click as an element goes to the e
       .filter(({ tool }) => tool === "click" || tool === "get_window_state")
       .map(({ tool, args }) => (tool === "click" ? `click ${args.x === undefined ? "element" : `(${String(args.x)}, ${String(args.y)})`} ${String(args.delivery_mode)}` : `read${args.include_screenshot ? " with image" : ""}`));
 
-  // With no image of the window in this session, bb-box reads it with one first.
+  // With no image of the window in this session, BB Box reads it with one first.
   const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
   const deleteThree = refOf(tree, 'push button "Delete Task 3"');
   const deleteTwo = refOf(tree, 'push button "Delete Task 2"');
@@ -5697,7 +5697,7 @@ test("a click on an element the desktop cannot click as an element goes to the e
   const clicked = text(await tool("computer_act", { box: box.name, action: "click", ref: deleteThree }));
   assert.match(
     clicked,
-    new RegExp(`^Clicked ${deleteThree} \\(push button 'Delete Task 3'\\) at its centre, with the real pointer \\(the desktop's focus may have moved\\)\\. The desktop could not click it as an element, so bb-box clicked where it is drawn\\.`),
+    new RegExp(`^Clicked ${deleteThree} \\(push button 'Delete Task 3'\\) at its centre, with the real pointer \\(the desktop's focus may have moved\\)\\. The desktop could not click it as an element, so BB Box clicked where it is drawn\\.`),
   );
   assert.match(clicked, /- \[e\d+\] list item "Task 3"/);
   assert.deepEqual(readDesktop(file).tasks["100"], ["Task 1", "Task 2"]);
@@ -5796,7 +5796,7 @@ test("computer_launch opens apps and URLs and says which windows opened", async 
   assert.equal(isError(missing), true);
   assert.equal(
     text(missing),
-    "bb-box could not open missing: 'missing' is not an executable on PATH and matches no installed .desktop application. Apps installed in the box: Browser, Editor, Tasks, Wide.\n\n" +
+    "BB Box could not open missing: 'missing' is not an executable on PATH and matches no installed .desktop application. Apps installed in the box: Browser, Editor, Tasks, Wide.\n\n" +
       "Next: Give app as one of these names, or the path of a program in the box.",
   );
   assert.match(text(await tool("computer_launch", { box: box.name })), /^Give app or url, not both and not neither\./);
@@ -5819,7 +5819,7 @@ test("computer_launch of a single-instance app already open, which opens no new 
   assert.equal(isError(again), false);
   assert.equal(
     text(again),
-    `Editor was already open, and opening it again opened no new window. bb-box brought its window to the front:\n- window ${id}: editor "Untitled 2 - Editor", 640 by 480\n\n` +
+    `Editor was already open, and opening it again opened no new window. BB Box brought its window to the front:\n- window ${id}: editor "Untitled 2 - Editor", 640 by 480\n\n` +
       `Its title was "Untitled 1 - Editor" before, so it may show a new document.\n\nNext: Call computer_observe with window ${id} to read it.`,
   );
   assert.deepEqual(lastCall(file, "bring_to_front")?.args, { pid, window_id: id });
@@ -5846,7 +5846,7 @@ test("computer_launch on macOS opens Finder, which always runs, in a new window,
   assert.ok(Date.now() - finderBegan < 4_000);
   assert.equal(
     finderAgain,
-    `/System/Library/CoreServices/Finder.app was already open, and opening it again opened no new window. bb-box brought its window to the front:\n- window ${home}: Finder "box", 640 by 480\n\nNext: Call computer_observe with window ${home} to read it.`,
+    `/System/Library/CoreServices/Finder.app was already open, and opening it again opened no new window. BB Box brought its window to the front:\n- window ${home}: Finder "box", 640 by 480\n\nNext: Call computer_observe with window ${home} to read it.`,
   );
   assert.deepEqual(launched(), { bundle_id: "com.apple.finder", urls: ["~"] });
   assert.equal(lastCall(file, "bring_to_front")?.args.window_id, home);
@@ -5871,13 +5871,13 @@ test("computer_launch on macOS opens Finder, which always runs, in a new window,
   assert.ok(Date.now() - began < 2_000);
   assert.equal(
     again,
-    `calculator was already open, and opening it again opened no new window. bb-box brought its window to the front:\n- window ${id}: Calculator "Calculator", 640 by 480\n\nNext: Call computer_observe with window ${id} to read it.`,
+    `calculator was already open, and opening it again opened no new window. BB Box brought its window to the front:\n- window ${id}: Calculator "Calculator", 640 by 480\n\nNext: Call computer_observe with window ${id} to read it.`,
   );
   assert.equal(lastCall(file, "bring_to_front")?.args.window_id, id);
 
   const missing = await tool("computer_launch", { box: box.name, app: "Nope" });
   assert.equal(isError(missing), true);
-  assert.match(text(missing), /^bb-box could not open Nope: No installed macOS app found for name 'Nope'\. Apps installed in the box: Archive Utility, Calculator, Finder, TextEdit\./);
+  assert.match(text(missing), /^BB Box could not open Nope: No installed macOS app found for name 'Nope'\. Apps installed in the box: Archive Utility, Calculator, Finder, TextEdit\./);
 });
 
 test("a web page's runs of text are one line each, and the limit counts every line shown", async (t) => {
@@ -5975,7 +5975,7 @@ test("an action on a reference is refused once when its element was renamed wher
   assert.equal(isError(refused), true);
   assert.equal(
     text(refused),
-    `${area} is now text 'Notes', but bb-box last showed it as text 'Draft!', so nothing was done.\n\nNext: Act on ${area} again if it is the one you want; otherwise call computer_observe.`,
+    `${area} is now text 'Notes', but BB Box last showed it as text 'Draft!', so nothing was done.\n\nNext: Act on ${area} again if it is the one you want; otherwise call computer_observe.`,
   );
   assert.equal(readDesktop(file).fields[id], "Notes");
   assert.match(text(await tool("computer_type", { box: box.name, ref: area, text: "?" })), new RegExp(`^Typed 1 character into ${area} \\(text 'Notes'\\)\\.`));
@@ -6055,18 +6055,18 @@ test("an action on the desktop says which windows opened, closed or changed, or 
   const picked = text(await tool("computer_act", { box: box.name, action: "click", ref: rename }));
   assert.match(picked, new RegExp(`^Clicked ${rename} \\(menu item 'Rename'\\)\\.\\n\\nClosed the context menu on list item 'Task 3' \\(window 104\\)\\.`));
 
-  // When the desktop gives another window's elements for a menu, bb-box says it cannot read the menu's.
+  // When the desktop gives another window's elements for a menu, BB Box says it cannot read the menu's.
   editDesktop(file, (desktop) => {
     desktop.misreadPopups = true;
   });
   const misread = text(await tool("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 327, y: 196 }));
-  assert.match(misread, /\n\nOpened a context menu on list item 'Task 3' \(window 105\), whose items bb-box cannot read\.\n\nNext: Call computer_screenshot with window "desktop" to see it, then click its items by pixels\.$/);
+  assert.match(misread, /\n\nOpened a context menu on list item 'Task 3' \(window 105\), whose items BB Box cannot read\.\n\nNext: Call computer_screenshot with window "desktop" to see it, then click its items by pixels\.$/);
   const unread = await tool("computer_observe", { box: box.name, window: 105 });
   assert.equal(isError(unread), true);
-  assert.match(text(unread), /^bb-box cannot read the items of the context menu on list item 'Task 3' \(window 105\): the desktop gives another window's instead\./);
+  assert.match(text(unread), /^BB Box cannot read the items of the context menu on list item 'Task 3' \(window 105\): the desktop gives another window's instead\./);
   assert.match(text(await tool("computer_type", { box: box.name, window: 105, keys: "Escape" })), /\n\nClosed the context menu on list item 'Task 3' \(window 105\)\./);
 
-  // When its items show in its window's tree instead, as a GTK app's do, bb-box says so, and they are references.
+  // When its items show in its window's tree instead, as a GTK app's do, BB Box says so, and they are references.
   editDesktop(file, (desktop) => {
     desktop.menusInWindow = true;
   });
@@ -6087,7 +6087,7 @@ test("a closed popup is forgotten, so later actions on the desktop do not read i
   await tool("computer_screenshot", { box: box.name });
   // Task 3, at (400, 240) on the screen.
   assert.match(text(await tool("computer_act", { box: box.name, action: "right_click", window: "desktop", x: 327, y: 196 })), /Opened a context menu on list item 'Task 3' \(window 101\)/);
-  // It closes where bb-box does not see it, as when a person clicks elsewhere.
+  // It closes where BB Box does not see it, as when a person clicks elsewhere.
   editDesktop(file, (desktop) => {
     desktop.windows = desktop.windows.filter((window) => window.menuOf === undefined);
   });
@@ -6127,7 +6127,7 @@ test("pixels of the desktop keep their meaning in a new session, and are refused
   assert.match(text(await tool("computer_screenshot", { box: box.name })), /^The desktop\. Image 1568x882 of screen 1920x1080, scale 0\.817;/);
   await until("the idle session to close", async () => !app.computer.connected(box.id));
 
-  // A new session has no image of the desktop to map pixels by, so bb-box takes one first.
+  // A new session has no image of the desktop to map pixels by, so BB Box takes one first.
   // The Clear all button of window 100, at (850, 640) on the screen.
   const opened = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 694, y: 523 }));
   assert.match(opened, /^Clicked \(694, 523\) on the desktop, \(850, 640\) on the screen\./);
@@ -6160,7 +6160,7 @@ test("a click on the desktop reads only a small tree under the point, and says w
   const clicked = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 408, y: 94 }));
   assert.match(
     clicked,
-    /\n\nNo window opened, closed or changed\. bb-box did not read the tree of window 100, which is under that point, as it is too large to read quickly\.\n\nNext: Call computer_observe with window 100 to see what changed in it, or computer_screenshot with window "desktop"\.$/,
+    /\n\nNo window opened, closed or changed\. BB Box did not read the tree of window 100, which is under that point, as it is too large to read quickly\.\n\nNext: Call computer_observe with window 100 to see what changed in it, or computer_screenshot with window "desktop"\.$/,
   );
   const reads = readDesktop(file).calls.filter((call) => call.tool === "get_window_state").map((call) => call.args.max_elements);
   assert.equal(reads[0], 5);
@@ -6194,7 +6194,7 @@ test("a window a few pixels from another of its app's is moved apart, so that it
   assert.doesNotMatch(second, /Task 1/);
   assert.match(
     second,
-    /\n\nbb-box moved window 101 to \(140, 140\) on the screen: it lay within a few pixels of window 100, another window of its app, and the desktop gave that window's tree for both\.\n\nNext:/,
+    /\n\nBB Box moved window 101 to \(140, 140\) on the screen: it lay within a few pixels of window 100, another window of its app, and the desktop gave that window's tree for both\.\n\nNext:/,
   );
   const moves = () => readDesktop(file).calls.filter((call) => call.tool === "set_window_frame");
   assert.deepEqual(
@@ -6221,7 +6221,7 @@ test("a window a few pixels from another of its app's is moved apart, so that it
   assert.ok(isError(stuck));
   assert.equal(
     text(stuck),
-    'bb-box cannot read window 102: the desktop gives the tree of window 100, "Tasks", which lies within a few pixels of it, and window 102 would not move, as when it is maximised.\n\nNext: Un-maximise or close one of the two windows, for example by double-clicking its title bar, then observe it again. Or act on window 102 by pixels: call computer_screenshot with window 102.',
+    'BB Box cannot read window 102: the desktop gives the tree of window 100, "Tasks", which lies within a few pixels of it, and window 102 would not move, as when it is maximised.\n\nNext: Un-maximise or close one of the two windows, for example by double-clicking its title bar, then observe it again. Or act on window 102 by pixels: call computer_screenshot with window 102.',
   );
 });
 
@@ -6248,7 +6248,7 @@ test("while a person holds a desktop the computer tools wait, and afterwards the
   assert.equal(took.error, null);
   const interrupted = await slow;
   assert.equal(isError(interrupted), true);
-  assert.match(text(interrupted), /^A person took control of the box's desktop while this ran, so bb-box closed its session with the driver\. bb-box cannot tell whether it was done\.\n\nNext: Wait until they hand control back/);
+  assert.match(text(interrupted), /^A person took control of the box's desktop while this ran, so BB Box closed its session with the driver\. BB Box cannot tell whether it was done\.\n\nNext: Wait until they hand control back/);
   assert.equal(app.computer.connected(box.id), false);
 
   const paused = await tool("computer_windows", { box: box.name });
@@ -6261,7 +6261,7 @@ test("while a person holds a desktop the computer tools wait, and afterwards the
   assert.match(back, new RegExp(`^${RETURNED.replace(/[.;]/g, "\\$&")}\\n\\nWindows on box`));
   assert.equal(readDesktop(file).calls.length, calls + 1, "nothing reached the driver while the person held control");
   assert.doesNotMatch(text(await tool("computer_windows", { box: box.name })), /Control returned/, "the notice comes once");
-  assert.match(text(await tool("computer_act", { box: box.name, action: "click", ref: add })), /^bb-box has no reference e\d+/, "references go when a person takes control");
+  assert.match(text(await tool("computer_act", { box: box.name, action: "click", ref: add })), /^BB Box has no reference e\d+/, "references go when a person takes control");
   await session.close();
 });
 
@@ -6306,7 +6306,7 @@ test("computer_take_control takes a desktop back from a person as a hand-back do
   await session.close();
 });
 
-test("a click on the desktop says it was done when a person takes control while bb-box looks for changes", async (t) => {
+test("a click on the desktop says it was done when a person takes control while BB Box looks for changes", async (t) => {
   const { harness, app, box, file, tool } = await desktopBox({ computer: { desktopWaitMs: 5_000 } });
   t.after(() => harness.lifecycle.dispose());
   await tool("computer_screenshot", { box: box.name });
@@ -6318,14 +6318,14 @@ test("a click on the desktop says it was done when a person takes control while 
   await session.receive(Uint8Array.of(1));
   await until("the viewer to join", async () => app.desktops.control.connected(box.id, viewer));
 
-  // Nothing is under (960, 540), and nothing changes, so bb-box keeps looking.
+  // Nothing is under (960, 540), and nothing changes, so BB Box keeps looking.
   const click = tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 784, y: 441 });
   await until("the click to reach the driver", async () => readDesktop(file).calls.some((call) => call.tool === "click"));
   const took = (await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null };
   assert.equal(took.error, null);
   const clicked = await click;
   assert.equal(isError(clicked), false, text(clicked));
-  assert.match(text(clicked), /^Clicked \(784, 441\) on the desktop, \(960, 540\) on the screen\. .*\n\nA person took control of the desktop before bb-box could read what changed\.\n\nNext: Wait until they hand control back, or take it back with computer_take_control once they ask you to continue; then call computer_observe\.$/);
+  assert.match(text(clicked), /^Clicked \(784, 441\) on the desktop, \(960, 540\) on the screen\. .*\n\nA person took control of the desktop before BB Box could read what changed\.\n\nNext: Wait until they hand control back, or take it back with computer_take_control once they ask you to continue; then call computer_observe\.$/);
   await session.close();
 });
 
@@ -6552,7 +6552,7 @@ test("box_device sends a control with its own parameters only, answers in words 
   assert.match(text(await tool("box_device", { box: plain.name, action: "home" })), /has no device: box_device works on ios and android boxes\./);
 });
 
-test("box_status asks the device server to read the device's settings first, so a change made outside bb-box shows with no viewer watching (F-7)", async (t) => {
+test("box_status asks the device server to read the device's settings first, so a change made outside BB Box shows with no viewer watching (F-7)", async (t) => {
   const runtime = { platform: "android", api: 35, image: "google_apis", revision: 9, abi: "x86_64", emulator: "37.2.12.0", snapshot: null };
   const offer = { platform: "android", devices: [{ model: "Pixel 8", native: "pixel_8", runtime }] };
   const kind: BoxKind = { ...FAKE_KINDS[0]!, id: "android", label: "Android emulator", capabilities: { ...FAKE_KINDS[0]!.capabilities, displays: [DEVICE_DISPLAY], device: offer as never } };
@@ -6644,7 +6644,7 @@ test("box_acquire and bb box acquire take a device, refuse it on other kinds, an
   assert.deepEqual(asked.filter((kind) => kind === "ios"), ["ios", "ios", "ios"], "by acquire twice, then by box_list");
 });
 
-test("the box log names who stopped and started a box from the panel, a tool and bb box, in box-log.db beside bb-box's database, and the view and the doctor say so (069)", async (t) => {
+test("the box log names who stopped and started a box from the panel, a tool and bb box, in box-log.db beside BB Box's database, and the view and the doctor say so (069)", async (t) => {
   const { app, bb, harness, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
   const folder = dirname(bb.storage.database().name);
@@ -6680,7 +6680,7 @@ test("the box log names who stopped and started a box from the panel, a tool and
   const doctor = (await harness.behavior.callRpc("doctor", null)) as { sections: { title: string; report: { checks: { id: string; status: string; detail: string }[] } }[] };
   const check = doctor.sections.find((section) => section.title === "Box log")?.report.checks[0];
   assert.equal(check?.status, "ok");
-  assert.match(check?.detail ?? "", /box-log\.db, attached to bb-box's database: \d+ events/);
+  assert.match(check?.detail ?? "", /box-log\.db, attached to BB Box's database: \d+ events/);
 });
 
 test("the reach check follows a box that stops answering with the Monitor off, and Check now checks it at once (069 G7)", async (t) => {
@@ -6911,11 +6911,11 @@ test("a box whose own identity reset took its BB machine is kept: the old machin
   );
   const events = app.boxLog.events(box.id).filter((event) => event.kind === "identity-reset" || event.kind === "enrolled-again");
   assert.deepEqual(events.map((event) => [event.kind, event.by.is]), [["identity-reset", "bb-box"], ["enrolled-again", "bb-box"]]);
-  assert.match(events[0]!.words ?? "", new RegExp(`^Box ${box.name} reset its identity at 2026-10-30 17:04:02 UTC, as none of the marker's MAC addresses .*\\. BB's machine ${machine} went with it, so bb-box enrols the box again as a new BB machine, and keeps it\\.$`));
-  assert.match(events[1]!.words ?? "", new RegExp(`^Box ${box.name} joined BB again as machine ${replacement}, in place of ${machine}, \\d+ s after bb-box found its identity reset\\.$`));
+  assert.match(events[0]!.words ?? "", new RegExp(`^Box ${box.name} reset its identity at 2026-10-30 17:04:02 UTC, as none of the marker's MAC addresses .*\\. BB's machine ${machine} went with it, so BB Box enrols the box again as a new BB machine, and keeps it\\.$`));
+  assert.match(events[1]!.words ?? "", new RegExp(`^Box ${box.name} joined BB again as machine ${replacement}, in place of ${machine}, \\d+ s after BB Box found its identity reset\\.$`));
   const [check] = await resetChecks(harness);
   assert.deepEqual([check?.id, check?.status], [`identity-reset.${box.name}`, "warn"]);
-  assert.match(check!.detail, new RegExp(`bb-box kept the box and enrolled it again, at .* UTC, as BB machine ${replacement}\\.$`));
+  assert.match(check!.detail, new RegExp(`BB Box kept the box and enrolled it again, at .* UTC, as BB machine ${replacement}\\.$`));
   await app.enrolment.sweep();
   assert.deepEqual(world.bootstraps, [box.id, box.id], "once enrolled again, the old reset is not acted on again");
 });
@@ -6975,7 +6975,7 @@ test("a thread's own machine whose identity reset is never removed nor enrolled 
   assert.deepEqual(world.bootstraps.filter((key) => key === THREAD), [THREAD], "no bootstrap of the old machine either");
   const [check] = await resetChecks(harness);
   assert.equal(check?.status, "fail");
-  assert.match(check!.detail, new RegExp(`It is the machine of thread ${THREAD}, and bb-box removes no thread's machine`));
+  assert.match(check!.detail, new RegExp(`It is the machine of thread ${THREAD}, and BB Box removes no thread's machine`));
   assert.match(check!.fix ?? "", new RegExp(`Copy what thread ${THREAD} needs from the box`));
 });
 
@@ -6999,17 +6999,17 @@ test("one of your machines whose BB machine BB removes after its identity reset 
   world.hosts.delete(quiet.enrol.hostId!);
   assert.deepEqual(await within(provider.remove({ resource: { boxId: quiet.id }, hostId: quiet.enrol.hostId } as never), "BB's removal of a box that does not answer", 30_000), { status: "removed" });
   const waiting = await app.boxes.find(quiet.id);
-  assert.equal(waiting?.state, "ready", "kept: bb-box could not read whether it reset");
+  assert.equal(waiting?.state, "ready", "kept: BB Box could not read whether it reset");
   assert.deepEqual([waiting?.enrol.state, waiting?.removedMachineToCheck?.machine], ["off", quiet.enrol.hostId]);
   const [check] = (await resetChecks(harness)).filter((each) => each.id === "identity-reset.build-2");
   assert.equal(check?.status, "warn");
-  assert.match(check!.detail, /bb-box could not read whether the box's identity reset/);
+  assert.match(check!.detail, /BB Box could not read whether the box's identity reset/);
   fake.faults.silent = undefined;
   await app.enrolment.sweep();
   await until("one of your machines with no reset of its own released once it answers (036)", async () => (await app.boxes.find(quiet.id)) === null);
 });
 
-test("a reset record that names another BB machine, as in a box copied from another, or none, as in the source of a clone made outside bb-box, or one bb-box never armed, changes nothing (070)", async (t) => {
+test("a reset record that names another BB machine, as in a box copied from another, or none, as in the source of a clone made outside bb-box, or one BB Box never armed, changes nothing (070)", async (t) => {
   const { harness, app, world, tool } = await start({ "fake-enabled": true });
   t.after(() => harness.lifecycle.dispose());
   await tool("box_acquire", {});
@@ -7031,7 +7031,7 @@ test("a reset record that names another BB machine, as in a box copied from anot
   await identityResetIn(app, unarmed, unarmed.enrol.hostId!);
   world.hosts.delete(unarmed.enrol.hostId!);
   assert.deepEqual(await within(provider.remove({ resource: { boxId: unarmed.id }, hostId: unarmed.enrol.hostId } as never), "BB's removal"), { status: "removed" });
-  assert.equal(await app.boxes.find(unarmed.id), null, "a box bb-box never armed is removed with its machine, as before (036)");
+  assert.equal(await app.boxes.find(unarmed.id), null, "a box BB Box never armed is removed with its machine, as before (036)");
 
   const mine = await armed(app, await addMachine(harness, app, { kind: "linux", name: "build-4" }));
   world.hosts.delete(mine.enrol.hostId!);
@@ -7040,7 +7040,7 @@ test("a reset record that names another BB machine, as in a box copied from anot
   assert.deepEqual(app.boxLog.events(box.id).filter((event) => event.kind === "identity-reset"), []);
 });
 
-test("a reset record bb-box cannot read is not taken for no reset: an unreadable record keeps the box (070)", async (t) => {
+test("a reset record BB Box cannot read is not taken for no reset: an unreadable record keeps the box (070)", async (t) => {
   const { harness, app, world } = await start({ "fake-enabled": true });
   t.after(() => harness.lifecycle.dispose());
   const provider = harness.inspection.registrations.machineProviders.get("bb-box")!;
@@ -7071,7 +7071,7 @@ test("an enrolment again after an identity reset that fails is tried again at th
   });
   const [failed] = await resetChecks(harness);
   assert.equal(failed?.status, "fail");
-  assert.match(failed!.detail, /bb-box kept the box; bb-box has not yet enrolled it again as a BB machine\. Its last try failed: .*BB's server did not answer/);
+  assert.match(failed!.detail, /BB Box kept the box; BB Box has not yet enrolled it again as a BB machine\. Its last try failed: .*BB's server did not answer/);
   world.bootstrapError = null;
   await app.enrolment.sweep();
   const again = await enrolledAgain(app, box.id);
@@ -7168,7 +7168,7 @@ test("box_snapshot, box_snapshots and box_snapshot_delete: an agent takes, lists
   assert.equal((await harness.behavior.runCli(["option", "set", "general.snapshots.perBox=2"])).exitCode, 0);
   await tool("box_snapshot", { box: box.name, name: "two" });
   const three = text(await tool("box_snapshot", { box: box.name, name: "three" }));
-  assert.match(three, /holds 2 of 2 snapshots\.\nThe box was at its limit of 2, so bb-box deleted the oldest snapshot an agent of this thread took and nobody kept: "one"\./);
+  assert.match(three, /holds 2 of 2 snapshots\.\nThe box was at its limit of 2, so BB Box deleted the oldest snapshot an agent of this thread took and nobody kept: "one"\./);
   const listed = text(await tool("box_snapshots", {}));
   assert.match(listed, new RegExp(`^Box ${box.name} \\(${box.id}\\), [^:]+: snapshots of its disk, or its disk and memory, while it runs\\.\\n  "two" \\(sn`));
   assert.match(listed, /\n  2 of 2 for this box\.\n\nNext: /);
@@ -7209,7 +7209,7 @@ test("box_fork and bb box snapshot fork: with no snapshot named, box_fork checks
   const box = await only(app);
   const refused = await tool("box_fork", { box: box.name });
   assert.equal(typeof refused === "string" ? false : refused.isError, true);
-  assert.match(text(refused), new RegExp(`^Box ${box.name} has no working identity reset now, so a copy of it would not give up its identity, and bb-box does not fork it\\.\\n\\nNext: Call box_status`));
+  assert.match(text(refused), new RegExp(`^Box ${box.name} has no working identity reset now, so a copy of it would not give up its identity, and BB Box does not fork it\\.\\n\\nNext: Call box_status`));
   assert.deepEqual(app.snapshotStore.records({ box: box.id }), [], "it took nothing");
   assert.equal((await app.boxes.list(THREAD)).length, 1, "and made no box");
   await tool("box_snapshot", { box: box.name, name: "plain" });
@@ -7223,7 +7223,7 @@ test("box_fork and bb box snapshot fork: with no snapshot named, box_fork checks
   };
   const after = text(await tool("box_fork", { box: box.name }));
   assert.match(after, /^The Proxmox token lacks VM\.Clone on \/pool\/bbbox\.\nTook snapshot "for a fork" \(sn[a-z2-7]{12}\) of box \S+ in [0-9.]+ s: it holds its disk\./);
-  assert.match(after, /bb-box deleted the snapshot "for a fork" it took for this, as the fork was refused\./);
+  assert.match(after, /BB Box deleted the snapshot "for a fork" it took for this, as the fork was refused\./);
   assert.deepEqual(app.snapshotStore.records({ box: box.id }).map((record) => record.name), ["plain"], "the snapshot it took is gone");
   const OTHER = "thr_other";
   world.threads.set(OTHER, makeThreadResponse({ id: OTHER, projectId: PROJECT, environmentId: "env_two", providerId: "claude-code" }));
@@ -7236,8 +7236,8 @@ test("snapshot tools never add release or settings advice to fork and restore ca
   new FakeSnapshots().attach(world.backend!, Date.now);
   await tool("box_acquire", {});
   const box = await only(app);
-  app.snapshots.fork = async () => { throw new BoxError("no_capacity", "Not forked: no card has room. Fork it with gpu none, or ask the user. bb-box copied nothing."); };
-  app.snapshots.restore = async () => { throw new BoxError("no_capacity", "Every VMID is in use, so bb-box has none for the copy a restore needs. Try again later, or ask the user to make room for the copy."); };
+  app.snapshots.fork = async () => { throw new BoxError("no_capacity", "Not forked: no card has room. Fork it with gpu none, or ask the user. BB Box copied nothing."); };
+  app.snapshots.restore = async () => { throw new BoxError("no_capacity", "Every VMID is in use, so BB Box has none for the copy a restore needs. Try again later, or ask the user to make room for the copy."); };
   for (const [name, input] of [["box_fork", { box: box.name, snapshot: "one", gpu: "shared" }], ["box_restore", { box: box.name, snapshot: "one", replace: true }]] as const) {
     const answer = text(await tool(name, input));
     assert.doesNotMatch(answer, /\n\nNext:/, answer);
@@ -7251,14 +7251,14 @@ test("071 unit 8: box_acquire takes gpu whole and box_fork too; the provider's r
   t.after(() => harness.lifecycle.dispose());
   new FakeSnapshots().attach(world.backend!, Date.now);
   const off = text(await tool("box_acquire", { kind: "linux", gpu: "whole" }));
-  assert.equal(off, "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. bb-box changed nothing.", "whole cards are off until the install turns them on");
+  assert.equal(off, "Not made: whole cards are off on this install. Ask for gpu shared, or ask the user. BB Box changed nothing.", "whole cards are off until the install turns them on");
   const before = app.configuration.exported();
   const turned = await app.configuration.apply({ ...before, general: { ...before.general, wholeCards: true } }, before.revision);
   assert.ok(turned.ok, JSON.stringify(turned.ok ? null : turned));
   const backend = world.backend! as unknown as { capacity: Backend["capacity"] };
   const capacity = backend.capacity.bind(backend);
   const asked: (string | undefined)[] = [];
-  const words = "Not made: no card on the fake host is free for a whole card now: card 0 has lone-pine running. Ask for gpu shared, or ask the user. bb-box changed nothing.";
+  const words = "Not made: no card on the fake host is free for a whole card now: card 0 has lone-pine running. Ask for gpu shared, or ask the user. BB Box changed nothing.";
   backend.capacity = async (kind, size, pending, signal, asking) => {
     if (size.gpu !== "whole") return capacity(kind, size, pending, signal, asking);
     asked.push(asking?.threadId);
@@ -7270,14 +7270,14 @@ test("071 unit 8: box_acquire takes gpu whole and box_fork too; the provider's r
   const forked: unknown[] = [];
   app.snapshots.fork = async (_caller, _box, _standing, _ref, input) => {
     forked.push(input?.gpu);
-    throw new BoxError("no_capacity", "Not forked: no card on the fake host is free for a whole card now. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.");
+    throw new BoxError("no_capacity", "Not forked: no card on the fake host is free for a whole card now. Fork it with gpu shared or none, or ask the user. BB Box copied nothing.");
   };
   (app.snapshots as unknown as Record<string, unknown>).checkForkOfBox = async () => {};
   const booted = await app.boxes.acquire({ threadId: THREAD, projectId: PROJECT, kind: "linux" });
   await app.boxes.settled(booted);
   const fork = text(await tool("box_fork", { box: booted.name, snapshot: "one", gpu: "whole" }));
   assert.deepEqual(forked, ["whole"]);
-  assert.match(fork, /Fork it with gpu shared or none, or ask the user\. bb-box copied nothing\./);
+  assert.match(fork, /Fork it with gpu shared or none, or ask the user\. BB Box copied nothing\./);
 });
 
 test("071 unit 10: box_resize gives an agent its own words when the check after an install failed, and no person's command", async (t) => {
@@ -7336,7 +7336,7 @@ test("071 unit 8, round 2: while whole cards are off, the schemas agents get for
   assert.match((await help(["snapshot", "fork"])).split("\n").find((line) => /^\s+--gpu /.test(line)) ?? "", /shared or whole/);
 });
 
-test("071 unit 8, round 2: bb-box reads its skills' names from its manifest, as the tool selection must list them", () => {
+test("071 unit 8, round 2: BB Box reads its skills' names from its manifest, as the tool selection must list them", () => {
   assert.deepEqual(manifestSkills()?.sort(), ["bb-box", "bb-box-setup"]);
 });
 
@@ -7347,7 +7347,7 @@ test("box_acquire, box_resize, box_start and box_snapshot keep a refusal's own w
   new FakeSnapshots().attach(world.backend!, Date.now);
   const backend = world.backend!;
   const capacity = backend.capacity.bind(backend);
-  const gpuRefusal = "Not made: no card on the fake host can take a shared GPU now. Ask for gpu none, or ask the user. bb-box changed nothing.";
+  const gpuRefusal = "Not made: no card on the fake host can take a shared GPU now. Ask for gpu none, or ask the user. BB Box changed nothing.";
   backend.capacity = async (kind, size, pending) => {
     if ((size as { gpu?: string }).gpu === "shared") {
       return { ok: false, message: "No card has room. Release a box on a card, or raise the boxes per card in BB Box's settings.", agentMessage: gpuRefusal, warm: null, hosts: [] };
@@ -7366,7 +7366,7 @@ test("box_acquire, box_resize, box_start and box_snapshot keep a refusal's own w
   backend.capacity = capacity;
   backend.offer([FAKE_KINDS[0]!, FAKE_KINDS[1]!]);
   const unsupported = text(await tool("box_acquire", { kind: "linux", gpu: "shared" }));
-  assert.match(unsupported, /Ask for gpu none, or ask the user\. bb-box changed nothing\.$/);
+  assert.match(unsupported, /Ask for gpu none, or ask the user\. BB Box changed nothing\.$/);
   assert.doesNotMatch(unsupported, /\n\nNext:/);
   assert.doesNotMatch(unsupported, /[Rr]elease|settings|Call box_status/);
 
@@ -7374,7 +7374,7 @@ test("box_acquire, box_resize, box_start and box_snapshot keep a refusal's own w
   assert.ok(!isError(await tool("box_acquire", { kind: "linux" })));
   const box = await only(app);
   backend.resizeWays = { cores: "live", memory: "live", disk: "live", shrinks: true };
-  const resizeRefusal = "Not resized: no card is free for this box. Keep the GPU shared, or ask the user. bb-box changed nothing.";
+  const resizeRefusal = "Not resized: no card is free for this box. Keep the GPU shared, or ask the user. BB Box changed nothing.";
   backend.resizeRoom = { ok: false, message: "No card is free. Release a desktop box, or raise the boxes per card.", agentMessage: resizeRefusal, warm: null, hosts: [] };
   const resized = text(await tool("box_resize", { box: box.name, memory_gib: 8 }));
   assert.equal(resized, resizeRefusal);
@@ -7396,10 +7396,10 @@ test("box_acquire, box_resize, box_start and box_snapshot keep a refusal's own w
   assert.equal(capped, "Box holds 5 snapshots, the most allowed.\n\nNext: Delete a snapshot you took and no longer need with box_snapshot_delete, or ask the user.");
   assert.doesNotMatch(capped, /[Ss]ettings|[Rr]elease|raise|widen/);
   app.snapshots.take = async () => {
-    throw new BoxError("no_capacity", "Not taken: the pool is full. Try again later, or ask the user. bb-box changed nothing.");
+    throw new BoxError("no_capacity", "Not taken: the pool is full. Try again later, or ask the user. BB Box changed nothing.");
   };
   const pooled = text(await tool("box_snapshot", { box: box.name }));
-  assert.equal(pooled, "Not taken: the pool is full. Try again later, or ask the user. bb-box changed nothing.");
+  assert.equal(pooled, "Not taken: the pool is full. Try again later, or ask the user. BB Box changed nothing.");
 
   const acquire = backend.acquire.bind(backend);
   backend.acquire = async () => {
@@ -7419,7 +7419,7 @@ test("box_restore restores the agent's own box at once with an undo; with agents
   await tool("box_acquire", {});
   const box = await app.boxes.enrolled(await only(app));
   await tool("box_snapshot", { box: box.name, name: "one" });
-  assert.match(text(await tool("box_restore", { box: box.name, snapshot: "one", replace: false })), /bb-box changed nothing\.\n\nNext: Call box_restore with replace true if you mean it\./);
+  assert.match(text(await tool("box_restore", { box: box.name, snapshot: "one", replace: false })), /BB Box changed nothing\.\n\nNext: Call box_restore with replace true if you mean it\./);
   const direct = text(await tool("box_restore", { box: box.name, snapshot: "one", replace: true }));
   assert.match(direct, new RegExp(`^Restored box ${box.name} to "one" \\(sn`));
   assert.match(direct, /Its undo is "before the restore at \d\d:\d\d" \(sn[a-z2-7]{12}\): restore that to undo this\./);
@@ -7480,7 +7480,7 @@ test("a box threads run on: box_restore is refused until machine restores are on
   assert.match(off, /BB Box does not restore such a box yet: that stays off until BB Box can hold every turn on it while it restores/);
   assert.equal(harness.inspection.pendingInteractions.length, 0);
 
-  assert.match((await harness.behavior.runCli(["snapshot", "machine-restores", "on"])).stdout ?? "", /^Restores of boxes threads run on are on until bb-box restarts/);
+  assert.match((await harness.behavior.runCli(["snapshot", "machine-restores", "on"])).stdout ?? "", /^Restores of boxes threads run on are on until BB Box restarts/);
   const noUndo = await harness.behavior.runCli(["snapshot", "restore", "dev-desk", "before the upgrade", "--machine", "--replace", "--no-undo", "--force"]);
   assert.match(noUndo.stderr ?? "", /always takes an undo before it restores a box threads run on/);
   const hook = harness.inspection.registrations.hooks["message.dispatch"]!;
@@ -7503,7 +7503,7 @@ test("a box threads run on: box_restore is refused until machine restores are on
   assert.equal(held.action, "wait");
   const again = (held as { sendAt: number }).sendAt;
   assert.ok(again >= asked + 15_000 && again <= Date.now() + 15_000, "BB asks again within 15 s, whether or not a recheck reaches the row");
-  assert.equal((held as { reason: string }).reason, "bb-box is restoring box dev-desk, the machine this thread runs on. This message waits until the box is ready again.");
+  assert.equal((held as { reason: string }).reason, "BB Box is restoring box dev-desk, the machine this thread runs on. This message waits until the box is ready again.");
   assert.ok(heldWords({ name: "x".repeat(200) }).length <= 200, "BB refuses a wait reason over 200 characters");
   assert.ok(heldWords({ name: "a".repeat(63) }).includes("a".repeat(63)));
   assert.deepEqual(await hook(makeMessageDispatchHookContext({ host: { id: "host_elsewhere" } })), { action: "proceed" }, "other machines' turns go on");
@@ -7511,7 +7511,7 @@ test("a box threads run on: box_restore is refused until machine restores are on
   assert.match(said, /^Restored box dev-desk to "before the upgrade"/);
   assert.match(said, /It was restored on a yes given in this thread\./);
   await until("the hold to end", async () => (await hook(onIt)).action === "proceed");
-  assert.ok(harness.inspection.recheckCount > rechecks, "bb-box asked BB to send the held messages");
+  assert.ok(harness.inspection.recheckCount > rechecks, "BB Box asked BB to send the held messages");
   const events = app.boxLog.events(machine.id).filter((event) => event.kind === "restore-asked" || event.kind === "restored");
   assert.equal(events.length, 2);
   for (const event of events) assert.match(event.words!, /on a yes given in/);
@@ -7536,7 +7536,7 @@ test("bb box option sets each backend's ceiling on paid snapshots and the agents
   assert.equal(app.configuration.exported().general.snapshots, undefined);
 });
 
-test("when bb-box cannot tell where the thread runs, the snapshot tools count its own box as one it runs on, and show only what it took there (070 unit 5)", async (t) => {
+test("when BB Box cannot tell where the thread runs, the snapshot tools count its own box as one it runs on, and show only what it took there (070 unit 5)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
   new FakeSnapshots().attach(world.backend!, Date.now);
@@ -7590,7 +7590,7 @@ test("070 unit 8: bb box snapshot keep and unkeep, a release that copies what wa
   assert.equal((await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD, "--name", "old image"])).exitCode, 0);
   const refused = await harness.behavior.runCli(["snapshot", "keep", box.name, "old image", "--thread", THREAD]);
   assert.equal(refused.exitCode, 1);
-  assert.match(refused.stderr ?? "", /Taken before .*'s image had the identity reset: "old image" could not be forked after a release, so bb-box does not keep it\. Its identity reset was off when it was taken, as in a box from an image prepared before the reset was turned on: refresh the Linux image and make the box again\. \(unsupported\)/);
+  assert.match(refused.stderr ?? "", /Taken before .*'s image had the identity reset: "old image" could not be forked after a release, so BB Box does not keep it\. Its identity reset was off when it was taken, as in a box from an image prepared before the reset was turned on: refresh the Linux image and make the box again\. \(unsupported\)/);
   const [record] = app.snapshotStore.records();
   app.snapshotStore.updateRecord(record!.id, { forkSafe: 7 });
   const check = await harness.behavior.runCli(["snapshot", "keep", box.name, "old image", "--thread", THREAD, "--days", "10", "--check"]);
@@ -7642,7 +7642,7 @@ test("while a desktop box records, its computer use is logged for the clip: clic
   assert.doesNotMatch(JSON.stringify(events), /milk/, "the text typed is not in the log");
 });
 
-test("typing whose field bb-box cannot tell, into a window's focused element or as a single key, is logged as secret, so the clip shows no pill and draws no zoom for it (073)", async (t) => {
+test("typing whose field BB Box cannot tell, into a window's focused element or as a single key, is logged as secret, so the clip shows no pill and draws no zoom for it (073)", async (t) => {
   const { harness, app, box, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
@@ -7709,7 +7709,7 @@ test("a person's keys are read as the desktop's server names Command and Option,
 const TOOLS_TAKING_NO_SESSION = ["list_windows", "launch_app", "list_apps", "bring_to_front", "kill_app"];
 const A_LONG_CAPTURE_MS = 60_000;
 
-test("while a desktop records, bb-box hides the driver's own agent cursor in a session of its own, names that session on each call that takes one, and shows the cursor again at the stop, in the same session, so its refs stay good (073)", async (t) => {
+test("while a desktop records, BB Box hides the driver's own agent cursor in a session of its own, names that session on each call that takes one, and shows the cursor again at the stop, in the same session, so its refs stay good (073)", async (t) => {
   const { harness, app, box, tool, file } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
@@ -7765,7 +7765,7 @@ test("a recording's hidden agent cursor is hidden again in a new session with th
   assert.equal(await app.computer.showAgentCursor(box), false, "so the clip keeps the driver's cursor");
 });
 
-test("a recording's hidden agent cursor comes back by itself as its capture ends at the limit, stays shown in a new session with the driver, and its stop still draws bb-box's pointer for that capture (073)", async (t) => {
+test("a recording's hidden agent cursor comes back by itself as its capture ends at the limit, stays shown in a new session with the driver, and its stop still draws BB Box's pointer for that capture (073)", async (t) => {
   const { harness, app, box, tool, file } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   await tool("computer_observe", { box: box.name, window: 100 });
@@ -7779,7 +7779,7 @@ test("a recording's hidden agent cursor comes back by itself as its capture ends
   await tool("computer_observe", { box: box.name, window: 100 });
   assert.equal(starts(), before + 1, "a new session with the driver");
   assert.equal(readDesktop(file).agentCursorShownBySession?.[session], true, "which leaves the cursor shown");
-  assert.equal(await app.computer.showAgentCursor(box), true, "the capture had it hidden throughout, so its stop draws bb-box's pointer");
+  assert.equal(await app.computer.showAgentCursor(box), true, "the capture had it hidden throughout, so its stop draws BB Box's pointer");
   assert.equal(await app.computer.showAgentCursor(box), false, "and only once");
 });
 
@@ -7796,7 +7796,7 @@ test("where the driver's agent cursor came back during a capture, its stop keeps
   assert.equal(await app.computer.showAgentCursor(box), false);
 });
 
-test("showing the hidden agent cursor again waits for the driver to confirm it, tries again after a short wait, and once more as bb-box next connects to the driver (073)", async (t) => {
+test("showing the hidden agent cursor again waits for the driver to confirm it, tries again after a short wait, and once more as BB Box next connects to the driver (073)", async (t) => {
   const { harness, app, box, tool, file } = await desktopBox({ computer: { cursorRestoreRetryMs: [50, 100, 150] } });
   t.after(() => harness.lifecycle.dispose());
   await tool("computer_observe", { box: box.name, window: 100 });
@@ -7819,7 +7819,7 @@ test("showing the hidden agent cursor again waits for the driver to confirm it, 
     desktop.endedSession = desktop.sessions;
   });
   await tool("computer_observe", { box: box.name, window: 100 });
-  assert.equal(readDesktop(file).agentCursorShownBySession?.[session], true, "shown as bb-box next connects");
+  assert.equal(readDesktop(file).agentCursorShownBySession?.[session], true, "shown as BB Box next connects");
 });
 
 test("files stay on the panel: an agent has no files tool, and another plugin cannot call the files RPC", async (t) => {

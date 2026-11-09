@@ -22,6 +22,7 @@ import { isSignallablePid } from "../transports/spawns.ts";
 import { TransportError, type CommandTransport } from "../transports/types.ts";
 
 /** How each Linux kind's standard image is built, as template/build.sh builds it. */
+import { PRODUCT } from "../brand.ts";
 const BUILDS: Readonly<Record<string, { readonly artifacts: string; readonly finalize: string; readonly gpu: string; readonly session: string; readonly check: string; readonly userspaceOfHostDriver?: true }>> = {
   linux: { artifacts: "linux", finalize: "linux", gpu: "", session: "", check: "bb-box-check-headless", userspaceOfHostDriver: true },
   "linux-desktop": { artifacts: "desktop", finalize: "desktop", gpu: "nvidia", session: "", check: "bb-box-check-desktop" },
@@ -111,7 +112,7 @@ export interface RefreshResult {
 /** The script that runs the guest scripts again in a build box, as root through sudo, from the staged files in setup.tgz. */
 export function buildScript(kind: string, bbUrl: string | null, buildId: string, prepare = ""): string {
   const build = BUILDS[kind];
-  if (!build) throw new Error(`bb-box refreshes no ${kind} image.`);
+  if (!build) throw new Error(`${PRODUCT} refreshes no ${kind} image.`);
   const src = `${BUILD_DIR}/proxmox-lxc/template`;
   return [
     "set -euo pipefail",
@@ -296,7 +297,7 @@ async function followWindows(command: CommandTransport, timeoutMs: number, resta
     let more = false;
     try {
       const looked = await command.run(windowsFollowScript(run, offset, WINDOWS_LOG_CHUNK), { timeoutMs: 30_000, signal });
-      if (looked.exitCode !== 0) throw new Error(`bb-box could not read refresh.ps1's log: ${looked.stderr.trim() || `exit code ${looked.exitCode}`}`);
+      if (looked.exitCode !== 0) throw new Error(`${PRODUCT} could not read refresh.ps1's log: ${looked.stderr.trim() || `exit code ${looked.exitCode}`}`);
       heard = Date.now();
       const seen = parseWindowsFollow(looked.stdout);
       offset += seen.bytes.length;
@@ -482,7 +483,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
   try {
     const kind = current.kind;
     const windows = KIND_INFO[kind]?.os === "windows";
-    if (!BUILDS[kind] && !images.build && !windows) return end(false, null, `bb-box refreshes no ${kind} image.`);
+    if (!BUILDS[kind] && !images.build && !windows) return end(false, null, `${PRODUCT} refreshes no ${kind} image.`);
     if (!windows) {
       // A Linux image takes the versions a rebuild takes (versions.ts).
       const versions = await (options.versions ?? resolveVersions)(options.setup, { pinned: !!options.pinned, signal });
@@ -496,7 +497,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       const arch = KIND_INFO[kind]!.arch;
       const pins = await windowsPins(options.setup, arch);
       const digest = await pinsDigest(options.setup, arch === "arm64" ? "windows-arm64" : "windows");
-      if (!digest) return end(false, null, "bb-box could not read the Windows build script's pins.");
+      if (!digest) return end(false, null, `${PRODUCT} could not read the Windows build script's pins.`);
       windowsCheck = await readFile(join(options.setup, "windows", "check.ps1"), "utf8");
       windowsCheck = images.adaptCheck?.(kind, windowsCheck, options.setup) ?? windowsCheck;
       const buildId = newBuildId(now());

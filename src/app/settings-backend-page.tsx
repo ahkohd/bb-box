@@ -12,7 +12,8 @@ import type { DoctorCheck, DoctorReport } from "../backends/types.ts";
 import type { BackendConfig } from "../core/document.ts";
 import type { Contract } from "../plugin/contract.ts";
 import type { ConfigState, DriverView, FieldView } from "../plugin/configuration.ts";
-import { Badge, relativeTime, StatusDot, type Tone } from "./common.tsx";
+import { ago } from "./box-words.ts";
+import { Badge, StatusDot, type Tone } from "./common.tsx";
 import { groupFields, isSecretField, isSecretState } from "./config.ts";
 import { REPOSITORY_URL } from "./settings-backends.tsx";
 import { backendPart, FieldCards, hasFormProblem, HostsSection, RemoveHostDialog, type BackendForm } from "./settings-backend-fields.tsx";
@@ -87,7 +88,7 @@ export function passedWords(report: DoctorReport): string {
 }
 
 function storedLine(health: BackendHealth, report: DoctorReport | null, now: number): string {
-  const ago = health.checkedAt !== null ? relativeTime(health.checkedAt, now) : null;
+  const checked = health.checkedAt !== null ? ago(health.checkedAt, now) : null;
   switch (health.status) {
     case "off":
       return "It takes no new boxes. Check it before you turn it on.";
@@ -96,11 +97,11 @@ function storedLine(health: BackendHealth, report: DoctorReport | null, now: num
     case "never":
       return "Check runs all its checks against what is saved, up to 30 s.";
     case "changed":
-      return report && ago ? `Its settings changed after its last check, ${ago}, which ${report.ok ? "passed" : "did not pass"}: ${passedWords(report)}. Check again to know.` : "Its settings changed after its last check. Check again to know.";
+      return report && checked ? `Its settings changed after its last check, ${checked}, which ${report.ok ? "passed" : "did not pass"}: ${passedWords(report)}. Check again to know.` : "Its settings changed after its last check. Check again to know.";
     case "stale":
-      return report && ago ? `${passedWords(report)} · checked ${ago}, so it may have changed since` : "It may have changed since its last check.";
+      return report && checked ? `${passedWords(report)} · checked ${checked}, so it may have changed since` : "It may have changed since its last check.";
     default:
-      return report && ago ? `${passedWords(report)} · checked ${ago}` : (health.detail ?? "");
+      return report && checked ? `${passedWords(report)} · checked ${checked}` : (health.detail ?? "");
   }
 }
 
@@ -131,7 +132,7 @@ function HealthCard({ form, check, running, onCheck, id, machines }: { form: Bac
   const line = running
     ? `Running all its checks against ${draft.changes ? "your unsaved changes" : "what is saved"}, up to 30 s.`
     : ofDraft
-      ? `Checked ${relativeTime(ofDraft.at, now)}, against your unsaved changes. Nothing is saved yet.${ofDraft.result?.doctor ? ` ${passedWords(ofDraft.result.doctor)}.` : ""}`
+      ? `Checked ${ago(ofDraft.at, now)}, against your unsaved changes. Nothing is saved yet.${ofDraft.result?.doctor ? ` ${passedWords(ofDraft.result.doctor)}.` : ""}`
       : storedLine(health, report, now);
   const showChecks = !running && report !== null && (ofDraft !== null || health.status !== "off");
   const problems = showChecks ? report!.checks.filter((each) => each.status === "fail" || each.status === "warn") : [];

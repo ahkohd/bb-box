@@ -13,12 +13,14 @@ import {
   type Observed,
   type Orientation,
 } from "./device.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export const IOS_DEFAULT_CONTENT_SIZE: IosContentSize = "large";
 export const ANDROID_DEFAULT_FONT_SCALE: AndroidFontScale = 1;
 export const IOS_DEFAULT_APPEARANCE = "light" as const;
 
-export const NOT_A_NETWORK_PRESET = "The network is none of bb-box's presets: ";
+export const NOT_A_NETWORK_PRESET = `The network is none of ${PRODUCT}'s presets: `;
 
 export function notANetworkPreset(reads: string): string {
   return `${NOT_A_NETWORK_PRESET}${reads}.`;

@@ -1,6 +1,8 @@
 import type { DoctorCheck } from "../backends/types.ts";
 import type { CheckId } from "./checks.ts";
 import { VIDEO_STEPS, VIDEO_STEP_SCALES, largerStep, smallerStep, type VideoEncoding, type VideoSize, type VideoStep, type VideoWant, type WantFor } from "./device.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export type { VideoWant, WantFor };
 export type RoomFor = "control" | WantFor;
@@ -481,7 +483,7 @@ export class EncoderLedgers {
       this.#deps.log(`The video encoder of ${label}, an ${chip}, is not in bb-box's table; measuring it for 15 s while nothing streams there.`);
       const measured = await this.#deps.probe(mac, this.#stopping.signal);
       if (measured === null || !(measured > 0)) {
-        this.#unprobed.set(chip, `bb-box could not measure the video encoder of ${label}`);
+        this.#unprobed.set(chip, `${PRODUCT} could not measure the video encoder of ${label}`);
         return;
       }
       this.#measured.set(chip, measured);
@@ -504,7 +506,7 @@ export class EncoderLedgers {
     const { mac, chip, label } = ledger.place;
     const id = `encoder.${label}` as CheckId;
     const name = `Video encoder on ${label}`;
-    if (!this.on) return { id, name, status: "skipped", detail: "The encoder ledger is off in bb-box's settings: shared ios boxes' streams are capped at two thirds, and nothing else is.", fix: null };
+    if (!this.on) return { id, name, status: "skipped", detail: `The encoder ledger is off in ${PRODUCT}'s settings: shared ios boxes' streams are capped at two thirds, and nothing else is.`, fix: null };
     const lowered = [...ledger.held].filter(([, held]) => VIDEO_STEPS.indexOf(held.step) < VIDEO_STEPS.indexOf(held.wanted)).map(([box]) => ledger.streams.get(box)?.name ?? box).sort();
     const loweredText = lowered.length ? ` Shown at a lower resolution: ${namedBoxes(lowered)}.` : "";
     const cpu = ledger.cpuAllotment;
@@ -515,7 +517,7 @@ export class EncoderLedgers {
     if (ledger.place.hardware === false) return { id, name, status: cpu?.beyond ? "warn" : "ok", detail: `${NO_HARDWARE_WORDS} ${cpuText}${loweredText}`, fix: cpu?.beyond ? cpuFix : null };
     const { budget, from } = this.budget(mac);
     const why = chip !== null ? this.#unprobed.get(chip) : undefined;
-    const source = from === "chip" ? `an ${chip}, about ${budget} full-size iPhone frames a second` : from === "probe" ? `an ${chip}, measured at ${Math.round(budget)} full-size iPhone frames a second` : `${chip ? `an ${chip}, which is not in bb-box's table` : "a chip bb-box has not read"}; bb-box assumes ${budget} full-size iPhone frames a second`;
+    const source = from === "chip" ? `an ${chip}, about ${budget} full-size iPhone frames a second` : from === "probe" ? `an ${chip}, measured at ${Math.round(budget)} full-size iPhone frames a second` : `${chip ? `an ${chip}, which is not in ${PRODUCT}'s table` : `a chip ${PRODUCT} has not read`}; ${PRODUCT} assumes ${budget} full-size iPhone frames a second`;
     const allotment = ledger.allotment;
     const streams = allotment?.streams.size ?? 0;
     const detail = `${roomWords(allotment?.used ?? 0, budget)} ${streams === 1 ? "1 stream" : `${streams} streams`}; ${source}.${loweredText}${allotment?.beyond ? ` ${ENCODER_FULL_WORDS}` : ""}${cpuStreams ? ` ${cpuText}` : ""}${why ? ` ${why}.` : ""}`;
@@ -526,7 +528,7 @@ export class EncoderLedgers {
       name,
       status: beyond || warn ? "warn" : "ok",
       detail,
-      fix: warn ? `bb-box measures it with ffmpeg's h264_videotoolbox when nothing streams on ${label}. Install ffmpeg there, or add the chip to CHIP_BUDGETS in src/core/encoder-ledger.ts.` : beyond ? cpuFix : null,
+      fix: warn ? `${PRODUCT} measures it with ffmpeg's h264_videotoolbox when nothing streams on ${label}. Install ffmpeg there, or add the chip to CHIP_BUDGETS in src/core/encoder-ledger.ts.` : beyond ? cpuFix : null,
     };
   }
 

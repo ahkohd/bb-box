@@ -17,6 +17,8 @@ import { isSecret, type BackendDriver } from "../backends/types.ts";
 import { GENERAL_SETTINGS } from "./config.ts";
 import { MAX_WARM, SCHEMA, checkDocument, knownKinds, type BackendConfig, type ConfigDocument, type KindConfig, type Secrets } from "./document.ts";
 import { PRESETS, parseSizeChanges, withEarlierSizes } from "./sizes.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export const DOCUMENT_KEY = "config/document";
 export const SECRETS_KEY = "config/secrets";
@@ -69,7 +71,7 @@ export function fromSettings(
   const general: { boxesPerThread?: number; enrol?: boolean } = {};
   const limit = values["boxes-per-thread"];
   if (typeof limit === "number" && Number.isInteger(limit) && limit > 0) general.boxesPerThread = limit;
-  else if (limit !== undefined && limit !== 0) notes.push(`Boxes per thread was ${JSON.stringify(limit)}, which bb-box read as no limit, so it was left out.`);
+  else if (limit !== undefined && limit !== 0) notes.push(`Boxes per thread was ${JSON.stringify(limit)}, which ${PRODUCT} read as no limit, so it was left out.`);
   if (values["enrol-boxes"] === false) general.enrol = false;
 
   let sizes = values["box-sizes"];
@@ -78,7 +80,7 @@ export function fromSettings(
     sizes = withEarlierSizes(sizes, earlier) ?? sizes;
   }
   const parsed = parseSizeChanges(sizes);
-  for (const problem of parsed.problems) notes.push(`Box sizes: ${problem} bb-box ignored it, so it was left out.`);
+  for (const problem of parsed.problems) notes.push(`Box sizes: ${problem} ${PRODUCT} ignored it, so it was left out.`);
   const kinds: Record<string, KindConfig> = {};
   const known = knownKinds(drivers);
   for (const [kind, change] of Object.entries(parsed.changes)) {
@@ -104,7 +106,7 @@ export function fromSettings(
     const warm: Record<string, number> = {};
     for (const [kind, count] of Object.entries(earlier.warm)) {
       const kept = Number.isFinite(count) ? Math.min(MAX_WARM, Math.max(0, Math.round(count))) : 0;
-      if (kept !== count) notes.push(`${driver.label} kept ${count} warm ${kind} boxes; bb-box keeps 0 to ${MAX_WARM}, so it is ${kept}.`);
+      if (kept !== count) notes.push(`${driver.label} kept ${count} warm ${kind} boxes; ${PRODUCT} keeps 0 to ${MAX_WARM}, so it is ${kept}.`);
       if (kept > 0) warm[kind] = kept;
     }
     backends.push({

@@ -9,11 +9,12 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { INVALID_BORDER } from "./size-field.ts";
-import { FieldProblem } from "./field-shell.tsx";
+import { FieldShell } from "./field-shell.tsx";
 import type { Actor } from "../core/box-log.ts";
 import type { BoxSnapshotsView, Contract, ForkPreview, ForkStarted, KeepPreview, RestorePreview, SnapshotChange, SnapshotRowView, TakeCheck } from "../plugin/contract.ts";
 import type { BoxView } from "../plugin/views.ts";
 import { actorWords, ago, type ThreadTitles } from "./box-words.ts";
+import { THIS_BOX_THREAD } from "./thread-chips.tsx";
 import { Badge, IconButton, message, StatusDot } from "./common.tsx";
 import { useThreadTitles } from "./desktop.tsx";
 import { CameraGlyph, ForkGlyph } from "./glyphs.tsx";
@@ -41,6 +42,7 @@ import {
   snapshotDay,
   snapshotPriceWords,
   snapshotSizeWords,
+  screenAround,
   snapshotWhen,
   threadLosses,
   undoLabel,
@@ -200,7 +202,7 @@ function usePicture(boxId: string, row: SnapshotRowView): string | null {
 function Thumbnail({ box, row, now }: { box: RowBox; row: SnapshotRowView; now: number }) {
   const source = usePicture(box.id, row);
   const [open, setOpen] = useState(false);
-  const label = `${box.name}'s screen around ${whenInSentence(row.takenAt, now).replace(/^today at /, "")}`;
+  const label = screenAround(box.name, row.takenAt, now);
   if (row.picture !== "taken") return <span className={TILE} aria-hidden />;
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -507,6 +509,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
   const [refused, setRefused] = useState<string | null>(null);
   const request = useRef(requestId());
   const describedBy = useId();
+  const nameFieldId = useId();
   const nameErrorId = useId();
   const whereName = useId();
   const gpuName = useId();
@@ -545,7 +548,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
     nav.go({ page: "box", boxId: answer.box.id, origins: ["from-box"] });
   };
   const named = check && !check.asMachine ? threadTitles[check.threadId] : undefined;
-  const thread = named && named !== "this box's thread" ? named : null;
+  const thread = named && named !== THIS_BOX_THREAD ? named : null;
   const nameWhy = name.trim() && !isMachineName(name.trim()) ? 'A lower-case letter first, then letters, digits and "-", up to 32, not ending in "-".' : null;
   const space = check?.bytes != null ? ` and ${gbWords(check.bytes)} on ${check.host ? `${check.host}'s ` : ""}${check.storage}` : "";
   return (
@@ -564,11 +567,9 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
         </>
       }
     >
-      <label className="block space-y-1">
-        <span className="text-xs text-foreground">Name of the new box</span>
-        <Input value={name} maxLength={32} placeholder="Made up if left empty" onChange={(event) => setName(event.target.value)} className={cn("h-8", nameWhy && INVALID_BORDER)} data-first-focus aria-invalid={!!nameWhy} aria-describedby={nameWhy ? nameErrorId : describedBy} />
-        {nameWhy ? <FieldProblem id={nameErrorId}>{nameWhy}</FieldProblem> : null}
-      </label>
+      <FieldShell label="Name of the new box" htmlFor={nameFieldId} problem={nameWhy} problemId={nameErrorId}>
+        <Input id={nameFieldId} value={name} maxLength={32} placeholder="Made up if left empty" onChange={(event) => setName(event.target.value)} className={cn("h-8", nameWhy && INVALID_BORDER)} data-first-focus aria-invalid={!!nameWhy} aria-describedby={nameWhy ? nameErrorId : describedBy} />
+      </FieldShell>
       {check?.offersGpu ? (
         <fieldset className="space-y-1">
           <legend className="text-xs text-foreground">GPU</legend>
@@ -589,7 +590,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
         <fieldset className="space-y-1">
           <legend className="text-xs text-foreground">Where it goes</legend>
           {[
-            { value: false, label: `In ${thread ? `"${thread}"` : "this box's thread"}` },
+            { value: false, label: `In ${thread ? `"${thread}"` : THIS_BOX_THREAD}` },
             { value: true, label: "As one of your machines" },
           ].map((option) => (
             <label key={String(option.value)} className="flex items-center gap-2 text-sm text-foreground">
@@ -599,7 +600,7 @@ function ForkDialog({ box, row, now, onClose, returnTo }: { box: RowBox; row: Sn
           ))}
         </fieldset>
       ) : check ? (
-        <p className="text-sm text-foreground">{check.asMachine ? "It becomes one of your machines." : `It goes in ${thread ? `"${thread}"` : "this box's thread"}.`}</p>
+        <p className="text-sm text-foreground">{check.asMachine ? "It becomes one of your machines." : `It goes in ${thread ? `"${thread}"` : THIS_BOX_THREAD}.`}</p>
       ) : null}
       <AlertDialogDescription id={describedBy} asChild>
         <div className="space-y-2 text-xs leading-snug text-muted-foreground">

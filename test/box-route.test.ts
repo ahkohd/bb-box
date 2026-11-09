@@ -157,7 +157,7 @@ test("a release that did not finish says so, never a spinner without end", () =>
   assert.equal(failedNotice(view({ log: { lastStart: null, lastStop: null, lastFailed: failed } }), NOW), null, "not once the box is no longer releasing");
 });
 
-test("a failed operation's words come from what bb-box then observed, with when; a resize names what changed (G6, words)", () => {
+test("a failed operation's words come from what BB Box then observed, with when; a resize names what changed (G6, words)", () => {
   const at = NOW - 2 * 60_000;
   const stop = { operation: "stop" as const, at, words: "Timed out waiting for the container to stop.", observed: { state: "running" as const, at, from: "Docker on devpc" }, parts: [] };
   const notice = failedNotice(view({ log: { lastStart: null, lastStop: null, lastFailed: stop } }), NOW)!;

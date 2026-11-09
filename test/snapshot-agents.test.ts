@@ -44,7 +44,7 @@ test("an agent's take past the limit deletes the oldest an agent of its thread t
   state.store.updateRecord(second.id, { keptUntil: state.now + 1000, owner: "person" });
   const refused = await rejection(state.snapshots.take(AGENT, box, standing(box), { name: "third" }));
   assert.equal(refused.code, "limit_reached");
-  assert.match(refused.message, /None of them is one an agent of this thread took and nobody kept, which bb-box would delete for a new one\. Delete one first: /);
+  assert.match(refused.message, /None of them is one an agent of this thread took and nobody kept, which BB Box would delete for a new one\. Delete one first: /);
   assert.equal((await rejection(state.snapshots.take(COMMAND, box, standing(box), { name: "the person's second" }))).code, "limit_reached", "the person's take past the limit is refused, never evicting");
   assert.equal(state.store.records({ box: box.id }).length, 3);
 });
@@ -61,7 +61,7 @@ test("a take or a restore refused only for now says try_again: a host's storage 
   state.provider.busy = "Proxmox is running a backup on guest 214, which holds its lock (backup). Try again when it ends.";
   const take = await rejection(state.snapshots.take(AGENT, box, standing(box)));
   assert.equal(take.code, "try_again");
-  assert.equal(take.message, `bb-box cannot take a snapshot of box ${box.name} now: Proxmox is running a backup on guest 214, which holds its lock (backup). Try again when it ends.`);
+  assert.equal(take.message, `BB Box cannot take a snapshot of box ${box.name} now: Proxmox is running a backup on guest 214, which holds its lock (backup). Try again when it ends.`);
   const restore = await rejection(state.snapshots.restore(AGENT, box, standing(box), "one"));
   assert.equal(restore.code, "try_again");
   assert.match(restore.message, /^BB Box cannot restore box \S+ now: Proxmox is running a backup/);
@@ -108,7 +108,7 @@ test("G17 in the engine: a turn running on a box threads run on refuses the rest
   });
   const startedAsItStopped = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one", { force: true }));
   assert.match(startedAsItStopped.message, /a turn runs on it now: "Fix the sign-in flow" \(working\)/);
-  assert.match(startedAsItStopped.message, /Nothing on its disk changed, and bb-box started box \S+ again as it was\.$/);
+  assert.match(startedAsItStopped.message, /Nothing on its disk changed, and BB Box started box \S+ again as it was\.$/);
   assert.deepEqual(state.provider.order, ["power-off", "start"], "stopped, found the turn, started again: no undo, no rollback");
   assert.equal((await current(state, box)).state, "ready");
   assert.equal((await current(state, box)).restoring ?? null, null);
@@ -178,7 +178,7 @@ test("a yes is checked against the plan wherever the restore's route now goes: a
   state.provider.order.length = 0;
   const stale = await rejection(state.snapshots.restore(AGENT, box, standing(box), asked.check.snapshot.id, { yes: { thread: THREAD, title: null, plan: asked.check.plan, at: state.now } }));
   assert.equal(stale.code, "in_use");
-  assert.match(stale.message, /changed after the yes was asked for, so bb-box restored nothing/);
+  assert.match(stale.message, /changed after the yes was asked for, so BB Box restored nothing/);
   assert.deepEqual([...state.provider.order], [], "no stop, no rollback");
 });
 
@@ -230,7 +230,7 @@ test("an agent's take past the limit on one of the person's machines replaces th
   assert.deepEqual(state.store.records({ box: box.id }).map((record) => record.name).sort(), ["second", "third"]);
 });
 
-test("a take that was to replace one past the limit finishes the replacement after bb-box restarts", async () => {
+test("a take that was to replace one past the limit finishes the replacement after BB Box restarts", async () => {
   const state = world();
   state.settings = { perBox: 3 };
   const box = await readyBox(state);
@@ -253,7 +253,7 @@ test("bb box option unsets a ceiling whose backend is gone, and refuses to set o
   assert.throws(() => setOptions(document, [["general.snapshots.ceilings.gone", "4"]], new Map()), /There is no backend "gone"/);
 });
 
-test("the turn hold asks BB again when a form's hold ends with no restore on the box, and says when bb-box could not confirm a restore", async () => {
+test("the turn hold asks BB again when a form's hold ends with no restore on the box, and says when BB Box could not confirm a restore", async () => {
   let rechecks = 0;
   let boxes: BoxRecord[] = [];
   const hold = new TurnHold({ boxes: async () => boxes, unconfirmed: (operation) => operation === "op_unknown", recheck: () => void rechecks++, logError: () => {} });
@@ -266,7 +266,7 @@ test("the turn hold asks BB again when a form's hold ends with no restore on the
   boxes = [{ ...box, restoring: { operation: "op_unknown", snapshot: "sn1", name: "before", at: 0, ran: true } } as BoxRecord];
   await hold.refresh();
   const unconfirmed = hold.decide({ host: { id: "host_1" } as never });
-  assert.match((unconfirmed as { reason: string }).reason, /^bb-box could not confirm its restore of box dev-desk, the machine this thread runs on, so this message waits\./);
+  assert.match((unconfirmed as { reason: string }).reason, /^BB Box could not confirm its restore of box dev-desk, the machine this thread runs on, so this message waits\./);
   boxes = [];
   await hold.refresh();
   assert.equal(rechecks, 2);

@@ -186,7 +186,7 @@ test("the take check plans and refuses as a take would, and changes nothing", as
   assert.equal(await checks.why(box), null, "a changed setting reads the plan again");
 });
 
-test("the box page's view: counts, rows newest first, the restore's notice for 24 hours with its undo, and a restore bb-box could not confirm", async () => {
+test("the box page's view: counts, rows newest first, the restore's notice for 24 hours with its undo, and a restore BB Box could not confirm", async () => {
   const state = world();
   const box = await readyBox(state);
   await state.snapshots.take(COMMAND, box, standing(box), { name: "older" });

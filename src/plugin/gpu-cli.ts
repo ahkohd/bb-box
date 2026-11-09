@@ -6,6 +6,8 @@ import type { Caller } from "../core/snapshot.ts";
 import type { ThreadOnBox } from "./contract.ts";
 import type { GpuMarkGuest, GpuMarking } from "../backends/types.ts";
 import type { BbBox } from "./setup.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 const ANSWER_WORDS: Readonly<Record<string, (guest: GpuMarkGuest) => string>> = {
   granted: () => "The GPU helper granted it.",
@@ -43,7 +45,7 @@ export function guestLine(guest: GpuMarkGuest): string {
 
 const UNDO_LEAVES =
   "Each claim is cleared by the GPU helper first, through a gpu.release marker, which then comes off: the guest keeps its device lines, and the helper no longer writes them. " +
-  "A box bb-box makes from now on is marked as it is made; these guests stay unmarked until bb box gpu mark marks them again.";
+  `A box ${PRODUCT} makes from now on is marked as it is made; these guests stay unmarked until bb box gpu mark marks them again.`;
 
 function count(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
@@ -111,7 +113,7 @@ function workingWords(threads: readonly ThreadOnBox[]): string | null {
   if (!working.length) return null;
   const named = working.map((thread) => (thread.title ? `"${thread.title}"` : thread.id));
   const list = named.length < 2 ? named[0]! : `${named.slice(0, -1).join(", ")} and ${named.at(-1)}`;
-  return `${working.length === 1 ? "A thread is" : `${working.length} threads are`} working on it, ${list}: the restart ends ${working.length === 1 ? "its" : "their"} work, so bb-box refuses it unless --force.`;
+  return `${working.length === 1 ? "A thread is" : `${working.length} threads are`} working on it, ${list}: the restart ends ${working.length === 1 ? "its" : "their"} work, so ${PRODUCT} refuses it unless --force.`;
 }
 
 function snapshotOffered(app: BbBox, box: BoxRecord): boolean {
@@ -129,8 +131,8 @@ export function gpuCommands(app: BbBox) {
   return {
     "gpu update": cliCommand({
       summary:
-        "Update NVIDIA's userspace in a running box with a GPU to the host's driver, after that driver changed (071). bb-box checks the box first: bb-box's own Linux image on x86_64, 2 GiB free, and no NVIDIA or CUDA packages from apt. It then downloads NVIDIA's installer for exactly the host's driver, checks it against NVIDIA's SHA-256, installs it with no kernel modules, restarts the box, and checks that nvidia-smi lists the box's card and CUDA's driver initialises, and for a desktop that it draws and encodes its video on the GPU. " +
-        "Everything running in the box stops. It is refused while a person holds control of the box's desktop, and while threads are working on it unless --force. Several boxes are updated one at a time. bb-box never updates a box's userspace by itself; bb box doctor names the boxes that need it.",
+        `Update NVIDIA's userspace in a running box with a GPU to the host's driver, after that driver changed (071). ${PRODUCT} checks the box first: ${PRODUCT}'s own Linux image on x86_64, 2 GiB free, and no NVIDIA or CUDA packages from apt. It then downloads NVIDIA's installer for exactly the host's driver, checks it against NVIDIA's SHA-256, installs it with no kernel modules, restarts the box, and checks that nvidia-smi lists the box's card and CUDA's driver initialises, and for a desktop that it draws and encodes its video on the GPU. ` +
+        `Everything running in the box stops. It is refused while a person holds control of the box's desktop, and while threads are working on it unless --force. Several boxes are updated one at a time. ${PRODUCT} never updates a box's userspace by itself; bb box doctor names the boxes that need it.`,
       positionals: [{ name: "box", description: "The box's name or ID. Several, with spaces between, are updated one at a time.", required: true, variadic: true }],
       options: {
         thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },

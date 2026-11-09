@@ -14,7 +14,8 @@
 // Each machine's are closed once, after the first call there that works.
 
 /** The title of the BB terminal that held the access before the host entry. */
-export const RETIRED_TITLE = "bb-box access";
+import { PRODUCT } from "../brand.ts";
+export const RETIRED_TITLE = `${PRODUCT} access`;
 /** How long bb-box trusts its last call, before calling again. */
 const CHECK_MS = 30_000;
 /**

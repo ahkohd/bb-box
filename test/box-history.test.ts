@@ -453,7 +453,7 @@ function openedHistory(folder: string, now: () => number, refuseAttach = false, 
   return { source, files, store: new BoxHistoryStore({ file: files.history, now, ...(logError ? { logError } : {}) }), log: new BoxLogStore({ file: files.log, now }) };
 }
 
-test("G12: a restart of bb-box taking 30 s loses no point, one taking 4 minutes loses one, and a box restarted inside shows no negative or huge CPU", async () => {
+test("G12: a restart of BB Box taking 30 s loses no point, one taking 4 minutes loses one, and a box restarted inside shows no negative or huge CPU", async () => {
   const folder = tempDir("history-restart");
   const clock = new FakeClock(T0 - 1000);
   const box = new FakeBox("bxrestarting001", 4, T0 - 1000);
@@ -797,7 +797,7 @@ test("G18: with box history's cap set low, its writes stop and say so in the doc
   assert.ok(opened.store.full, `writes stopped after ${written} points, at ${pageSize * (Number(db.pragma("boxhistory.page_count", { simple: true })))} bytes`);
   const check = opened.store.checks("On.")[0]!;
   assert.equal(check.status, "warn");
-  assert.match(check.detail, /Box history's file is full, so bb-box stopped keeping box history/);
+  assert.match(check.detail, /Box history's file is full, so BB Box stopped keeping box history/);
   assert.match(opened.store.fullWords() ?? "", /starts again once old points age out/, "Monitor settings show the same words");
   assert.equal(opened.store.record("bxfilling000000", { start: T0, end: T0 + MINUTE, cpu: 1, memory: 1, disk: 1, down: 1, up: 1, load: null, cores: 1, cpuStall: null, memoryStall: null, high: 0 }, { at: T0 + 2 * HOUR, reading: parseLightOutput("linux", linuxOutput({})) }), false, "no write is tried while full");
   const before = logged.length;
@@ -925,10 +925,10 @@ test("a step read in part keeps its known gaps at their own times and says how m
 
 test("the doctor says whether box history reads, and its coverage this hour and the last", () => {
   assert.match(historyStateWords({ ...MONITOR_DEFAULTS, enabled: false }, 0, 2, null), /^Off, as the Monitor is off/);
-  assert.match(historyStateWords({ ...MONITOR_DEFAULTS, boxHistory: false }, 0, 2, null), /^Off: bb-box reads no box in the background/);
+  assert.match(historyStateWords({ ...MONITOR_DEFAULTS, boxHistory: false }, 0, 2, null), /^Off: BB Box reads no box in the background/);
   assert.equal(
     historyStateWords(MONITOR_DEFAULTS, 30, 6, { due: 1800, taken: 1790, skipped: 4, failed: 6, unanswered: 60, readingMs: 0, slowestMs: 0, workers: 6 }),
-    "On: bb-box reads 30 boxes once a minute, with up to 6 readings at once. This hour and the last, 1790 of 1800 readings due were taken within 10 s of their second (99.4%); 4 skipped, 6 failed, and 60 not tried as their box did not answer.",
+    "On: BB Box reads 30 boxes once a minute, with up to 6 readings at once. This hour and the last, 1790 of 1800 readings due were taken within 10 s of their second (99.4%); 4 skipped, 6 failed, and 60 not tried as their box did not answer.",
   );
   assert.equal(HIGH.load, 32);
 });

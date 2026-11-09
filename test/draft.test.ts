@@ -138,7 +138,7 @@ test("version files: mise for the box user, what standard images have left out, 
     "mise.toml: [env] PORT = 3000 is not a plain string.",
     ".nvmrc: node 18 as well as 20.11.0 from .tool-versions: the draft takes 20.11.0.",
   ]);
-  assert.equal(draft.check, "#!/bin/bash\n# A project image's check (049): bb-box runs it as the box user after the script, and\n# on a box of the image's build. It fails when the script did not do its work.\nset -euo pipefail\nnode --version\ngo version\njava -version\n");
+  assert.equal(draft.check, "#!/bin/bash\n# A project image's check (049): BB Box runs it as the box user after the script, and\n# on a box of the image's build. It fails when the script did not do its work.\nset -euo pipefail\nnode --version\ngo version\njava -version\n");
   const lts = drafted([{ path: ".nvmrc", text: "lts/*\n" }]);
   assert.ok(!lts.script.includes("mise use --global 'node"), "the LTS is the standard image's node");
   assert.match(lts.script, /# The standard image has what \.nvmrc asks for\./);

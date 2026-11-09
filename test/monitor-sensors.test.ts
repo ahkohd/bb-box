@@ -79,13 +79,13 @@ test("reads the sensor helper's output and rejects nonsense", () => {
   assert.equal(parseSensorOutput('{"cpuTempC":999}')?.cpuTempC, null);
 });
 
-test("the embedded helper matches its recorded digest, and is built from bb-box's source", () => {
+test("the embedded helper matches its recorded digest, and is built from BB Box's source", () => {
   assert.equal(createHash("sha256").update(Buffer.from(MAC_SENSORS_BINARY, "base64")).digest("hex"), MAC_SENSORS_DIGEST);
   assert.ok(readFileSync(new URL("../setup/monitor/bb-box-sensors.c", import.meta.url), "utf8").includes("IOReportCopyChannelsInGroup"));
   assert.match(readFileSync(new URL("../setup/monitor/build-sensors.sh", import.meta.url), "utf8"), /src\/monitor\/mac-sensors-binary\.ts/);
 });
 
-test("the helper is written under bb-box's own cache folder, under a name with its digest", () => {
+test("the helper is written under BB Box's own cache folder, under a name with its digest", () => {
   const source = readFileSync(new URL("../src/monitor/mac-sensors.ts", import.meta.url), "utf8");
   assert.match(source, /"Library", "Caches", "bb-box"/);
   assert.match(source, /`bb-box-sensors-\$\{MAC_SENSORS_DIGEST\.slice\(0, 16\)\}`/);

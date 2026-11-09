@@ -10,10 +10,12 @@ import type { ByteChannel, RunResult } from "../transports/types.ts";
 import type { DoctorCheck } from "../backends/types.ts";
 import { inSlot, placementOf } from "../core/device-host.ts";
 import { NO_DECISION, type Decision, type EncoderLedgers, type EncoderPlace } from "../core/encoder-ledger.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export const IDLE_CLOSE_MS = 10 * 60_000;
 export const SLOT_STREAM_CAP: VideoStep = "two-thirds";
-export const ASKED_HOST_WORDS = "The device server for this box has not started. bb-box has asked the host to start it again.";
+export const ASKED_HOST_WORDS = `The device server for this box has not started. ${PRODUCT} has asked the host to start it again.`;
 export const HELLO_TRIES = 2;
 export const DEVICE_COPY_NEEDS_CONTROL_WORDS = "Take control first, then copy: only the tab with control reads the device's clipboard.";
 const SCRIPT_TIMEOUT_MS = 60_000;
@@ -231,7 +233,7 @@ export class DeviceServers {
   async clipboard(box: BoxRecord): Promise<{ readonly text: string | null; readonly error: string | null }> {
     const view = await this.ensure(box);
     if (view.is === "connected" && view.version < CLIPBOARD_READ_SINCE_VERSION) {
-      return { text: null, error: `Box ${box.name}'s device server is version ${view.version}, which cannot read the device's clipboard. bb-box delivers version ${this.version} once no person has control and no recording runs.` };
+      return { text: null, error: `Box ${box.name}'s device server is version ${view.version}, which cannot read the device's clipboard. ${PRODUCT} delivers version ${this.version} once no person has control and no recording runs.` };
     }
     const answer = await this.read(box, { type: "clipboard" });
     if (!answer.ok) return { text: null, error: answer.error.words };
@@ -425,7 +427,7 @@ export class DeviceServers {
     }
     if (model === asked) return null;
     if (model === null) {
-      const failed: ClaimSwitch = { is: "failed", from: null, to: asked, words: `the spare's device had not booted ${Math.round((Date.now() - began) / 1000)} s after the claim, so bb-box did not switch it` };
+      const failed: ClaimSwitch = { is: "failed", from: null, to: asked, words: `the spare's device had not booted ${Math.round((Date.now() - began) / 1000)} s after the claim, so ${PRODUCT} did not switch it` };
       this.#claimSwitches.set(box.id, failed);
       this.#deps.log(`Box ${box.name}, a claimed spare: ${failed.words}.`);
       return failed;
@@ -662,7 +664,7 @@ export class DeviceServers {
   async #deliverIfAllowed(box: BoxRecord, held: Held, running: number | null, why: string): Promise<DeviceServerView> {
     const bad = await this.#bad(box.id);
     if (bad !== null && bad >= this.version) {
-      if (held.view.is === "none") held.view = { is: "down", words: `Version ${this.version} of the device server did not answer in this box, so bb-box does not deliver it again.` };
+      if (held.view.is === "none") held.view = { is: "down", words: `Version ${this.version} of the device server did not answer in this box, so ${PRODUCT} does not deliver it again.` };
       return held.view;
     }
     if (this.#deps.personHasControl(box.id)) return this.#wait(box, held, running, "person");
@@ -756,13 +758,13 @@ export class DeviceServers {
     const name = `Device server of ${box.name}`;
     const view = this.view(box.id);
     const bad = await this.#bad(box.id);
-    const badWords = bad !== null ? ` Version ${bad} did not answer in this box, so it went back, and bb-box delivers no version before ${bad + 1} to it.` : "";
+    const badWords = bad !== null ? ` Version ${bad} did not answer in this box, so it went back, and ${PRODUCT} delivers no version before ${bad + 1} to it.` : "";
     if (view.is === "connected") {
       const behind = view.version < this.version;
       const waitMs = this.#deps.deviceStateWaitMs ?? DOCTOR_STATE_WAIT_MS;
       const now = await this.#stateNow(box.id, waitMs);
       const said = `Version ${view.version}, protocol ${view.protocol}: `;
-      const deliveryWords = behind && bad === null ? ` This bb-box delivers version ${this.version} when it next connects as the box's lease holder.` : "";
+      const deliveryWords = behind && bad === null ? ` This ${PRODUCT} delivers version ${this.version} when it next connects as the box's lease holder.` : "";
       if (now) {
         checks.push({
           id,
@@ -780,9 +782,9 @@ export class DeviceServers {
         const why = linkOpen
           ? `it did not answer within ${Math.round(waitMs / 1000)} s`
           : !ended
-            ? "bb-box has no connection to it now"
+            ? `${PRODUCT} has no connection to it now`
             : ended.idle
-              ? `bb-box closed its connection at ${utcWords(ended.at)}, as nothing used it`
+              ? `${PRODUCT} closed its connection at ${utcWords(ended.at)}, as nothing used it`
               : `its connection ended at ${utcWords(ended.at)}: ${ended.words.replace(/\.$/, "")}`;
         checks.push({
           id,
@@ -795,11 +797,11 @@ export class DeviceServers {
     } else if (view.is === "waiting") {
       checks.push({ id, name, status: "ok", detail: `Version ${view.version ?? "none"}; version ${view.for} waits until ${view.why === "person" ? "the person hands back control" : "the recording ends"}.`, fix: null });
     } else if (view.is === "down") {
-      checks.push({ id, name, status: "fail", detail: view.words + badWords, fix: `Read ~/.bb-box/device/server.log in box ${box.name}. Once the cause is fixed, sh ~/.bb-box/device/current/src/device/bb-box-device.sh restart in the box starts it again, as a newer bb-box's delivery does.` });
+      checks.push({ id, name, status: "fail", detail: view.words + badWords, fix: `Read ~/.bb-box/device/server.log in box ${box.name}. Once the cause is fixed, sh ~/.bb-box/device/current/src/device/bb-box-device.sh restart in the box starts it again, as a newer ${PRODUCT}'s delivery does.` });
     } else if (view.is === "superseded") {
-      checks.push({ id, name, status: "ok", detail: "A bb-box instance started later holds this box's device.", fix: null });
+      checks.push({ id, name, status: "ok", detail: `A ${PRODUCT} instance started later holds this box's device.`, fix: null });
     } else {
-      checks.push({ id, name, status: "skipped", detail: "bb-box has not connected to it since it started.", fix: null });
+      checks.push({ id, name, status: "skipped", detail: `${PRODUCT} has not connected to it since it started.`, fix: null });
     }
     if (box.capabilities.device?.platform === "ios" && !isTestOffer(box.capabilities.device)) checks.push(await this.#deviceHubCheck(box));
     return checks;
@@ -821,7 +823,7 @@ export class DeviceServers {
     } finally {
       clearTimeout(timer);
     }
-    if (!seen) return { id, name, status: "skipped", detail: `bb-box could not look in box ${box.name}${why}.`, fix: null };
+    if (!seen) return { id, name, status: "skipped", detail: `${PRODUCT} could not look in box ${box.name}${why}.`, fix: null };
     const kills = seen.killed ? ` The device server has killed it ${seen.killed === 1 ? "once" : `${seen.killed} times`}, last at ${new Date(seen.last ?? 0).toISOString().slice(0, 16).replace("T", " ")} UTC: Xcode's Run opens it.` : "";
     if (seen.running) {
       return {

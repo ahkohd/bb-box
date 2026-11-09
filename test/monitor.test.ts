@@ -258,7 +258,7 @@ function lxcOutput(uptime: number, usage: number): string {
   });
 }
 
-test("a box read through bb-box's route: an LXC box's own CPU, cores and memory, and no host load", () => {
+test("a box read through BB Box's route: an LXC box's own CPU, cores and memory, and no host load", () => {
   const collector = createRouteCollector({ os: "linux", scope: "machine", refreshIntervalMs: () => 5000 });
   const first = collector.snapshot({ sections: routeSections(lxcOutput(1000, 9_000_000)), receivedAt: 0 });
   assert.equal(first.cpu.usagePercent, null);
@@ -371,7 +371,7 @@ test("each machine that is a box names its box, whether it is a BB machine or re
   );
 });
 
-test("each kind of box takes its path: a BB machine through the host entry, a slot's as its own user, the rest through bb-box's route", async (t) => {
+test("each kind of box takes its path: a BB machine through the host entry, a slot's as its own user, the rest through BB Box's route", async (t) => {
   const hostCalls: { hostId: string; scope: string }[] = [];
   const ranIn: string[] = [];
   const hostEntry = monitorHandlers();

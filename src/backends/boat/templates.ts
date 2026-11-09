@@ -8,6 +8,8 @@ import type { BackendStorage } from "../types.ts";
 import type { RunResult } from "../../transports/types.ts";
 import { BoatError, isRunning, isStarting, isStopped, type BoatApi, type Sandbox, type SandboxSize } from "./api.ts";
 import { BOAT_TEMPLATE_KINDS, type BoatKind } from "./config.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const TEMPLATE_ROLE = "template";
 export const TRIAL_ROLE = "template-trial";
@@ -87,7 +89,7 @@ export const ARCHIVE_WITHIN_MS = 60 * 60_000;
 const RECORD = "template/";
 const FAILED = "template-failed/";
 export const FAILED_BUILD_RETRY_MS = 6 * 3_600_000;
-export const LEFT_BUILD_WHY = "a build was going when bb-box restarted";
+export const LEFT_BUILD_WHY = `a build was going when ${PRODUCT} restarted`;
 const RETIRED = "retired-templates";
 
 export const TEMPLATE_STEP: Readonly<Record<BoatKind, "linux" | "desktop" | "android">> = { linux: "linux", "linux-desktop-cpu": "desktop", android: "android" };
@@ -203,7 +205,7 @@ export function templateArchive(setup = setupDir()): Promise<Buffer> {
     child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
     child.on("error", reject);
-    child.on("close", (code) => (code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(`tar could not pack bb-box's template scripts from ${dirname(setup)}: ${stderr.trim() || `exit ${code}`}`))));
+    child.on("close", (code) => (code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(`tar could not pack ${PRODUCT}'s template scripts from ${dirname(setup)}: ${stderr.trim() || `exit ${code}`}`))));
   });
 }
 
@@ -239,9 +241,9 @@ export function stageScript(kind: BoatKind, files: StagedFiles): string {
     'exec 9>>"$s/lock"',
     `flock -w 5 9 || exit ${IN_HAND_ELSEWHERE}`,
     `[ ! -e "$s/pid" ] || exit ${IN_HAND_ELSEWHERE}`,
-    `rm -rf "$d" && mkdir -p "$d" && : > "$d/log" && tar -xzf - -C "$d" || fail "could not unpack bb-box's template scripts"`,
+    `rm -rf "$d" && mkdir -p "$d" && : > "$d/log" && tar -xzf - -C "$d" || fail "could not unpack ${PRODUCT}'s template scripts"`,
     write(files.buildEnv, "build.env", "write the build's settings"),
-    write(`${files.publicKey}\n`, "plugin-key.pub", "write bb-box's key"),
+    write(`${files.publicKey}\n`, "plugin-key.pub", `write ${PRODUCT}'s key`),
     ...(files.licence ? [write(`${files.licence}\n`, "android-sdk-license", "write the Android SDK licence's acceptance")] : []),
     `setsid nohup sh -c ${quote(guestJobScript())} sh "$d" "$s" ${TEMPLATE_STEP[kind]} </dev/null >/dev/null 2>&1 &`,
   ].join("\n");
@@ -337,7 +339,7 @@ export class BoatTemplates {
   async whyBuild(kind: BoatKind): Promise<string | null> {
     const record = await this.record(kind);
     if (!record) return "there is none yet";
-    if (record.key !== this.key()) return "bb-box's template scripts changed";
+    if (record.key !== this.key()) return `${PRODUCT}'s template scripts changed`;
     if (this.#deps.now() - record.builtAt >= TEMPLATE_REBUILT_AFTER_MS) return "it is a week old";
     return null;
   }
@@ -490,7 +492,7 @@ export class BoatTemplates {
       if (left) throw new BuildLeftRunning(`boat leaves the Android template build ${left.id} until it expires, because the Android SDK's licence is not accepted.`);
       throw new Error("boat's Android template needs the Android SDK's licence accepted in BB Box's settings first.");
     }
-    if (left) log(`boat: following the ${kind} template build ${left.id}, which bb-box started before it restarted, rather than build another.`);
+    if (left) log(`boat: following the ${kind} template build ${left.id}, which ${PRODUCT} started before it restarted, rather than build another.`);
     else log(`boat: building the ${kind} template, as ${why}.`);
     const made = left ?? (await this.#create(kind, key, size));
     const since = Math.min(left?.createdAt ?? started, started);
@@ -507,7 +509,7 @@ export class BoatTemplates {
       log(`boat: the ${kind} template ${made.id} is ready, built in ${Math.round(record.buildMs / 60_000)} minutes.`);
       return record;
     } catch (error) {
-      if (this.#leaving(error)) throw error instanceof BuildLeftRunning ? error : new BuildLeftRunning(`bb-box is stopping, so it leaves boat's template build ${made.id} to the bb-box that starts next; its last step ended so: ${error instanceof Error ? error.message : String(error)}`);
+      if (this.#leaving(error)) throw error instanceof BuildLeftRunning ? error : new BuildLeftRunning(`${PRODUCT} is stopping, so it leaves boat's template build ${made.id} to the ${PRODUCT} that starts next; its last step ended so: ${error instanceof Error ? error.message : String(error)}`);
       if (await this.#templateStays(made.id, kind)) this.#failureLeft.set(kind, made.id);
       else {
         await this.#deps.forget(made.id);
@@ -594,7 +596,7 @@ export class BoatTemplates {
     const trialLabels = { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: template };
     const left = (await api.list(trialLabels)).filter((sandbox) => !this.#buildSandboxes.has(sandbox.id) && (isRunning(sandbox.state) || isStarting(sandbox.state))).sort(newestFirst)[0] ?? null;
     this.#stillHere();
-    if (left) log(`boat: checking the ${kind} template ${template} in its trial fork ${left.id}, which bb-box made before it restarted.`);
+    if (left) log(`boat: checking the ${kind} template ${template} in its trial fork ${left.id}, which ${PRODUCT} made before it restarted.`);
     const trial = left ?? (await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: trialLabels, name: `bb-box ${kind} template trial` }));
     this.#buildSandboxes.add(trial.id);
     let leftRunning = false;
@@ -688,7 +690,7 @@ export class BoatTemplates {
   }
 
   #stillHere(): void {
-    if (this.#disposed) throw new BuildLeftRunning("bb-box is stopping, so it leaves boat's template build to the bb-box that starts next.");
+    if (this.#disposed) throw new BuildLeftRunning(`${PRODUCT} is stopping, so it leaves boat's template build to the ${PRODUCT} that starts next.`);
   }
 
   async #follow(id: string, kind: BoatKind, stage: () => Promise<boolean>, since: number): Promise<void> {
@@ -725,7 +727,7 @@ export class BoatTemplates {
         throw new Error(`boat's ${kind} template build failed with exit ${build.customized}: ${build.tail.join("\n").trim().slice(-600)}`);
       }
       if (next === "finalize-failed") throw new Error(`boat's ${kind} template did not finalize: ${build.tail.join("\n").trim().slice(-400) || `exit ${build.finalized}`}`);
-      if (next === "died") throw new Error(`boat's ${kind} template build in ${id} stopped without an exit code: no process holds it${build.started ? ", so its guest scripts died" : ", and its sandbox restarted or an older bb-box started it"}.`);
+      if (next === "died") throw new Error(`boat's ${kind} template build in ${id} stopped without an exit code: no process holds it${build.started ? ", so its guest scripts died" : `, and its sandbox restarted or an older ${PRODUCT} started it`}.`);
       if (next === "unstaged") {
         if (stagedHere) throw new Error(`boat's ${kind} template build in ${id} was staged, but no process runs its guest scripts.`);
         stagedHere = await stage();

@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { setupDir } from "../setup-dir.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const IDENTITY_DAEMON = "dev.bb-box.identity";
 const TOOL_END = "BBBOX_IDENTITY_TOOL";
@@ -32,7 +34,7 @@ export function identityInstallScript(text = macosIdentityTool()): string {
   return `case "$(sysctl -n hw.model 2>/dev/null)" in VirtualMac*) ;; *) echo "not a VM"; exit 0 ;; esac
 sudo -n /bin/sh -s <<'${INSTALL_END}'
 set -e
-mkdir -p /usr/local/sbin /usr/local/lib/bb-box
+mkdir -p /usr/local/sbin /usr/local/lib/${PRODUCT}
 cat > /usr/local/sbin/bb-box-identity.new <<'${TOOL_END}'
 ${text.endsWith("\n") ? text : `${text}\n`}${TOOL_END}
 chmod 755 /usr/local/sbin/bb-box-identity.new

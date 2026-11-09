@@ -9,6 +9,8 @@ import { describeSize } from "../core/sizes.ts";
 import type { Snapshotting } from "../backends/types.ts";
 import { withinWait } from "../core/snapshot-picture.ts";
 import { snapshotGpuWordsFor } from "../core/gpu.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export const PERSON: Caller = { is: "person" };
 
@@ -126,20 +128,20 @@ export function forkWhyOf(record: SnapshotRecord, offer: Snapshotting | null): s
   if (record.state === "deleting") return "it is being deleted";
   if (record.state !== "ready") return `it is ${record.state}`;
   if (record.scope === "device") return "it holds the device only";
-  if (!forksOn(record.box.system)) return "bb-box forks Linux and macOS boxes only";
+  if (!forksOn(record.box.system)) return `${PRODUCT} forks Linux and macOS boxes only`;
   if (record.forkSafe === null) return `${record.box.name} had no working identity reset when it was taken`;
   if (record.forkSafe < (offer.forkSafeFrom ?? 1)) return `${record.box.name} had an identity reset older than version ${offer.forkSafeFrom} when it was taken`;
   return null;
 }
 
 export function keepWhyOf(record: SnapshotRecord, offer: Snapshotting | null, pinned: string | null): string | null {
-  if (offer?.forkWhy) return `bb-box keeps only what it can fork after a release, and ${offer.forkWhy}`;
+  if (offer?.forkWhy) return `${PRODUCT} keeps only what it can fork after a release, and ${offer.forkWhy}`;
   if (!offer || offer.keepsPastRelease === "no") return "its backend keeps nothing past a release";
   if (record.state !== "ready") return `it is ${record.state === "taking" ? "still being taken" : record.state === "deleting" ? "being deleted" : record.state}`;
   if (pinned) return pinned;
   if (record.scope === "device") return "it holds the device only, which lives in the box";
-  if (record.boxGone && record.guest !== "held-copy" && !(offer.keepsPastRelease === "as-is" && record.keptUntil !== null)) return "its box is gone, and bb-box keeps it until you delete it";
-  if (!forksOn(record.box.system)) return "bb-box keeps only what it can fork after a release, and forks Linux and macOS boxes only";
+  if (record.boxGone && record.guest !== "held-copy" && !(offer.keepsPastRelease === "as-is" && record.keptUntil !== null)) return `its box is gone, and ${PRODUCT} keeps it until you delete it`;
+  if (!forksOn(record.box.system)) return `${PRODUCT} keeps only what it can fork after a release, and forks Linux and macOS boxes only`;
   if (record.forkSafe === null) return `taken before ${record.box.name}'s image had the identity reset: it could not be forked after a release`;
   if (record.forkSafe < (offer.forkSafeFrom ?? 1)) return `taken under version ${record.forkSafe} of ${record.box.name}'s identity reset, older than the version ${offer.forkSafeFrom} a fork needs`;
   return null;
@@ -192,10 +194,10 @@ function restoredOf(snapshots: Snapshots, box: BoxRecord, now: number): Pick<Box
   if (operation.state === "running" && running) return { ...none, restoring: { to, step: restoreStepWords(operation.step) } };
   if (operation.state === "running" || operation.state === "unknown") {
     const step = restoreStepWords(operation.step);
-    return { ...none, unconfirmed: { to, words: `${operation.error ?? (step ? `It was at ${step} when bb-box restarted.` : "It was cut short.")}` } };
+    return { ...none, unconfirmed: { to, words: `${operation.error ?? (step ? `It was at ${step} when ${PRODUCT} restarted.` : "It was cut short.")}` } };
   }
   if (now - (operation.endedAt ?? operation.startedAt) > RESTORED_NOTICE_MS) return none;
-  if (operation.state === "failed") return { ...none, failed: { operation: operation.id, at: operation.endedAt ?? operation.startedAt, to: target?.name ?? null, error: operation.error ?? "bb-box gave no reason." } };
+  if (operation.state === "failed") return { ...none, failed: { operation: operation.id, at: operation.endedAt ?? operation.startedAt, to: target?.name ?? null, error: operation.error ?? `${PRODUCT} gave no reason.` } };
   const undo = operation.undo ? snapshots.ledger.record(operation.undo) : null;
   return {
     ...none,
@@ -218,7 +220,7 @@ export function boxSnapshotsView(snapshots: Snapshots, box: BoxRecord, takeWhy: 
   return {
     offer: offer ? { holds: offer.holds, scope: offer.scope, whileRunning: offer.whileRunning, restore: offer.restore, fork: offer.fork, keeps: offer.keepsPastRelease !== "no", excludes: offer.excludes, price: offer.price } : null,
     keepDays: snapshots.settings.keepDays,
-    noneWhy: offer ? null : backend ? `Boxes on ${box.backendLabel} have no snapshots.` : `The ${box.backendLabel} backend is not in bb-box's settings, so it takes no snapshots of ${box.name}.`,
+    noneWhy: offer ? null : backend ? `Boxes on ${box.backendLabel} have no snapshots.` : `The ${box.backendLabel} backend is not in ${PRODUCT}'s settings, so it takes no snapshots of ${box.name}.`,
     perBox: snapshots.settings.perBox,
     counted: records.filter(countsAgainstLimit).length,
     undos: records.filter((record) => record.undoOf !== null && !isKept(record) && record.state !== "failed").length,

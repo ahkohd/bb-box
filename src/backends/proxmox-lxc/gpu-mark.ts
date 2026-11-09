@@ -24,6 +24,8 @@ import {
   type MarkPlan,
   type UnmarkPlan,
 } from "./gpu-marking.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 const ANSWER_POLLS = 10;
 const ANSWER_POLL_MS = 1_000;
@@ -108,7 +110,7 @@ async function planAndWrite(api: Proxmox, installId: string, guest: PoolGuest, f
     const next = nextTags(look, decided);
     if (!next || request.check) return { guest, look, plan: decided, wrote: false, failed: null };
     if (typeof look.config.digest !== "string" || !look.config.digest) {
-      return { guest, look, plan: decided, wrote: false, failed: "Proxmox gave no digest with its config, so bb-box does not write its tags." };
+      return { guest, look, plan: decided, wrote: false, failed: `Proxmox gave no digest with its config, so ${PRODUCT} does not write its tags.` };
     }
     try {
       await new OwnedGuests(api).writeOn(guest.vmid, owner, look.config, { tags: next }, signal);
@@ -117,7 +119,7 @@ async function planAndWrite(api: Proxmox, installId: string, guest: PoolGuest, f
       if (error instanceof NoLongerOurs) return { guest, look, plan: decided, wrote: false, failed: error.message };
       const meanwhile = error instanceof ProxmoxError && error.changedMeanwhile;
       if (!meanwhile || tries >= WRITE_TRIES) {
-        const why = meanwhile ? "Its config kept changing while bb-box wrote its tags. Run bb box gpu mark again." : `Proxmox refused its tags: ${error instanceof Error ? error.message : String(error)}`;
+        const why = meanwhile ? `Its config kept changing while ${PRODUCT} wrote its tags. Run bb box gpu mark again.` : `Proxmox refused its tags: ${error instanceof Error ? error.message : String(error)}`;
         return { guest, look, plan: decided, wrote: false, failed: why };
       }
       look = await lookAt(api, guest.vmid, signal);
@@ -207,19 +209,19 @@ export async function markGpus(api: Proxmox, setup: MarkingSetup, request: GpuMa
   const helper = vm ? parseGpuHelper(vm.notes) : null;
   let lines: HelperLines = vm ? parseHelperLines(vm.notes) : NO_HELPER_LINES;
   {
-    if (!vm) return refuse(`The token can read no VM named ${setup.reportVm} on ${node}, so bb-box cannot read the GPU helper's report.`, `Run host/setup-gpu-report.sh, then host/setup-gpu.sh, from the setup guide as root on ${node}.`);
+    if (!vm) return refuse(`The token can read no VM named ${setup.reportVm} on ${node}, so ${PRODUCT} cannot read the GPU helper's report.`, `Run host/setup-gpu-report.sh, then host/setup-gpu.sh, from the setup guide as root on ${node}.`);
     if (!helper) return refuse(`${node} has no GPU helper: VM ${vm.vmid}'s report has no helper line, and only the helper, bb-box-gpu, answers a marker.`, `Run host/setup-gpu.sh from the setup guide as root on ${node}.`);
     const at = /^\s*at (\d+)\s*$/m.exec(vm.notes);
     const verdict = judgeGpuHelper(helper, { node, pool: setup.pool, vmid: vm.vmid, ageMs: at ? setup.now() - Number(at[1]) * 1000 : null, ago: setup.ago });
     if (verdict.status === "fail") return refuse(verdict.detail, verdict.fix);
-    if (!lines.cards.length) return refuse(`The GPU helper on ${node} lists no card in VM ${vm.vmid}'s report, so bb-box cannot tell which card a guest's lines name.`, `Run systemctl status bb-box-gpu and nvidia-smi as root on ${node}.`);
+    if (!lines.cards.length) return refuse(`The GPU helper on ${node} lists no card in VM ${vm.vmid}'s report, so ${PRODUCT} cannot tell which card a guest's lines name.`, `Run systemctl status bb-box-gpu and nvidia-smi as root on ${node}.`);
     if (!lines.ledgerReported) {
       return refuse(
         `bb-box-gpu ${helper.version} on ${node} does not report its ledger, which bb box gpu mark needs to ask above each guest's last answered generation and to read each grant.`,
         `Run host/setup-gpu.sh from this BB Box's setup guide, as root on ${node}, to install bb-box-gpu 0.2.0 or later.`,
       );
     }
-    if (lines.omitted.length) return refuse(`VM ${vm.vmid}'s report leaves lines out (${lines.omitted.join("; ")}), so bb-box cannot read every claim the helper holds.`, `Read what the helper says with journalctl -u bb-box-gpu on ${node}.`);
+    if (lines.omitted.length) return refuse(`VM ${vm.vmid}'s report leaves lines out (${lines.omitted.join("; ")}), so ${PRODUCT} cannot read every claim the helper holds.`, `Read what the helper says with journalctl -u bb-box-gpu on ${node}.`);
     if (request.undo && !helperAtLeast(helper.version, RELEASING_HELPER)) {
       return refuse(
         `bb-box-gpu ${helper.version} on ${node} cannot clear a claim, and --undo clears each claim the helper holds before it takes a marker off.`,

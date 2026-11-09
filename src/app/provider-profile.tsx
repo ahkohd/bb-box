@@ -9,7 +9,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { Capacity, Limit } from "../backends/types.ts";
 import type { OfferView, ProviderProfile } from "../plugin/views.ts";
 import { providerTitle, RUNS_ON_WORDS } from "./box-form.tsx";
-import { relativeTime, seconds } from "./common.tsx";
+import { ago } from "./box-words.ts";
+import { seconds } from "./common.tsx";
 
 const GIB = 1024;
 const RESOURCE_WORDS: Record<Limit["resource"], string> = {
@@ -67,7 +68,7 @@ export function usuallyWords(profile: Pick<ProviderProfile, "makes">): string {
   return parts.length ? parts.join(" · ") : "No cold start recorded yet.";
 }
 
-/** "Ready · Proxmox VE 9.2 on pve · 2 boxes on it · checked 2 minutes ago". */
+/** "Ready · Proxmox VE 9.2 on pve · 2 boxes on it · checked 2 min ago". */
 export function statusWords(profile: Pick<ProviderProfile, "status" | "boxes">, now: number): string {
   const { status, boxes } = profile;
   const parts: string[] = [];
@@ -76,7 +77,7 @@ export function statusWords(profile: Pick<ProviderProfile, "status" | "boxes">, 
   else parts.push(status.ok === false ? "Needs attention" : "Ready");
   if (status.summary) parts.push(status.summary);
   parts.push(`${boxes} ${boxes === 1 ? "box" : "boxes"} on it`);
-  if (status.checkedAt !== null) parts.push(`checked ${relativeTime(status.checkedAt, now)}`);
+  if (status.checkedAt !== null) parts.push(`checked ${ago(status.checkedAt, now)}`);
   return parts.join(" · ");
 }
 

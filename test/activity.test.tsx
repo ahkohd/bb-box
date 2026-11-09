@@ -8,7 +8,8 @@ import type { BoxView } from "../src/plugin/views.ts";
 import { forgetLive } from "../src/app/common.tsx";
 import { forgetActivity } from "../src/app/activity.tsx";
 import { upWords } from "../src/app/monitor/status.tsx";
-import { sidebarTitle } from "../src/app/desktop.tsx";
+import { sidebarTitle, threadGroupHeading } from "../src/app/desktop.tsx";
+import { threadInSentence } from "../src/app/thread-chips.tsx";
 import { HistoryChart, peakRuns } from "../src/app/history-chart.tsx";
 
 const BOX_ID = "bxcalmotter001";
@@ -306,8 +307,8 @@ test("G16: Live keeps reading while the box stops; once the stop is confirmed th
   await waitFor(() => expect(screen.getByRole("region", { name: "Activity" }).textContent).toMatch(/calm-otter is stopped, so BB Box is not reading it\. It stopped 1 min ago, today at /));
 });
 
-test("a box bb-box cannot read says the Monitor's words in Activity's frame, which keeps its size with empty charts; one it read before keeps its history", async () => {
-  const unreadable: MonitorReach = { is: "unreadable", machineId: null, why: "bb-box cannot read box calm-otter now: its BB machine is not answering BB, and it runs no shell bb-box can read without it." };
+test("a box BB Box cannot read says the Monitor's words in Activity's frame, which keeps its size with empty charts; one it read before keeps its history", async () => {
+  const unreadable: MonitorReach = { is: "unreadable", machineId: null, why: "BB Box cannot read box calm-otter now: its BB machine is not answering BB, and it runs no shell BB Box can read without it." };
   open(handlers({ page: () => page(boxView({ os: "windows" }), unreadable), reading: () => snapshot(), history: (range) => historyView(range, { newest: null }, () => ({ cpu: null, cpuBusiest: null, memory: null, memoryHighest: null, disk: null, down: null, up: null, covered: 0 })) }));
   const card = await activity();
   expect(card.querySelector("[data-activity-quiet]")!.textContent).toContain("its BB machine is not answering BB");
@@ -389,10 +390,12 @@ test("the Monitor's up label says whose clock it counts, so it does not contradi
   expect(upWords(snapshot({ slot: { host: "mac-1", encoder: null } }), true)).toBe("host up 1h 0m");
 });
 
-test("a thread with no title of its own is headed by the words BB's sidebar shows, its first prompt, else this box's thread", () => {
+test("a thread with no title is null for a heading, Untitled thread on a chip and this box's thread in a sentence", () => {
   expect(sidebarTitle({ title: "Fix the sign-in flow", titleFallback: "fix it" }, "thr_1")).toBe("Fix the sign-in flow");
   expect(sidebarTitle({ title: null, titleFallback: "CALL box_list" }, "thr_1")).toBe("CALL box_list");
-  expect(sidebarTitle({ title: "  ", titleFallback: null }, "thr_1")).toBe("this box's thread");
+  expect(sidebarTitle({ title: "  ", titleFallback: null }, "thr_1")).toBeNull();
+  expect(threadGroupHeading(null)).toBe("Untitled thread");
+  expect(threadInSentence(null)).toBe("this box's thread");
 });
 
 test("a slot far over its share says so in its words: the tile, the summary and the read-out keep 787% and 125%, and only the drawn line stops at the top", async () => {
@@ -533,7 +536,7 @@ test("with box history off, 1 h, 24 h and 7 d keep what was read before under th
   cleanup();
   forgetLive();
   forgetActivity();
-  open(handlers({ page: () => page(boxView()), reading: () => snapshot(), history: (range) => historyView(range, { full: "Box history's file is full, so bb-box stopped keeping box history." }) }));
+  open(handlers({ page: () => page(boxView()), reading: () => snapshot(), history: (range) => historyView(range, { full: "Box history's file is full, so BB Box stopped keeping box history." }) }));
   const full = await activity();
   fireEvent.click(await within(full).findByRole("radio", { name: "24 h" }));
   await waitFor(() => expect(full.querySelector("[data-history-full]")).toBeTruthy());

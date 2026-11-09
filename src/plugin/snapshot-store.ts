@@ -16,6 +16,8 @@ import {
 import { chargeOf, type Charge } from "../core/snapshot-cost.ts";
 import type { HeldIdentity, NotForkSafe } from "../core/identity.ts";
 import { SCHEMA, type AttachedFile } from "./attached-files.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 const listed = (values: readonly string[]) => values.map((value) => `'${value}'`).join(", ");
 const ACTORS = ["person", "agent", "command", "bb-box", "outside", "unknown"] as const;
@@ -461,8 +463,8 @@ export class SnapshotStore implements SnapshotLedger {
   }
 
   get problem(): string | null {
-    if (this.#file.problem) return `bb-box could not set up ${this.#file.spec.file}: ${sentence(this.#file.problem)}`;
-    if (this.#failure) return `bb-box could not write to ${this.#file.spec.file}: ${sentence(this.#failure.error)}`;
+    if (this.#file.problem) return `${PRODUCT} could not set up ${this.#file.spec.file}: ${sentence(this.#file.problem)}`;
+    if (this.#failure) return `${PRODUCT} could not write to ${this.#file.spec.file}: ${sentence(this.#failure.error)}`;
     return null;
   }
 
@@ -711,19 +713,19 @@ export class SnapshotStore implements SnapshotLedger {
   checks(): DoctorCheck[] {
     const file = this.#file;
     const where = file.attached
-      ? `${file.spec.file}, attached to bb-box's database`
+      ? `${file.spec.file}, attached to ${PRODUCT}'s database`
       : file.schema !== "main"
         ? file.spec.file
-        : `bb-box's database, as its handle refused to attach ${file.spec.file}${file.refusal ? `: ${file.refusal}` : ""}`;
-    const fix = "Check that BB's data folder has room and that bb-box's files in it are writable, then restart bb-box. Until then bb-box takes and deletes no snapshots.";
-    if (file.problem) return [{ id: "snapshots", name: "Snapshots' records", status: "fail", detail: `bb-box could not set up its snapshots' records in ${where}: ${sentence(file.problem)}`, fix }];
+        : `${PRODUCT}'s database, as its handle refused to attach ${file.spec.file}${file.refusal ? `: ${file.refusal}` : ""}`;
+    const fix = `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart bb-box. Until then ${PRODUCT} takes and deletes no snapshots.`;
+    if (file.problem) return [{ id: "snapshots", name: "Snapshots' records", status: "fail", detail: `${PRODUCT} could not set up its snapshots' records in ${where}: ${sentence(file.problem)}`, fix }];
     if (this.#failure) {
       return [
         {
           id: "snapshots",
           name: "Snapshots' records",
           status: "fail",
-          detail: `bb-box could not write its snapshots' records in ${where} ${this.#failure.count} ${this.#failure.count === 1 ? "time" : "times"}, last at ${new Date(this.#failure.at).toISOString()}: ${sentence(this.#failure.error)}`,
+          detail: `${PRODUCT} could not write its snapshots' records in ${where} ${this.#failure.count} ${this.#failure.count === 1 ? "time" : "times"}, last at ${new Date(this.#failure.at).toISOString()}: ${sentence(this.#failure.error)}`,
           fix,
         },
       ];
@@ -734,7 +736,7 @@ export class SnapshotStore implements SnapshotLedger {
       counts = this.#file.db().prepare(`SELECT state, COUNT(*) AS count FROM ${this.#table("snapshots")} GROUP BY state ORDER BY state`).all() as { state: string; count: number }[];
       unsettled = this.unsettled().length;
     } catch (error) {
-      return [{ id: "snapshots", name: "Snapshots' records", status: "fail", detail: `bb-box could not read its snapshots' records in ${where}: ${sentence(error instanceof Error ? error.message : String(error))}`, fix }];
+      return [{ id: "snapshots", name: "Snapshots' records", status: "fail", detail: `${PRODUCT} could not read its snapshots' records in ${where}: ${sentence(error instanceof Error ? error.message : String(error))}`, fix }];
     }
     const total = counts.reduce((sum, row) => sum + row.count, 0);
     const byState = counts.map((row) => `${row.count} ${row.state}`).join(", ");
@@ -745,8 +747,8 @@ export class SnapshotStore implements SnapshotLedger {
         id: "snapshots",
         name: "Snapshots' records",
         status: file.attached ? "ok" : "warn",
-        detail: `bb-box's records of snapshots and their operations, in ${where}: ${total} ${total === 1 ? "snapshot" : "snapshots"}${byState ? ` (${byState})` : ""}, ${unsettled} ${unsettled === 1 ? "operation" : "operations"} not settled${size}.`,
-        fix: file.attached ? null : "Nothing is lost: the records live in bb-box's database.",
+        detail: `${PRODUCT}'s records of snapshots and their operations, in ${where}: ${total} ${total === 1 ? "snapshot" : "snapshots"}${byState ? ` (${byState})` : ""}, ${unsettled} ${unsettled === 1 ? "operation" : "operations"} not settled${size}.`,
+        fix: file.attached ? null : `Nothing is lost: the records live in ${PRODUCT}'s database.`,
       },
     ];
   }

@@ -43,7 +43,7 @@ function setup(options: { failBuild?: boolean; slowBuild?: boolean; app?: () => 
   return { fake, backend: disposed(backend), again: () => disposed(make()), lines, received, advance: (ms: number) => (now += ms), building, finish: () => writeFileSync(finishBuild, "") };
 }
 
-test("a Linux image is built once in a Linux instance of its own, from bb-box's setup scripts, pushed to the workspace's registry and recorded, and the instance destroyed", async () => {
+test("a Linux image is built once in a Linux instance of its own, from BB Box's setup scripts, pushed to the workspace's registry and recorded, and the instance destroyed", async () => {
   const { fake, backend, received } = setup();
   const signal = new AbortController().signal;
   const [first, second] = await Promise.all([backend.linuxImages.forBox("linux", signal), backend.linuxImages.forBox("linux", signal)]);
@@ -198,7 +198,7 @@ test("with the tailnet on, a build machine joins it with a one-off key of its ow
     const image = await backend.linuxImages.forBox("linux", new AbortController().signal);
     assert.match(image.ref, /^nscr\.io\/ws\/bbbox\/linux:/);
     assert.deepEqual(order, ["built after joining"]);
-    assert.deepEqual(minted, ["bb-box Namespace build-linux"]);
+    assert.deepEqual(minted, ["BB Box Namespace build-linux"]);
     const calls = readFileSync(log, "utf8").trim().split("\n");
     assert.ok(calls.some((call) => /^tailscale up --auth-key=file:\S+ --hostname=bb-box-ns-inst1-build-linux /.test(call)), calls.join("; "));
     assert.ok(calls.includes("key tskey-auth-one-off-build"), "the key reached the machine on its input");
@@ -233,7 +233,7 @@ test("a reload while an image builds leaves the build running in its instance, a
   assert.equal(status(), "DESTROYED", "once the build ends, its instance goes");
 });
 
-test("a build instance no build of bb-box's follows, as one whose record was lost, is destroyed by the next upkeep; one made in the last two minutes is left to its build (#1032)", async () => {
+test("a build instance no build of BB Box's follows, as one whose record was lost, is destroyed by the next upkeep; one made in the last two minutes is left to its build (#1032)", async () => {
   const { fake, backend, advance } = setup();
   const start = Date.parse("2030-01-01T00:00:00Z");
   const instance = (id: string, createdAt: number) => ({

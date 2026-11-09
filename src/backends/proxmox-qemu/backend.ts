@@ -122,6 +122,8 @@ import type { OpenStream } from "../../core/selkies.ts";
 import { openRoute } from "../../transports/route.ts";
 import type { QemuConfig } from "./config.ts";
 import { storedKeyPair } from "../ssh-key.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 const MiB = 2 ** 20;
 const GiB = 2 ** 30;
@@ -605,7 +607,7 @@ export class ProxmoxQemuBackend implements Backend {
     return { macs, smbios: /(?:^|,)uuid=([^,]+)/.exec(String(config.smbios1 ?? ""))?.[1] ?? null };
   }
 
-  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the copy a restore needs. Try again later, or ask the user to make room for the copy.`)): Promise<number> {
+  async #claimFree(api: Proxmox, signal?: AbortSignal, noneFree: (range: string) => Error = (range) => new SnapshotFailed(`Every VMID ${range} is in use, so ${PRODUCT} has none for the copy a restore needs. Try again later, or ask the user to make room for the copy.`)): Promise<number> {
     if (this.#nextVmid === null) {
       const stored = await this.#context.storage.get<number>(NEXT_VMID);
       this.#nextVmid ??= typeof stored === "number" && this.#inRange(stored) ? stored : this.#config.vmids.first;
@@ -640,8 +642,8 @@ export class ProxmoxQemuBackend implements Backend {
     const api = await this.client();
     const from = this.#vmid(source);
     const config = await this.#ownConfig(api, source, signal);
-    if ((await api.status(from, signal))?.status === "running") throw new SnapshotFailed(`Guest ${from} is running, and bb-box copies a guest only once it has stopped.`);
-    if (config.lock) throw new SnapshotFailed(`Proxmox has guest ${from} locked (${String(config.lock)}), so bb-box cannot copy it.`);
+    if ((await api.status(from, signal))?.status === "running") throw new SnapshotFailed(`Guest ${from} is running, and ${PRODUCT} copies a guest only once it has stopped.`);
+    if (config.lock) throw new SnapshotFailed(`Proxmox has guest ${from} locked (${String(config.lock)}), so ${PRODUCT} cannot copy it.`);
     const disk = bootDisk(config);
     const template = typeof source.data?.template === "number" ? source.data.template : null;
     const vmid = await this.#claimFree(api, signal);
@@ -663,7 +665,7 @@ export class ProxmoxQemuBackend implements Backend {
     const config = await this.#ownOrCopyConfig(api, ref.guest, signal);
     const disk = bootDisk(config);
     const template = typeof ref.guest.data?.template === "number" ? ref.guest.data.template : null;
-    const vmid = await this.#claimFree(api, signal, (range) => new SnapshotFailed(`Every VMID ${range} is in use, so bb-box has none for the held copy. Try again later, or ask the user to make room for the copy.`));
+    const vmid = await this.#claimFree(api, signal, (range) => new SnapshotFailed(`Every VMID ${range} is in use, so ${PRODUCT} has none for the held copy. Try again later, or ask the user to make room for the copy.`));
     try {
       const copy = this.#guest(api.node, vmid, template, label.box);
       await hooks.claimed(copy);
@@ -680,7 +682,7 @@ export class ProxmoxQemuBackend implements Backend {
     const config = await this.#copyConfig(api, copy, signal);
     if (!config) throw gone(vmid);
     const madeFor = `bb-box install ${this.#context.installId} box ${label.box} held copy of snapshot ${label.snapshot}`;
-    if (!String(config.description ?? "").startsWith(madeFor)) throw new SnapshotFailed(`Guest ${vmid} is not the copy bb-box made of snapshot ${label.snapshot}, so bb-box does not label it as one.`);
+    if (!String(config.description ?? "").startsWith(madeFor)) throw new SnapshotFailed(`Guest ${vmid} is not the copy ${PRODUCT} made of snapshot ${label.snapshot}, so ${PRODUCT} does not label it as one.`);
     const template = typeof copy.data?.template === "number" ? copy.data.template : null;
     await disarm(api, vmid, signal);
     await api.configure(vmid, { tags: heldCopyTags(this.#context.installId, label, Date.now(), template), onboot: false, delete: ["protection"] }, signal);
@@ -751,7 +753,7 @@ export class ProxmoxQemuBackend implements Backend {
     const tags = parseTags(config.tags);
     const box = typeof copy.data?.box === "string" ? copy.data.box : "";
     const described = typeof config.description === "string" && config.description.startsWith(`bb-box install ${this.#context.installId} box ${box} held copy of snapshot `);
-    if (!isHeldCopy(tags) && !isEarlierGuest(tags) && !described) throw new SnapshotFailed(`Guest ${copy.ref} is not a held copy or an earlier guest of box ${box}, so bb-box does not delete it as one.`);
+    if (!isHeldCopy(tags) && !isEarlierGuest(tags) && !described) throw new SnapshotFailed(`Guest ${copy.ref} is not a held copy or an earlier guest of box ${box}, so ${PRODUCT} does not delete it as one.`);
     await this.#forget(this.#vmid(copy));
     await api.destroy(this.#vmid(copy), signal);
   }
@@ -760,7 +762,7 @@ export class ProxmoxQemuBackend implements Backend {
     const api = await this.client();
     const from = this.#vmid(copy);
     const config = await this.#copyConfig(api, copy, signal);
-    if (!config || !isTemplate(config)) throw new SnapshotFailed(`Guest ${from} is not a held copy of box ${box.name} that bb-box can use.`);
+    if (!config || !isTemplate(config)) throw new SnapshotFailed(`Guest ${from} is not a held copy of box ${box.name} that ${PRODUCT} can use.`);
     const disk = bootDisk(config);
     const template = typeof copy.data?.template === "number" ? copy.data.template : null;
     const vmid = await this.#claimFree(api, signal);
@@ -796,7 +798,7 @@ export class ProxmoxQemuBackend implements Backend {
         ownConfig: (api, guest, signal) => this.#ownConfig(api, guest, signal),
         sourceConfig: (api, guest, signal) => this.#ownOrCopyConfig(api, guest, signal),
         rootDisk: bootDisk,
-        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Not forked: every VMID ${range} is in use, so bb-box has none for the fork. Try again later, or ask the user. bb-box copied nothing.`)),
+        claimVmid: (api, signal) => this.#claimFree(api, signal, (range) => new BackendError("no_capacity", `Not forked: every VMID ${range} is in use, so ${PRODUCT} has none for the fork. Try again later, or ask the user. ${PRODUCT} copied nothing.`)),
         unreserve: (vmid) => this.#reserved.delete(vmid),
         forget: (vmid) => this.#forget(vmid),
         guest: (node, vmid, template, boxId, build) => this.#guest(node, vmid, template, boxId, null, build),
@@ -927,7 +929,7 @@ export class ProxmoxQemuBackend implements Backend {
     if (this.kinds().some((offered) => offered.id === kind)) return [];
     await this.#readAndroidDevices(signal);
     if (this.kinds().some((offered) => offered.id === kind)) return [];
-    return [{ kind, why: this.#androidDevices?.why ?? "bb-box has not read the Android templates' records yet.", passing: false }];
+    return [{ kind, why: this.#androidDevices?.why ?? `${PRODUCT} has not read the Android templates' records yet.`, passing: false }];
   }
 
   #linuxKind(kind: string): boolean {
@@ -964,7 +966,7 @@ export class ProxmoxQemuBackend implements Backend {
       report.warn(
         ANDROID_DISK,
         `${detail} A refresh's build and trial boxes and an Android box in use need about ${ANDROID_ROOM_GIB} GiB, so a refresh may wait for room or fail.`,
-        `Free space on ${storage}, release boxes, or lower the disk kept free in bb-box's settings.`,
+        `Free space on ${storage}, release boxes, or lower the disk kept free in ${PRODUCT}'s settings.`,
       );
   }
 
@@ -1040,8 +1042,8 @@ export class ProxmoxQemuBackend implements Backend {
           ? `${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${box} needs. Release a box or ask for less memory.`
           : `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so ${box} does not fit. ` +
             (memoryFree > reserve.memoryMiB
-              ? "Release a box, ask for less memory, or lower the memory kept free in bb-box's settings."
-              : "Release a box, or lower the memory kept free in bb-box's settings."),
+              ? `Release a box, ask for less memory, or lower the memory kept free in ${PRODUCT}'s settings.`
+              : `Release a box, or lower the memory kept free in ${PRODUCT}'s settings.`),
       );
     }
     if (node.cpus !== null && size.cores > node.cpus) {
@@ -1054,17 +1056,17 @@ export class ProxmoxQemuBackend implements Backend {
         grow * 1024 > diskFree
           ? `${storageFree}, less than the ${Math.ceil(grow)} GiB a ${size.diskGiB} GiB disk adds to the template's. Ask for a smaller disk or release boxes.`
           : `${storageFree} and keeps ${reserve.diskGiB} GiB free, so a ${size.diskGiB} GiB disk, ${Math.ceil(grow)} GiB more than the template's, does not fit. ` +
-            "Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings.",
+            `Ask for a smaller disk, release boxes, or lower the disk kept free in ${PRODUCT}'s settings.`,
       );
     }
     if (diskFree < reserve.diskGiB * 1024 && !fromPool) {
       problems.push(
         `The ${storage} storage on ${api.node} has ${Math.floor(diskFree / 1024)} GiB free, less than the ${reserve.diskGiB} GiB kept free. ` +
-          "Release boxes, free some space, or lower the disk kept free in bb-box's settings.",
+          `Release boxes, free some space, or lower the disk kept free in ${PRODUCT}'s settings.`,
       );
     }
     if (this.#freeVmid(guests) === null && !fromPool) {
-      problems.push(`Every VMID from ${first} to ${last} is in use. Release a box, or widen the VMID range in bb-box's settings.`);
+      problems.push(`Every VMID from ${first} to ${last} is in use. Release a box, or widen the VMID range in ${PRODUCT}'s settings.`);
     }
     const ok = problems.length === 0;
     return { ok, message: ok ? null : problems[0]!, warm, hosts: [{ host: api.node, ok, limits }] };
@@ -1330,7 +1332,7 @@ export class ProxmoxQemuBackend implements Backend {
     if (status.status !== "running") throw new BackendError("unsupported", "A stopped VM is resized once it runs: start it first.");
     const config = await api.config(vmid, signal);
     const from = sizeOf(config);
-    if (!from) throw new Error(`VM ${vmid} does not say its cores and memory, so bb-box cannot resize it.`);
+    if (!from) throw new Error(`VM ${vmid} does not say its cores and memory, so ${PRODUCT} cannot resize it.`);
     if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
       throw new BackendError("unsupported", `A VM's disk only grows, and this one's is ${from.diskGiB} GiB.`);
     }
@@ -1365,7 +1367,7 @@ export class ProxmoxQemuBackend implements Backend {
         memory > memoryFree
           ? `${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(memory)} more the box needs. Release a box or ask for less memory.`
           : `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so the ${formatMiB(memory)} more the box needs does not fit. ` +
-              "Release a box, ask for less memory, or lower the memory kept free in bb-box's settings.",
+              `Release a box, ask for less memory, or lower the memory kept free in ${PRODUCT}'s settings.`,
       );
     }
     const grow = to.diskGiB !== null ? Math.max(0, to.diskGiB - (from.diskGiB ?? to.diskGiB)) : 0;
@@ -1378,7 +1380,7 @@ export class ProxmoxQemuBackend implements Backend {
         problems.push(
           grow * 1024 > diskFree
             ? `${storageFree}, less than the ${grow} GiB more the disk needs. Ask for a smaller disk or release boxes.`
-            : `${storageFree} and keeps ${reserve.diskGiB} GiB free, so ${grow} GiB more disk does not fit. Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings.`,
+            : `${storageFree} and keeps ${reserve.diskGiB} GiB free, so ${grow} GiB more disk does not fit. Ask for a smaller disk, release boxes, or lower the disk kept free in ${PRODUCT}'s settings.`,
         );
       }
     }
@@ -1569,7 +1571,7 @@ export class ProxmoxQemuBackend implements Backend {
         API,
         message(error),
         unauthorised
-          ? "Check the API token ID and secret in bb-box's settings."
+          ? `Check the API token ID and secret in ${PRODUCT}'s settings.`
           : "Check the API URL, and that BB's server can reach it. Set the TLS fingerprint from the setup guide's token file, or the CA certificate if a private CA signed the API's certificate.",
       );
       skip(...later);
@@ -1581,7 +1583,7 @@ export class ProxmoxQemuBackend implements Backend {
         api = await this.client();
         pass(NODE, `Boxes run on ${api.node}.`);
       } catch (error) {
-        fail(NODE, message(error), "Set the node in bb-box's settings to one the API lists.");
+        fail(NODE, message(error), `Set the node in ${PRODUCT}'s settings to one the API lists.`);
         skip(...later.slice(1));
       }
     }
@@ -1666,7 +1668,7 @@ export class ProxmoxQemuBackend implements Backend {
             name,
             missing ? `VM ${template} does not exist on ${node}, or is not in pool ${pool}.` : message(error),
             missing
-              ? `Build it with setup/proxmox-qemu/build.sh, or remove it from the ${name[1].replace(/ template \d+$/, "")} templates in bb-box's settings.`
+              ? `Build it with setup/proxmox-qemu/build.sh, or remove it from the ${name[1].replace(/ template \d+$/, "")} templates in ${PRODUCT}'s settings.`
               : audit(error, `Give the token VM.Audit and VM.Clone on /vms/${template}.`),
           );
         }
@@ -1677,7 +1679,7 @@ export class ProxmoxQemuBackend implements Backend {
         else
           fail(
             ANDROID_KVM,
-            "Android templates are listed, but KVM in Linux VM boxes is off, so bb-box takes it that the host does not allow nested virtualization. The Android emulator needs KVM, and the refresh boots its devices.",
+            `Android templates are listed, but KVM in Linux VM boxes is off, so ${PRODUCT} takes it that the host does not allow nested virtualization. The Android emulator needs KVM, and the refresh boots its devices.`,
             "Turn on linux-kvm in Proxmox QEMU's settings once build.sh linux says KVM works in a clone; build.sh android stops when it does not.",
           );
       }
@@ -1685,7 +1687,7 @@ export class ProxmoxQemuBackend implements Backend {
       const bridge = this.#config.network.bridge;
       try {
         if (await api.interfaceExists(bridge, signal)) pass(BRIDGE, `${bridge} exists on ${node}.`);
-        else fail(BRIDGE, `${node} has no ${bridge}.`, "Create the bridge as the Proxmox LXC setup guide does, or set the bridge in bb-box's settings.");
+        else fail(BRIDGE, `${node} has no ${bridge}.`, `Create the bridge as the Proxmox LXC setup guide does, or set the bridge in ${PRODUCT}'s settings.`);
       } catch (error) {
         fail(BRIDGE, message(error), audit(error, `Give the token Sys.Audit on /nodes/${node}.`));
       }
@@ -1704,7 +1706,7 @@ export class ProxmoxQemuBackend implements Backend {
           const os = this.#flavour(LINUX_TEMPLATE_KINDS.find((kind) => guest.tags.includes(`${KIND_TAG}${kind.id}`)) ?? KIND);
           const build = buildFromTags(guest.tags);
           notes.push(
-            `VMID ${guest.vmid} is the rollback of ${os} template ${target ?? "unknown"}${build ? `, ${BUILD}${build}` : ""}. It holds a box's VMID and address until the template's next refresh replaces it. To go back to it, list ${guest.vmid} as the ${os} template in bb-box's settings.`,
+            `VMID ${guest.vmid} is the rollback of ${os} template ${target ?? "unknown"}${build ? `, ${BUILD}${build}` : ""}. It holds a box's VMID and address until the template's next refresh replaces it. To go back to it, list ${guest.vmid} as the ${os} template in ${PRODUCT}'s settings.`,
           );
         }
       } catch (error) {
@@ -1725,15 +1727,15 @@ export class ProxmoxQemuBackend implements Backend {
         if (keys.generated) {
           warn(
             SSH_KEY_CHECK,
-            "bb-box made a key, which a template from build.sh does not accept; its public key is below.",
+            `${PRODUCT} made a key, which a template from build.sh does not accept; its public key is below.`,
             "Paste BBBOX_SSH_KEY, the key build.sh put in the template, here or in Proxmox LXC's settings. Or add the public key below to the template.",
           );
-        } else pass(SSH_KEY_CHECK, "From bb-box's settings; its public key is below.");
+        } else pass(SSH_KEY_CHECK, `From ${PRODUCT}'s settings; its public key is below.`);
       } else {
-        fail(SSH_KEY_CHECK, "ssh-keygen cannot read the SSH private key in bb-box's settings.", "Paste the whole of BBBOX_SSH_KEY, the private key build.sh put in the template.");
+        fail(SSH_KEY_CHECK, `ssh-keygen cannot read the SSH private key in ${PRODUCT}'s settings.`, "Paste the whole of BBBOX_SSH_KEY, the private key build.sh put in the template.");
       }
     } catch (error) {
-      fail(SSH_KEY_CHECK, message(error), "Check the SSH private key in bb-box's settings: paste the whole of BBBOX_SSH_KEY, the private key build.sh put in the template.");
+      fail(SSH_KEY_CHECK, message(error), `Check the SSH private key in ${PRODUCT}'s settings: paste the whole of BBBOX_SSH_KEY, the private key build.sh put in the template.`);
     }
 
     const ok = checks.every((check) => check.status !== "fail");
@@ -1751,7 +1753,7 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   async dispose(): Promise<void> {
-    this.#stopping.abort(new Error("bb-box is stopping."));
+    this.#stopping.abort(new Error(`${PRODUCT} is stopping.`));
     await this.#http.destroy();
     await this.#upkeep.running?.catch(() => undefined);
     await (await this.#ssh?.catch(() => null))?.ssh.dispose();
@@ -1768,7 +1770,7 @@ export class ProxmoxQemuBackend implements Backend {
           if (nodes.length !== 1) {
             throw new Error(
               nodes.length
-                ? `The Proxmox API lists ${nodes.length} nodes (${nodes.join(", ")}). Set the node in bb-box's settings.`
+                ? `The Proxmox API lists ${nodes.length} nodes (${nodes.join(", ")}). Set the node in ${PRODUCT}'s settings.`
                 : "The Proxmox API lists no online node.",
             );
           }
@@ -1811,7 +1813,7 @@ export class ProxmoxQemuBackend implements Backend {
 
   #vmid(guest: Guest): number {
     const vmid = Number(guest.ref);
-    if (!this.#inRange(vmid)) throw new Error(`Guest ${guest.ref} is outside bb-box's VMID range, so bb-box leaves it alone.`);
+    if (!this.#inRange(vmid)) throw new Error(`Guest ${guest.ref} is outside ${PRODUCT}'s VMID range, so ${PRODUCT} leaves it alone.`);
     return vmid;
   }
 
@@ -1980,7 +1982,7 @@ export class ProxmoxQemuBackend implements Backend {
       config = await api.config(template, signal);
     } catch (error) {
       if (error instanceof ProxmoxError && error.gone) {
-        throw new Error(`${this.#templateName(template)} does not exist on ${api.node}, or is not in pool ${this.#config.proxmox.pool}. Run the doctor check in bb-box's panel.`);
+        throw new Error(`${this.#templateName(template)} does not exist on ${api.node}, or is not in pool ${this.#config.proxmox.pool}. Run the doctor check in ${PRODUCT}'s panel.`);
       }
       throw error;
     }
@@ -2051,7 +2053,7 @@ export class ProxmoxQemuBackend implements Backend {
       if (vmid === null) {
         throw new BackendError(
           "no_capacity",
-          `Every VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is in use. Release a box, or widen the VMID range in bb-box's settings.`,
+          `Every VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is in use. Release a box, or widen the VMID range in ${PRODUCT}'s settings.`,
         );
       }
       this.#reserved.add(vmid);
@@ -2075,7 +2077,7 @@ export class ProxmoxQemuBackend implements Backend {
         if (state === "away") {
           throw new Error(
             `${this.#templateName(template)} on ${api.node} was still missing, or not yet a template, after ${Math.round(this.#templateWaitMs / 1000)} s ` +
-              `(${message(error)}). Run the doctor check in bb-box's panel.`,
+              `(${message(error)}). Run the doctor check in ${PRODUCT}'s panel.`,
           );
         }
         if (state === "back") {
@@ -2167,8 +2169,8 @@ export class ProxmoxQemuBackend implements Backend {
       throw new Error(
         `Port ${port} of ${host} is open, but SSH as ${user} did not answer within ${seconds(left)}. ` +
           (os === "linux"
-            ? `Check that the template accepts bb-box's key in ~${user}/.ssh/authorized_keys.`
-            : `Check that the template accepts bb-box's key in C:\\ProgramData\\ssh\\administrators_authorized_keys.`),
+            ? `Check that the template accepts ${PRODUCT}'s key in ~${user}/.ssh/authorized_keys.`
+            : `Check that the template accepts ${PRODUCT}'s key in C:\\ProgramData\\ssh\\administrators_authorized_keys.`),
       );
     }
   }
@@ -2517,7 +2519,7 @@ export class ProxmoxQemuBackend implements Backend {
     for (;;) {
       const free = this.#freeVmid(taken, this.#nextVmid ?? this.#config.vmids.first);
       if (free === null) throw new BackendError("no_capacity", `No VMID from ${this.#config.vmids.first} to ${this.#config.vmids.last} is free for the rollback of template ${target}. Release a box first.`);
-      kept = `bb-box rollback of ${Os} template ${target}${oldBuild ? `, ${BUILD}${oldBuild}` : ""}, kept until its next refresh. To use it, list ${free} as the ${Os} template in bb-box's settings.`;
+      kept = `${PRODUCT} rollback of ${Os} template ${target}${oldBuild ? `, ${BUILD}${oldBuild}` : ""}, kept until its next refresh. To use it, list ${free} as the ${Os} template in ${PRODUCT}'s settings.`;
       this.#reserved.add(free);
       try {
         if (thin) await api.cloneLinked({ template: target, vmid: free, hostname: `${name}-rollback`, pool, description: kept }, signal);
@@ -2577,7 +2579,7 @@ export class ProxmoxQemuBackend implements Backend {
     if (!config) return;
     const tags = parseTags(config.tags);
     const ours = tags.includes(installTag(this.#context.installId)) && (tags.includes(IMAGE_BOX) || tags.some((tag) => tag.startsWith(IMAGE_TAG)));
-    if (this.#allTemplates().includes(vmid) || !ours || !this.#inRange(vmid)) throw new Error(`VM ${vmid} is not an image box or build of this install's, so bb-box leaves it.`);
+    if (this.#allTemplates().includes(vmid) || !ours || !this.#inRange(vmid)) throw new Error(`VM ${vmid} is not an image box or build of this install's, so ${PRODUCT} leaves it.`);
     await this.#forget(vmid);
     // A captured build is protected, as templates are.
     if (config.protection) await api.configure(vmid, { delete: ["protection"] }, signal);

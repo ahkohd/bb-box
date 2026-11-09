@@ -14,6 +14,7 @@
 import { BoxError } from "../core/boxes.ts";
 
 /** BB's abort reason for a plugin's tool calls when it disposes the plugin. */
+import { PRODUCT } from "../brand.ts";
 export const PLUGIN_DISPOSED = "plugin-disposed";
 /** How long a deploy waits for commands still running. */
 export const DRAIN_MS = 5_000;
@@ -23,7 +24,7 @@ const STOP_MS = 5_000;
 /** A command that close() stopped, as bb-box was restarting. */
 export class Restarted extends Error {
   constructor() {
-    super("bb-box restarted while the command ran.");
+    super(`${PRODUCT} restarted while the command ran.`);
     this.name = "Restarted";
   }
 }
@@ -53,7 +54,7 @@ export class Drain {
    */
   async run<T>(signal: AbortSignal, task: (signal: AbortSignal) => Promise<T>, options: { detachMs?: number } = {}): Promise<T> {
     if (this.#closed) {
-      throw new BoxError("restarting", "bb-box is restarting, as for an update, and takes no new commands until it is back, usually within seconds.");
+      throw new BoxError("restarting", `${PRODUCT} is restarting, as for an update, and takes no new commands until it is back, usually within seconds.`);
     }
     const controller = new AbortController();
     const follow = () => {

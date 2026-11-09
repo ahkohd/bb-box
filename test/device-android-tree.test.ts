@@ -41,7 +41,7 @@ function named(elements: readonly DeviceElement[], label: string, role?: string)
   return found;
 }
 
-describe("Android's tree, from bb-box's tree server and from uiautomator dump (063, 7.2 and 7.3)", () => {
+describe("Android's tree, from BB Box's tree server and from uiautomator dump (063, 7.2 and 7.3)", () => {
   test("reads the server's windows, with the display's rotation and size", () => {
     const screen = served("android-tree-settings.json");
     assert.equal(screen.source, "server");
@@ -230,7 +230,7 @@ function source(overrides: Partial<AndroidTreeOptions> & { channels?: FakeChanne
 const TREE_LINE = text("android-tree-settings.json").trim();
 
 describe("where an Android tree comes from (063, 7.3)", () => {
-  test("starts bb-box's tree server from its dex on the device, and reads through it", async () => {
+  test("starts BB Box's tree server from its dex on the device, and reads through it", async () => {
     const channel = new FakeChannel();
     channel.answers.push(() => TREE_LINE);
     const { tree, spawned, ran } = source({ channels: [channel] });
@@ -254,7 +254,7 @@ describe("where an Android tree comes from (063, 7.3)", () => {
 
   test("gives way to an instrumentation test: the read is refused in words, and nothing is dumped, as a dump could crash the test", async () => {
     const channel = new FakeChannel();
-    channel.answers.push(() => JSON.stringify({ ok: false, code: "instrumentation", words: "bb-box's tree server gives way to an instrumentation running on the device." }));
+    channel.answers.push(() => JSON.stringify({ ok: false, code: "instrumentation", words: "BB Box's tree server gives way to an instrumentation running on the device." }));
     channel.answers.push(() => TREE_LINE);
     const { tree, ran, logs } = source({ channels: [channel] });
     await assert.rejects(tree.read(), (error: unknown) => error instanceof DriverError && error.code === "held-elsewhere" && error.message === instrumentationWords());
@@ -333,10 +333,10 @@ describe("where an Android tree comes from (063, 7.3)", () => {
 
   test("a paste the tree server cannot make leaves it to the Paste key, with the reason logged (F-18)", async () => {
     const held = new FakeChannel();
-    held.answers.push(() => JSON.stringify({ ok: false, code: "instrumentation", words: "bb-box's tree server gives way to an instrumentation running on the device." }));
+    held.answers.push(() => JSON.stringify({ ok: false, code: "instrumentation", words: "BB Box's tree server gives way to an instrumentation running on the device." }));
     const first = source({ channels: [held] });
     assert.equal(await first.tree.pasteIntoFocusedField(), false);
-    assert.ok(first.logs.some((line) => /^paste: the tree server did not paste, so the Paste key goes: bb-box's tree server gives way/.test(line)));
+    assert.ok(first.logs.some((line) => /^paste: the tree server did not paste, so the Paste key goes: BB Box's tree server gives way/.test(line)));
 
     const silent = source({ channels: [new FakeChannel("Exception in thread main")] });
     assert.equal(await silent.tree.pasteIntoFocusedField(), false);

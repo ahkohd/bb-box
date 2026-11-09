@@ -6,6 +6,8 @@ import { hashDockerSetup } from "../docker/setup-hash.ts";
 import { setupDir } from "../setup-dir.ts";
 import type { BackendStorage } from "../types.ts";
 import type { InstanceShape, NamespaceApi } from "./api.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const LINUX_IMAGE_TARGETS = {
   linux: "linux",
@@ -111,7 +113,7 @@ export function setupArchive(setup = setupDir()): Promise<Buffer> {
     child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
     child.on("error", reject);
-    child.on("close", (code) => (code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(`tar could not pack bb-box's setup scripts: ${stderr.trim() || `exit ${code}`}`))));
+    child.on("close", (code) => (code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(`tar could not pack ${PRODUCT}'s setup scripts: ${stderr.trim() || `exit ${code}`}`))));
   });
 }
 
@@ -196,7 +198,7 @@ export class LinuxImages {
   }
 
   dispose(): void {
-    this.#disposing.abort(new Error("bb-box stopped, as for a reload"));
+    this.#disposing.abort(new Error(`${PRODUCT} stopped, as for a reload`));
   }
 
   #saved(target: LinuxImageTarget): Promise<SavedBuild | undefined> {
@@ -210,7 +212,7 @@ export class LinuxImages {
   async carryOnLeftBuilds(): Promise<void> {
     for (const target of Object.values(LINUX_IMAGE_TARGETS)) {
       if (this.#building.has(target) || !(await this.#saved(target))) continue;
-      void this.build(target, "an earlier run of bb-box left its build").catch(() => undefined);
+      void this.build(target, `an earlier run of ${PRODUCT} left its build`).catch(() => undefined);
     }
   }
 
@@ -237,7 +239,7 @@ export class LinuxImages {
     const record = await this.record(target);
     if (!record) return "there is none yet";
     const key = await this.key(signal);
-    if (record.key !== key) return record.key.split("-")[0] !== key.split("-")[0] ? "bb-box's image scripts changed" : "BB's app changed";
+    if (record.key !== key) return record.key.split("-")[0] !== key.split("-")[0] ? `${PRODUCT}'s image scripts changed` : "BB's app changed";
     if (this.#deps.now() - record.builtAt >= LINUX_IMAGE_REBUILT_AFTER_MS) return "it is a week old";
     return null;
   }

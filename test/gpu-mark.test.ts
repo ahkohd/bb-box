@@ -33,7 +33,7 @@ test("bb box gpu mark marks each of this install's guests whose lines name a car
   const marking = await backend.markGpus(request());
   assert.equal(marking.refused, null);
   const guests = byVmid(marking);
-  assert.deepEqual([...guests.keys()], [7001, 7002, 7003, 7004], "only this install's guests that hold a card, in its pool, and none bb-box makes and removes itself");
+  assert.deepEqual([...guests.keys()], [7001, 7002, 7003, 7004], "only this install's guests that hold a card, in its pool, and none BB Box makes and removes itself");
   assert.deepEqual(
     [...guests.values()].map((guest) => [guest.vmid, guest.outcome, guest.marker, guest.card, guest.running, guest.answer]),
     [
@@ -212,7 +212,7 @@ test("--undo clears each claim through the helper, then takes the shared and who
     assert.ok(report.some((line) => line.startsWith(`ledger ${vmid} `) && line.endsWith(" answered g2 claim none")), `CT ${vmid}'s claim is cleared`);
   }
   assert.ok(report.includes(`holder ${A} 7001 shared running install ${INSTALL} unmanaged`), "it holds its card by its lines, unmanaged, as before marking");
-  assert.match(markingText([undone]), /^Proxmox LXC on pve: cleared the claim of 4 guests\. Each claim is cleared by the GPU helper first, through a gpu\.release marker, which then comes off: the guest keeps its device lines, and the helper no longer writes them\. A box bb-box makes from now on is marked as it is made; these guests stay unmarked until bb box gpu mark marks them again\.\n/);
+  assert.match(markingText([undone]), /^Proxmox LXC on pve: cleared the claim of 4 guests\. Each claim is cleared by the GPU helper first, through a gpu\.release marker, which then comes off: the guest keeps its device lines, and the helper no longer writes them\. A box BB Box makes from now on is marked as it is made; these guests stay unmarked until bb box gpu mark marks them again\.\n/);
   assert.doesNotMatch(markingText([undone]), /starts later is marked/, "Opus 9: a start does not mark a box again");
   const writes = bridge.tagWrites().length;
   const again = await backend.markGpus(request({ undo: true }));
@@ -263,7 +263,7 @@ test("a guest's config changed between the read and the write is read again; one
   const marking = await bridge.backend().markGpus(request());
   assert.deepEqual(marking.guests.map((guest) => [guest.vmid, guest.outcome, guest.why]), [
     [7080, "marked", null],
-    [7081, "refused", "Its config kept changing while bb-box wrote its tags. Run bb box gpu mark again."],
+    [7081, "refused", "Its config kept changing while BB Box wrote its tags. Run bb box gpu mark again."],
   ]);
   assert.equal(bridge.proxmox.guests.get(7080)!.config.memory, "4096", "the other change stands");
   assert.ok(bridge.tags(7080).includes(marker("shared", CARD_A, 1)));
@@ -292,8 +292,8 @@ test("bb box gpu mark refuses the whole run, changing nothing, with no helper, a
       ["no helper", "pve has no GPU helper: VM 9190's report has no helper line, and only the helper, bb-box-gpu, answers a marker.", "Run host/setup-gpu.sh from the setup guide as root on pve.", 0],
       ["old", "The GPU helper on pve last reported 3 minutes ago, in VM 9190.", "Run systemctl status bb-box-gpu as root on pve, and check the host's clock.", 0],
       ["not served", "bb-box-gpu 0.4.3 on pve serves pool team, not this install's pool bbbox.", "Run host/setup-gpu.sh --pool bbbox as root on pve.", 0],
-      ["no cards", "The GPU helper on pve lists no card in VM 9190's report, so bb-box cannot tell which card a guest's lines name.", "Run systemctl status bb-box-gpu and nvidia-smi as root on pve.", 0],
-      ["no report VM", "The token can read no VM named bb-box-gpu-memory on pve, so bb-box cannot read the GPU helper's report.", "Run host/setup-gpu-report.sh, then host/setup-gpu.sh, from the setup guide as root on pve.", 0],
+      ["no cards", "The GPU helper on pve lists no card in VM 9190's report, so BB Box cannot tell which card a guest's lines name.", "Run systemctl status bb-box-gpu and nvidia-smi as root on pve.", 0],
+      ["no report VM", "The token can read no VM named bb-box-gpu-memory on pve, so BB Box cannot read the GPU helper's report.", "Run host/setup-gpu-report.sh, then host/setup-gpu.sh, from the setup guide as root on pve.", 0],
     ],
   );
   assert.deepEqual(fresh.tagWrites(), []);
@@ -409,7 +409,7 @@ test("the marking rules on their own: the marker's grammar, a guest's device set
   assert.deepEqual(lines.omitted, ["2 holder lines, 1 answers"]);
   assert.deepEqual(parseHelperLines("    omitted the rest, as the report was too long").omitted, ["the rest, as the report was too long"]);
   const verdict = judgeGpuMigration(lines, [], { ...eligibility, node: "pve", vmid: REPORT_VMID });
-  assert.deepEqual([verdict.status, verdict.detail], ["fail", "VM 9190's report leaves lines out (2 holder lines, 1 answers), so bb-box cannot show every guest is marked and the helper would write nothing."], "an incomplete report never passes (Astra 4)");
+  assert.deepEqual([verdict.status, verdict.detail], ["fail", "VM 9190's report leaves lines out (2 holder lines, 1 answers), so BB Box cannot show every guest is marked and the helper would write nothing."], "an incomplete report never passes (Astra 4)");
   const desktopLines = cardLines(CARD_A, "desktop");
   const duplicated = (more: string[]) => Object.fromEntries([...desktopLines, ...more].map((line, at) => [`dev${at}`, line]));
   assert.deepEqual(planMark({ look: look(duplicated(["/dev/nvidiactl,mode=0666"])), recordedPart: null }, context), {

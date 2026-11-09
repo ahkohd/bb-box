@@ -43,7 +43,7 @@ test("an image's shape and its checks: its name, Linux kinds that exist, its pro
       ["images.windows.kinds", "An image's script is a Linux one for now, and windows-desktop is not a Linux kind"],
       ["images.windows.kinds", 'There is no kind "nonsense"'],
       ["images.twin.kinds", "Project prj_one's linux boxes would get both first and twin"],
-      ["images.large.script", "The script is 257 KiB; bb-box keeps up to 256 KiB"],
+      ["images.large.script", "The script is 257 KiB; BB Box keeps up to 256 KiB"],
     ],
   );
 });

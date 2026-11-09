@@ -126,6 +126,7 @@ import {
 } from "./snapshots.ts";
 
 /** A box is ready in under a second, a desktop in about one; an import of its image can come first. */
+import { PRODUCT } from "../../brand.ts";
 const READY_TIMEOUT_MS = 60_000;
 const READY_FILE = "/run/bb-box/ready";
 /** The image's command, which neither `msb create` nor `msb start` runs. */
@@ -557,7 +558,7 @@ export class MsbBackend implements Backend {
         const building = this.#startBuild(image, kind);
         throw new BackendError(
           "no_capacity",
-          `${this.#host} has no image ${image} yet. bb-box is building it there in a microVM, which takes about 10 minutes from when it started, ${Math.round((Date.now() - building.since) / 60_000)} min ago.`,
+          `${this.#host} has no image ${image} yet. ${PRODUCT} is building it there in a microVM, which takes about 10 minutes from when it started, ${Math.round((Date.now() - building.since) / 60_000)} min ago.`,
         );
       }
       const result = await this.#cli.script("import", [image], signal);
@@ -711,7 +712,7 @@ export class MsbBackend implements Backend {
    */
   #buildShort(facts: HostFacts): string | null {
     if (facts.freeGiB >= BUILD_FREE_GIB) return null;
-    return `${this.#host} has ${facts.freeGiB} GiB free where msb keeps its images and build files (${facts.dir}), and bb-box builds an image there only with ${BUILD_FREE_GIB} GiB free, so the host keeps 60 GiB.`;
+    return `${this.#host} has ${facts.freeGiB} GiB free where msb keeps its images and build files (${facts.dir}), and ${PRODUCT} builds an image there only with ${BUILD_FREE_GIB} GiB free, so the host keeps 60 GiB.`;
   }
 
   /**
@@ -809,13 +810,13 @@ export class MsbBackend implements Backend {
   async #removeImage(ref: string, signal?: AbortSignal): Promise<void> {
     if (ref.startsWith("bbbox-image-")) {
       const found = await this.#cli.inspect(ref, signal);
-      if (found && found.labels[LABELS.imageBox] !== this.#context.installId) throw new Error(`The microVM ${ref} is not a trial box of this install's, so bb-box leaves it.`);
+      if (found && found.labels[LABELS.imageBox] !== this.#context.installId) throw new Error(`The microVM ${ref} is not a trial box of this install's, so ${PRODUCT} leaves it.`);
       if (found) await this.#cli.run(["remove", "--force", "--quiet", ref], { timeoutMs: 120_000, signal });
       await this.#cli.script("undisk", [ref], signal);
       return;
     }
     const refreshing = MSB_KINDS.some((kind) => this.#config.images[kind] && ref.startsWith(`${this.#config.images[kind]!.replace(/:[^:/]*$/, "")}:refresh-`));
-    if (!refreshing) throw new Error(`The image ${ref} is not a refresh's build, so bb-box leaves it.`);
+    if (!refreshing) throw new Error(`The image ${ref} is not a refresh's build, so ${PRODUCT} leaves it.`);
     await this.#cli.run(["image", "remove", ref], { timeoutMs: 120_000, signal });
   }
 
@@ -969,11 +970,11 @@ export class MsbBackend implements Backend {
     if (facts.cpus && size.cores > facts.cpus) {
       why = `${host} has ${facts.cpus} cores, fewer than the ${size.cores} asked for. Ask for at most ${facts.cpus} cores`;
     } else if (guests >= this.#config.boxes) {
-      why = `${host} has ${guests} of the ${this.#config.boxes} bb-box microVMs it may have, counting stopped boxes and other installs' boxes. Release a box, or raise the most boxes in bb-box's settings`;
+      why = `${host} has ${guests} of the ${this.#config.boxes} ${PRODUCT} microVMs it may have, counting stopped boxes and other installs' boxes. Release a box, or raise the most boxes in ${PRODUCT}'s settings`;
     } else if (overcommit !== 1 && memoryUsed + size.memoryMiB > ceiling - reserve) {
       why =
         `the boxes on ${host} may have ${formatMiB(ceiling - reserve)} of memory in all, at a memory overcommit of ${overcommit}, and have ${formatMiB(memoryUsed)}, so ${box} does not fit. ` +
-        "Ask for less memory, release a box, or raise the memory overcommit in bb-box's settings";
+        `Ask for less memory, release a box, or raise the memory overcommit in ${PRODUCT}'s settings`;
     } else if (state.availableMiB !== null && state.availableMiB - starting - reserve < need) {
       why =
         `${host} has ${formatMiB(state.availableMiB)} of memory available now${starting ? `, ${formatMiB(starting)} of it for boxes still starting,` : ""} and keeps ${formatMiB(reserve)} free, ` +
@@ -983,7 +984,7 @@ export class MsbBackend implements Backend {
         size.memoryMiB > memoryFree
           ? `${host} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${box} needs. Ask for less memory or release a box`
           : `${host} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve)} free, so ${box} does not fit. ` +
-            (memoryFree > reserve ? "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings" : "Release a box, or lower the memory kept free in bb-box's settings");
+            (memoryFree > reserve ? `Ask for less memory, release a box, or lower the memory kept free in ${PRODUCT}'s settings` : `Release a box, or lower the memory kept free in ${PRODUCT}'s settings`);
     } else if (size.diskGiB !== null && size.diskGiB > facts.freeGiB) {
       why = `${host} has ${facts.freeGiB} GiB free, less than the ${size.diskGiB} GiB disk asked for. Ask for a smaller disk`;
     }
@@ -1075,7 +1076,7 @@ export class MsbBackend implements Backend {
     if (/already exists/i.test(result.stderr)) {
       const found = await this.#cli.inspect(name, signal);
       if (found) {
-        if (!this.#ours(found, box.boxId)) throw new Error(`The microVM ${name} on ${this.#host} belongs to another box, so bb-box left it alone.`);
+        if (!this.#ours(found, box.boxId)) throw new Error(`The microVM ${name} on ${this.#host} belongs to another box, so ${PRODUCT} left it alone.`);
         if (powerOf(found.status) !== "running") return this.#boot(name, signal);
         return this.#launch(name, signal);
       }
@@ -1217,7 +1218,7 @@ export class MsbBackend implements Backend {
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     if (!found) throw this.#gone(guest);
     const from = sizeOf(found) ?? guest.size;
-    if (!from) throw new Error(`MicroVM ${guest.ref} does not say its CPUs and memory, so bb-box cannot resize it.`);
+    if (!from) throw new Error(`MicroVM ${guest.ref} does not say its CPUs and memory, so ${PRODUCT} cannot resize it.`);
     if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
       throw new BackendError("unsupported", `A microVM's root disk only grows, and this one's is ${from.diskGiB} GiB.`);
     }
@@ -1343,18 +1344,18 @@ export class MsbBackend implements Backend {
     if (facts) {
       const about = `${facts.os} ${facts.arch}, kernel ${facts.kernel}, ${facts.cpus} cores, ${formatMiB(facts.memoryMiB)}, ${facts.freeGiB} GiB free`;
       const arch = archOf(facts.arch);
-      if (facts.os !== "Linux" && facts.os !== "Darwin") push("microsandbox.host", hostName, "fail", `${about}. bb-box runs msb on Linux hosts and Macs.`, "Use a Linux host with KVM, or a Mac with Apple silicon.");
+      if (facts.os !== "Linux" && facts.os !== "Darwin") push("microsandbox.host", hostName, "fail", `${about}. ${PRODUCT} runs msb on Linux hosts and Macs.`, "Use a Linux host with KVM, or a Mac with Apple silicon.");
       else if (!arch || (facts.os === "Darwin" && arch !== "arm64")) push("microsandbox.host", hostName, "fail", `${about}. msb runs on x86_64 and arm64 Linux hosts, and Macs with Apple silicon.`, "Use another host.");
       else push("microsandbox.host", hostName, "ok", `${about}. It offers the ${arch} kinds.`);
 
-      if (facts.installed === MSB_VERSION) push("microsandbox.msb", "msb", "ok", `msb ${MSB_VERSION}, as bb-box pins it, in ${facts.dir}.`);
+      if (facts.installed === MSB_VERSION) push("microsandbox.msb", "msb", "ok", `msb ${MSB_VERSION}, as ${PRODUCT} pins it, in ${facts.dir}.`);
       else
         push(
           "microsandbox.msb",
           "msb",
           "warn",
-          facts.installed ? `msb ${facts.installed} is in ${facts.dir}; this bb-box pins ${MSB_VERSION}.` : `msb is not installed in ${facts.dir} yet.`,
-          `bb-box installs msb ${MSB_VERSION} there, checked by its SHA-256, with the next box or within a few minutes. It needs curl and tar on the host.`,
+          facts.installed ? `msb ${facts.installed} is in ${facts.dir}; this ${PRODUCT} pins ${MSB_VERSION}.` : `msb is not installed in ${facts.dir} yet.`,
+          `${PRODUCT} installs msb ${MSB_VERSION} there, checked by its SHA-256, with the next box or within a few minutes. It needs curl and tar on the host.`,
         );
 
       const kvmFix = `Let the user BB runs as on ${this.#host} use /dev/kvm: add it to the kvm group, then restart its services (sudo systemctl restart user@$(id -u).service) so BB's daemon has the group.`;
@@ -1372,7 +1373,7 @@ export class MsbBackend implements Backend {
             "microsandbox.overcommit",
             "Memory overcommit",
             "warn",
-            `${this.#host} is a Mac, which keeps the memory a box has used, so bb-box counts each box there at its full size, whatever the memory overcommit of ${overcommit}.`,
+            `${this.#host} is a Mac, which keeps the memory a box has used, so ${PRODUCT} counts each box there at its full size, whatever the memory overcommit of ${overcommit}.`,
             "Set the memory overcommit to 1.",
           );
         } else {
@@ -1385,8 +1386,8 @@ export class MsbBackend implements Backend {
         }
       }
       const snapshotsOff = versionRefusal(facts.installed);
-      if (snapshotsOff) push("microsandbox.snapshots", "Snapshots", "warn", `${snapshotsOff}, so its boxes take no snapshots.`, `bb-box installs msb ${MSB_VERSION} there, within a few minutes.`);
-      else if (!facts.lxc) push("microsandbox.snapshots", "Snapshots", "ok", `msb ${facts.installed} takes them, as bb-box's checks measured. A box made before bb-box gave boxes a Docker disk of msb's own takes none.`);
+      if (snapshotsOff) push("microsandbox.snapshots", "Snapshots", "warn", `${snapshotsOff}, so its boxes take no snapshots.`, `${PRODUCT} installs msb ${MSB_VERSION} there, within a few minutes.`);
+      else if (!facts.lxc) push("microsandbox.snapshots", "Snapshots", "ok", `msb ${facts.installed} takes them, as ${PRODUCT}'s checks measured. A box made before ${PRODUCT} gave boxes a Docker disk of msb's own takes none.`);
       if (facts.lxc) {
         push(
           "microsandbox.lxc",
@@ -1417,23 +1418,23 @@ export class MsbBackend implements Backend {
         const labels = facts.installed ? await this.#cli.imageLabels(image, signal).catch(() => null) : null;
         const inDocker = ids[`docker:${image}`] || null;
         if (!labels) {
-          if (inDocker) push(id, name, "warn", `msb on ${this.#host} has no ${image} yet. Docker there has it.`, `bb-box imports it from Docker with the first ${serves.join(" or ")} box, or within a few minutes.`);
+          if (inDocker) push(id, name, "warn", `msb on ${this.#host} has no ${image} yet. Docker there has it.`, `${PRODUCT} imports it from Docker with the first ${serves.join(" or ")} box, or within a few minutes.`);
           else if (this.#building?.image === image)
-            push(id, name, "warn", `bb-box is building ${image} on ${this.#host} in a microVM, since ${Math.round((Date.now() - this.#building.since) / 60_000)} min ago.`, "Wait for it: about 10 minutes from the start.");
+            push(id, name, "warn", `${PRODUCT} is building ${image} on ${this.#host} in a microVM, since ${Math.round((Date.now() - this.#building.since) / 60_000)} min ago.`, "Wait for it: about 10 minutes from the start.");
           else
             push(
               id,
               name,
               "warn",
               `${this.#host} has no image ${image}, in msb${docker ? " or in Docker" : ""}.`,
-              `bb-box builds it there in a microVM of its own, about 10 minutes, with the first ${serves.join(" or ")} box or within a few minutes. It needs ${BUILD_FREE_GIB} GiB free. Or build it with Docker there with setup/docker/build.sh, and bb-box imports it.`,
+              `${PRODUCT} builds it there in a microVM of its own, about 10 minutes, with the first ${serves.join(" or ")} box or within a few minutes. It needs ${BUILD_FREE_GIB} GiB free. Or build it with Docker there with setup/docker/build.sh, and ${PRODUCT} imports it.`,
             );
           continue;
         }
         const imported = await this.#context.storage.get<string>(this.#importedKey(image));
         const recorded = recordFromJson(labels[LABELS.imageRecord]);
-        const judged = judgeImage(recorded, { os: "linux", pins: serves.some((kind) => !kind.includes("desktop")) ? linuxPins : desktopPins, bbApp: app, pinChrome: recorded?.arch === "arm64" ? chromeArm : chromeAmd }, "Build it again on the host with setup/docker/build.sh, and bb-box imports it.");
-        const behind = inDocker && imported && inDocker !== imported ? " Docker has a newer build, which bb-box imports within a few minutes." : "";
+        const judged = judgeImage(recorded, { os: "linux", pins: serves.some((kind) => !kind.includes("desktop")) ? linuxPins : desktopPins, bbApp: app, pinChrome: recorded?.arch === "arm64" ? chromeArm : chromeAmd }, `Build it again on the host with setup/docker/build.sh, and ${PRODUCT} imports it.`);
+        const behind = inDocker && imported && inDocker !== imported ? ` Docker has a newer build, which ${PRODUCT} imports within a few minutes.` : "";
         push(id, name, judged.status, `For ${serves.join(", ")} boxes. ${judged.detail}${behind}`, judged.fix);
       }
 
@@ -1452,7 +1453,7 @@ export class MsbBackend implements Backend {
           `Room on ${this.#host}`,
           room.why === null ? "ok" : "warn",
           room.why ?? room.capacity.limits.map((limit) => `${limit.resource}${limit.id ? ` ${limit.id}` : ""} ${limit.unit === "MiB" ? `${formatMiB(limit.used)} of ${formatMiB(limit.total ?? 0)}` : `${limit.used} of ${limit.total}`}`).join(", "),
-          room.why === null ? null : "Release a box, or change the most boxes, the memory kept free or the memory overcommit in bb-box's settings.",
+          room.why === null ? null : `Release a box, or change the most boxes, the memory kept free or the memory overcommit in ${PRODUCT}'s settings.`,
         );
       }
       const sizes = sizesCheck({
@@ -1556,7 +1557,7 @@ export class MsbBackend implements Backend {
     const memoryMiB = now?.memoryMiB ?? 0;
     const takeWhy = hostWhy ?? guestWhy;
     const restoreWhy = takeWhy ?? targetWhy;
-    const forkWhy = hostWhy ?? targetWhy ?? (target && !captured ? `bb-box cannot read the size snapshot ${target.ref} was taken at.` : null);
+    const forkWhy = hostWhy ?? targetWhy ?? (target && !captured ? `${PRODUCT} cannot read the size snapshot ${target.ref} was taken at.` : null);
     return {
       storage,
       take: {
@@ -1618,7 +1619,7 @@ export class MsbBackend implements Backend {
         await this.#removeSnapshot(made, listed, signal);
       } catch (cause) {
         if (signal?.aborted) throw cause;
-        throw new SnapshotIncomplete(`msb could not take it (${failed}), and bb-box could not delete what it left, ${made.id}: ${message(cause)}`);
+        throw new SnapshotIncomplete(`msb could not take it (${failed}), and ${PRODUCT} could not delete what it left, ${made.id}: ${message(cause)}`);
       }
       throw new SnapshotFailed(`msb could not take it: ${failed}.`);
     }
@@ -1648,7 +1649,7 @@ export class MsbBackend implements Backend {
     const found = listed.find((each) => (ref.ref ? each.id === ref.ref : parseSnapshotNaming(each.group, each.name)?.snapshot === ref.id)) ?? null;
     if (!found) return;
     const named = parseSnapshotNaming(found.group, found.name);
-    if (!named || named.install !== this.#context.installId || named.snapshot !== ref.id) throw new SnapshotFailed(`msb's snapshot ${found.id}, ${found.group}:${found.name}, is not bb-box's snapshot ${ref.id} of this install's, so bb-box does not delete it.`);
+    if (!named || named.install !== this.#context.installId || named.snapshot !== ref.id) throw new SnapshotFailed(`msb's snapshot ${found.id}, ${found.group}:${found.name}, is not ${PRODUCT}'s snapshot ${ref.id} of this install's, so ${PRODUCT} does not delete it.`);
     await hooks.submitting();
     await hooks.task({ ref: `${DELETE_TASK}${found.id}`, host: this.#host });
     await this.#removeSnapshot(found, listed, signal);
@@ -1695,7 +1696,7 @@ export class MsbBackend implements Backend {
     const listed = await this.#snapshotList(signal);
     const found = listed.find((each) => each.id === ref.ref) ?? null;
     const named = found ? parseSnapshotNaming(found.group, found.name) : null;
-    if (!found || !named || named.install !== this.#context.installId || named.snapshot !== ref.id) throw new SnapshotFailed(`msb on ${this.#host} has no snapshot ${ref.ref || ref.id} of bb-box's, so bb-box cannot write its keep date.`);
+    if (!found || !named || named.install !== this.#context.installId || named.snapshot !== ref.id) throw new SnapshotFailed(`msb on ${this.#host} has no snapshot ${ref.ref || ref.id} of ${PRODUCT}'s, so ${PRODUCT} cannot write its keep date.`);
     const result = await this.#cli.script("keep", [found.id, kept ?? "none"], signal);
     if (result.exitCode !== 0) throw this.#cli.error(`Writing the keep date of ${found.id}`, result);
   }
@@ -1718,7 +1719,7 @@ export class MsbBackend implements Backend {
     );
     if (diskGiB) await this.#cli.ok(["modify", name, "--root-disk", `${diskGiB}G`, "--format", "json"], { timeoutMs: 120_000, signal });
     const made = await this.#owned(name, box.boxId, signal);
-    if (!made) throw new Error(`The microVM ${name} restored for box ${box.boxId} does not carry the box's labels after bb-box set them.`);
+    if (!made) throw new Error(`The microVM ${name} restored for box ${box.boxId} does not carry the box's labels after ${PRODUCT} set them.`);
     return made;
   }
 
@@ -1757,7 +1758,7 @@ export class MsbBackend implements Backend {
       await hooks.claim(this.#restoredGuest(name, box, null));
       const there = await this.#cli.inspect(name, signal);
       if (there && this.#ours(there, box.boxId)) return this.#restoredGuest(name, box, sizeOf(there));
-      if (there && !this.#partMade(there, box.boxId)) throw new Error(`The microVM ${name} on ${this.#host} belongs to another box, so bb-box left it alone.`);
+      if (there && !this.#partMade(there, box.boxId)) throw new Error(`The microVM ${name} on ${this.#host} belongs to another box, so ${PRODUCT} left it alone.`);
       if (there) await this.#remove(name, box.boxId, signal);
       const started = performance.now();
       await this.#restoreAs(held, name, box.size, "boot", signal);

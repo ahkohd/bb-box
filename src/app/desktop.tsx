@@ -51,7 +51,7 @@ import { BoxListSkeleton, BoxRowsSkeleton, LoadFailed, NewBoxButtonSpace, Snapsh
 import { busyUntil, type ShownBusy } from "./row-line.ts";
 import { useWakeAt } from "./row-status.tsx";
 import { silentWhy } from "./box-words.ts";
-import { threadTitle, ThreadWorking } from "./thread-chips.tsx";
+import { THIS_BOX_THREAD, threadTitle, ThreadWorking, UNTITLED_THREAD } from "./thread-chips.tsx";
 import { chosenThreadTitle } from "../plugin/thread-on-box.ts";
 import { BarNumbers, OtherViews, otherViewsNow, useBarNumbersShown, ViewSwitchButton } from "./view-bar.tsx";
 import { boxPage, otherView, pageOfView, routeOf, wayBack, type BoxViewName, type BoxViewRoute } from "./box-route.ts";
@@ -2260,25 +2260,25 @@ function BoxViewPage({ route }: { route: BoxViewRoute }) {
   );
 }
 
-const knownTitles = new Map<string, string>();
+const knownTitles = new Map<string, string | null>();
 
 export function forgetThreadTitles(): void {
   knownTitles.clear();
 }
 
-export function sidebarTitle(thread: { readonly title?: string | null; readonly titleFallback?: string | null }, _threadId: string): string {
-  return thread.title?.trim() || thread.titleFallback?.trim() || "this box's thread";
+export function sidebarTitle(thread: { readonly title?: string | null; readonly titleFallback?: string | null }, _threadId: string): string | null {
+  return thread.title?.trim() || thread.titleFallback?.trim() || null;
 }
 
-export function threadGroupHeading(title: string | undefined): string {
+export function threadGroupHeading(title: string | null | undefined): string {
   if (title === undefined) return "Thread";
-  if (!title || title === "this box's thread") return "Untitled thread";
+  if (!title || title === THIS_BOX_THREAD) return UNTITLED_THREAD;
   return title;
 }
 
-export function useThreadTitles(threadIds: readonly string[]): Record<string, string> {
+export function useThreadTitles(threadIds: readonly string[]): Record<string, string | null> {
   const sdk = useSdk();
-  const [titles, setTitles] = useState<Record<string, string>>(() => Object.fromEntries(threadIds.flatMap((threadId) => (knownTitles.has(threadId) ? [[threadId, knownTitles.get(threadId)!]] : []))));
+  const [titles, setTitles] = useState<Record<string, string | null>>(() => Object.fromEntries(threadIds.flatMap((threadId) => (knownTitles.has(threadId) ? [[threadId, knownTitles.get(threadId)!]] : []))));
   const key = threadIds.join(" ");
   useEffect(() => {
     let cancelled = false;
@@ -2292,7 +2292,7 @@ export function useThreadTitles(threadIds: readonly string[]): Record<string, st
           if (!cancelled) setTitles((current) => ({ ...current, [threadId]: title }));
         })
         .catch(() => {
-          if (!cancelled) setTitles((current) => ({ ...current, [threadId]: "this box's thread" }));
+          if (!cancelled) setTitles((current) => ({ ...current, [threadId]: null }));
         });
     }
     return () => {
@@ -2448,14 +2448,14 @@ function BoxList({ opening }: { opening?: BoxesTab }) {
   const offered = choices(tabBoxes);
   const kept = Object.fromEntries(TAG_GROUPS.map((group) => [group, filters[group].filter((value) => offered[group].includes(value))])) as unknown as Filters;
   const threadOf = new Map(threads.flatMap((entry) => (entry.thread ? [[entry.threadId, entry.thread] as const] : [])));
-  const titleOf = (threadId: string): string | undefined => {
+  const titleOf = (threadId: string): string | null | undefined => {
     const thread = threadOf.get(threadId);
     const chosen = thread ? chosenThreadTitle({ id: threadId, title: thread.title }) : null;
     if (chosen) return threadTitle({ id: threadId, title: chosen, running: thread?.running ?? false });
     return titles[threadId];
   };
-  const machineListed = machines.map((entry) => ({ box: entry.box, entry, busy: mineNow.get(entry.box.id)?.busy ?? null, words: entry.threads.map((thread) => thread.title ?? ""), activeAt: mineNow.get(entry.box.id)?.activeAt }));
-  const threadListed = threads.map(({ threadId, box, busy, activeAt }) => ({ box, threadId, busy: busy ?? null, words: [titleOf(threadId) ?? ""], activeAt }));
+  const machineListed = machines.map((entry) => ({ box: entry.box, entry, busy: mineNow.get(entry.box.id)?.busy ?? null, words: entry.threads.map((thread) => threadTitle(thread)), activeAt: mineNow.get(entry.box.id)?.activeAt }));
+  const threadListed = threads.map(({ threadId, box, busy, activeAt }) => ({ box, threadId, busy: busy ?? null, words: [threadGroupHeading(titleOf(threadId))], activeAt }));
   const machineRows = shown(machineListed, search, kept, sort);
   const threadRows = shown(threadListed, search, kept, sort);
   const counts = tagCounts(tab === "machines" ? machineListed : threadListed, search, kept);

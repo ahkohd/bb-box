@@ -87,7 +87,7 @@ export function waysLine(ways: Resizing): string {
 
 /** A refusal while the person chooses: nothing was tried, so it does not say that nothing changed. */
 export function checkWords(text: string): string {
-  return withoutRaiseLargest(text.replace(/\s*bb-box changed nothing\.\s*$/, ""));
+  return withoutRaiseLargest(text.replace(new RegExp(`\\s*${PRODUCT} changed nothing\\.\\s*$`), ""));
 }
 
 function whole(text: string): number | undefined {

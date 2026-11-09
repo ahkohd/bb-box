@@ -142,7 +142,7 @@ test("the undo is admitted before the box stops: room and the ceiling refuse it 
   state.provider.percentFull = 90;
   const room = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
   assert.equal(room.code, "try_again", "room is refused only for now");
-  assert.match(room.message, /^bb-box would take an undo of box \S+ before restoring it, and (\S+ )?storage fast is 90% full, and your settings take no snapshot past 85%: .* Or restore without an undo, with --no-undo\.$/);
+  assert.match(room.message, /^BB Box would take an undo of box \S+ before restoring it, and (\S+ )?storage fast is 90% full, and your settings take no snapshot past 85%: .* Or restore without an undo, with --no-undo\.$/);
   const agentRoom = await rejection(state.snapshots.restore(AGENT, box, standing(box), "one"));
   assert.doesNotMatch(agentRoom.message, /--no-undo/);
   assert.equal((await rejection(state.snapshots.restore(AGENT, box, standing(box), "one", { undo: false }))).code, "not_owner");
@@ -180,7 +180,9 @@ test("G5: the guard refuses a box threads run on for everyone, and while a perso
   assert.match(agent.message, /Ask the person to end it first, or to restore the box themselves\./);
   assert.equal((await rejection(state.snapshots.restore(AGENT, box, standing(box), "one", { force: true }))).code, "not_owner");
   state.guard = { threads: [], threadsUnread: null, control: false, terminals: null };
-  assert.match((await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"))).message, /could not tell whether a BB terminal is open on it/);
+  const unknownTerminal = (await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"))).message;
+  assert.match(unknownTerminal, /BB Box could not tell whether a BB terminal is open on it/);
+  assert.doesNotMatch(unknownTerminal, /\$\{/);
   assert.deepEqual(state.provider.order, [], "nothing changed while refused");
   state.guard = { threads: [], threadsUnread: null, control: true, terminals: 1 };
   const anyway = await state.snapshots.restore(COMMAND, box, standing(box), "one", { force: true });
@@ -207,7 +209,7 @@ test("a failed undo, a refused rollback or a failed stop leaves the disk as it w
   write(state, box, "work.txt", "now");
   state.provider.take = "failed";
   const undo = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
-  assert.match(undo.message, /^BB Box did not restore box \S+ to "one": bb-box could not take the undo "before the restore at 10:42": snapshot feature is not available\. Nothing on its disk changed, and bb-box started box \S+ again as it was\.$/);
+  assert.match(undo.message, /^BB Box did not restore box \S+ to "one": BB Box could not take the undo "before the restore at 10:42": snapshot feature is not available\. Nothing on its disk changed, and BB Box started box \S+ again as it was\.$/);
   assert.equal(read(state, box, "work.txt"), "now");
   assert.equal((await current(state, box)).state, "ready");
   assert.equal(state.store.records({ box: box.id }).find((record) => record.undoOf)?.state, "failed");
@@ -226,7 +228,7 @@ test("a failed undo, a refused rollback or a failed stop leaves the disk as it w
   assert.equal(stopped.restoring ?? null, null);
   assert.equal(state.store.pins().size, 0);
   assert.ok(state.kinds(box.id).filter((kind) => kind === "restore-failed").length >= 4);
-  assert.match(state.log.events(box.id).at(-1)!.words!, /^At the rollback: Proxmox's rollback task failed: rollback interrupted\. bb-box then found it stopped\.$/);
+  assert.match(state.log.events(box.id).at(-1)!.words!, /^At the rollback: Proxmox's rollback task failed: rollback interrupted\. BB Box then found it stopped\.$/);
 });
 
 test("G7: a locked guest refuses a restore with the host's command, and ZFS restores are refused, before anything changes; a restore across a disk's growth gives the disk back its size then", async () => {
@@ -239,7 +241,7 @@ test("G7: a locked guest refuses a restore with the host's command, and ZFS rest
   assert.equal(locked.code, "locked");
   assert.equal(locked.message, `Fake host left box ${box.name} locked (rollback), so BB Box restores nothing. Run \`pct unlock 214\` on pve-1.`);
   assert.deepEqual(await state.snapshots.restoreChecks(), [
-    { id: `snapshots.locked.${box.name}`, name: `${box.name} locked`, status: "fail", detail: `Fake host left box ${box.name} locked (rollback), so bb-box takes, deletes and restores none of its snapshots.`, fix: "Run `pct unlock 214` on pve-1." },
+    { id: `snapshots.locked.${box.name}`, name: `${box.name} locked`, status: "fail", detail: `Fake host left box ${box.name} locked (rollback), so BB Box takes, deletes and restores none of its snapshots.`, fix: "Run `pct unlock 214` on pve-1." },
   ]);
   state.provider.locked = null;
   state.provider.restoreWay = "rollback-newest-only";
@@ -255,7 +257,7 @@ test("G7: a locked guest refuses a restore with the host's command, and ZFS rest
   assert.match(state.log.events(box.id).at(-1)!.words!, /its size went from 2 cores, 4 GiB memory, 16 GiB disk to 2 cores, 4 GiB memory, 8 GiB disk, as it was then\.$/);
 });
 
-test("G6: bb-box restarted after the stop, the undo, the rollback and the start: each restore finishes at the next start, and its pins end", async () => {
+test("G6: BB Box restarted after the stop, the undo, the rollback and the start: each restore finishes at the next start, and its pins end", async () => {
   for (const step of ["stopped", "undo", "rolled-back", "started"] as const) {
     const state = world();
     const box = await readyBox(state);
@@ -277,11 +279,11 @@ test("G6: bb-box restarted after the stop, the undo, the rollback and the start:
     assert.equal(state.store.pins().size, 0, step);
     const undo = state.store.records({ box: box.id }).find((record) => record.undoOf)!;
     assert.equal(undo.state, "ready", step);
-    assert.match(state.log.events(box.id).at(-1)!.words!, /after bb-box restarted; its undo is "before the restore at 10:42"\.$/, step);
+    assert.match(state.log.events(box.id).at(-1)!.words!, /after BB Box restarted; its undo is "before the restore at 10:42"\.$/, step);
   }
 });
 
-test("G6: bb-box restarted once a restore was recorded changes nothing; an unconfirmed rollback stays unknown and pinned, and the box says so", async () => {
+test("G6: BB Box restarted once a restore was recorded changes nothing; an unconfirmed rollback stays unknown and pinned, and the box says so", async () => {
   const state = world();
   const box = await readyBox(state);
   await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
@@ -294,7 +296,7 @@ test("G6: bb-box restarted once a restore was recorded changes nothing; an uncon
   assert.equal((await current(state, box)).state, "ready");
   assert.equal(state.store.records({ box: box.id }).filter((record) => record.undoOf).length, 0, "an undo never begun is not kept");
   assert.equal(state.store.pins().size, 0);
-  assert.match(state.log.events(box.id).at(-1)!.words!, /^bb-box restarted before the restore began\. Nothing changed\.$/);
+  assert.match(state.log.events(box.id).at(-1)!.words!, /^BB Box restarted before the restore began\. Nothing changed\.$/);
   state.provider.rollback = "unknown";
   const unsure = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
   assert.equal(unsure.code, "unreachable");
@@ -308,7 +310,7 @@ test("G6: bb-box restarted once a restore was recorded changes nothing; an uncon
   assert.match((await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"))).message, /could not confirm the restore that began at/);
   const [doctor] = await state.snapshots.restoreChecks();
   assert.equal(doctor?.id, `snapshots.restore.${box.name}`);
-  assert.match(doctor!.detail, /^bb-box could not confirm the restore that began at 10:42 UTC on box \S+: It was rolling back, and bb-box could not read the rollback's task: cannot reach the provider's task list: timed out\.$/);
+  assert.match(doctor!.detail, /^BB Box could not confirm the restore that began at 10:42 UTC on box \S+: It was rolling back, and BB Box could not read the rollback's task: cannot reach the provider's task list: timed out\.$/);
   await state.backend.start!(stuck.guest!);
   await state.boxes.sweep();
   const swept = await current(state, box);
@@ -337,7 +339,7 @@ test("a repeated request is the same restore, and a reuse for another is refused
   assert.equal((await current(state, box)).state, "ready");
 });
 
-test("G13: restores made outside bb-box are logged from the provider's tasks by their status, once each, and an OK one sets the box straight", async () => {
+test("G13: restores made outside BB Box are logged from the provider's tasks by their status, once each, and an OK one sets the box straight", async () => {
   const state = world();
   const box = await readyBox(state);
   await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
@@ -356,10 +358,10 @@ test("G13: restores made outside bb-box are logged from the provider's tasks by 
   assert.deepEqual(
     events().map((event) => event.kind),
     ["restored-outside", "restored-outside", "restore-outside-failed", "restore-outside-running"],
-    "bb-box's own rollback is not logged as made outside it",
+    "BB Box's own rollback is not logged as made outside it",
   );
-  assert.match(events()[0]!.words!, /^Proxmox's task UPID:one, by root@pam, at 2026-10-30 10:43 UTC, ended OK: its disk went back to an earlier snapshot\. bb-box wrote its labels again, wrote its access file\.$/);
-  assert.match(events()[2]!.words!, /failed: unable to rollback: no such snapshot\. bb-box then found it running\.$/);
+  assert.match(events()[0]!.words!, /^Proxmox's task UPID:one, by root@pam, at 2026-10-30 10:43 UTC, ended OK: its disk went back to an earlier snapshot\. BB Box wrote its labels again, wrote its access file\.$/);
+  assert.match(events()[2]!.words!, /failed: unable to rollback: no such snapshot\. BB Box then found it running\.$/);
   assert.equal(state.backend.relabels.length, relabels + 2);
   await state.snapshots.sweep();
   assert.equal(events().length, 4, "nothing is logged twice, and a task still running is said once");
@@ -528,7 +530,7 @@ test("a failed flush stops the restore before the stop unless the person accepts
   const went = await state.snapshots.restore(COMMAND, box, standing(box), "one", { unflushed: "go-on" });
   assert.equal(went.unflushed, "sync: Input/output error");
   assert.match(state.store.record(went.undo!.id)?.note ?? "", /may miss what was written in the last seconds before the restore\.$/);
-  assert.match(state.log.events(box.id).find((event) => event.kind === "restored")!.words!, /bb-box could not flush its writes before the stop \(sync: Input\/output error\), so its undo may miss the last of them/);
+  assert.match(state.log.events(box.id).find((event) => event.kind === "restored")!.words!, /BB Box could not flush its writes before the stop \(sync: Input\/output error\), so its undo may miss the last of them/);
 });
 
 test("the flush waits 15 s at most, getting into the box included", async () => {

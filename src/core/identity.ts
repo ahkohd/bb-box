@@ -1,6 +1,8 @@
 import type { IdentitySource, Snapshotting } from "../backends/types.ts";
 import type { CommandTransport } from "../transports/types.ts";
 import { quote } from "../transports/process.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export const IDENTITY_TOOL = "/usr/local/sbin/bb-box-identity";
 export const DESKTOP_FORK_SAFE_FROM = 9;
@@ -12,11 +14,11 @@ export const IDENTITY_TOOL_MISSING = 64;
 export const IDENTITY_VARIABLE = "BBBOX_IDENTITY";
 export const MARKER_WRITE_MS = 20_000;
 export const FORK_SAFE_PROBE_MS = 10_000;
-export const STOPPED_ANOTHER_WAY = "A snapshot of a stopped box is fork-safe only when bb-box stopped the box and it has not run since, as bb-box reads the identity reset just before its stop: start the box, stop it with bb-box and take the snapshot again";
+export const STOPPED_ANOTHER_WAY = `A snapshot of a stopped box is fork-safe only when ${PRODUCT} stopped the box and it has not run since, as ${PRODUCT} reads the identity reset just before its stop: start the box, stop it with ${PRODUCT} and take the snapshot again`;
 
 export function resetOffWords(system: IdentitySystem): string {
   return system === "macos"
-    ? "Its identity reset was off when it was taken, as in a box made before bb-box installed macOS's reset: make the box again"
+    ? `Its identity reset was off when it was taken, as in a box made before ${PRODUCT} installed macOS's reset: make the box again`
     : "Its identity reset was off when it was taken, as in a box from an image prepared before the reset was turned on: refresh the Linux image and make the box again";
 }
 
@@ -283,12 +285,12 @@ export function forkVerdict(seen: ForkSeen, expected: ForkExpected): ForkVerdict
   const status = seen.status;
   if (!status) {
     if (seen.exitCode === IDENTITY_TOOL_MISSING) return refused("its disk has no identity reset");
-    return refused(seen.exitCode === null ? "bb-box could not read its identity reset in time" : `reading its identity reset exited with ${seen.exitCode}`);
+    return refused(seen.exitCode === null ? `${PRODUCT} could not read its identity reset in time` : `reading its identity reset exited with ${seen.exitCode}`);
   }
-  if (!seen.done) return refused("bb-box could not read all of what makes up its identity: its check stopped part way");
-  if (seen.unreadable.length) return refused(`bb-box could not read ${listWords(seen.unreadable)} in it, so it cannot tell that it gave up its source's identity`);
-  if (seen.addresses === null) return refused("bb-box could not read its addresses");
-  if (seen.tailnetNode === null) return refused("bb-box could not read its Tailscale state");
+  if (!seen.done) return refused(`${PRODUCT} could not read all of what makes up its identity: its check stopped part way`);
+  if (seen.unreadable.length) return refused(`${PRODUCT} could not read ${listWords(seen.unreadable)} in it, so it cannot tell that it gave up its source's identity`);
+  if (seen.addresses === null) return refused(`${PRODUCT} could not read its addresses`);
+  if (seen.tailnetNode === null) return refused(`${PRODUCT} could not read its Tailscale state`);
   const forkMacs = new Set(expected.forkMacs.map((mac) => mac.toLowerCase()));
   const sourceMacs = new Set(expected.sourceMacs.map((mac) => mac.toLowerCase()));
   const shared = [...forkMacs].filter((mac) => sourceMacs.has(mac));
@@ -313,7 +315,7 @@ export function forkVerdict(seen: ForkSeen, expected: ForkExpected): ForkVerdict
   if (status.boot !== "reset" && status.boot !== "kept") return refused(`its boot's identity check says "${status.boot}", not that it reset`);
   if (status.raced) return refused("its identity reset ran after a user had logged in, so BB's daemon may have started as its source before the reset");
   if (!status.enabled) return refused("its identity reset is off");
-  if (status.version < expected.safeFrom) return refused(`it has version ${status.version} of the identity reset, and bb-box forks only from version ${expected.safeFrom} there`);
+  if (status.version < expected.safeFrom) return refused(`it has version ${status.version} of the identity reset, and ${PRODUCT} forks only from version ${expected.safeFrom} there`);
   if (seen.missing.length) return refused(`it has no ${listWords(seen.missing.map((item) => MISSING_WORDS[item] ?? item))}, which its reset makes`);
   if (expected.ownAddress && !seen.addresses.includes(expected.ownAddress)) {
     return refused(`it does not hold its own address ${expected.ownAddress}${seen.addresses.length ? `, only ${listWords(seen.addresses)}` : ", nor any other"}`);
@@ -389,5 +391,5 @@ export async function readIdentityResets(command: CommandTransport, signal?: Abo
   const [first, ...rest] = ran.stdout.split("\n");
   if (ran.exitCode === 0 && first === "absent") return { state: "absent" };
   if (ran.exitCode === 0 && first === "present") return { state: "read", resets: parseIdentityResets(rest.join("\n")) };
-  throw new Error(`bb-box could not read ${IDENTITY_RESETS}: ${ran.timedOut ? "it took too long" : `the read exited with ${ran.exitCode}`}`);
+  throw new Error(`${PRODUCT} could not read ${IDENTITY_RESETS}: ${ran.timedOut ? "it took too long" : `the read exited with ${ran.exitCode}`}`);
 }

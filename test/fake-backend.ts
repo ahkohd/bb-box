@@ -244,7 +244,7 @@ export class FakeBackend implements Backend {
   /** Stops and starts wait here while it is set. */
   powerGate: Promise<void> | null = null;
   readonly calls: string[] = [];
-  /** What stopped() says of a guest that stopped without bb-box's request (#406). */
+  /** What stopped() says of a guest that stopped without BB Box's request (#406). */
   stopReason: StopReason | null = null;
   /** The steps a start reports, with the time each took. */
   startSteps: Readonly<Record<string, number>> = { boot: 1_200 };
@@ -961,7 +961,7 @@ export class FakeTransport implements CommandTransport {
     await this.#answer();
     const hashed = this.#powerShellHash(script);
     if (hashed) return hashed;
-    // A fake box has no root of its own: what bb-box runs as root runs as the test's user, never through the test machine's sudo.
+    // A fake box has no root of its own: what BB Box runs as root runs as the test's user, never through the test machine's sudo.
     const own = script.includes(`${IDENTITY_STATE}/identity-`) ? script.replaceAll(IDENTITY_STATE, this.#identityState) : script;
     return this.#line.run(withoutTestMachineFlush(own).replaceAll("sudo -n ", "").replaceAll(IDENTITY_TOOL, this.#identityTool), { ...options, signal: this.#signal(options?.signal) });
   }

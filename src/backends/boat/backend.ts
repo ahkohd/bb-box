@@ -426,7 +426,7 @@ export class BoatBackend implements Backend {
     }
     const why = this.templates.building("android")
       ? `boat.dev is building its Android template, about ${buildWaitWords("android", null).match(/about (\d+) minutes/)?.[1] ?? "30"} minutes; Android boxes come once it is ready.`
-      : "boat.dev has no Android template yet; bb-box builds it in its next upkeep, within a few minutes, and Android boxes come once it is ready.";
+      : `boat.dev has no Android template yet; ${PRODUCT} builds it in its next upkeep, within a few minutes, and Android boxes come once it is ready.`;
     return [{ kind, why, passing: false }];
   }
 
@@ -461,12 +461,12 @@ export class BoatBackend implements Backend {
     if (limits.activeSandboxes && running + needed > limits.activeSandboxes) {
       const others = running - mine;
       problems.push(
-        `${plan} allows ${limits.activeSandboxes} sandboxes at once, and ${running} ${running === 1 ? "is" : "are"} running or starting${others > 0 ? `, ${others} of them not bb-box's` : ""}` +
+        `${plan} allows ${limits.activeSandboxes} sandboxes at once, and ${running} ${running === 1 ? "is" : "are"} running or starting${others > 0 ? `, ${others} of them not ${PRODUCT}'s` : ""}` +
           (needed === 2 ? `. This box's template must be built first, in a sandbox of its own: ${buildWaitWords(boatKind, null).replace(/^Building /, "building ")}` : ".") +
           " Release or stop a boat box, or ask another backend.",
       );
     }
-    if (mine + needed - 1 >= this.#config.mostBoxes) problems.push(`bb-box has ${mine} of the ${this.#config.mostBoxes} boat sandboxes it may run at once${needed === 2 ? ", and this box's template needs one more while it is built" : ""}. Release or stop a boat box, or raise Most boxes in BB Box's settings.`);
+    if (mine + needed - 1 >= this.#config.mostBoxes) problems.push(`${PRODUCT} has ${mine} of the ${this.#config.mostBoxes} boat sandboxes it may run at once${needed === 2 ? ", and this box's template needs one more while it is built" : ""}. Release or stop a boat box, or raise Most boxes in BB Box's settings.`);
     if (limits.computeCapSeconds !== null && limits.computeUsedSeconds !== null && limits.computeUsedSeconds >= limits.computeCapSeconds)
       problems.push("The boat trial's compute hours are used up. Make a payment in boat's dashboard to end the trial, or use another backend.");
     const window = limits.starts.find((each) => each.remaining <= 0);
@@ -512,7 +512,7 @@ export class BoatBackend implements Backend {
         await this.#answers(sandbox.id, "user", this.#now() + this.#readyMs(), signal);
         await this.#identityDecided(sandbox.id, IDENTITY_DECIDED, this.#now() + this.#readyMs(), signal);
         const owned = await (await this.#command(sandbox.id, "user", signal)).run((this.#options.ownKeyScript ?? ownKeyScript)((await this.#keys()).publicKey), { timeoutMs: 30_000, signal });
-        if (owned.exitCode !== 0) throw new Error(`boat's sandbox ${sandbox.id} did not take bb-box's key for its box user: ${owned.stderr.trim().slice(-300) || `exit ${owned.exitCode}`}`);
+        if (owned.exitCode !== 0) throw new Error(`boat's sandbox ${sandbox.id} did not take ${PRODUCT}'s key for its box user: ${owned.stderr.trim().slice(-300) || `exit ${owned.exitCode}`}`);
         await this.#answers(sandbox.id, BOX_USER, this.#now() + this.#readyMs(), signal);
       });
       await step("settle", () => this.#settled(sandbox.id, this.#now() + this.#readyMs(), signal));
@@ -562,7 +562,7 @@ export class BoatBackend implements Backend {
       await this.#api.delete(sandbox.id, signal);
     }
     hooks.timing("delete", Math.round(performance.now() - started));
-    if (stagingLeft) throw new Error(`boat's sandbox deployed to restore box ${String(guest.data?.box)} may still run, and bb-box could not delete or stop it: ${message(stagingLeft)}`);
+    if (stagingLeft) throw new Error(`boat's sandbox deployed to restore box ${String(guest.data?.box)} may still run, and ${PRODUCT} could not delete or stop it: ${message(stagingLeft)}`);
   }
 
   async #stagingStopped(boxId: string, token: string, id: string | null, signal?: AbortSignal): Promise<boolean> {
@@ -672,7 +672,7 @@ export class BoatBackend implements Backend {
     if (!shape) throw new BackendError("no_capacity", this.#tooBig(to, limits));
     const resized = (size: SizeShape): Guest => ({ ...guest, size: shapeSize(size), facts: [{ label: "Size", value: sizeWords(size) }, ...(guest.facts ?? []).filter((fact) => fact.label !== "Size")] });
     if (sandbox.size === shape.size) return resized(shape);
-    if (!options.restart) throw new BackendError("unsupported", `boat.dev changes a sandbox's size only when it starts: bb-box stops box ${guest.ref}'s sandbox and starts it again on a ${shape.size} machine, which ends everything running in it.`);
+    if (!options.restart) throw new BackendError("unsupported", `boat.dev changes a sandbox's size only when it starts: ${PRODUCT} stops box ${guest.ref}'s sandbox and starts it again on a ${shape.size} machine, which ends everything running in it.`);
     const wasRunning = isRunning(sandbox.state) || isStarting(sandbox.state);
     await this.stop(guest, signal);
     try {
@@ -708,7 +708,7 @@ export class BoatBackend implements Backend {
     if (sandbox.state === "error") return { reason: `boat says the sandbox failed${sandbox.error ? `: ${sandbox.error}` : "."}`, crashed: true, at: null };
     if (!isStopped(sandbox.state)) return null;
     return {
-      reason: `boat stopped the sandbox${sandbox.error ? `: ${sandbox.error}` : " at its auto-stop, as bb-box had not renewed it: bb-box was not running, or could not reach boat"}. Its disk is kept for 14 days.`,
+      reason: `boat stopped the sandbox${sandbox.error ? `: ${sandbox.error}` : ` at its auto-stop, as ${PRODUCT} had not renewed it: ${PRODUCT} was not running, or could not reach boat`}. Its disk is kept for 14 days.`,
       crashed: true,
       at: sandbox.stoppedAt,
     };
@@ -755,7 +755,7 @@ export class BoatBackend implements Backend {
     const forkWhy =
       refused ??
       (target && !saved ? `boat has no saved snapshot ${target.ref} any more.` : saved && saved.status !== "ready" ? `boat's saved snapshot ${saved.name} is ${saved.status}${saved.error ? `: ${saved.error}` : ""}.` : null) ??
-      (forkShape ? null : `bb-box could not read the size of ${target ? `boat's saved snapshot ${target.ref}` : `box ${guest.ref}'s sandbox`}.`) ??
+      (forkShape ? null : `${PRODUCT} could not read the size of ${target ? `boat's saved snapshot ${target.ref}` : `box ${guest.ref}'s sandbox`}.`) ??
       (forkStarts.ok ? null : `${forkStarts.words}.`);
     return {
       storage: BOAT_STORAGE,
@@ -802,7 +802,7 @@ export class BoatBackend implements Backend {
         if (await this.#api.savedSnapshot(name, signal)) throw new Error(`boat still lists ${name}.`);
       } catch (cause) {
         if (signal?.aborted) throw cause;
-        throw new SnapshotIncomplete(`${failed}, and bb-box could not delete what it left, ${name}: ${message(cause)}`);
+        throw new SnapshotIncomplete(`${failed}, and ${PRODUCT} could not delete what it left, ${name}: ${message(cause)}`);
       }
       throw new SnapshotFailed(`${failed}.`);
     }
@@ -1003,7 +1003,7 @@ export class BoatBackend implements Backend {
     const box = typeof ref.guest.data?.box === "string" ? ref.guest.data.box : null;
     const name = ref.ref || (box ? savedName(this.#context.installId, box, ref.id) : "");
     const parsed = parseSavedName(name);
-    if (!parsed || parsed.install !== this.#context.installId || parsed.snapshot !== ref.id) throw new SnapshotFailed(`${name || ref.id} is not a saved snapshot of this install's, so bb-box does not change it.`);
+    if (!parsed || parsed.install !== this.#context.installId || parsed.snapshot !== ref.id) throw new SnapshotFailed(`${name || ref.id} is not a saved snapshot of this install's, so ${PRODUCT} does not change it.`);
     return name;
   }
 
@@ -1011,7 +1011,7 @@ export class BoatBackend implements Backend {
     const wanted = stagingName(boxId, token);
     const staging = id ? await this.#api.get(id, signal) : ((await this.#api.list({}, signal)).find((sandbox) => sandbox.name === wanted && !Object.keys(sandbox.labels).length) ?? null);
     if (!staging) return;
-    if (staging.name !== wanted || Object.keys(staging.labels).length) throw new Error(`boat's sandbox ${staging.id} is not the one bb-box deployed to restore box ${boxId}, so bb-box leaves it.`);
+    if (staging.name !== wanted || Object.keys(staging.labels).length) throw new Error(`boat's sandbox ${staging.id} is not the one ${PRODUCT} deployed to restore box ${boxId}, so ${PRODUCT} leaves it.`);
     await this.#api.delete(staging.id, signal);
   }
 
@@ -1133,9 +1133,9 @@ export class BoatBackend implements Backend {
       name: "Sandboxes",
       status: unclaimed.length ? "warn" : "ok",
       detail: held.length ? `${held.length}, at most ${this.#config.mostBoxes} running at once: ${described.join("; ")}.` : `None now; at most ${this.#config.mostBoxes} running at once.`,
-      fix: unclaimed.length ? "bb-box's sweep deletes sandboxes labelled for this install that no box claims." : null,
+      fix: unclaimed.length ? `${PRODUCT}'s sweep deletes sandboxes labelled for this install that no box claims.` : null,
     });
-    notes.push(`A box stops by itself ${this.#config.leaseMinutes} minutes after bb-box last renewed its auto-stop, and keeps its disk for 14 days, free. bb-box renews each box it holds every few minutes, and deletes a box when it is released.`);
+    notes.push(`A box stops by itself ${this.#config.leaseMinutes} minutes after ${PRODUCT} last renewed its auto-stop, and keeps its disk for 14 days, free. ${PRODUCT} renews each box it holds every few minutes, and deletes a box when it is released.`);
     const failing = checks.some((check) => check.status === "fail");
     return { ok: !failing, summary: failing ? "boat.dev needs attention." : `boat.dev answers; ${held.length} sandbox${held.length === 1 ? "" : "es"}.`, checks, notes };
   }
@@ -1181,7 +1181,7 @@ export class BoatBackend implements Backend {
     if (reach.from === "tailnet") return { ...check, status: "ok", detail: "Each boat box joins the tailnet as it starts, and reaches BB's server through it.", fix: null };
     if (reach.from === "url") return { ...check, status: "ok", detail: `boat boxes reach BB's server at ${reach.host}, over the internet.`, fix: null };
     if (reach.from === "nowhere") return { ...check, status: "warn", detail: cannotEnrolWords(reach), fix: CANNOT_ENROL_FIX };
-    return { ...check, status: "skipped", detail: "bb-box knows no URL for BB's server here, so it cannot tell whether boat boxes reach it.", fix: null };
+    return { ...check, status: "skipped", detail: `${PRODUCT} knows no URL for BB's server here, so it cannot tell whether boat boxes reach it.`, fix: null };
   }
 
   #androidCheck(limits: BoatLimits): DoctorCheck {
@@ -1218,7 +1218,7 @@ export class BoatBackend implements Backend {
       const failed = await this.templates.failedBuild(kind);
       if (failed) failures.push(`${kind}'s last build failed at ${new Date(failed.at).toISOString().slice(11, 16)} UTC, and is tried again ${Math.round(FAILED_BUILD_RETRY_MS / 3_600_000)} hours later or when a box needs it: ${failed.why}`);
     }
-    return { id: "boat.templates", name: "Templates", status: failures.length ? "warn" : "ok", detail: `Stopped sandboxes boxes fork, at no cost: ${lines.join("; ")}.${failures.length ? ` ${failures.join(" ")}` : ""}`, fix: failures.length ? "bb-box's log shows each build's steps. A box of the kind tries the build again at once." : null };
+    return { id: "boat.templates", name: "Templates", status: failures.length ? "warn" : "ok", detail: `Stopped sandboxes boxes fork, at no cost: ${lines.join("; ")}.${failures.length ? ` ${failures.join(" ")}` : ""}`, fix: failures.length ? `${PRODUCT}'s log shows each build's steps. A box of the kind tries the build again at once.` : null };
   }
 
   async #readLimits(signal?: AbortSignal, fresh = false): Promise<BoatLimits> {
@@ -1406,9 +1406,9 @@ export class BoatBackend implements Backend {
       const boot = /^boot=(\S+)$/m.exec(read.stdout)?.[1] ?? null;
       if (read.exitCode === 0 && boot && decided.has(boot)) return;
       if (read.exitCode === 0 && boot && decided === FORK_IDENTITY_DECIDED && FORK_IDENTITY_REFUSED.has(boot)) {
-        throw new Error(`boat's sandbox ${sandbox}, a fork, says its identity check is ${boot === "off" ? "off" : "unarmed, with no marker"}, so it has not shown that it gave up its source's identity, and bb-box lets nothing use it.`);
+        throw new Error(`boat's sandbox ${sandbox}, a fork, says its identity check is ${boot === "off" ? "off" : "unarmed, with no marker"}, so it has not shown that it gave up its source's identity, and ${PRODUCT} lets nothing use it.`);
       }
-      if (read.exitCode === 0 && boot === "failed") throw new Error(`boat's sandbox ${sandbox} could not finish its identity reset, so bb-box does not let its box user in, and BB's daemon and Tailscale stay off. The next start tries again; bb-box-identity.service in the box says why.`);
+      if (read.exitCode === 0 && boot === "failed") throw new Error(`boat's sandbox ${sandbox} could not finish its identity reset, so ${PRODUCT} does not let its box user in, and BB's daemon and Tailscale stay off. The next start tries again; bb-box-identity.service in the box says why.`);
       last = boot ? `its identity check says ${boot}` : read.stderr.trim();
       if (!kicked && this.#now() >= kickAt) {
         kicked = true;
@@ -1417,7 +1417,7 @@ export class BoatBackend implements Backend {
       }
       await this.#sleep(250, signal);
     }
-    throw new Error(`boat's sandbox ${sandbox} did not finish checking whether it is a copy in time${last ? ` (${last})` : ""}, so bb-box does not let its box user in. bb-box-identity.service in the box says why.`);
+    throw new Error(`boat's sandbox ${sandbox} did not finish checking whether it is a copy in time${last ? ` (${last})` : ""}, so ${PRODUCT} does not let its box user in. bb-box-identity.service in the box says why.`);
   }
 
   async #restored(sandbox: string, deadline: number, signal?: AbortSignal): Promise<void> {
@@ -1450,7 +1450,7 @@ export class BoatBackend implements Backend {
     const command = await this.#command(sandbox, BOX_USER, signal);
     const prepared = await command.run(this.#options.tailscaleScript ?? LINUX_TAILSCALE, { timeoutMs: 180_000, signal });
     if (prepared.exitCode !== 0) throw new Error(`Tailscale did not start in boat's sandbox ${sandbox}: ${prepared.stderr.trim().slice(-300) || `exit ${prepared.exitCode}`}`);
-    const key = await tailnet.mintKey({ description: `bb-box boat ${name}` }, signal);
+    const key = await tailnet.mintKey({ description: `${PRODUCT} boat ${name}` }, signal);
     const joined = await command.run(joinScript(this.#tailnetHostname(name)), { stdin: key.key, timeoutMs: 90_000, signal });
     if (joined.exitCode !== 0) throw new Error(`boat's sandbox ${sandbox} did not join the tailnet: ${joined.stderr.trim().slice(-300) || `exit ${joined.exitCode}`}`);
   }

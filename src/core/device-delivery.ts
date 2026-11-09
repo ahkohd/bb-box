@@ -6,6 +6,7 @@ import { DEVICE_HUB_PROCESS, type DeviceOffer, type Intent } from "./device.ts";
 import { RECORD_DIR } from "./device-recording.ts";
 
 export const DEVICE_SERVER_FILES = [
+  "src/brand.ts",
   "src/core/device-models.ts",
   "src/core/device-parse.ts",
   "src/core/device-recording.ts",

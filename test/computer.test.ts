@@ -55,7 +55,7 @@ test("a click Cua on Windows made, but found another process's window in front o
   assert.equal(landedElsewhere({ ...result("was not foreground after the click"), isError: false }), null);
 });
 
-test("explain says why the desktop refused in bb-box's words, without Cua's codes, tools or hex window IDs", () => {
+test("explain says why the desktop refused in BB Box's words, without Cua's codes, tools or hex window IDs", () => {
   const refused = (text: string, structured?: Record<string, unknown>) => ({ content: [{ type: "text", text }], structuredContent: structured, isError: true });
   const focus =
     "foreground_unavailable: window 0x1000122 did not become the active, focused window within 1.5s (active=0x0 focus_within_target=true); " +
@@ -64,7 +64,7 @@ test("explain says why the desktop refused in bb-box's words, without Cua's code
   assert.equal(explain(refused(focus)), "Window 16777506 did not become the active, focused window within 1.5s; no input was sent.");
   assert.equal(
     explain(refused("element_token is stale; call get_window_state again to refresh", { status: "refused", refusal: { code: "stale_element_token" } })),
-    "The element changed since bb-box last read its window, so nothing was done.",
+    "The element changed since BB Box last read its window, so nothing was done.",
   );
   assert.equal(explain(refused("Cua Driver could not do that.")), "The desktop gave no reason.");
   assert.equal(explain(refused("The app is not responding \u2014 call get_window_state to check it.")), "The app is not responding.");

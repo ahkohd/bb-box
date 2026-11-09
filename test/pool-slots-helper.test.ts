@@ -76,7 +76,7 @@ test("machine slot keep-app copies BB's app from the home of the user who runs i
   assert.equal(host.file("/usr/local/share/bb-box/slot-home/.bb-machines/bb.example.com/host-artifact.sha256"), `${digest}\n`);
 });
 
-test("a kept host, as the pool's Mac is, starts closed with no carried slots, holds no ports until bb-box opens it, and opens with the settings bb-box gives", () => {
+test("a kept host, as the pool's Mac is, starts closed with no carried slots, holds no ports until BB Box opens it, and opens with the settings BB Box gives", () => {
   const host = kept();
   assert.equal(host.file(`${HOST}/kept`), "");
   assert.match(host.file(`${HOST}/closed`)!, /^since=\d+\n$/);
@@ -93,7 +93,7 @@ test("a kept host, as the pool's Mac is, starts closed with no carried slots, ho
   assert.deepEqual(open, { status: 0, stdout: "open=yes\nmost=6\nahead=0\nresetting-most=4\ndisk-reserve-gib=40\n", stderr: "" });
   assert.equal(host.file(`${HOST}/closed`), null);
   assert.deepEqual(host.daemons(), [HELPER_DAEMON, PORTS_DAEMON]);
-  assert.equal(lines(host.run(["open"], OPEN(1, 12)).stdout).get("most"), "12", "the pool's Mac takes bb-box's settings at each open, as it is never made again");
+  assert.equal(lines(host.run(["open"], OPEN(1, 12)).stdout).get("most"), "12", "the pool's Mac takes BB Box's settings at each open, as it is never made again");
 
   const summary = host.run(["summary"]);
   assert.equal(summary.status, 0, summary.stderr);
@@ -236,7 +236,7 @@ function iosSetup(host: FakeDeviceHost, options: { list?: boolean } = {}): strin
   return join(dir, "pool");
 }
 
-test("mac-ios.sh installs idb_companion from its pin, the slots' helper and home, and a seed it makes by slimming a device as bb-box's admin user", () => {
+test("mac-ios.sh installs idb_companion from its pin, the slots' helper and home, and a seed it makes by slimming a device as BB Box's admin user", () => {
   const host = fakeDeviceHost({ slim: false, template: false });
   const pool = iosSetup(host);
   const run = () => spawnSync("/bin/sh", [join(pool, "mac-ios.sh"), pool, "bbbox-admin"], { encoding: "utf8", env: { ...host.env } });
@@ -252,7 +252,7 @@ test("mac-ios.sh installs idb_companion from its pin, the slots' helper and home
   assert.match(host.file("/usr/local/share/bb-box/slot-home/.zshenv")!, /path_helper/);
   assert.deepEqual(host.devices("bbbox-admin"), {}, "the admin user's devices are deleted once the seed is kept");
   assert.equal(host.file(`${HOST}/kept`), "", "set up as a kept host");
-  assert.match(host.file(`${HOST}/closed`)!, /^since=/, "closed until bb-box opens it");
+  assert.match(host.file(`${HOST}/closed`)!, /^since=/, "closed until BB Box opens it");
   assert.match(host.file(`${HOST}/settings`)!, /^most=12\nahead=1\nresetting-most=4\ndisk-reserve-gib=40\n/);
 
   assert.ok(!result.stdout.includes("warning="), "no sshd on the fake Mac, so nothing to warn of");

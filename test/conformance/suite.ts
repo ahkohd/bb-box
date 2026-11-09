@@ -103,7 +103,7 @@ const SIMULATOR_SCRIPT = [
 export interface ConformanceBb {
   /**
    * Runs BB's bootstrap in the box with the box ID as the key. The suite
-   * calls it again after a stop and start, as bb-box does (017).
+   * calls it again after a stop and start, as BB Box does (017).
    */
   enrol(box: BoxIdentity, command: CommandTransport, signal: AbortSignal): Promise<void>;
   /** Whether the box's BB machine is connected to the server. */
@@ -972,14 +972,14 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             if (!enrolled) return t.skip("the box did not enrol");
             if (restartedAt === null) return t.skip("the box did not stop and start");
             const { command } = need();
-            // bb-box starts BB's daemon again with the same key after a start.
+            // BB Box starts BB's daemon again with the same key after a start.
             await options.bb!.enrol(box, command, signal());
             await until(() => options.bb!.connected(box, signal()), Math.max(0, restartedAt + RECONNECT_MS - Date.now()), "the box reconnects to BB", 100);
           });
 
           it("a new instance on empty storage with the same install ID names the box's owner", { timeout, skip: skip.recovery ?? false }, async () => {
             const { guest } = need();
-            // As when bb-box loses its storage: the sweep rebuilds the box's record from this.
+            // As when BB Box loses its storage: the sweep rebuilds the box's record from this.
             const fresh = await options.create(new MemoryStorage(), CONFORMANCE_INSTALL);
             others.push(fresh);
             const held = (await fresh.held(signal())).find((other) => other.ref === guest.ref);
@@ -1198,7 +1198,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           // As a build's script and finalizing leave it: a file of the image's, and its record, where the OS keeps it (049, 054).
           const os = kinds.find((kind) => kind.id === standard.kind)?.capabilities.os;
           const dir = os === "windows" ? "C:\\bb-box" : os === "macos" ? "/usr/local/share/bb-box" : "/usr/share/bb-box";
-          const marker = `bb-box conformance ${randomBytes(4).toString("hex")}`;
+          const marker = `BB Box conformance ${randomBytes(4).toString("hex")}`;
           const build = `build.conformance-${Date.now()}`;
           const record = { contract: 1, image: "conformance", kind: standard.kind, arch: "", build, built: new Date().toISOString(), os: "", tools: {} };
           const script =

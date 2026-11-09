@@ -23,6 +23,8 @@ import { gpuCommands } from "./gpu-cli.ts";
 import { isGpuPart } from "../core/gpu.ts";
 import { snapshotStatusLine } from "./snapshot-words.ts";
 import { importChangeText } from "../app/settings-import.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -235,7 +237,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           async run({ options }) {
             const kinds = await app.kinds();
             if (options.json) return json(kinds);
-            if (!kinds.length) return out("No backend is on, so there are no kinds. bb box setup docker sets up Docker on the machine that runs BB; or add one with bb box backend add <type>, or in bb-box's settings.");
+            if (!kinds.length) return out(`No backend is on, so there are no kinds. bb box setup docker sets up Docker on the machine that runs BB; or add one with bb box backend add <type>, or in ${PRODUCT}'s settings.`);
             return out(
               kinds
                 .map((kind) => {
@@ -357,7 +359,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         "machines add": cliCommand({
           summary: "Add a machine of your own: a box of the kind, kept as a BB machine under the name until you remove it.",
           positionals: [{ name: "kind", description: "The kind of box, from bb box kinds. It must be able to become a BB machine.", required: true }],
-          options: { ...jsonOption, ...sizeOptions, ...onOption, name: { type: "string", description: "Its name, which is also its BB machine's: a lower-case letter first, then letters, digits and \"-\". bb-box picks one when left out." }, "no-wait": { type: "boolean", description: "Return once the box is recorded." } },
+          options: { ...jsonOption, ...sizeOptions, ...onOption, name: { type: "string", description: `Its name, which is also its BB machine's: a lower-case letter first, then letters, digits and "-". ${PRODUCT} picks one when left out.` }, "no-wait": { type: "boolean", description: "Return once the box is recorded." } },
           run: ({ positionals, options }) =>
             guard("Adding the machine", async () => {
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
@@ -454,7 +456,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         forget: cliCommand({
-          summary: "Forget a box whose backend is no longer in bb-box's settings: bb-box removes its record and deletes nothing, so a guest that still runs keeps running.",
+          summary: `Forget a box whose backend is no longer in ${PRODUCT}'s settings: ${PRODUCT} removes its record and deletes nothing, so a guest that still runs keeps running.`,
           positionals: boxPositional,
           options: { ...threadOption, ...machineOption },
           run: ({ positionals, options }, ctx) =>
@@ -462,12 +464,12 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const owner = options.machine ? OPERATOR : threadOf(options.thread, ctx);
               const box = await boxes.get(owner, positionals.box);
               await app.forget(owner, box.id, BY_COMMAND);
-              return out(`Forgot box ${box.name}: bb-box removed its record. Nothing was deleted on ${box.backendLabel}: if the box still runs there, it keeps running.`);
+              return out(`Forgot box ${box.name}: ${PRODUCT} removed its record. Nothing was deleted on ${box.backendLabel}: if the box still runs there, it keeps running.`);
             }),
         }),
         "image set": cliCommand({
           summary:
-            "Set a project's image (049): a script run as root on its kinds' standard images, for the boxes of the project's threads, with an optional check run as the box user. bb-box keeps a copy of the files. Setting it changes every new box of those kinds in the project.",
+            `Set a project's image (049): a script run as root on its kinds' standard images, for the boxes of the project's threads, with an optional check run as the box user. ${PRODUCT} keeps a copy of the files. Setting it changes every new box of those kinds in the project.`,
           positionals: [{ name: "name", description: "The image's name: a lower-case letter first, then letters, digits and \"-\".", required: true }],
           options: {
             kinds: { type: "string", description: "The kinds it builds on, comma-separated, such as linux,linux-desktop-cpu." },
@@ -529,7 +531,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         "image show": cliCommand({
-          summary: "Print a project's image's script, and its check, as bb-box keeps them (049).",
+          summary: `Print a project's image's script, and its check, as ${PRODUCT} keeps them (049).`,
           positionals: [{ name: "name", description: "The image's name, from bb box image list.", required: true }],
           run: ({ positionals }) =>
             guard("Showing the image", async () => {
@@ -559,7 +561,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         "images list": cliCommand({
-          summary: "List the standard images bb-box rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first.",
+          summary: `List the standard images ${PRODUCT} rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first.`,
           options: { ...jsonOption, output: { type: "string", description: "Print this image's last rebuild's last lines, as <backend>/<ref>." } },
           run: ({ options }, ctx) =>
             guard("Listing the images", async () => {
@@ -571,7 +573,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
                 if (!view) throw new BoxError("not_found", `There is no image ${String(options.output)}.`);
                 return out(view.last?.output.length ? view.last.output.join("\n") : `${view.name} has no rebuild with output yet.`);
               }
-              if (!views.length) return out(problems.length ? problems.join("\n") : "No backend that is on has images bb-box rebuilds.");
+              if (!views.length) return out(problems.length ? problems.join("\n") : `No backend that is on has images ${PRODUCT} rebuilds.`);
               const running = app.imageJobs.running();
               const soon = await app.imageJobs.dueSoon(ctx.signal).catch(() => null);
               return out(
@@ -620,7 +622,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         }),
         "images versions": cliCommand({
           summary:
-            "Show what a rebuild of the standard Linux images would take now (049): upstream's latest stable Claude Code, Codex, pi, gh and Chrome, each with the SHA-256 it publishes, and the day's apt snapshot, against this bb-box's pins.",
+            `Show what a rebuild of the standard Linux images would take now (049): upstream's latest stable Claude Code, Codex, pi, gh and Chrome, each with the SHA-256 it publishes, and the day's apt snapshot, against this ${PRODUCT}'s pins.`,
           options: { ...jsonOption, pinned: { type: "boolean", description: "Take the repository's pins alone, as a build with --pinned does." } },
           run: ({ options }, ctx) =>
             guard("Reading the latest versions", async () => {
@@ -672,7 +674,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             ),
         }),
         "docker-check": cliCommand({
-          summary: "Check that Docker on a BB machine answers through bb-box's Docker relay (042), with its version, cores and memory.",
+          summary: `Check that Docker on a BB machine answers through ${PRODUCT}'s Docker relay (042), with its version, cores and memory.`,
           positionals: [{ name: "machine", description: "The BB machine's ID or name, from bb machine list.", required: true }],
           options: jsonOption,
           run: ({ positionals, options }, ctx) =>
@@ -681,7 +683,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               if (options.json) return json(check);
               const { info } = check;
               return out(
-                `Docker ${info.version} on ${check.name} (${check.hostId}) answers through bb-box's relay: ${info.operatingSystem}, ${info.arch}, ` +
+                `Docker ${info.version} on ${check.name} (${check.hostId}) answers through ${PRODUCT}'s relay: ${info.operatingSystem}, ${info.arch}, ` +
                   `${info.cpus} cores, ${(info.memoryMiB / 1024).toFixed(1)} GiB memory. ` +
                   `The first call took ${(check.firstMs / 1000).toFixed(1)} s, opening the relay if it was closed; the next ${(check.againMs / 1000).toFixed(2)} s.`,
               );
@@ -689,14 +691,14 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         }),
         "docker-build": cliCommand({
           summary:
-            "Build the images a BB machine that hosts Docker boxes lacks there, or has from another layout or with another build of BB's app, through bb-box's relay (042). Waits for the build. " +
+            `Build the images a BB machine that hosts Docker boxes lacks there, or has from another layout or with another build of BB's app, through ${PRODUCT}'s relay (042). Waits for the build. ` +
             `Building all three needs about ${BUILD_FREE_GB} GB free there; with less, it does not start.`,
-          positionals: [{ name: "machine", description: "The BB machine's ID or name, from bb machine list. Its Docker must be added in bb-box's settings, under Add backend.", required: true }],
+          positionals: [{ name: "machine", description: `The BB machine's ID or name, from bb machine list. Its Docker must be added in ${PRODUCT}'s settings, under Add backend.`, required: true }],
           run: ({ positionals }) =>
             guard("Building the images", async () => {
               // From BB's record and the configuration: listing would look at every machine's Docker.
               const host = await app.dockerHostOf(positionals.machine);
-              if (!host?.backend) throw new BoxError("not_found", `${positionals.machine} is not a Docker host in bb-box's settings. Add its Docker under Add backend first.`);
+              if (!host?.backend) throw new BoxError("not_found", `${positionals.machine} is not a Docker host in ${PRODUCT}'s settings. Add its Docker under Add backend first.`);
               const build = await app.dockerImages.ensure(host.hostId);
               const took = build.endedAt ? ` in ${Math.round((build.endedAt - build.startedAt) / 1000)} s` : "";
               if (build.state === "failed") return { exitCode: 1, stderr: `Building the images on ${host.name} failed${took}: ${build.detail ?? "no reason given"}\n` };
@@ -717,7 +719,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         "config show": cliCommand({
-          summary: "Show bb-box's configuration. --json prints it as a file for config apply, with no secret in it: keep it to set bb-box up again.",
+          summary: `Show ${PRODUCT}'s configuration. --json prints it as a file for config apply, with no secret in it: keep it to set ${PRODUCT} up again.`,
           options: jsonOption,
           async run({ options }) {
             const state = await app.configuration.state();
@@ -751,7 +753,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         }),
         "config apply": cliCommand({
           summary:
-            "Save a configuration file as bb-box's whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one, or --replace, saves over what is there, as when setting bb-box up again from an export.",
+            `Save a configuration file as ${PRODUCT}'s whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one, or --replace, saves over what is there, as when setting ${PRODUCT} up again from an export.`,
           positionals: fileArgument,
           options: { ...jsonOption, replace: { type: "boolean", description: "Save over the current configuration whatever revision the file names." } },
           run: ({ positionals, options }, ctx) =>
@@ -776,7 +778,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         "config migrated": cliCommand({
-          summary: "Show the copy of BB's settings bb-box kept when it moved them into its configuration. --remove removes it.",
+          summary: `Show the copy of BB's settings ${PRODUCT} kept when it moved them into its configuration. --remove removes it.`,
           options: { ...jsonOption, remove: { type: "boolean", description: "Remove the copy." } },
           async run({ options }) {
             if (options.remove) {
@@ -785,7 +787,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }
             const copy = await app.configuration.migrated();
             if (options.json) return json(copy);
-            return out(copy ? movedText(copy) : "There is no copy of BB's settings: bb-box never moved any, or the copy was removed.");
+            return out(copy ? movedText(copy) : `There is no copy of BB's settings: ${PRODUCT} never moved any, or the copy was removed.`);
           },
         }),
         ...(app.replyDrops ? replyDropCommands(app.replyDrops) : {}),
@@ -794,7 +796,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
         ...gpuCommands(app),
         ...monitorCommands(bb, app.monitor, app.history),
         sweep: cliCommand({
-          summary: "Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers, and settle and check bb-box's snapshots against each backend's.",
+          summary: `Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers, and settle and check ${PRODUCT}'s snapshots against each backend's.`,
           options: jsonOption,
           run: ({ options }, ctx) =>
             guard("Sweeping", async () => {

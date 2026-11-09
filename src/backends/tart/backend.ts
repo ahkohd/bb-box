@@ -223,6 +223,8 @@ import {
   type SnapshotLabel,
 } from "./snapshots.ts";
 import { identityInstallScript } from "./identity.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 const SSH_KEY = "ssh-key";
 const READY_TIMEOUT_MS = 5 * 60_000;
@@ -515,7 +517,7 @@ export function spotlightJudgement(view: SpotlightView): { status: DoctorCheck["
   return {
     status: "warn",
     detail: `Spotlight indexes ${view.folder}, so it opens each new VM's disk after Tart makes it. Measured on macOS 26 (F-12), those opens take no lock, so they cannot fail a start as tart list's did, but they read every new disk.`,
-    fix: `With bb-box's backend for the Mac turned off and no VM running, as the host user, move Tart's folder to a name Spotlight skips and link its old name to it: mv ${quote(view.homeFolder)} ${quote(moved)} && ln -sfn ${quote(moved)} ${quote(view.home)}. To undo it, in the same way: ${undo}.${ownVolume}`,
+    fix: `With ${PRODUCT}'s backend for the Mac turned off and no VM running, as the host user, move Tart's folder to a name Spotlight skips and link its old name to it: mv ${quote(view.homeFolder)} ${quote(moved)} && ln -sfn ${quote(moved)} ${quote(view.home)}. To undo it, in the same way: ${undo}.${ownVolume}`,
   };
 }
 
@@ -1034,7 +1036,7 @@ export class TartBackend implements Backend {
       deleteVm: (host, vm, signal) => this.#delete(host, vm, "macos", null, signal),
       publicKey: async () => {
         const { publicKey } = await this.#keys();
-        if (!publicKey) throw new Error("bb-box has no public key for its Tart SSH key, so it cannot give a slot's user its key.");
+        if (!publicKey) throw new Error(`${PRODUCT} has no public key for its Tart SSH key, so it cannot give a slot's user its key.`);
         return publicKey;
       },
       logError: (operation, error) => this.#context.logError(operation, error),
@@ -1108,7 +1110,7 @@ export class TartBackend implements Backend {
     const silent = [...states].filter((entry): entry is [string, Error] => entry[1] instanceof Error);
     const answered = [...states.keys()].filter((host) => !silent.some(([name]) => name === host));
     const whys = [
-      ...silent.map(([host, error]) => `${host} did not answer, so bb-box cannot read which devices its iOS image offers: ${error.message}`),
+      ...silent.map(([host, error]) => `${host} did not answer, so ${PRODUCT} cannot read which devices its iOS image offers: ${error.message}`),
       ...(answered.length ? [`the iOS image ${image} on ${answered.join(" and ")} lists no iOS devices in its record, so there is none to boot. bb box doctor says why`] : []),
     ];
     return [{ kind: IOS_IMAGE_KIND, why: `${whys.join("; ")}.`, passing: !answered.length }];
@@ -1291,13 +1293,13 @@ export class TartBackend implements Backend {
     let why: string | null = null;
     if (size.diskGiB !== null && os !== "windows") {
       // Growing a macOS VM's disk needs its recovery partition removed and its APFS container grown inside the guest.
-      why = `a Tart box keeps its image's disk, so bb-box cannot give it a ${size.diskGiB} GiB disk yet. Ask for the base disk`;
+      why = `a Tart box keeps its image's disk, so ${PRODUCT} cannot give it a ${size.diskGiB} GiB disk yet. Ask for the base disk`;
     } else if (state.cpus && size.cores > state.cpus) {
       why = `${host.name} has ${state.cpus} cores, fewer than the ${size.cores} asked for. Ask for at most ${state.cpus} cores`;
     } else if (os === "windows" && !state.qemu.version) {
       why = `${host.name} has no QEMU on the PATH of ${host.user}'s SSH sessions, which Windows boxes need. Install QEMU there, with Homebrew or Nix`;
     } else if (os === "windows" && !state.qemu.image) {
-      why = `${host.name} has no Windows image ${image ?? ""} in ~/.bb-box/qemu/images. Prepare it there, or set the Windows image in bb-box's settings`;
+      why = `${host.name} has no Windows image ${image ?? ""} in ~/.bb-box/qemu/images. Prepare it there, or set the Windows image in ${PRODUCT}'s settings`;
     } else if (os === "macos" && macos.length + starting >= this.#config.vmsPerHost) {
       const names = macos.map((vm) => this.#vmWords(vm.name, state.owners.get(vm.name))).join(", ");
       why =
@@ -1311,8 +1313,8 @@ export class TartBackend implements Backend {
           ? `${host.name} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${box} needs. Ask for less memory or release a box`
           : `${host.name} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so ${box} does not fit. ` +
             (memoryFree > reserve.memoryMiB
-              ? "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings"
-              : "Release a box, or lower the memory kept free in bb-box's settings");
+              ? `Ask for less memory, release a box, or lower the memory kept free in ${PRODUCT}'s settings`
+              : `Release a box, or lower the memory kept free in ${PRODUCT}'s settings`);
     } else if (state.disk.freeMiB < diskReserveMiB) {
       why = `${host.name} has ${diskFree(state.disk)}, less than the ${formatMiB(diskReserveMiB)} kept free. Release boxes or free some space`;
     } else if (state.disk.freeMiB - grow * MiB_PER_GiB < diskReserveMiB) {
@@ -1322,7 +1324,7 @@ export class TartBackend implements Backend {
             "Ask for a smaller disk or release boxes"
           : `${host.name} has ${diskFree(state.disk)} and keeps ${formatMiB(diskReserveMiB)} free, ` +
             `so a ${size.diskGiB} GiB disk, ${grow} GiB more than the Windows image's, does not fit. ` +
-            "Ask for a smaller disk, release boxes, or lower the disk kept free in bb-box's settings";
+            `Ask for a smaller disk, release boxes, or lower the disk kept free in ${PRODUCT}'s settings`;
     } else if (saved && state.disk.freeMiB - grow * MiB_PER_GiB - size.memoryMiB < diskReserveMiB) {
       const vm = `a warm VM saved with its ${formatMiB(size.memoryMiB)} of memory`;
       why =
@@ -1339,7 +1341,7 @@ export class TartBackend implements Backend {
   }
 
   #full(kind: string, hosts: readonly { why: string | null }[]): string {
-    if (!hosts.length) return `Every Mac is off in bb-box's settings, so none takes a new ${kind} box.`;
+    if (!hosts.length) return `Every Mac is off in ${PRODUCT}'s settings, so none takes a new ${kind} box.`;
     const reasons = [...new Set(hosts.map((host) => host.why).filter((why): why is string => why !== null))];
     return `No Mac can take this ${kind} box: ${reasons.join("; ")}.`;
   }
@@ -1472,7 +1474,7 @@ export class TartBackend implements Backend {
           if (claimed !== "claimed") {
             const fields = parseFields(claimed);
             if (fields.install !== this.#context.installId || fields.box !== box.boxId) {
-              throw new Error(`VM ${vm} on ${host.name} belongs to another box, so bb-box left it alone.`);
+              throw new Error(`VM ${vm} on ${host.name} belongs to another box, so ${PRODUCT} left it alone.`);
             }
           }
           owned = true;
@@ -1604,7 +1606,7 @@ export class TartBackend implements Backend {
           if (claimed !== "claimed") {
             const fields = parseFields(claimed);
             if (fields.install !== this.#context.installId || fields.box !== box.boxId) {
-              throw new Error(`VM ${vm} on ${host.name} belongs to another box, so bb-box left it alone.`);
+              throw new Error(`VM ${vm} on ${host.name} belongs to another box, so ${PRODUCT} left it alone.`);
             }
           }
           owned = true;
@@ -2003,7 +2005,7 @@ export class TartBackend implements Backend {
     if (power === null) throw this.#gone(guest);
     if (power !== "running") throw new BackendError("unsupported", "A stopped VM is resized once it runs: start it first.");
     const from = await this.#readSize(host, guest, signal);
-    if (!from) throw new Error(`Tart did not say the size of ${guest.ref}, so bb-box cannot resize it.`);
+    if (!from) throw new Error(`Tart did not say the size of ${guest.ref}, so ${PRODUCT} cannot resize it.`);
     if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
       throw new BackendError("unsupported", `A VM's disk only grows, and this one's is ${from.diskGiB} GiB.`);
     }
@@ -2047,7 +2049,7 @@ export class TartBackend implements Backend {
         grow > memoryFree
           ? `${host.name} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(grow)} more the box needs. Ask for less memory or release a box.`
           : `${host.name} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so the ${formatMiB(grow)} more the box needs does not fit. ` +
-            "Ask for less memory, release a box, or lower the memory kept free in bb-box's settings.";
+            `Ask for less memory, release a box, or lower the memory kept free in ${PRODUCT}'s settings.`;
     } else if (disk > 0 && state.disk.freeMiB - disk * MiB_PER_GiB < diskReserveMiB) {
       why = `${host.name} has ${diskFree(state.disk)} and keeps ${formatMiB(diskReserveMiB)} free, so ${disk} GiB more disk does not fit. Ask for a smaller disk or release boxes.`;
     }
@@ -2132,7 +2134,7 @@ export class TartBackend implements Backend {
   }
 
   #snapshotGuest(guest: Guest): { host: TartHost; os: "macos" | "linux" } {
-    if (slotRefOf(guest)) throw new BackendError("unsupported", "A box on a shared iOS host has no VM of its own, so bb-box takes no snapshot of it.");
+    if (slotRefOf(guest)) throw new BackendError("unsupported", `A box on a shared iOS host has no VM of its own, so ${PRODUCT} takes no snapshot of it.`);
     const os = this.#osOf(guest);
     if (os === "windows") throw new BackendError("unsupported", `${this.label} takes no snapshots of Windows boxes.`);
     return { host: this.#hostOf(guest), os };
@@ -2162,11 +2164,11 @@ export class TartBackend implements Backend {
     const power = await this.power(guest, signal);
     if (power === null) throw new SnapshotFailed(`The VM ${guest.ref} is no longer on ${host.name}.`);
     const suspends = power === "running";
-    if (suspends && os === "linux") throw new SnapshotFailed("Tart cannot suspend a Linux VM, so bb-box takes its snapshot only while the box is stopped. Stop it first.");
+    if (suspends && os === "linux") throw new SnapshotFailed(`Tart cannot suspend a Linux VM, so ${PRODUCT} takes its snapshot only while the box is stopped. Stop it first.`);
     const before = parsePlanRead((await this.#run(host, planScript(guest.ref, this.#context.installId, this.#boxOf(guest), null), { timeoutMs: 30_000, signal })).stdout);
     const short = roomShort(before, this.#copyFloorGiB());
-    if (short) throw new SnapshotFailed(`${short.charAt(0).toUpperCase()}${short.slice(1)}. bb-box suspended nothing.`);
-    if (before.sameVolume === false) throw new SnapshotFailed(`The snapshots folder on ${host.name} is on another volume than the VMs, so a copy there would be a full copy. Move it to the VMs' volume. bb-box suspended nothing.`);
+    if (short) throw new SnapshotFailed(`${short.charAt(0).toUpperCase()}${short.slice(1)}. ${PRODUCT} suspended nothing.`);
+    if (before.sameVolume === false) throw new SnapshotFailed(`The snapshots folder on ${host.name} is on another volume than the VMs, so a copy there would be a full copy. Move it to the VMs' volume. ${PRODUCT} suspended nothing.`);
     await hooks.submitting();
     await hooks.task({ ref: taskRef({ kind: "take", id: take.id }), host: host.name });
     if (suspends) {
@@ -2176,7 +2178,7 @@ export class TartBackend implements Backend {
       } catch (error) {
         if (signal?.aborted) throw error;
         const notResumed = await this.#resumeAfterTake(guest, signal);
-        throw new SnapshotFailed(`bb-box could not suspend ${guest.ref} on ${host.name} to copy it, so it copied nothing: ${message(error)}`, notResumed);
+        throw new SnapshotFailed(`${PRODUCT} could not suspend ${guest.ref} on ${host.name} to copy it, so it copied nothing: ${message(error)}`, notResumed);
       }
     }
     const capturedAt = Date.now();
@@ -2190,7 +2192,7 @@ export class TartBackend implements Backend {
     if (result.exitCode !== 0) throw new SnapshotFailed(this.#said(result), notResumed);
     const taken = parseTaken(result.stdout);
     if (taken === "gone") throw new SnapshotFailed(`The VM ${guest.ref} on ${host.name} is not box ${take.box}'s any more.`, notResumed);
-    if (!taken) throw new Error(`${host.name} copied ${guest.ref}, but bb-box could not read what it said: ${result.stdout.trim().slice(0, 300)}`);
+    if (!taken) throw new Error(`${host.name} copied ${guest.ref}, but ${PRODUCT} could not read what it said: ${result.stdout.trim().slice(0, 300)}`);
     return { ref: take.id, holds: taken.label.holds, capturedAt, size: taken.kib !== null ? { bytes: taken.kib * 1024, means: "whole" } : null, notResumed };
   }
 
@@ -2253,7 +2255,7 @@ export class TartBackend implements Backend {
   async providerTask(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
     const parsed = parseTaskRef(task.ref);
     const host = this.#hostNamed(task.host);
-    if (!parsed || !host) return { state: "missing", words: `${task.ref} is not a task bb-box knows on ${this.label}` };
+    if (!parsed || !host) return { state: "missing", words: `${task.ref} is not a task ${PRODUCT} knows on ${this.label}` };
     const listing = await this.#listing(host, signal);
     const rollback = parsed.kind === "rollback" ? (await this.#run(host, rollbackRecordScript(parsed.vm), { timeoutMs: 30_000, signal })).stdout : null;
     return taskOutcome(parsed, listing, rollback);
@@ -2280,7 +2282,7 @@ export class TartBackend implements Backend {
   async rollbackSnapshot(guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
     const { host } = this.#snapshotGuest(guest);
     const box = this.#boxOf(guest);
-    if (!box) throw new SnapshotFailed(`The VM ${guest.ref} names no box, so bb-box puts no snapshot in its place.`);
+    if (!box) throw new SnapshotFailed(`The VM ${guest.ref} names no box, so ${PRODUCT} puts no snapshot in its place.`);
     const id = ref.ref || ref.id;
     const read = parsePlanRead((await this.#run(host, planScript(guest.ref, this.#context.installId, box, id), { timeoutMs: 30_000, signal })).stdout);
     const another = savedUnder(read.snapshot?.label ?? null, read.snapshot?.saved ?? false, read);
@@ -2318,7 +2320,7 @@ export class TartBackend implements Backend {
     const claimed = (await this.#run(host, claimScript(vm, this.#owner(box)), { signal })).stdout.trim();
     if (claimed !== "claimed") {
       const fields = parseFields(claimed);
-      if (fields.install !== this.#context.installId || fields.box !== box.boxId) throw new Error(`VM ${vm} on ${host.name} belongs to another box, so bb-box left it alone.`);
+      if (fields.install !== this.#context.installId || fields.box !== box.boxId) throw new Error(`VM ${vm} on ${host.name} belongs to another box, so ${PRODUCT} left it alone.`);
     }
     try {
       const result = await this.#runSnapshot(host, forkScript({ install: this.#context.installId, snapshot: ref.ref || ref.id, vm, cpus: box.size.cores, memoryMiB: box.size.memoryMiB, macos: os === "macos", minFreeGiB: this.#copyFloorGiB() }), 10 * 60_000, signal);
@@ -2567,7 +2569,7 @@ export class TartBackend implements Backend {
   /** Hands a warm VM to a box: its owner file names the box from now on. */
   async #hold(member: PoolMember, box: BoxIdentity, signal?: AbortSignal): Promise<void> {
     const host = this.#hostNamed(member.host);
-    if (!host) throw new Error(`Mac ${member.host} is not in bb-box's settings.`);
+    if (!host) throw new Error(`Mac ${member.host} is not in ${PRODUCT}'s settings.`);
     const held = (await this.#run(host, holdScript(member.ref, this.#context.installId, "warm", this.#owner(box)), { signal })).stdout.trim();
     if (held !== "held") throw new Error(`The warm VM ${member.ref} on ${host.name} is no longer free.`);
   }
@@ -2665,7 +2667,7 @@ export class TartBackend implements Backend {
         this.#placing.set(vm, { host: host.name, vm, memoryMiB: footprint(pool.kinds[0]!, pool.size), macos: !windows });
         return { host, state };
       }
-      return whys.length ? `${whys.join("; ")}.` : "Every Mac is off in bb-box's settings.";
+      return whys.length ? `${whys.join("; ")}.` : `Every Mac is off in ${PRODUCT}'s settings.`;
     });
     if (typeof placed === "string") return placed;
     const { host, state } = placed;
@@ -2879,15 +2881,15 @@ export class TartBackend implements Backend {
     try {
       keys = await this.#keys();
       if (keys.publicKey) {
-        push("tart.ssh-key", "SSH key", "ok", keys.generated ? "bb-box made a key; its public key is below." : "From bb-box's settings; its public key is below.");
+        push("tart.ssh-key", "SSH key", "ok", keys.generated ? `${PRODUCT} made a key; its public key is below.` : `From ${PRODUCT}'s settings; its public key is below.`);
         notes.push(
           `Each Mac's user, user ${this.#config.ssh.vmUser} in each macOS image and user ${LINUX_USER} in the Linux and Windows images, must accept this SSH key in ~/.ssh/authorized_keys: ${keys.publicKey}`,
         );
       } else {
-        push("tart.ssh-key", "SSH key", "fail", "ssh-keygen cannot read the SSH private key in bb-box's settings.", "Paste the whole private key, or clear the setting so bb-box makes one.");
+        push("tart.ssh-key", "SSH key", "fail", `ssh-keygen cannot read the SSH private key in ${PRODUCT}'s settings.`, `Paste the whole private key, or clear the setting so ${PRODUCT} makes one.`);
       }
     } catch (error) {
-      push("tart.ssh-key", "SSH key", "fail", message(error), "Check the SSH private key in bb-box's settings, or clear it so bb-box makes one.");
+      push("tart.ssh-key", "SSH key", "fail", message(error), `Check the SSH private key in ${PRODUCT}'s settings, or clear it so ${PRODUCT} makes one.`);
     }
 
     if (!this.#config.hosts.length) {
@@ -2909,7 +2911,7 @@ export class TartBackend implements Backend {
     /** An image's record judged, with the prepare script's command that builds it again as the fix. */
     const judge = (kind: TartKind, image: string, record: ImageRecord | null, on: string): ImageJudgement => {
       const os = guestOsOf(kind);
-      const key = "--key '<bb-box's public key>'";
+      const key = `--key '<${PRODUCT}'s public key>'`;
       const command =
         os === "windows"
           ? `prepare-windows-image.sh --iso <ISO> --iso-sha256 <its SHA-256> ${key} --name ${image} --replace`
@@ -2935,7 +2937,7 @@ export class TartBackend implements Backend {
           state ? "fail" : "skipped",
           state ? state.message : "Skipped until the checks above pass.",
           state
-            ? `Check that ${host.user}@${host.address} accepts bb-box's key over SSH${tart ? ", that its host key is in bb-box's settings, and that Tart is installed" : " and that its host key is in bb-box's settings"} (setup/tart/README.md).`
+            ? `Check that ${host.user}@${host.address} accepts ${PRODUCT}'s key over SSH${tart ? `, that its host key is in ${PRODUCT}'s settings, and that Tart is installed` : ` and that its host key is in ${PRODUCT}'s settings`} (setup/tart/README.md).`
             : null,
         );
         if (windowsImage) push(`qemu.${host.name}`, `QEMU on ${host.name}`, "skipped", "Skipped until the checks above pass.");
@@ -2959,7 +2961,7 @@ export class TartBackend implements Backend {
         const config = state.configs.get(image);
         if (!listed) {
           const script = guestOsOf(kind) === "linux" ? `prepare-linux-image.sh${kind === "linux-arm64-desktop-cpu" ? " --desktop" : ""}` : "prepare-image.sh";
-          push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "fail", `${host.name} has no Tart VM ${image}.`, `Prepare it with setup/tart/${script}, or set the image in bb-box's settings.`);
+          push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "fail", `${host.name} has no Tart VM ${image}.`, `Prepare it with setup/tart/${script}, or set the image in ${PRODUCT}'s settings.`);
         } else if (config?.os && config.os !== (guestOsOf(kind) === "linux" ? "linux" : "darwin")) {
           const wanted = guestOsOf(kind) === "linux" ? "Linux" : "macOS";
           push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "fail", `${image} on ${host.name} is a ${config.os} VM.`, `Give a ${wanted} image.`);
@@ -3009,11 +3011,11 @@ export class TartBackend implements Backend {
     }
     if (others.size) {
       notes.push(
-        `bb-box leaves alone the VMs of other installs on these Macs: ${[...others].map(([install, count]) => `${count} of install ${install}`).join(", ")}. They still count against each Mac's room.`,
+        `${PRODUCT} leaves alone the VMs of other installs on these Macs: ${[...others].map(([install, count]) => `${count} of install ${install}`).join(", ")}. They still count against each Mac's room.`,
       );
     }
     if (this.slots) {
-      const unread = (error: unknown): DoctorCheck[] => [{ id: "ios-hosts.all", name: "Shared iOS hosts", status: "warn", detail: `bb-box could not read its shared iOS hosts: ${message(error)}`, fix: null }];
+      const unread = (error: unknown): DoctorCheck[] => [{ id: "ios-hosts.all", name: "Shared iOS hosts", status: "warn", detail: `${PRODUCT} could not read its shared iOS hosts: ${message(error)}`, fix: null }];
       checks.push(...(await this.slots.doctor(states, signal).catch(unread)));
       for (const host of this.#config.hosts) {
         await this.#probes.measure(host.name, signal).catch(() => null);
@@ -3045,7 +3047,7 @@ export class TartBackend implements Backend {
     const macosImage = this.#config.kinds.macos.image ?? this.#config.kinds["macos-desktop"].image;
     const rebuild = `Build it again on ${host.name} with setup/tart/prepare-ios-image.sh --from ${macosImage ?? "<the macOS image>"} --name ${image} --replace.`;
     if (!state.vms.some((vm) => vm.name === image)) {
-      push(id, name, "fail", `${host.name} has no Tart VM ${image}.`, `Build it with setup/tart/prepare-ios-image.sh${macosImage ? ` --from ${macosImage}` : ""} --name ${image}, or clear the iOS image in bb-box's settings.`);
+      push(id, name, "fail", `${host.name} has no Tart VM ${image}.`, `Build it with setup/tart/prepare-ios-image.sh${macosImage ? ` --from ${macosImage}` : ""} --name ${image}, or clear the iOS image in ${PRODUCT}'s settings.`);
       return;
     }
     const macosBuild = macosImage ? (state.records.get(macosImage)?.build ?? null) : null;
@@ -3075,7 +3077,7 @@ export class TartBackend implements Backend {
     const imageId = `image.${host.name}.windows-arm64-desktop` as const;
     const imageName = `windows-arm64-desktop image on ${host.name}`;
     if (!qemu.image) {
-      push(imageId, imageName, "fail", `${host.name} has no Windows image ${image} in ~/.bb-box/qemu/images.`, "Prepare it on the Mac, or set the Windows image in bb-box's settings.");
+      push(imageId, imageName, "fail", `${host.name} has no Windows image ${image} in ~/.bb-box/qemu/images.`, `Prepare it on the Mac, or set the Windows image in ${PRODUCT}'s settings.`);
     } else if (!qemu.image.readOnly) {
       push(
         imageId,
@@ -3099,10 +3101,10 @@ export class TartBackend implements Backend {
     const name = `macOS forks on ${host.name}`;
     try {
       const can = (await this.#run(host, script("if diskutil image attach --help >/dev/null 2>&1; then echo yes; else echo no; fi\n"), { timeoutMs: 30_000, signal })).stdout.trim() === "yes";
-      if (can) push(id, name, "ok", `${host.name}'s diskutil can attach a fork's disk, so bb-box cleans it of its source's identity before the fork first boots.`);
+      if (can) push(id, name, "ok", `${host.name}'s diskutil can attach a fork's disk, so ${PRODUCT} cleans it of its source's identity before the fork first boots.`);
       else push(id, name, "warn", `On ${host.name}, ${NO_IMAGE_ATTACH}.`, `Update ${host.name} to macOS 27 or later to make macOS forks there.`);
     } catch (error) {
-      push(id, name, "warn", `bb-box could not ask ${host.name}'s diskutil whether it attaches disk images: ${message(error)}`, null);
+      push(id, name, "warn", `${PRODUCT} could not ask ${host.name}'s diskutil whether it attaches disk images: ${message(error)}`, null);
     }
   }
 
@@ -3119,7 +3121,7 @@ export class TartBackend implements Backend {
       const judged = spotlightJudgement(view);
       push(id, name, judged.status, judged.detail, judged.fix);
     } catch (error) {
-      push(id, name, "warn", `bb-box could not ask Spotlight on ${host.name} about Tart's VMs: ${message(error)}`, null);
+      push(id, name, "warn", `${PRODUCT} could not ask Spotlight on ${host.name} about Tart's VMs: ${message(error)}`, null);
     }
   }
 
@@ -3133,18 +3135,18 @@ export class TartBackend implements Backend {
     const name = `Windows video on ${host.name}`;
     const off = "Until then, Windows desktops show over VNC only.";
     if (video.status === "ready") {
-      push(id, name, "ok", `bb-box's build of bb-box-stream, ${this.#videoBuild().build}, gives Windows desktops video from QEMU.`);
+      push(id, name, "ok", `${PRODUCT}'s build of bb-box-stream, ${this.#videoBuild().build}, gives Windows desktops video from QEMU.`);
     } else if (video.status === "no-tools") {
-      push(id, name, "warn", `${host.name} has no swiftc from Xcode's Command Line Tools, which bb-box builds bb-box-stream with. ${off}`, "Install them on the Mac: xcode-select --install.");
+      push(id, name, "warn", `${host.name} has no swiftc from Xcode's Command Line Tools, which ${PRODUCT} builds bb-box-stream with. ${off}`, "Install them on the Mac: xcode-select --install.");
     } else if (video.status === "failed") {
       push(id, name, "warn", `swiftc could not build bb-box-stream: ${video.why} ${off}`, "Update Xcode's Command Line Tools on the Mac, then run the checks again.");
     } else {
-      push(id, name, "warn", `bb-box is building bb-box-stream on ${host.name}, which takes about a minute. ${off}`, "Run the checks again in a minute.");
+      push(id, name, "warn", `${PRODUCT} is building bb-box-stream on ${host.name}, which takes about a minute. ${off}`, "Run the checks again in a minute.");
     }
   }
 
   async dispose(): Promise<void> {
-    this.#stopping.abort(new Error("bb-box is stopping."));
+    this.#stopping.abort(new Error(`${PRODUCT} is stopping.`));
     this.slots?.dispose();
     if (this.#quietKick) clearTimeout(this.#quietKick);
     await this.#upkeep.running?.catch(() => undefined);
@@ -3162,7 +3164,7 @@ export class TartBackend implements Backend {
 
   #hostOf(guest: Guest): TartHost {
     const host = this.#hostNamed(guest.host);
-    if (!host) throw new Error(`Box VM ${guest.ref} is on Mac ${guest.host ?? "unknown"}, which is not in bb-box's Tart settings. Add the Mac back to reach it.`);
+    if (!host) throw new Error(`Box VM ${guest.ref} is on Mac ${guest.host ?? "unknown"}, which is not in ${PRODUCT}'s Tart settings. Add the Mac back to reach it.`);
     return host;
   }
 
@@ -3313,7 +3315,7 @@ export class TartBackend implements Backend {
       if (!discard || !failedRestore(error)) throw error;
       if (os !== "windows" && (await this.#run(host, discardStateScript(vm), { timeoutMs: 30_000, signal })).stdout.trim() === "kept") {
         throw new Error(
-          `The memory of the snapshot just put in the place of ${vm} on ${host.name} did not resume, so bb-box did not boot it from its disk, which would lose that memory without a word: ${message(error)} Start the box again to boot it from its disk, or restore another snapshot.`,
+          `The memory of the snapshot just put in the place of ${vm} on ${host.name} did not resume, so ${PRODUCT} did not boot it from its disk, which would lose that memory without a word: ${message(error)} Start the box again to boot it from its disk, or restore another snapshot.`,
         );
       }
       this.#context.logError(
@@ -3379,7 +3381,7 @@ export class TartBackend implements Backend {
     if (!ready) {
       throw new Error(
         `${vm} on ${host.name} did not answer SSH as ${access.user} at ${access.host}${access.port === 22 ? "" : `:${access.port}`} within ${Math.round(left / 1000)} s. ` +
-          `Check that the image's user ${access.user} accepts bb-box's key.`,
+          `Check that the image's user ${access.user} accepts ${PRODUCT}'s key.`,
       );
     }
   }
@@ -3581,7 +3583,7 @@ export class TartBackend implements Backend {
   #imageRef(ref: string): { host: TartHost; vm: string } {
     const at = ref.indexOf("/");
     const host = this.#hostNamed(at > 0 ? ref.slice(0, at) : null);
-    if (!host) throw new Error(`${ref} is not an image on a Mac in bb-box's Tart settings.`);
+    if (!host) throw new Error(`${ref} is not an image on a Mac in ${PRODUCT}'s Tart settings.`);
     return { host, vm: ref.slice(at + 1) };
   }
 
@@ -3755,7 +3757,7 @@ export class TartBackend implements Backend {
     const fields = state.owners.get(vm);
     const configured = TART_KINDS.some((kind) => this.#config.kinds[kind].image === vm) || this.#config.iosImage === vm;
     if (configured || !fields || fields.install !== this.#context.installId || !(fields["image-box"] || fields["image-build"])) {
-      throw new Error(`${vm} on ${host.name} is not an image box or build of this install's, so bb-box leaves it.`);
+      throw new Error(`${vm} on ${host.name} is not an image box or build of this install's, so ${PRODUCT} leaves it.`);
     }
     await this.#delete(host, vm, guestOsOf(fields.kind ?? ""), null, signal);
     await this.#run(host, forgetImageScript(vm), { timeoutMs: 30_000, signal });
@@ -3773,14 +3775,14 @@ export class TartBackend implements Backend {
     // A Windows image is refreshed in a box of its current build (054): no prepare script runs for it.
     if (os === "windows") throw new Error("A Windows image is refreshed in a box of its build, not by its prepare script.");
     const { ssh, publicKey: key } = await this.#keys();
-    if (!key) throw new Error("bb-box has no SSH public key for the image's user to accept.");
+    if (!key) throw new Error(`${PRODUCT} has no SSH public key for the image's user to accept.`);
     const stamp = Date.now().toString(36);
     const vm = `${VM_PREFIX}img-refresh-${stamp}`;
     const dir = `.bb-box/tart/setup-${stamp}`;
     // bb-box-stream's source is the pool Mac's (060).
     const ios = current.kind === IOS_IMAGE_KIND;
     const macosImage = this.#config.kinds.macos.image ?? this.#config.kinds["macos-desktop"].image;
-    if (ios && !macosImage) throw new Error("The iOS image is built on the macOS image, and bb-box's Tart settings name none.");
+    if (ios && !macosImage) throw new Error(`The iOS image is built on the macOS image, and ${PRODUCT}'s Tart settings name none.`);
     const tar = spawnSync("tar", ["-C", setup, "-czf", "-", "tart", "proxmox-lxc", "ssh-pool/mac-stream.swift", "ssh-pool/mac-chrome.sh"], { maxBuffer: 64 * 1024 * 1024 });
     if (tar.status !== 0) throw new Error(`tar could not pack the setup files: ${tar.stderr.toString().trim()}`);
     const mac = new SshTransport(ssh, await this.#mac(host), "macos");
@@ -3864,7 +3866,7 @@ export class TartBackend implements Backend {
       } catch (error) {
         signal.throwIfAborted();
         if (Date.now() - heard > BUILD_LOST_MS) {
-          throw new Error(`bb-box could not reach ${host.name} for ${Math.round(BUILD_LOST_MS / 60_000)} minutes while the prepare script ran there: ${error instanceof Error ? error.message : String(error)}`);
+          throw new Error(`${PRODUCT} could not reach ${host.name} for ${Math.round(BUILD_LOST_MS / 60_000)} minutes while the prepare script ran there: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
       if (Date.now() > deadline) throw new Error(`The prepare script on ${host.name} ran out of time.`);

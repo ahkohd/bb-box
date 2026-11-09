@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { cloneElement, forwardRef, isValidElement, useEffect, useId, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ReactElement, type ReactNode, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { BoxDialog, DialogButton } from "./box-dialog.tsx";
 import {
@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { FieldProblem } from "./field-shell.tsx";
+import { FieldProblem, FieldShell } from "./field-shell.tsx";
 import { INVALID_BORDER } from "./size-field.ts";
 import {
   BATTERY_LEVELS,
@@ -745,12 +745,13 @@ function FormDialog({ open, title, description, submit, onSubmit, onClose, child
 }
 
 function Field({ label, problem, problemId, children }: { label: string; problem?: string | null; problemId?: string; children: ReactNode }) {
+  const generated = useId();
+  const only = isValidElement<{ id?: string }>(children) ? (children as ReactElement<{ id?: string }>) : null;
+  const fieldId = only ? (only.props.id ?? generated) : undefined;
   return (
-    <label className="flex flex-col gap-1 text-xs text-foreground">
-      {label}
-      {children}
-      {problem ? <FieldProblem id={problemId}>{problem}</FieldProblem> : null}
-    </label>
+    <FieldShell label={label} htmlFor={fieldId} problem={problem} problemId={problemId}>
+      {only && fieldId ? cloneElement(only, { id: fieldId }) : children}
+    </FieldShell>
   );
 }
 

@@ -6,9 +6,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { withoutSecretVersions, type Problem } from "../core/document.ts";
 import type { ConfigState, Contract } from "../plugin/contract.ts";
-import { Badge, message, relativeTime } from "./common.tsx";
+import { ago } from "./box-words.ts";
+import { Badge, message } from "./common.tsx";
 import { useSettings } from "./settings-context.tsx";
-import type { DraftRegistry, Outcome } from "./settings-drafts.ts";
+import { reasonAfterColon, type DraftRegistry, type Outcome } from "./settings-drafts.ts";
 import { IMPORT_PART, IMPORT_TEXT, exportedText, importChanges, importPlan, importValueWords, importedPaths, invalidWords, parseImport, secretsToGive, type ImportChange } from "./settings-import.ts";
 import { Card, Group, RowNote, Rows, SettingRow } from "./settings-parts.tsx";
 import { ConflictNote, RestoredNote, SaveBar, focusAfterRender, useDraft, useRegistry, type Draft, type SaveWords } from "./settings-saving.tsx";
@@ -460,7 +461,10 @@ function MovedCopyRow() {
   const removal = useStore(copyRemoval);
   const [asking, setAsking] = useState(false);
   const action = useDialogAction(() => setAsking(false));
-  const copy = state.migrated;
+  const live = state.migrated;
+  const remembered = useRef(live);
+  if (live) remembered.current = live;
+  const copy = live ?? (asking ? remembered.current : null);
   const remove = async (): Promise<string | null> => {
     copyRemoval.set({ removing: true, note: null });
     let note: CopyRemoval["note"];
@@ -468,7 +472,7 @@ function MovedCopyRow() {
       const result = await rpc.call("config.migrated.remove", null);
       note = { text: result.removed ? "Removed the copy of BB's earlier settings." : "There was no copy left to remove: it was removed elsewhere.", tone: "info" };
     } catch (caught) {
-      const reason = message(caught).replace(/\.+$/, "").replace(/^([A-Z])(?=[a-z])/, (letter) => letter.toLowerCase());
+      const reason = reasonAfterColon(message(caught).replace(/\.+$/, ""));
       try {
         const after = await rpc.call("config.get", null);
         note = after.migrated ? { text: `The copy was not removed: ${reason}. It is still kept; try again.`, tone: "bad" } : { text: "Removed the copy of BB's earlier settings. BB Box did not reply, and the configuration shows it gone.", tone: "info" };
@@ -477,6 +481,7 @@ function MovedCopyRow() {
       }
     }
     await refresh().catch(() => {});
+    await Promise.resolve();
     copyRemoval.set({ removing: false, note: note.tone === "bad" ? null : note });
     if (note.tone === "bad") return note.text;
     focusAfterRender(COPY_NOTE, COPY_BUTTON);
@@ -488,7 +493,7 @@ function MovedCopyRow() {
         <SettingRow
           path={COPY_BUTTON}
           label="Settings moved from BB"
-          description={`BB Box kept a copy of BB's own settings for it when it moved them into this configuration, ${relativeTime(copy.at, Date.now())}, so a value that moved wrongly can be compared. It holds no secret. bb box config migrated shows it.`}
+          description={`BB Box kept a copy of BB's own settings for it when it moved them into this configuration, ${ago(copy.at, Date.now())}, so a value that moved wrongly can be compared. It holds no secret. bb box config migrated shows it.`}
         >
           <Button type="button" variant="outline" size="sm" className="h-7" data-draft-path={COPY_BUTTON} disabled={removal.removing} onClick={() => setAsking(true)}>
             {removal.removing ? <Icon name="Loading" className="animate-spin" aria-hidden /> : null}
@@ -525,7 +530,7 @@ function MovedCopyRow() {
         }
       >
         <div className="space-y-2">
-          <p>BB Box made it {copy ? relativeTime(copy.at, Date.now()) : ""}, when it moved BB's settings into this configuration. Everything in it is in the configuration now, and nothing reads it.</p>
+          <p>BB Box made it {copy ? ago(copy.at, Date.now()) : ""}, when it moved BB's settings into this configuration. Everything in it is in the configuration now, and nothing reads it.</p>
           <p>
             Once removed it cannot be got back. To keep a record first, run <code className="rounded-sm bg-muted px-1 py-0.5 font-mono text-xs text-foreground">bb box config migrated --json</code>.
           </p>

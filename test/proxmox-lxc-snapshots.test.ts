@@ -60,7 +60,7 @@ test("a snapshot's Proxmox name and label carry IDs and dates only, and the labe
   assert.deepEqual(parseSnapshotLabel(versioned), { install: "inst1", box: "bxamberfox2q7k", snapshot: SNAPSHOT, reset: 7, kept: "2026-11-29" }, "the identity reset's version is a number, not a name or a secret");
   assert.deepEqual(parseSnapshotLabel(`${label} kept 2026-11-29`)?.kept, "2026-11-29");
   assert.equal(keptUntilOf("2026-11-29"), Date.UTC(2026, 10, 30) - 1, "kept until the end of the day");
-  assert.equal(parseSnapshotLabel("bb-box snapshot research"), null);
+  assert.equal(parseSnapshotLabel("BB Box snapshot research"), null);
   assert.equal(parseSnapshotLabel(`bb-box install inst1 box bx1 snapshot notanid`), null);
 });
 
@@ -88,7 +88,7 @@ test("the plan refuses a take on storage that takes none, on a locked guest with
   state.proxmox.storageTypes.set("local-lvm", "dir");
   const directory = await state.backend.planSnapshots(guest, "linux", null);
   assert.equal(directory.take.ok, false);
-  assert.equal(directory.take.why, "local-lvm (directory) takes no snapshots of containers, so bb-box takes no snapshot there.");
+  assert.equal(directory.take.why, "local-lvm (directory) takes no snapshots of containers, so BB Box takes no snapshot there.");
   state.proxmox.storageTypes.delete("local-lvm");
 
   state.proxmox.guests.get(vmid)!.config.lock = "rollback";
@@ -106,7 +106,7 @@ test("the plan refuses a take on storage that takes none, on a locked guest with
   made.push(fresh);
   const noRight = await fresh.planSnapshots(guest, "linux", null);
   assert.equal(noRight.take.ok, false);
-  assert.equal(noRight.take.why, "The Proxmox token lacks VM.Snapshot on /pool/bbbox, so bb-box cannot take snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on pve.");
+  assert.equal(noRight.take.why, "The Proxmox token lacks VM.Snapshot on /pool/bbbox, so BB Box cannot take snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on pve.");
 });
 
 test("a take records its task before it waits, and is complete only once Proxmox lists it without a snapstate", async () => {
@@ -224,10 +224,10 @@ test("thin metadata is read from the storage's own thin pool; when it cannot be,
   state.proxmox.storageConfigs.set("local-lvm", { storage: "local-lvm", type: "lvmthin", content: "rootdir" });
   const plan = await state.backend.planSnapshots(guest, "linux", null);
   assert.equal(plan.storage.metadataPercentFull, null);
-  assert.equal(plan.storage.metadataUnread, "bb-box cannot read which thin pool local-lvm is");
+  assert.equal(plan.storage.metadataUnread, "BB Box cannot read which thin pool local-lvm is");
   const check = (await state.backend.doctor()).checks.find((each) => each.id === "proxmox.snapshots")!;
   assert.equal(check.status, "warn");
-  assert.match(check.detail, /bb-box cannot read local-lvm's thin metadata \(bb-box cannot read which thin pool local-lvm is\), so a take checks the pool's data use but not that its metadata is under 80% full\./);
+  assert.match(check.detail, /BB Box cannot read local-lvm's thin metadata \(BB Box cannot read which thin pool local-lvm is\), so a take checks the pool's data use but not that its metadata is under 80% full\./);
   assert.match(check.fix!, /Sys\.Audit on \/, a read of the whole cluster/);
 });
 
@@ -237,7 +237,7 @@ test("a delete checks the snapshot's own label before it deletes: one named as o
   (state.proxmox.guests.get(vmid)!.snapshots ??= []).push({ name: snapshotName(SNAPSHOT), description: "made by hand", snaptime: 1_790_000_000 });
   const refused = await state.backend.deleteSnapshot({ id: SNAPSHOT, ref: "", guest }, tasks().hooks).catch((caught: unknown) => caught);
   assert.ok(refused instanceof SnapshotFailed);
-  assert.equal((refused as Error).message, `The snapshot named bbsn7kq2m6xa4pdq on guest ${vmid} is not bb-box's snapshot ${SNAPSHOT}: its description says "made by hand". bb-box deleted nothing.`);
+  assert.equal((refused as Error).message, `The snapshot named bbsn7kq2m6xa4pdq on guest ${vmid} is not BB Box's snapshot ${SNAPSHOT}: its description says "made by hand". BB Box deleted nothing.`);
   assert.equal(state.proxmox.guests.get(vmid)!.snapshots!.length, 1);
   state.proxmox.guests.get(vmid)!.snapshots![0]!.description = `bb-box install ${state.context.installId} box bxanotherboxaa snapshot ${SNAPSHOT}`;
   assert.ok((await state.backend.deleteSnapshot({ id: SNAPSHOT, ref: "", guest }, tasks().hooks).catch((caught: unknown) => caught)) instanceof SnapshotFailed, "another box's label");
@@ -251,7 +251,7 @@ test("a take is complete only when its task succeeded; the provider is told befo
   const { hooks, submitted, seen } = tasks();
   const failed = await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks).catch((caught: unknown) => caught);
   assert.ok(failed instanceof SnapshotIncomplete);
-  assert.equal((failed as Error).message, "Proxmox's task failed (vmstate save failed), though it left the snapshot with no part-made state, so bb-box does not count it as taken.");
+  assert.equal((failed as Error).message, "Proxmox's task failed (vmstate save failed), though it left the snapshot with no part-made state, so BB Box does not count it as taken.");
   assert.deepEqual(submitted, [0], "submitting came before any task was recorded");
   assert.deepEqual((await state.backend.findTasks(guest, "take", since)).map((task) => task.ref), [seen[0]!.ref]);
   assert.deepEqual(await state.backend.findTasks(guest, "delete", since), []);
@@ -646,7 +646,7 @@ test("a held copy cut short before its own labels still carries its source's tag
   const listed = (await state.backend.held()).find((each) => each.ref === String(part.vmid));
   assert.ok(listed, "the sweep sees it");
   assert.equal(listed.owner, null, "as a guest that names no box");
-  await assert.rejects(state.backend.labelCopy(claimed!, { box: id.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }), /is not the copy bb-box made of snapshot snbbbbbbbbbbbb/);
+  await assert.rejects(state.backend.labelCopy(claimed!, { box: id.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }), /is not the copy BB Box made of snapshot snbbbbbbbbbbbb/);
   await state.backend.labelCopy(claimed!, { box: id.boxId, snapshot: SNAPSHOT, kept: "2026-11-30", forkSafe: 7, kind: "linux" });
   for (const tag of ["held-copy", `snapshot.${SNAPSHOT}`, "kept.2026-11-30", "reset.7"]) assert.match(part.config.tags ?? "", new RegExp(`(^|;)${tag.replace(/\./g, "\\.")}(;|$)`), `labelled once its clone ends well: ${tag}`);
   assert.equal(part.config.onboot, "0");
@@ -727,20 +727,20 @@ test("review 6: the wait for a held copy's template is bounded by 120 s of elaps
     async () => ({}),
     () => false,
     async () => {
-      stop.abort(new Error("bb-box is stopping."));
+      stop.abort(new Error("BB Box is stopping."));
       throw stop.signal.reason;
     },
     250,
     7002,
     () => 0,
   );
-  await assert.rejects(cancelled, /bb-box is stopping/);
+  await assert.rejects(cancelled, /BB Box is stopping/);
   let ready = 0;
   await untilTemplate(async () => (++ready >= 3 ? { template: 1 } : {}), (config) => config.template === 1, async () => {}, 250, 7003, () => 0);
   assert.equal(ready, 3);
 });
 
-test("review: a clone's wait grows with its disk, at 3 times bb-box's estimate and never under 180 s, and the task is waited for that long in the same run", async () => {
+test("review: a clone's wait grows with its disk, at 3 times BB Box's estimate and never under 180 s, and the task is waited for that long in the same run", async () => {
   assert.equal(cloneWaitMs(null), 180_000);
   assert.equal(cloneWaitMs(16), 180_000);
   assert.equal(cloneWaitMs(100), 720_000, "a 100 GiB disk: 3 times 240 s");

@@ -62,7 +62,7 @@ test("the panel's sentences name BB Box, the save bar can wrap, and field errors
   assert.match(saving, /ml-auto flex min-w-0 w-full max-w-full basis-full flex-wrap items-center justify-end gap-1\.5 sm:w-auto sm:basis-auto/);
   assert.doesNotMatch(saving, /shrink-0 flex-wrap items-center gap-1\.5/);
   assert.equal(PRODUCT, "BB Box");
-  assert.equal(missingBackendWords("docker"), "This BB Box has no docker backend.");
+  assert.equal(missingBackendWords("docker"), "BB Box has no docker backend. Update BB Box, or remove this backend.");
 });
 
 test("dialogs do not copy the destructive button style or a shadow literal", () => {

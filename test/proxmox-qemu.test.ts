@@ -712,7 +712,7 @@ test("a Linux VM box takes its box's name inside: at its acquire, at each start 
   assert.equal(windowsSsh.log().filter((entry) => entry.command.includes("bb-box-boot")).length, 0);
 });
 
-test("vmNameScript renames a Linux VM from its template's build name, its hosts line too, and leaves a machine with no bb-box boot script, or already named, as it is", () => {
+test("vmNameScript renames a Linux VM from its template's build name, its hosts line too, and leaves a machine with no BB Box boot script, or already named, as it is", () => {
   const dir = tempDir("vm-name");
   const bin = join(dir, "bin");
   const etc = join(dir, "etc");
@@ -730,7 +730,7 @@ test("vmNameScript renames a Linux VM from its template's build name, its hosts 
     assert.equal(ran.status, 0, ran.stderr);
     return [readFileSync(join(dir, "kernel"), "utf8"), readFileSync(join(etc, "hostname"), "utf8"), readFileSync(join(etc, "hosts"), "utf8")];
   };
-  assert.deepEqual(run("bb-box-linux-build"), ["bb-box-linux-build\n", "bb-box-linux-build\n", "127.0.0.1 localhost\n127.0.1.1 bb-box-linux-build\n"], "no boot script: not a bb-box VM");
+  assert.deepEqual(run("bb-box-linux-build"), ["bb-box-linux-build\n", "bb-box-linux-build\n", "127.0.0.1 localhost\n127.0.1.1 bb-box-linux-build\n"], "no boot script: not a BB Box VM");
   writeFileSync(marker, "#!/bin/sh\n");
   chmodSync(marker, 0o755);
   assert.deepEqual(run("bb-box-linux-build"), ["calm-otter\n", "calm-otter\n", "127.0.0.1 localhost\n127.0.1.1 calm-otter\n"]);
@@ -738,7 +738,7 @@ test("vmNameScript renames a Linux VM from its template's build name, its hosts 
   assert.deepEqual(run("calm-otter")[0], "calm-otter\n", "already named: nothing to do, so no sudo");
 });
 
-test("doctor passes on a complete setup, and warns that a template from build.sh lacks a key bb-box made", async () => {
+test("doctor passes on a complete setup, and warns that a template from build.sh lacks a key BB Box made", async () => {
   const { backend, storage } = setup({ "ssh-private-key": "" });
   const report = await backend.doctor();
   assert.equal(report.ok, true, JSON.stringify(report, null, 2));
@@ -784,7 +784,7 @@ test("doctor names the snapshot right a VM token lacks, and what Ceph RBD, ZFS a
   const snapshots = report.checks.find((check) => check.id === "proxmox.snapshots")!;
   assert.deepEqual([snapshots.status, snapshots.detail, snapshots.fix], [
     "warn",
-    "The token lacks VM.Snapshot.Rollback on /pool/bbbox, so bb-box cannot restore snapshots. " +
+    "The token lacks VM.Snapshot.Rollback on /pool/bbbox, so BB Box cannot restore snapshots. " +
       "ceph (Ceph RBD) restores any snapshot. tank (ZFS) restores only the newest snapshot. files (NFS, qcow2 files) restores any snapshot.",
     "Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on pve. It keeps the token and its secret, and adds the missing rights to the token's role.",
   ]);
@@ -827,7 +827,7 @@ test("doctor judges each Windows template's image by the record in its descripti
   assert.match(image(9106).detail, /It has Node\.js 20\.11\.0, and BB's installer needs 22\.19\.0 or later, so each box installs it as it joins BB, about 11 s more\./);
   assert.match(image(9106).detail, /It has none of the agent CLIs BB runs threads with, Claude Code, Codex, Pi, so box_thread refuses its boxes \(#561\)\./);
   assert.equal(image(9105).status, "warn");
-  assert.match(image(9105).detail, /It is 61 days old, more than 60, .* It was built with other pins than this bb-box's/);
+  assert.match(image(9105).detail, /It is 61 days old, more than 60, .* It was built with other pins than this BB Box's/);
   assert.equal(image(9105).fix, "Rebuild it with the setup guide's setup/proxmox-qemu/build.sh, as root on pve: build.sh windows 9105 --replace.");
 });
 
@@ -836,7 +836,7 @@ test("doctor passes the key from the settings", async () => {
   const report = await setup({ "ssh-private-key": privateKey }).backend.doctor();
   const key = report.checks.find((check) => check.id === "ssh.key")!;
   assert.equal(key.status, "ok", JSON.stringify(key));
-  assert.equal(key.detail, "From bb-box's settings; its public key is below.");
+  assert.equal(key.detail, "From BB Box's settings; its public key is below.");
 });
 
 test("doctor says what is missing", async () => {
@@ -1145,7 +1145,7 @@ test("dispose stops a warm fill", async () => {
     if (call.path.endsWith("/status/start")) disposed ??= backend.dispose();
     return undefined;
   };
-  await assert.rejects(backend.maintain(), /bb-box is stopping/);
+  await assert.rejects(backend.maintain(), /BB Box is stopping/);
   await disposed;
   assert.equal(proxmox.guests.has(9700), false, "the VM it was filling is deleted");
 });
@@ -1236,12 +1236,12 @@ test("image operations on a Linux template: its build box has no Windows steps, 
   assert.match(proxmox.guests.get(9120)!.config.description!, /^bb-box linux vm template, refreshed \d{4}-\d{2}-\d{2} from Ubuntu 24\.04's cloud image 20260926\.\n\{"contract":1,/);
   const rollback = [...proxmox.guests.values()].find((guest) => parseTags(guest.config.tags).includes("image.rollback"))!;
   assert.equal(rollback.name, "bb-box-linux-rollback");
-  assert.match(rollback.config.description!, /^bb-box rollback of Linux template 9120, build\.20261011-090550-3ca0, kept until its next refresh\. To use it, list \d+ as the Linux template in bb-box's settings\.\n$/);
+  assert.match(rollback.config.description!, /^BB Box rollback of Linux template 9120, build\.20261011-090550-3ca0, kept until its next refresh\. To use it, list \d+ as the Linux template in BB Box's settings\.\n$/);
   // The doctor lists it, as it holds a box's VMID and address (054, 057).
   const notes = (await backend.doctor()).notes.join("\n");
   assert.match(
     notes,
-    new RegExp(`^VMID ${rollback.vmid} is the rollback of Linux template 9120, build\\.20261011-090550-3ca0\\. It holds a box's VMID and address until the template's next refresh replaces it\\. To go back to it, list ${rollback.vmid} as the Linux template in bb-box's settings\\.$`, "m"),
+    new RegExp(`^VMID ${rollback.vmid} is the rollback of Linux template 9120, build\\.20261011-090550-3ca0\\. It holds a box's VMID and address until the template's next refresh replaces it\\. To go back to it, list ${rollback.vmid} as the Linux template in BB Box's settings\\.$`, "m"),
   );
 });
 
@@ -1314,7 +1314,7 @@ test("image operations: a box from the Windows template, its capture as a templa
   assert.equal(rollback.vmid, 9702);
   assert.deepEqual([rollback.template, rollback.name, rollback.config.protection], [true, "bb-box-windows-rollback", "1"]);
   assert.deepEqual(parseTags(rollback.config.tags), ["bb-box", "install.test", "image.rollback", "kind.windows-desktop", "template.9104", "build.20260901-020000-77aa"]);
-  assert.match(rollback.config.description!, /^bb-box rollback of Windows template 9104, build\.20260901-020000-77aa, kept until its next refresh\. To use it, list 9702 as the Windows template in bb-box's settings\.\n$/);
+  assert.match(rollback.config.description!, /^BB Box rollback of Windows template 9104, build\.20260901-020000-77aa, kept until its next refresh\. To use it, list 9702 as the Windows template in BB Box's settings\.\n$/);
   assert.deepEqual(
     (await images.list()).builds.map((one) => [one.ref, one.image, one.current]),
     [["9104", "standard", true], ["9702", "rollback", false]],
@@ -1451,7 +1451,7 @@ function linuxDiskTools(ssh: ReturnType<typeof fakeSsh>, address: string): { log
   };
 }
 
-test("a Linux VM's root file system is grown over a disk larger than its template's by bb-box after its first boot, not left to its boot script alone", async () => {
+test("a Linux VM's root file system is grown over a disk larger than its template's by BB Box after its first boot, not left to its boot script alone", async () => {
   const { backend, proxmox, ssh } = setup({ "linux-templates": "9120" });
   proxmox.addVmTemplate(9120);
   const tools = linuxDiskTools(ssh, "192.0.2.150");
@@ -1550,7 +1550,7 @@ test("an Android template with KVM off offers no kind, but its image is listed, 
   assert.equal(replaced.ref, "9108");
   const rollback = [...proxmox.guests.values()].find((guest) => parseTags(guest.config.tags).includes("image.rollback"))!;
   assert.equal(rollback.name, "bb-box-android-rollback");
-  assert.match(rollback.config.description!, /^bb-box rollback of Android template 9108, build\.20261020-030000-77aa, kept until its next refresh\./);
+  assert.match(rollback.config.description!, /^BB Box rollback of Android template 9108, build\.20261020-030000-77aa, kept until its next refresh\./);
   const withKvm = setup({ "android-templates": "9108", "linux-kvm": true });
   withKvm.proxmox.addVmTemplate(9108);
   assert.equal((await withKvm.backend.doctor()).checks.find((one) => one.id === "proxmox.android-kvm")?.status, "ok");

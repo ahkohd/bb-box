@@ -31,6 +31,7 @@ import { standingOfRecord } from "../core/snapshots.ts";
 import type { Standing } from "../core/snapshot.ts";
 
 /** How many kept profiles stay: older ones go as a new one is kept. */
+import { PRODUCT } from "../brand.ts";
 const PROFILES_KEPT = 5;
 
 /** bb-box's own folder of BB's data, beside its database: profiles/. */
@@ -503,7 +504,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       const backend = app.backends.get(id);
       if (!backend?.cardsInUse) return { is: "none" };
       const read = backend.cardsInUse.bind(backend);
-      const inUse = await answerWithin(CARDS_READ_MS, (signal) => read(signal)).catch((error: unknown) => ({ is: "unread" as const, host: null, why: `bb-box could not read the cards: ${error instanceof Error ? error.message : String(error)}`, setup: null }));
+      const inUse = await answerWithin(CARDS_READ_MS, (signal) => read(signal)).catch((error: unknown) => ({ is: "unread" as const, host: null, why: `${PRODUCT} could not read the cards: ${error instanceof Error ? error.message : String(error)}`, setup: null }));
       return settingsCards(inUse, id, (await boxes.all()).map((box) => ({ id: box.id, name: box.name, backend: box.backend })));
     },
     "config.check": ({ draft, test, read }) => app.configuration.check(draft, test, undefined, { read }),

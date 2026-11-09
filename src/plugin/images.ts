@@ -17,6 +17,7 @@ import { defaultSize, kindSizes } from "../core/sizes.ts";
 import type { ImageBakes } from "./bakes.ts";
 
 /** The days after which a standard image is due (049): a week for Linux, a month for macOS and Windows. */
+import { PRODUCT } from "../brand.ts";
 const INTERVAL_DAYS = { linux: 7, android: 30, macos: 30, ios: 30, windows: 30 } as const;
 /** A refresh run stops starting images after this long (049). */
 export const RUN_LIMIT_MS = 4 * 60 * 60_000;
@@ -50,7 +51,7 @@ export interface DueSoon {
 }
 
 /** The automation that runs the job each night, as the setup guide gives it. */
-export const AUTOMATION = 'bb automation create --project <project> --name "bb-box images" --cron "0 2 * * *" --timezone <zone> --script "bb box images refresh" --timeout 900000';
+export const AUTOMATION = `bb automation create --project <project> --name "${PRODUCT} images" --cron "0 2 * * *" --timezone <zone> --script "bb box images refresh" --timeout 900000`;
 
 export interface ImageJobsDeps {
   /** The backends that are on. */
@@ -231,7 +232,7 @@ export class ImageJobs {
     const days = (this.#now() - Date.parse(record.built)) / DAY_MS;
     if (days > INTERVAL_DAYS[os]) return [2, `it is ${Math.floor(days)} days old, past its ${INTERVAL_DAYS[os]}-day interval`];
     if (carriesBbApp(build.kind) && app && record.bbApp !== app) return [4, "it has another build of BB's app than BB's server gives"];
-    if (pins && record.pins !== pins) return [5, "it was built with other pins than this bb-box's"];
+    if (pins && record.pins !== pins) return [5, `it was built with other pins than this ${PRODUCT}'s`];
     const program = await this.#deps.facts.program?.(build.kind, backend.id).catch(() => null);
     if (program && record.program && record.program !== program) return [6, "its guest program or prepare script changed"];
     return null;
@@ -391,7 +392,7 @@ export class ImageJobs {
 
   /** Stops a run: the image being refreshed fails, its old build stays, and no other starts. */
   stop(): void {
-    this.#running?.stop.abort(new Error("bb-box is stopping."));
+    this.#running?.stop.abort(new Error(`${PRODUCT} is stopping.`));
   }
 
   async #run(options: RunOptions, signal: AbortSignal): Promise<RunResult> {

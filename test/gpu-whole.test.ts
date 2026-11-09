@@ -118,7 +118,7 @@ test("071 unit 8: the whole-card rules: stopped shared boxes the helper manages 
   assert.deepEqual(said(placeWhole(rules([`holder ${A} 31 whole stopped install test managed`], { candidates: new Set([A]) }))), ["card 0 is CT 31's whole card"], "a stopped whole box keeps its card");
   const reservations = new CardReservations();
   reservations.add(A, "shared", 384, "bxr", null, { name: "amber-fox", threadId: "thr_x" });
-  assert.deepEqual(said(placeWhole(rules([], { reserved: reservations.live(lines(report.join("\n")), 0), candidates: new Set([A]) }))), ["bb-box is placing amber-fox on card 0"]);
+  assert.deepEqual(said(placeWhole(rules([], { reserved: reservations.live(lines(report.join("\n")), 0), candidates: new Set([A]) }))), ["BB Box is placing amber-fox on card 0"]);
   assert.deepEqual(said(placeWhole(rules([], { outstanding: [{ vmid: 40, marker: { card: A, generation: 3 } }], candidates: new Set([A]) }))), ["the GPU helper has not answered CT 40's request g3 on card 0"]);
   assert.deepEqual(said(placeWhole(rules([`unsettled 41 ${A} g2`], { candidates: new Set([A]) }))), ["card 0 waits for CT 41 to ask again, as the GPU helper's ledger was lost and it may hold the card"]);
   assert.deepEqual(said(placeWhole(rules([], { memory: new Map([[A, { freeMiB: 900, totalMiB: 97_887 }]]), candidates: new Set([A]) }))), ["card 0 has 900 MiB free when last read, less than the 1024 MiB a new server needs"]);
@@ -128,14 +128,14 @@ test("071 unit 8: the whole-card rules: stopped shared boxes the helper manages 
   assert.deepEqual(warm.retire, [51], "this install's warm guests on the card are retired, not counted");
 });
 
-test("071 unit 8: a card kept whole for a box bb-box is making takes no shared box, so a shared placement and a whole one never meet on a card", () => {
+test("071 unit 8: a card kept whole for a box BB Box is making takes no shared box, so a shared placement and a whole one never meet on a card", () => {
   const reservations = new CardReservations();
   reservations.add(A, "whole", 1024, "bxw", null, { name: "quiet-elm", threadId: "thr_job" });
   const live = reservations.live(lines(report.join("\n")), 0);
   const placed = placeShared({ ...rules([], { reserved: live, limit: 4 }), needMiB: 1024 });
   assert.ok(placed.is === "placed" && placed.card.uuid === B, "the shared box goes to the other card");
   const refused = placeShared({ ...rules([], { reserved: live, limit: 4, candidates: new Set([A]) }), needMiB: 1024 });
-  assert.deepEqual(said(refused), ["card 0 is kept whole for quiet-elm, which bb-box is making"]);
+  assert.deepEqual(said(refused), ["card 0 is kept whole for quiet-elm, which BB Box is making"]);
 });
 
 test("071 unit 8: a server with a whole card is placed, marked whole in the write that labels it, granted, given the server set while stopped, and started on its card", async () => {
@@ -174,9 +174,9 @@ test("071 unit 8 gate: two whole acquires at once for one free card make one box
   assert.ok(error instanceof BackendError && error.code === "no_capacity", String(error));
   assert.match(
     error.message,
-    /^No card on pve is free for a whole card now: card 0 (is kept whole for whole-box-\d+, which bb-box is making|is whole-box-\d+'s whole card); card 1 has CT 7060 of another install running\. Release a box on one of the cards, ask for gpu shared, or ask for gpu none\.$/,
+    /^No card on pve is free for a whole card now: card 0 (is kept whole for whole-box-\d+, which BB Box is making|is whole-box-\d+'s whole card); card 1 has CT 7060 of another install running\. Release a box on one of the cards, ask for gpu shared, or ask for gpu none\.$/,
   );
-  assert.match(error.agentMessage ?? "", /^Not made: no card on pve is free for a whole card now: .* Ask for gpu shared, or ask the user\. bb-box changed nothing\.$/);
+  assert.match(error.agentMessage ?? "", /^Not made: no card on pve is free for a whole card now: .* Ask for gpu shared, or ask the user\. BB Box changed nothing\.$/);
   assert.equal(clones(bridge), before + 1, "the refused acquire copied nothing");
   bridge.pass();
   assert.equal(bridge.node.reportLines().filter((line) => / granted whole /.test(line)).length, 1, bridge.node.reportLines().join("\n"));
@@ -195,19 +195,19 @@ test("071 unit 8: a whole card refused while boxes run on the cards names them: 
   await assert.rejects(backend.acquire(box("linux", "whole", "thr_agent"), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
     assert.equal(error.message, `No card on pve is free for a whole card now: card 0 has lone-pine (in thread "Train the model") running; card 1 is quiet-elm's whole card (in thread "Long job"). ${WHOLE_FIX}`);
-    assert.equal(error.agentMessage, "Not made: no card on pve is free for a whole card now: card 0 has lone-pine running; card 1 is quiet-elm's whole card. Ask for gpu shared, or ask the user. bb-box changed nothing.");
+    assert.equal(error.agentMessage, "Not made: no card on pve is free for a whole card now: card 0 has lone-pine running; card 1 is quiet-elm's whole card. Ask for gpu shared, or ask the user. BB Box changed nothing.");
     return true;
   });
   await assert.rejects(backend.acquire(box("linux", "whole", "thr_train"), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
-    assert.equal(error.agentMessage, "Not made: no card on pve is free for a whole card now: card 0 has lone-pine running; card 1 is quiet-elm's whole card. Release one of your own boxes on card 0 (lone-pine), ask for gpu shared, or ask the user. bb-box changed nothing.");
+    assert.equal(error.agentMessage, "Not made: no card on pve is free for a whole card now: card 0 has lone-pine running; card 1 is quiet-elm's whole card. Release one of your own boxes on card 0 (lone-pine), ask for gpu shared, or ask the user. BB Box changed nothing.");
     assert.doesNotMatch(error.agentMessage!, /Train the model|Long job|quiet-elm\)|settings/);
     return true;
   });
   assert.equal(clones(bridge), before, "refused before any copy");
   const room = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" }, [], undefined, { threadId: "thr_job" });
   assert.equal(room.ok, false);
-  assert.equal(room.agentMessage, "Not made: no card on pve is free for a whole card now: card 0 has lone-pine running; card 1 is quiet-elm's whole card. Release one of your own boxes on card 1 (quiet-elm), ask for gpu shared, or ask the user. bb-box changed nothing.");
+  assert.equal(room.agentMessage, "Not made: no card on pve is free for a whole card now: card 0 has lone-pine running; card 1 is quiet-elm's whole card. Release one of your own boxes on card 1 (quiet-elm), ask for gpu shared, or ask the user. BB Box changed nothing.");
   const desktop = await backend.capacity("linux-desktop", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" }, []);
   assert.match(desktop.message!, /^No card on pve is free for a whole card now: card 0 has lone-pine \(in thread "Train the model"\) running; card 1 is quiet-elm's whole card/);
 });
@@ -274,7 +274,7 @@ test("071 unit 8: whole is refused, with words for each audience and before any 
   for (const kind of ["linux", "linux-desktop"]) {
     const room = await backend.capacity(kind, { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" }, []);
     assert.equal(room.message, "pve cannot give a box a whole card now: its GPU helper has writes off, so it gives no box a card. Turn writes on with host/setup-gpu.sh --writes on --check, then --writes on, as root on pve.", kind);
-    assert.equal(room.agentMessage, "Not made: pve cannot give a box a whole card now: its GPU helper has writes off, so it gives no box a card. Ask for gpu shared, or ask the user. bb-box changed nothing.", kind);
+    assert.equal(room.agentMessage, "Not made: pve cannot give a box a whole card now: its GPU helper has writes off, so it gives no box a card. Ask for gpu shared, or ask the user. BB Box changed nothing.", kind);
   }
   const before = clones(off);
   await assert.rejects(backend.acquire(box("linux-desktop", "whole"), null, hooks(), signal()), /pve cannot give a box a whole card now: its GPU helper has writes off/);
@@ -285,7 +285,7 @@ test("071 unit 8: whole is refused, with words for each audience and before any 
   bare.timerReport();
   const timer = bare.backend();
   const room = await timer.capacity("linux-desktop", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" }, []);
-  assert.equal(room.agentMessage, "Not made: pve cannot give a box a whole card now: it has no GPU helper to give a box a card. Ask for gpu shared, or ask the user. bb-box changed nothing.");
+  assert.equal(room.agentMessage, "Not made: pve cannot give a box a whole card now: it has no GPU helper to give a box a card. Ask for gpu shared, or ask the user. BB Box changed nothing.");
 });
 
 test("071 unit 8: a fork with a whole card is placed and its card kept whole before anything is copied, and refused with the fork's own words when no card is free", async () => {
@@ -296,7 +296,7 @@ test("071 unit 8: a fork with a whole card is placed and its card kept whole bef
   await backend.placeForkGpu(fork, "whole");
   const beside = await backend.acquire(box("linux-desktop", "shared"), null, hooks(), signal());
   assert.equal(beside.claim?.card, B, "the card kept whole for the fork takes no shared box");
-  await assert.rejects(backend.acquire(box("linux-desktop", "whole"), null, hooks(), signal()), /card 0 is kept whole for fork-fox, which bb-box is making/);
+  await assert.rejects(backend.acquire(box("linux-desktop", "whole"), null, hooks(), signal()), /card 0 is kept whole for fork-fox, which BB Box is making/);
   backend.clearForkGpu(fork.boxId);
   await backend.release(beside, releasing);
   bridge.pass();
@@ -305,8 +305,8 @@ test("071 unit 8: a fork with a whole card is placed and its card kept whole bef
   bridge.pass();
   await assert.rejects(backend.placeForkGpu(box("linux-desktop", "whole", "thr_fork"), "whole"), (error: unknown) => {
     assert.ok(error instanceof BackendError && error.code === "no_capacity");
-    assert.equal(error.message, "Not forked: No card on pve is free for a whole card now: card 0 has lone-pine running; card 1 has CT 7062 of another install running. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.");
-    assert.equal(error.agentMessage, "Not forked: No card on pve is free for a whole card now: card 0 has lone-pine running; card 1 has CT 7062 of another install running. Fork it with gpu shared or none, or ask the user. bb-box copied nothing.");
+    assert.equal(error.message, "Not forked: No card on pve is free for a whole card now: card 0 has lone-pine running; card 1 has CT 7062 of another install running. Fork it with gpu shared or none, or ask the user. BB Box copied nothing.");
+    assert.equal(error.agentMessage, "Not forked: No card on pve is free for a whole card now: card 0 has lone-pine running; card 1 has CT 7062 of another install running. Fork it with gpu shared or none, or ask the user. BB Box copied nothing.");
     return true;
   });
   await assert.rejects(backend.placeForkGpu(box("linux", "whole"), "whole"), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
@@ -393,10 +393,10 @@ test("071 unit 8, lead: whole cards are off unless the install turns them on: no
   assert.match(gpuPartsText(linux, 1_000), /: none or shared; ask with gpu shared \(.*\)\. Whole cards are off on [^:]+: ask the user if a box needs a card to itself\.$/);
   const refused = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" }, []);
   assert.equal(refused.message, "Whole cards are off on Proxmox LXC on pve, so no box gets a card to itself there. Ask for gpu shared, or turn Whole cards on in Proxmox LXC on pve's GPUs section in BB Box's settings, or with bb box backend set proxmox-lxc --field whole-cards=true.");
-  assert.equal(refused.agentMessage, "Not made: whole cards are off on Proxmox LXC on pve. Ask for gpu shared, or ask the user. bb-box changed nothing.");
+  assert.equal(refused.agentMessage, "Not made: whole cards are off on Proxmox LXC on pve. Ask for gpu shared, or ask the user. BB Box changed nothing.");
   const before = clones(bridge);
   await assert.rejects(backend.acquire(box("linux", "whole"), null, hooks(), signal()), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && error.agentMessage === refused.agentMessage);
-  await assert.rejects(backend.placeForkGpu(box("linux-desktop", "whole"), "whole"), { agentMessage: "Not forked: whole cards are off on Proxmox LXC on pve. Fork it with gpu shared or none, or ask the user. bb-box copied nothing." });
+  await assert.rejects(backend.placeForkGpu(box("linux-desktop", "whole"), "whole"), { agentMessage: "Not forked: whole cards are off on Proxmox LXC on pve. Fork it with gpu shared or none, or ask the user. BB Box copied nothing." });
   assert.equal(clones(bridge), before);
   assert.equal((await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "shared" }, [])).ok, true, "shared is as before");
 });
@@ -477,7 +477,7 @@ test("071 unit 8, Fable 5: a card the start gate keeps whole names the box it is
   };
   await backend.start(bridge.stoppedGuest(7011, owl, 9001), signal());
   assert.equal(seen, "starting-owl starting");
-  assert.equal(blockWords({ is: "reserved-whole", card: lines(report.join("\n")).cards[1]!, making: { name: "starting-owl", threadId: "thr_whole", starting: true } }, byVmid, PERSON), "card 1 is kept whole for starting-owl, which bb-box is starting");
+  assert.equal(blockWords({ is: "reserved-whole", card: lines(report.join("\n")).cards[1]!, making: { name: "starting-owl", threadId: "thr_whole", starting: true } }, byVmid, PERSON), "card 1 is kept whole for starting-owl, which BB Box is starting");
 });
 
 test("071 unit 8, Astra 6, Astra 7 and Fable 4: box_list gives desktops their cards too, whose whole card each is and which are free for a whole card, by the acquire's own placement, so a card a mismatch closes is not free", async () => {
@@ -529,7 +529,7 @@ test("071 unit 8, round 2, Astra 1: with whole cards on, whole is refused while 
   for (const kind of ["linux", "linux-desktop"]) {
     const room = await backend.capacity(kind, { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "whole" }, []);
     assert.equal(room.message, `${why} Upgrade the helper with host/setup-gpu.sh from a BB Box release with bb-box-gpu 0.4.3 or later, as root on pve.`, kind);
-    assert.equal(room.agentMessage, `Not made: ${why} Ask for gpu shared, or ask the user. bb-box changed nothing.`, kind);
+    assert.equal(room.agentMessage, `Not made: ${why} Ask for gpu shared, or ask the user. BB Box changed nothing.`, kind);
     assert.doesNotMatch(room.agentMessage!, /setup-gpu|upgrade/i);
   }
   const before = clones(bridge);
@@ -664,7 +664,7 @@ for (const route of ["return", "adopt"] as const) {
         : () => backend.armReturned(guest, held, true, signal());
     await assert.rejects(handoff(), (error: unknown) => {
       refusedForOldHelper(error);
-      assert.match((error as Error).message, new RegExp(`^bb-box did not write gpu\\.whole\\.${A}\\.g\\d+ on CT ${given.ref}, which would ask the host's GPU helper for a whole card: `));
+      assert.match((error as Error).message, new RegExp(`^BB Box did not write gpu\\.whole\\.${A}\\.g\\d+ on CT ${given.ref}, which would ask the host's GPU helper for a whole card: `));
       return true;
     });
     bridge.pass();

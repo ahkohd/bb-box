@@ -3,6 +3,8 @@ import type { CardMemory } from "./gpu-claims.ts";
 import type { HelperCard } from "./gpu-marking.ts";
 import { agentChoices, blockWords, PERSON, type CardBlock, type CardNamer } from "./gpu-refusals.ts";
 import { USERSPACE_INSTALL_SECONDS, startFirstWords } from "../../core/gpu-userspace.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const GPU_RESTART_SECONDS = 15;
 
@@ -100,7 +102,7 @@ export function gpuPlanWords(input: GpuPlanInput): string {
     return `GPU: shared → whole ${named(toCard)} · Live. ${capitalised(named(toCard))} becomes ${name}'s alone: no other box is placed on it while ${name} holds it. Nothing in ${name} stops.${yieldWords(others)}`;
   }
   const held = input.fromHeldBy ? `${capitalised(input.fromHeldBy)}. ` : "";
-  return `GPU: shared on ${named(fromCard)} → whole ${named(toCard)} · Restart. ${held}bb-box moves ${name} to ${named(toCard)}, which has no other box, ${seconds}. Everything running in ${name} stops.`;
+  return `GPU: shared on ${named(fromCard)} → whole ${named(toCard)} · Restart. ${held}${PRODUCT} moves ${name} to ${named(toCard)}, which has no other box, ${seconds}. Everything running in ${name} stops.`;
 }
 
 export function plannedChange(input: GpuPlanInput, refusal: GpuRefusal | null = null): GpuResize {
@@ -129,7 +131,7 @@ export function noWholeCardRefusal(box: PlanBox, blocks: readonly CardBlock[], n
   const own = agentChoices(blocks, namer, asking, "keep the GPU shared");
   return {
     person: `No card is free for ${box.name} alone.${person.length ? ` ${person.join(". ")}.` : ""} Release one of them, or keep the GPU shared.`,
-    agent: `Not resized: no card is free for ${box.name} alone.${agent.length ? ` ${capitalised(agent.join("; "))}.` : ""} ${own} bb-box changed nothing.`,
+    agent: `Not resized: no card is free for ${box.name} alone.${agent.length ? ` ${capitalised(agent.join("; "))}.` : ""} ${own} ${PRODUCT} changed nothing.`,
   };
 }
 
@@ -139,21 +141,21 @@ export function noSharedCardRefusal(node: string, box: PlanBox, blocks: readonly
   const own = agentChoices(blocks, namer, asking, "keep it with no GPU");
   return {
     person: `No card on ${node} can take a shared GPU for ${box.name} now${person.length ? `: ${person.join("; ")}` : ""}. Release a box on a card, keep it with no GPU, or raise the boxes per card in BB Box's settings.`,
-    agent: `Not resized: no card on ${node} can take a shared GPU for ${box.name} now${agent.length ? `: ${agent.join("; ")}` : ""}. ${own} bb-box changed nothing.`,
+    agent: `Not resized: no card on ${node} can take a shared GPU for ${box.name} now${agent.length ? `: ${agent.join("; ")}` : ""}. ${own} ${PRODUCT} changed nothing.`,
   };
 }
 
 export function helperNotReadyRefusal(node: string, box: PlanBox, why: string, fix: string): GpuRefusal {
   return {
     person: `${node} cannot change ${box.name}'s GPU now: ${why}. ${fix}`,
-    agent: `Not resized: ${node} cannot change ${box.name}'s GPU now: ${why}. Keep its GPU as it is, or ask the user. bb-box changed nothing.`,
+    agent: `Not resized: ${node} cannot change ${box.name}'s GPU now: ${why}. Keep its GPU as it is, or ask the user. ${PRODUCT} changed nothing.`,
   };
 }
 
 export function unmarkedRefusal(box: PlanBox): GpuRefusal {
   return {
-    person: `${capitalised(box.name)} has a card's device lines and no GPU marker, so bb-box does not know which claim it holds. Run bb box gpu mark, then resize it again.`,
-    agent: `Not resized: ${box.name} has a card's device lines and no GPU marker, so bb-box does not know which claim it holds. Ask the user. bb-box changed nothing.`,
+    person: `${capitalised(box.name)} has a card's device lines and no GPU marker, so ${PRODUCT} does not know which claim it holds. Run bb box gpu mark, then resize it again.`,
+    agent: `Not resized: ${box.name} has a card's device lines and no GPU marker, so ${PRODUCT} does not know which claim it holds. Ask the user. ${PRODUCT} changed nothing.`,
   };
 }
 
@@ -162,5 +164,5 @@ export function startFirstRefusal(box: PlanBox, driver: string): GpuRefusal {
 }
 
 export function noDriverRefusal(node: string, box: PlanBox): GpuRefusal {
-  return helperNotReadyRefusal(node, box, "its GPU helper reports no NVIDIA driver, so bb-box cannot tell which userspace a card needs", "Run bb box doctor.");
+  return helperNotReadyRefusal(node, box, `its GPU helper reports no NVIDIA driver, so ${PRODUCT} cannot tell which userspace a card needs`, "Run bb box doctor.");
 }

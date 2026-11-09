@@ -162,7 +162,7 @@ async function serving(hosts: NamespaceHosts): Promise<NamespaceHostRecord> {
   throw new Error("the host did not serve");
 }
 
-test("Namespace's ios offer comes from its last Mac measured: a model its Xcode makes, its newest runtime, and bb-box's list for it (065, unit 7)", () => {
+test("Namespace's ios offer comes from its last Mac measured: a model its Xcode makes, its newest runtime, and BB Box's list for it (065, unit 7)", () => {
   const offer = namespaceDeviceOffer(REPORT);
   assert.ok(offer.ok);
   const device = offer.device.devices[0];
@@ -173,11 +173,11 @@ test("Namespace's ios offer comes from its last Mac measured: a model its Xcode 
   const noList = { ...REPORT, capabilities: { ...REPORT.capabilities, simulator: { is: "yes" as const, what: { xcode: "26.4", runtimes: ["iOS 26.4"], newest: { os: "26.4", build: "23E1" }, deviceTypes: ["com.apple.CoreSimulator.SimDeviceType.iPhone-17"] } } } };
   assert.match((namespaceDeviceOffer(noList) as { why: string }).why, /no slimming list for iOS 26\.4 \(23E1\)/);
   const noModel = { ...REPORT, capabilities: { ...REPORT.capabilities, simulator: { is: "yes" as const, what: { xcode: "26.1.1", runtimes: ["iOS 26.2"], newest: { os: "26.2", build: "23C54" }, deviceTypes: ["com.apple.CoreSimulator.SimDeviceType.iPhone-8"] } } } };
-  assert.match((namespaceDeviceOffer(noModel) as { why: string }).why, /can make none of bb-box's iOS devices/);
+  assert.match((namespaceDeviceOffer(noModel) as { why: string }).why, /can make none of BB Box's iOS devices/);
   assert.match((namespaceDeviceOffer({ ...REPORT, capabilities: NOT_MEASURED }) as { why: string }).why, /cannot run the iOS Simulator/);
 });
 
-test("a host's setup unpacks bb-box's setup and runs mac-ios.sh as root with the host's settings, as a host deleted after its last box", () => {
+test("a host's setup unpacks BB Box's setup and runs mac-ios.sh as root with the host's settings, as a host deleted after its last box", () => {
   const script = hostSetupScript({ most: 4, ahead: 1, resettingMost: 2, diskReserveGiB: 20 });
   assert.match(script, /sudo -n env HOST_SETTINGS='most=4\nahead=1\nresetting-most=2\ndisk-reserve-gib=20' \/bin\/sh "\$here\/ssh-pool\/mac-ios\.sh" "\$here\/ssh-pool" "\$\(id -un\)"/);
   assert.match(UNPACK_SETUP, /tar -xzf - -C "\$HOME\/bb-box-setup"/);

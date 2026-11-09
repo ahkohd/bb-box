@@ -38,6 +38,7 @@ import {
 } from "./rfb.ts";
 
 /** How long opening the box's display and its handshake may take. */
+import { PRODUCT } from "../brand.ts";
 const CONNECT_TIMEOUT_MS = 20_000;
 /** How long a sign-in may hang before a display that can restart its server has it restarted, once, and is tried again (#411). */
 export const STALL_MS = 4_000;
@@ -574,7 +575,7 @@ export class RfbRelay {
       failed = error instanceof Error ? error : new Error(String(error));
     }
     this.#options.onServerRestart?.(why, failed);
-    const words = failed ? `bb-box could not restart it: ${failed.message}` : "bb-box restarted it, and the viewer connects again";
+    const words = failed ? `${PRODUCT} could not restart it: ${failed.message}` : `${PRODUCT} restarted it, and the viewer connects again`;
     await this.#end("box", new Error(`The desktop's VNC server ${why}, so ${words}.`));
   }
 

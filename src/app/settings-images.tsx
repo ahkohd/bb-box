@@ -9,7 +9,8 @@ import type { ConfigState } from "../plugin/configuration.ts";
 import type { Contract, ImageFailure, ImagesStatus } from "../plugin/contract.ts";
 import type { RunProgress } from "../plugin/images.ts";
 import type { ImageOptionView } from "../plugin/views.ts";
-import { Badge, message, relativeTime, StatusDot, useLive, type Tone } from "./common.tsx";
+import { ago } from "./box-words.ts";
+import { Badge, message, StatusDot, useLive, type Tone } from "./common.tsx";
 import { ImageRowsSkeleton, LoadFailed, WhileLoading } from "./loading-states.tsx";
 import { RebuildNow, RUN_TONE, isRunning, stateWords, type RunImage } from "./rebuild-now.tsx";
 import { switchKey, useSettings } from "./settings-context.tsx";
@@ -66,7 +67,7 @@ function bakeWords(value: PlainValue): string {
 function failureItem(state: ConfigState, failure: ImageFailure, now: number): StatusItem {
   const kind = kindWords(state, failure.kind);
   const backend = backendWords(state, failure.backend);
-  const when = relativeTime(failure.at, now);
+  const when = ago(failure.at, now);
   if (failure.of === "project") {
     return {
       key: `image-build-${failure.name}-${failure.backend}-${failure.kind}`,
@@ -117,11 +118,11 @@ function rowState(row: StandardRow, now: number): { readonly tone: Tone; readonl
   if (row.run) return { tone: RUN_TONE[row.run.state], words: stateWords(row.run), saysWhyDue: false };
   const image = row.image;
   const outcome = image?.outcome ?? null;
-  if (outcome?.state === "failed") return { tone: "bad", words: `Its last rebuild failed ${relativeTime(outcome.at, now)}: ${outcome.reason ?? "no reason given"}`, saysWhyDue: false };
-  if (outcome?.state === "waiting") return { tone: "warn", words: `Its last rebuild waited ${relativeTime(outcome.at, now)}: ${outcome.reason ?? "no room"}`, saysWhyDue: false };
+  if (outcome?.state === "failed") return { tone: "bad", words: `Its last rebuild failed ${ago(outcome.at, now)}: ${outcome.reason ?? "no reason given"}`, saysWhyDue: false };
+  if (outcome?.state === "waiting") return { tone: "warn", words: `Its last rebuild waited ${ago(outcome.at, now)}: ${outcome.reason ?? "no room"}`, saysWhyDue: false };
   if (image?.due) return { tone: "warn", words: `Due: ${image.due}`, saysWhyDue: true };
   const ageUnknown = !image || image.built === "no record";
-  return { tone: "ok", words: outcome?.state === "refreshed" && ageUnknown ? `Up to date, rebuilt ${relativeTime(outcome.at, now)}` : "Up to date", saysWhyDue: false };
+  return { tone: "ok", words: outcome?.state === "refreshed" && ageUnknown ? `Up to date, rebuilt ${ago(outcome.at, now)}` : "Up to date", saysWhyDue: false };
 }
 
 const RUN_STATES_NEEDING_ATTENTION: ReadonlySet<RunImage["state"]> = new Set(["next", "refreshing", "failed", "waiting", "not started"]);
@@ -207,7 +208,7 @@ function lastRunWords(progress: RunProgress | null, now: number): string | null 
   const counts = new Map<RunImage["state"], number>();
   for (const image of progress.images) counts.set(image.state, (counts.get(image.state) ?? 0) + 1);
   const parts = (["refreshed", "waiting", "failed", "skipped", "not started"] as const).filter((each) => counts.get(each)).map((each) => `${counts.get(each)} ${RUN_COUNT_WORDS[each]}`);
-  const ended = `The last rebuild ended ${relativeTime(progress.ended ?? now, now)}`;
+  const ended = `The last rebuild ended ${ago(progress.ended ?? now, now)}`;
   return parts.length ? `${ended}: ${parts.join(", ")}.` : `${ended}, with nothing to rebuild.`;
 }
 
@@ -426,7 +427,7 @@ function sourceWords(image: ImageConfig, now: number): string {
   const files = [image.source?.script, image.source?.check].filter((file): file is string => !!file);
   const from = files.length ? `From ${files.join(" and ")} in the project's repository` : "Set by hand";
   const updated = image.updated ? Date.parse(image.updated) : NaN;
-  return Number.isFinite(updated) ? `${from}, set ${relativeTime(updated, now)}.` : `${from}.`;
+  return Number.isFinite(updated) ? `${from}, set ${ago(updated, now)}.` : `${from}.`;
 }
 
 function ProjectImageDetails({ id, name, image, view, loaded, now, onRemove }: { id: string; name: string; image: ImageConfig; view: ImageOptionView | null; loaded: boolean; now: number; onRemove: () => void }) {
@@ -440,12 +441,12 @@ function ProjectImageDetails({ id, name, image, view, loaded, now, onRemove }: {
         <ul className="space-y-1 text-xs leading-snug">
           {builds.map((build) => (
             <li key={`${build.backend}-${build.kind}`} className="text-muted-foreground">
-              <StateLine tone="ok" words={`Built for ${kindWords(state, build.kind)} on ${backendWords(state, build.backend)}`} items={[`${build.build ?? "a build"}, ${relativeTime(Date.parse(build.built), now)}`]} />
+              <StateLine tone="ok" words={`Built for ${kindWords(state, build.kind)} on ${backendWords(state, build.backend)}`} items={[`${build.build ?? "a build"}, ${ago(Date.parse(build.built), now)}`]} />
             </li>
           ))}
           {failed.map((failure) => (
             <li key={`failed-${failure.backend}-${failure.kind}`}>
-              <StateLine tone="warn" words={`Its build for ${kindWords(state, failure.kind)} on ${backendWords(state, failure.backend)} failed ${relativeTime(failure.at, now)}: ${failure.reason}`} />
+              <StateLine tone="warn" words={`Its build for ${kindWords(state, failure.kind)} on ${backendWords(state, failure.backend)} failed ${ago(failure.at, now)}: ${failure.reason}`} />
             </li>
           ))}
         </ul>

@@ -588,7 +588,7 @@ function server(initial: BoxView[], options: { cards?: Record<string, SettingsCa
     const found = find(ref);
     if (found) ended.set(found.id, { box: found.id, thread: THREAD, name: found.name, how, at: Date.now(), by: { is: "person" }, backend: found.backendLabel, state: found.state });
   };
-  /** A box's clipboard where bb-box moves it with commands (#464): as the viewer pasted, or as the box copied. */
+  /** A box's clipboard where BB Box moves it with commands (#464): as the viewer pasted, or as the box copied. */
   let boxClipboard: { text: string; serial: number } | null = null;
   const copyInBox = (text: string) => (boxClipboard = { text, serial: (boxClipboard?.serial ?? 0) + 1 });
   const handlers: PluginRpcTestHandlers<Contract> = {
@@ -1114,7 +1114,7 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
   expect(slot.getByText("clone 0.7 s · total 2.1 s · BB enrolment 5.3 s")).toBeTruthy();
   expect(slot.getByText("resume 4.1 s · ssh 1.2 s · setting the clock 0.6 s · total 6.0 s")).toBeTruthy();
   expect(slot.getByText("Last start")).toBeTruthy();
-  expect(slot.getByText("12 minutes ago")).toBeTruthy();
+  expect(slot.getByText("12 min ago")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "calm-otter: details" }));
   expect(slot.queryByText("192.0.2.10")).toBeNull();
 
@@ -1367,7 +1367,7 @@ test("071 unit 11: the New box form keeps the Docker reach sentence for a chosen
 
   await open([offered(linuxBase, [docker, proxmox])]);
   expect(screen.queryByText(reach)).toBeNull();
-  expect(screen.queryByText(/bb-box places/)).toBeNull();
+  expect(screen.queryByText(/BB Box places/)).toBeNull();
   await choose("GPU", "Shared");
   expect(screen.queryByText(reach)).toBeNull();
   pickProvider("docker-1");
@@ -1819,7 +1819,7 @@ test("the (i) on a provider row opens its profile, fetched for every provider on
     "Linux, Linux desktop (GPU) · LXC containers",
     "pve: memory 12 of 64 GiB, 4 GiB kept back · cores 6 of 16",
     "Linux ~2.2 s (1 ready now) · Linux desktop (GPU) ~3.1 s",
-    "Ready · Proxmox VE 9.2 on pve · 2 boxes on it · checked 2 minutes ago",
+    "Ready · Proxmox VE 9.2 on pve · 2 boxes on it · checked 2 min ago",
   ]);
   expect(asked).toEqual(["fake", "ssh-pool"]);
   // The (i) does not choose the row; it keeps its place in the card, shown on hover, focus or while its profile is open.
@@ -1889,7 +1889,7 @@ test("the profile's words: limits, room, where it runs, what it makes, the usual
   expect(usuallyWords({ makes: [{ id: "macos", label: "macOS", form: "VM", typicalReadyMs: null, ready: 0 }] })).toBe("No cold start recorded yet.");
   expect(statusWords({ status: { state: "off", problem: null, ok: null, summary: null, checkedAt: null }, boxes: 1 }, 0)).toBe("Off · 1 box on it");
   expect(statusWords({ status: { state: "misconfigured", problem: "Set the API token.", ok: null, summary: null, checkedAt: null }, boxes: 0 }, 0)).toBe("Needs setting up: Set the API token. · 0 boxes on it");
-  expect(statusWords({ status: { state: "active", problem: null, ok: false, summary: "Template 9101 has no build tag.", checkedAt: 0 }, boxes: 3 }, 60_000)).toBe("Needs attention · Template 9101 has no build tag. · 3 boxes on it · checked 1 minute ago");
+  expect(statusWords({ status: { state: "active", problem: null, ok: false, summary: "Template 9101 has no build tag.", checkedAt: 0 }, boxes: 3 }, 60_000)).toBe("Needs attention · Template 9101 has no build tag. · 3 boxes on it · checked 1 min ago");
 });
 
 test("a provider row says it has a spare ready now, with no count (#121, #440)", async () => {
@@ -2026,7 +2026,7 @@ function fakeResizer(now: { cores: number; memoryGiB: number; diskGiB: number | 
     if (input.check) return { ...base, plan };
     if (options.full) return { ...base, plan: null, error: options.full };
     if (options.inUseGiB !== undefined && to.memoryGiB < current.memoryGiB && to.memoryGiB - 0.5 < options.inUseGiB) {
-      return { ...base, plan: null, error: `Box calm-otter uses ${options.inUseGiB} GiB of memory now, so ${to.memoryGiB} GiB would leave less than 512 MiB free, and the kernel could end its processes. Give it at least ${Math.ceil(options.inUseGiB + 0.5)} GiB, or free memory in it first. bb-box changed nothing.` };
+      return { ...base, plan: null, error: `Box calm-otter uses ${options.inUseGiB} GiB of memory now, so ${to.memoryGiB} GiB would leave less than 512 MiB free, and the kernel could end its processes. Give it at least ${Math.ceil(options.inUseGiB + 0.5)} GiB, or free memory in it first. BB Box changed nothing.` };
     }
     if (restart && !input.restart) return { ...base, plan: null, needsRestart: true, error: "Resizing box calm-otter needs a restart." };
     if (restart && options.threads?.length && !input.force) return { ...base, plan: null, threads: options.threads };
@@ -2122,7 +2122,7 @@ test("a row says how a resize that ended in the last two minutes went, for a pan
   const ways = { cores: "restart", memory: "restart", disk: "restart", shrinks: false } as const;
   const boxes = [
     box({ sizeNow: size(4, 8, 64), resizing: ways, lastResize: ended(0.5, "done") }),
-    box({ id: "box_2", name: "quiet-heron", sizeNow: size(2, 4, 64), resizing: ways, lastResize: ended(1, "failed", "The Mac has 2 GiB of memory left. bb-box changed nothing.") }),
+    box({ id: "box_2", name: "quiet-heron", sizeNow: size(2, 4, 64), resizing: ways, lastResize: ended(1, "failed", "The Mac has 2 GiB of memory left. BB Box changed nothing.") }),
     box({ id: "box_3", name: "old-wren", sizeNow: size(4, 8, 64), resizing: ways, lastResize: ended(5, "done") }),
     box({ id: "box_4", name: "busy-finch", sizeNow: size(2, 4, 64), resizing: ways, lastResize: { ...ended(0, "done"), state: "resizing", ms: null } }),
   ];
@@ -2188,7 +2188,7 @@ test("Resize shows refusals plainly: no room, memory below use, and a disk that 
   fireEvent.click(within(dialog).getByRole("button", { name: "Resize" }));
   // The answer to Resize, headed as one: the plan's "changes at once" goes, as nothing changed.
   expect((await within(dialog).findByRole("alert")).textContent).toBe(
-    "Not resizedBox calm-otter uses 3.6 GiB of memory now, so 4 GiB would leave less than 512 MiB free, and the kernel could end its processes. Give it at least 5 GiB, or free memory in it first. bb-box changed nothing.",
+    "Not resizedBox calm-otter uses 3.6 GiB of memory now, so 4 GiB would leave less than 512 MiB free, and the kernel could end its processes. Give it at least 5 GiB, or free memory in it first. BB Box changed nothing.",
   );
   expect(within(dialog).queryByText("Changes at once. Everything running in calm-otter carries on.")).toBeNull();
   expect(within(dialog).getByText("Resize calm-otter")).toBeTruthy();
@@ -2196,8 +2196,8 @@ test("Resize shows refusals plainly: no room, memory below use, and a disk that 
   expect(within(dialog).getByRole("button", { name: "Resize" }).hasAttribute("disabled")).toBe(true);
 });
 
-test("a refusal while the person chooses never says bb-box changed nothing: nothing was tried (061)", () => {
-  expect(checkWords("Resizing box calm-otter needs a restart for its memory. bb-box changed nothing.")).toBe("Resizing box calm-otter needs a restart for its memory.");
+test("a refusal while the person chooses never says BB Box changed nothing: nothing was tried (061)", () => {
+  expect(checkWords("Resizing box calm-otter needs a restart for its memory. BB Box changed nothing.")).toBe("Resizing box calm-otter needs a restart for its memory.");
   expect(checkWords("A box's disk only grows, and this box's is 20 GiB, more than the 10 GiB asked for.")).toBe("A box's disk only grows, and this box's is 20 GiB, more than the 10 GiB asked for.");
 });
 
@@ -2395,7 +2395,7 @@ test("first run: where BB's user cannot use Docker, the panel gives that machine
   fireEvent.click(slot.getByRole("button", { name: "Check again" }));
   await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "setup.offer").length).toBeGreaterThan(1));
   cleanup();
-  // Where bb-box cannot tell how BB runs, it says so in words, with the usermod line alone.
+  // Where BB Box cannot tell how BB runs, it says so in words, with the usermod line alone.
   const words = panel(server([], { kinds: [], setups: [{ ...fix, restart: null }] }).handlers);
   expect(await words.findByText("Then restart BB there, or log out and in again, or reboot. That ends the turns of threads running there.")).toBeTruthy();
   expect(words.queryByText(/systemctl/)).toBeNull();
@@ -2620,7 +2620,7 @@ test("status says a check's age, never ready for a pass over an hour old, and Ch
   const { handlers, changes } = server([], { config: { document, backends: state.backends.map((backend) => ({ ...backend, doctor: old })) } });
   const slot = settings(handlers);
   expect(await slot.findByText("Fake host passed its last check")).toBeTruthy();
-  expect(slot.getByText(/checked 6 hours ago/)).toBeTruthy();
+  expect(slot.getByText(/checked 6 h ago/)).toBeTruthy();
   const checkAll = slot.getByRole("button", { name: "Check all" });
   fireEvent.click(checkAll);
   await waitFor(() => expect(changes.filter((change) => change.startsWith("check fake "))).toHaveLength(1));
@@ -2646,7 +2646,7 @@ test("a switch saves at once and says Saved; a refusal, three refusals in a row 
 
   const refused = settings(server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.fake.token", message: "Set the API token." }] } }).handlers);
   fireEvent.click(await refused.findByRole("switch", { name: "Fake host: takes new boxes" }));
-  expect(await refused.findByText("Fake host was not changed: set the API token.")).toBeTruthy();
+  expect(await refused.findByText("Fake host was not changed: Set the API token.")).toBeTruthy();
   expect(refused.getByRole("switch", { name: "Fake host: takes new boxes" }).getAttribute("aria-checked")).toBe("true");
   expect(refused.queryByText("Saved")).toBeNull();
   cleanup();
@@ -2853,12 +2853,12 @@ test("an empty field another backend fills says where its value comes from, unti
 });
 
 test("a refused save shows each problem at its field and the rest in the bar, and keeps the draft", async () => {
-  const { handlers } = server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.fake.url", message: "Use an https URL." }, { path: "backends.fake", message: "bb-box runs one Fake host backend for now." }] } });
+  const { handlers } = server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.fake.url", message: "Use an https URL." }, { path: "backends.fake", message: "BB Box runs one Fake host backend for now." }] } });
   const slot = settings(handlers, "#backend/fake");
   fireEvent.change(await slot.findByRole("textbox", { name: "API URL" }), { target: { value: "http://192.0.2.10:8006" } });
   fireEvent.click(slot.getByRole("button", { name: "Save" }));
   expect(await slot.findByText("Use an https URL.")).toBeTruthy();
-  expect(slot.getByText("bb-box runs one Fake host backend for now.")).toBeTruthy();
+  expect(slot.getByText("BB Box runs one Fake host backend for now.")).toBeTruthy();
   expect(slot.getByText(/^Not saved: fix the 2 fields marked\. Your changes are still here\./)).toBeTruthy();
   expect(slot.getByRole("textbox", { name: "API URL" }).getAttribute("aria-invalid")).toBe("true");
   expect((slot.getByRole("textbox", { name: "API URL" }) as HTMLInputElement).value).toBe("http://192.0.2.10:8006");
@@ -2989,7 +2989,7 @@ test("the backend's menu renames at once, copies nothing secret, and removes onl
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Remove backend…" }));
   expect(await screen.findByText(/with the SSH key, which BB Box cannot show or get back/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Remove backend" }));
-  expect(await refused.findByText("Fake host was not removed: backend fake has 1 box, so it cannot be removed or renamed. Turn it off and release them first.")).toBeTruthy();
+  expect(await refused.findByText("Fake host was not removed: Backend fake has 1 box, so it cannot be removed or renamed. Turn it off and release them first.")).toBeTruthy();
   expect(window.location.hash).toBe("#backend/fake");
   cleanup();
 
@@ -3109,11 +3109,11 @@ test("Add backend groups every driver by where boxes run, with what it makes and
   cleanup();
   applied = null;
 
-  const refused = server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.other.machines", message: "Add a machine." }, { path: "backends.other", message: "bb-box runs one Other pool backend for now." }] } });
+  const refused = server([], { applyWith: { ok: false, reason: "problems", problems: [{ path: "backends.other.machines", message: "Add a machine." }, { path: "backends.other", message: "BB Box runs one Other pool backend for now." }] } });
   const again = settings(refused.handlers, "#setup/other");
   fireEvent.click(await again.findByRole("button", { name: "Save and turn on" }));
   expect(await again.findByText("Add a machine.")).toBeTruthy();
-  expect(again.getByText("bb-box runs one Other pool backend for now.")).toBeTruthy();
+  expect(again.getByText("BB Box runs one Other pool backend for now.")).toBeTruthy();
   expect(again.getByText(/^Not saved: it cannot be on without the 2 fields marked\. Fix it, or save it off to finish later\./)).toBeTruthy();
   expect(window.location.hash).toBe("#setup/other");
   fireEvent.click(again.getByRole("button", { name: "Save, keep it off" }));
@@ -3366,7 +3366,7 @@ test("the Images page lists every standard image with its build, why it is due a
   expect(row("fake/desktop").getByText("Up to date")).toBeTruthy();
   expect(row("fake/desktop").getByText("build.2026-10-10, 1 day old")).toBeTruthy();
   expect(row("fake/desktop").getByText("Linux desktop")).toBeTruthy();
-  expect(row("fake/old").getByText("Its last rebuild failed yesterday: the trial box did not answer.")).toBeTruthy();
+  expect(row("fake/old").getByText("Its last rebuild failed 1 d 6 h ago: the trial box did not answer.")).toBeTruthy();
   expect(row("fake/old").getByText("due: it fails the doctor")).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Rebuild 2 images" }));
   await waitFor(() => expect(changes).toContain("images.refresh"));
@@ -3426,7 +3426,7 @@ test("after a run the Images page says what it did to each image: rebuilt, waite
     ],
   };
   const slot = settings(server([], { rebuildable: ["fake/linux", "fake/desktop", "fake/old", "fake/arm"].map((name, index) => listed(name, index === 1 ? "linux-desktop" : "linux")), progress }).handlers, "#option/images");
-  expect(await slot.findByText("0 of 5 images due. The last rebuild ended 2 hours ago: 1 rebuilt, 1 waited for room, 1 failed, 1 skipped, 1 not started.")).toBeTruthy();
+  expect(await slot.findByText("0 of 5 images due. The last rebuild ended 2 h ago: 1 rebuilt, 1 waited for room, 1 failed, 1 skipped, 1 not started.")).toBeTruthy();
   expect(slot.queryByText("Rebuilt, now build.2026-10-11, in 300 s")).toBeNull();
   fireEvent.click(slot.getByRole("button", { name: "2 images up to date" }));
   expect(slot.getByText("Rebuilt, now build.2026-10-11, in 300 s")).toBeTruthy();
@@ -3507,7 +3507,7 @@ test("an image that is due or failed has its own row on the Images page, and the
   const fold = await slot.findByRole("button", { name: "2 images up to date" });
   expect(imageRowNames()).toEqual(["fake/old", "fake/desktop"]);
   expect(slot.getByText("Due: it is 10 days old, past its 7-day interval")).toBeTruthy();
-  expect(slot.getByText("Its last rebuild failed 1 hour ago: the trial box did not answer.")).toBeTruthy();
+  expect(slot.getByText("Its last rebuild failed 1 h ago: the trial box did not answer.")).toBeTruthy();
   expect(slot.getByText("1 of 4 images due.")).toBeTruthy();
   expect(document.querySelector('[data-image-row="fake/desktop"]')!.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Try the Linux image on Fake host again" }));
@@ -3518,7 +3518,7 @@ test("an image that is due or failed has its own row on the Images page, and the
 
 test("when every standard image needs attention the Images page has no fold row", async () => {
   const slot = settings(server([], { rebuildable: [standardImage("fake/linux", { outcome: FAILED_OUTCOME }), standardImage("fake/arm", { outcome: { state: "waiting", at: Date.now() - 3_600_000, reason: "no room" } })] }).handlers, "#option/images");
-  expect(await slot.findByText("Its last rebuild waited 1 hour ago: no room")).toBeTruthy();
+  expect(await slot.findByText("Its last rebuild waited 1 h ago: no room")).toBeTruthy();
   expect(imageRowNames()).toEqual(["fake/linux", "fake/arm"]);
   expect(slot.queryByRole("button", { name: /up to date$/ })).toBeNull();
 });
@@ -3604,9 +3604,9 @@ test("projects' images: each with its projects, kinds and builds, its script and
   expect(rust.getAttribute("aria-expanded")).toBe("false");
   fireEvent.click(rust);
   expect(rust.getAttribute("aria-expanded")).toBe("true");
-  expect(slot.getByText("From .bb/box-setup.sh and .bb/box-check.sh in the project's repository, set 3 days ago.")).toBeTruthy();
+  expect(slot.getByText("From .bb/box-setup.sh and .bb/box-check.sh in the project's repository, set 3 d ago.")).toBeTruthy();
   expect(slot.getByText("Built for Linux on Fake host")).toBeTruthy();
-  expect(slot.getByText("Its build for Linux desktop on Fake host failed 1 hour ago: its check failed: exit code 127: rg: not found")).toBeTruthy();
+  expect(slot.getByText("Its build for Linux desktop on Fake host failed 1 h ago: its check failed: exit code 127: rg: not found")).toBeTruthy();
   expect(slot.getByLabelText("Script of rust-tools, run as root").textContent).toBe("apt-get install -y ripgrep");
   expect(slot.getByLabelText("Check of rust-tools, run as the box user").textContent).toBe("rg --version");
   expect(screen.getByRole("combobox", { name: "When go-tools is built ahead" }).textContent).toBe("Run at each box's start");
@@ -3706,7 +3706,7 @@ test("a failed rebuild and a project image's failed build are in the overview's 
   const slot = settings(server([], { failures }).handlers);
   const things = within(await slot.findByRole("region", { name: "Things that need you" }));
   expect(await things.findByText("The Linux image on Fake host did not rebuild")).toBeTruthy();
-  expect(things.getByText("Failed 1 hour ago: the trial box did not answer. New boxes start from its last build meanwhile.")).toBeTruthy();
+  expect(things.getByText("Failed 1 h ago: the trial box did not answer. New boxes start from its last build meanwhile.")).toBeTruthy();
   expect(things.getByText("Fix: Fix the cause, then Try again on the Images page, or run bb box images build fake/9100.")).toBeTruthy();
   expect(things.getByText("The image rust-tools did not build for Linux desktop on Fake host")).toBeTruthy();
   expect(things.getByText("Fix: Fix its script, then set the image again with bb box image set rust-tools.")).toBeTruthy();
@@ -4365,7 +4365,7 @@ test("a macOS VM on Tart, whose VNC server moves no clipboard, has it through bb
     // Tart's VNC server takes Alt as Command and Meta as Option: Cmd goes as Alt, Option as Meta, and the paste chord is Alt+V.
     client._handleKeyEvent(0xffe9, "MetaLeft", true, null, null);
     client._handleKeyEvent(0xff7e, "AltLeft", true, null, null);
-    // € goes as its Unicode keysym, which bb-box's input in the Mac types as the character.
+    // € goes as its Unicode keysym, which BB Box's input in the Mac types as the character.
     client._handleKeyEvent(0x20ac, "KeyE", true, null, null);
     expect(client.keyEvents).toEqual([
       { keysym: 0xffe9, code: "AltLeft", down: true },
@@ -5177,7 +5177,7 @@ test("the device picker lists the box's models, warns of one not started in this
   }
 });
 
-test("Screenshot asks bb-box for the device's own pixels without taking control, and copies them as a PNG (063)", async () => {
+test("Screenshot asks BB Box for the device's own pixels without taking control, and copies them as a PNG (063)", async () => {
   const undo = withVideo();
   const unsize = sizedPanel(900, 800);
   const write = vi.fn<(items: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
@@ -5340,7 +5340,7 @@ test("where the browser has no WebCodecs, the device shows stills over its own c
     const device = deviceSocket();
     act(() => device.open());
     expect(device.sent).toEqual(['BB_DEVICE_STILLS {"on":true}', "START_VIDEO"]);
-    act(() => void device.onmessage?.({ data: `BB_DEVICE_HELLO ${JSON.stringify({ protocol: 1, version: 2, platform: "android", devices: [{ model: "Pixel 8", native: "bb-box-test-device", runtime: { platform: "android", api: 35, image: "google_apis", revision: 1, abi: "x86_64", emulator: "bb-box test driver", snapshot: null } }], state: { ...PIXEL_8_STATE, power: { is: "booting", since: 1 } }, lease: false })}` }));
+    act(() => void device.onmessage?.({ data: `BB_DEVICE_HELLO ${JSON.stringify({ protocol: 1, version: 2, platform: "android", devices: [{ model: "Pixel 8", native: "bb-box-test-device", runtime: { platform: "android", api: 35, image: "google_apis", revision: 1, abi: "x86_64", emulator: "BB Box test driver", snapshot: null } }], state: { ...PIXEL_8_STATE, power: { is: "booting", since: 1 } }, lease: false })}` }));
     expect(await slot.findByText("Booting")).toBeTruthy();
     act(() => void device.onmessage?.({ data: `BB_DEVICE_STATE ${JSON.stringify({ state: PIXEL_8_STATE })}` }));
     act(() => void device.onmessage?.({ data: `BB_DEVICE_STILL ${JSON.stringify({ png: "iVBORw0KGgo=", generation: 1 })}` }));
@@ -6245,7 +6245,7 @@ test("as a desktop in your control takes the tab's new size, the video holds its
   }
 });
 
-test("a person watching a Wayland desktop with bb-box-cursor sees the box's pointer drawn over the video, where bb-box says it is, scaled with the picture; the person in control does not (060)", async () => {
+test("a person watching a Wayland desktop with bb-box-cursor sees the box's pointer drawn over the video, where BB Box says it is, scaled with the picture; the person in control does not (060)", async () => {
   const undo = withVideo();
   const size = FakeDecoder.size;
   try {
@@ -7372,10 +7372,10 @@ test("a machine's threads show as up to 3 chips, working first, then the latest,
   const { handlers } = server([], { machines: [machine({}, threads)] });
   const list = boxesPage(handlers);
   const chips = within(await list.findByRole("list", { name: "Threads on this box" }));
-  expect(chips.getAllByRole("button").map((chip) => chip.textContent)).toEqual(["Check the release notes", "this box's thread", "Thread number 11", "+11 more", "+9 more"]);
+  expect(chips.getAllByRole("button").map((chip) => chip.textContent)).toEqual(["Check the release notes", "Untitled thread", "Thread number 11", "+11 more", "+9 more"]);
   const where = (text: string) => chips.getAllByRole("button").find((chip) => chip.textContent === text)!.closest("[role=listitem], span.flex")!.className;
   expect(where("Check the release notes")).not.toMatch(/@(max-)?md:hidden/);
-  expect(["this box's thread", "Thread number 11", "+9 more"].map(where)).toEqual(Array(3).fill(expect.stringContaining("@max-md:hidden")));
+  expect(["Untitled thread", "Thread number 11", "+9 more"].map(where)).toEqual(Array(3).fill(expect.stringContaining("@max-md:hidden")));
   expect(where("+11 more")).toContain("@md:hidden");
   fireEvent.click(chips.getByRole("button", { name: "9 more threads" }));
   const search = await screen.findByRole("textbox", { name: "Search threads" });
@@ -7994,7 +7994,7 @@ test("a provider that cannot take the box now is greyed, after the ones that can
   const pool = { ...POOLED.offers[1]!, free: 0 };
   const cloud = { ...KINDS[0]!.offers[0]!, backend: "namespace", name: "Namespace", type: "namespace", label: "Namespace", hosts: [], form: "VM" as const, typicalReadyMs: null };
   const crowded: KindView = { ...POOLED, offers: [pool, KINDS[0]!.offers[0]!, cloud], forms: ["Physical", "LXC", "VM"] };
-  const { handlers, changes } = server([], { kinds: [crowded, KINDS[1]!], rooms: { "ssh-pool": "In use by swift-fox", namespace: "Namespace has 3 of the 3 machines bb-box may have at once" } });
+  const { handlers, changes } = server([], { kinds: [crowded, KINDS[1]!], rooms: { "ssh-pool": "In use by swift-fox", namespace: "Namespace has 3 of the 3 machines BB Box may have at once" } });
   const slot = panel(handlers);
   await slot.findByText("No boxes yet");
   fireEvent.click(slot.getByRole("button", { name: "New box" }));
@@ -8004,7 +8004,7 @@ test("a provider that cannot take the box now is greyed, after the ones that can
       "First with roomThe one below:-",
       "pveContainer · usually ~2.2 s:-",
       "SSH host poolPhysical · In use by swift-fox:true",
-      "NamespaceVM · Namespace has 3 of the 3 machines bb-box may have at once:true",
+      "NamespaceVM · Namespace has 3 of the 3 machines BB Box may have at once:true",
     ]),
   );
   fireEvent.click(within(providers).getByRole("radio", { name: /^SSH host pool/ }));
@@ -8541,7 +8541,7 @@ test.each(KEYBOARD_MODES.flatMap((mode) => BROWSERS.map((browser) => ({ mode, br
     try {
       const { handlers, changes } = server([desktopBox(mode.box as Partial<BoxView>)]);
       const slot = desktopTab(handlers);
-      // The text is on its way once noVNC or bb-box's RPC has it.
+      // The text is on its way once noVNC or BB Box's RPC has it.
       const textSent = () => client.pasted.length + changes.filter((change) => change.startsWith("desktopPaste")).length;
       await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
       const client = novnc.FakeRfb.made[0]! as unknown as FakeClient;
@@ -8602,7 +8602,7 @@ test.each(KEYBOARD_MODES.flatMap((mode) => BROWSERS.map((browser) => ({ mode, br
       const keys = () => socket.sent.filter((sent): sent is string => typeof sent === "string" && /^k[du],/.test(sent));
       const menuPaste = async () => fireEvent.click(within(await openMenu(slot.getByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Paste from this computer" }));
       const textSent = () => socket.sent.filter((sent) => typeof sent === "string" && /^c[bw]/.test(sent)).length + changes.filter((change) => change.startsWith("desktopPaste")).length;
-      // bb-box's own Mac input for video takes Meta as Command.
+      // BB Box's own Mac input for video takes Meta as Command.
       const command = (mode.box as Partial<BoxView>).os === "macos" ? 65511 : 65507;
 
       fireEvent.keyDown(canvas, { key: "Shift", code: "ShiftLeft", shiftKey: true });
@@ -9252,7 +9252,7 @@ test("F-22: at 360 px the panel's rows open tabs titled by the box's name where 
   }
 });
 
-test("F-22: each panel tab has an icon of its own: a monitor for Desktop, a phone for Device, a terminal for Terminal, each a name bb-box declares, and the Box tab keeps BB's default", () => {
+test("F-22: each panel tab has an icon of its own: a monitor for Desktop, a phone for Device, a terminal for Terminal, each a name BB Box declares, and the Box tab keeps BB's default", () => {
   expect(app.threadPanelActions.map((action) => [action.id, action.icon ?? null])).toEqual([
     ["boxes", null],
     ["desktop", "bb-box/monitor"],
@@ -10745,7 +10745,7 @@ test("070 unit 5: the restore form says what goes, that an undo is always taken 
     userspaceNote: null,
   };
   const words = restoreFormWords(payload, Date.now());
-  expect(words.lead).toMatch(/^An agent in this thread asks to restore dev-desk to "before the upgrade", taken today at \d{2}:\d{2}, 2 h ago\. dev-desk is a box threads run on, so an agent restores it only on a yes given here\.$/);
+  expect(words.lead).toMatch(/^An agent in this thread asks to restore dev-desk to "before the upgrade", taken (?:today|yesterday) at \d{2}:\d{2}, 2 h ago\. dev-desk is a box threads run on, so an agent restores it only on a yes given here\.$/);
   expect(words.button).toBe("Restore dev-desk anyway");
   const submitted: unknown[] = [];
   let cancelled = 0;
@@ -10900,6 +10900,7 @@ test("070 unit 7: Fork opens a dialog with the new box's name, where it goes, it
   const why = within(dialog).getByRole("alert");
   expect(why.textContent).toMatch(/lower-case letter/);
   expect(name.getAttribute("aria-describedby")).toBe(why.id);
+  expect(why.closest("label")).toBeNull();
   expect(name.className).toContain("border-destructive");
   fireEvent.click(within(dialog).getByRole("radio", { name: "As one of your machines" }));
   fireEvent.change(name, { target: { value: "calm-otter" } });
@@ -10938,7 +10939,7 @@ test("070 unit 7: a fork's page says where it came from among its facts", async 
   const { handlers } = server([box({ forkedFrom: { name: "amber-fox", snapshot: "before the migration", takenAt: Date.now() - 60_000 } })]);
   const slot = boxPageAt(handlers, "box/box_1");
   const facts = await slot.findByRole("region", { name: "Facts" });
-  expect(facts.textContent).toMatch(/Forked from amber-fox, "before the migration" \(today \d\d:\d\d\)/);
+  expect(facts.textContent).toMatch(/Forked from amber-fox, "before the migration" \(today at \d\d:\d\d\)/);
 });
 
 test("070 unit 6: Take snapshot asks for a name and note, says what it holds, costs and counts, and sends the take; focus starts on the name and returns to the button", async () => {
@@ -11126,7 +11127,7 @@ test("070 unit 6: the restored notice says when, to what and by whom, and its Un
   expect((slot.getByRole("button", { name: "Restore: not now, as calm-otter is being restored" }) as HTMLButtonElement).disabled).toBe(true);
   cleanup();
 
-  const unsure = server([box()], { snapshots: snapshotsView({ unconfirmed: { to: "before the migration", words: "It was at the rollback when bb-box restarted." } }) });
+  const unsure = server([box()], { snapshots: snapshotsView({ unconfirmed: { to: "before the migration", words: "It was at the rollback when BB Box restarted." } }) });
   slot = boxPageAt(unsure.handlers, "box/box_1");
   expect(await slot.findByText('BB Box could not confirm the restore of calm-otter to "before the migration"')).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Check now" }));
@@ -11223,7 +11224,7 @@ test("070 unit 6 review: notices say an undo may miss the last writes and a rest
   expect(await within(dialog).findByText(/This undo may miss what was written in the last seconds before its restore/)).toBeTruthy();
   cleanup();
 
-  const failed = server([box()], { snapshots: snapshotsView({ failed: { operation: "opfail", at, to: "one", error: "Proxmox refused the stop: the guest would not stop. bb-box started it again as it was." } }) });
+  const failed = server([box()], { snapshots: snapshotsView({ failed: { operation: "opfail", at, to: "one", error: "Proxmox refused the stop: the guest would not stop. BB Box started it again as it was." } }) });
   slot = boxPageAt(failed.handlers, "box/box_1");
   expect(await slot.findByText(/^The restore of calm-otter to "one" failed at /)).toBeTruthy();
   expect(document.querySelector('[data-notice="bad"]')?.textContent).toMatch(/the guest would not stop/);
@@ -11291,7 +11292,7 @@ test("a row's second line says how the box is now: the state, what needs attenti
   expect(rowWords(unjoined)).toBe("Ready · Could not join BB · up 12 s · 2 cores · 4 GiB memory");
   expect(rowReasons(unjoined)).toEqual(["Could not join BB: BB's server is not reachable from Proxmox LXC: turn the tailnet on. See Machine access in BB's settings, under Machines."]);
   const passing = rowLine(box({ readyAt: now - 12_000, enrol: { state: "failed", hostId: null, error: "Enrolling box calm-otter failed: Machine bootstrap command failed:\n\ncurl: (28) Resolving timed out after 10001 milliseconds" } }), { now });
-  expect(rowReasons(passing)[0], "a failure that can pass gives no settings advice, even before bb-box plans its tries").not.toContain("Machine access");
+  expect(rowReasons(passing)[0], "a failure that can pass gives no settings advice, even before BB Box plans its tries").not.toContain("Machine access");
   const retrying = rowLine(box({ readyAt: now - 3 * MIN, enrol: { state: "enrolling", hostId: null, error: null }, joinTries: { failed: 2, next: now + 10 * MIN, words: "This box could not reach BB's address in time: the connection timed out (curl: (28) Connection timed out).", of: 5, setup: false } }), { now });
   expect(rowWords(retrying)).toBe("Ready · Joining BB, try 3 of 5 · up 3 min · 2 cores · 4 GiB memory");
   expect(rowReasons(retrying)).toEqual(["Joining BB, try 3 of 5: Joining BB: try 3 of 5 starts in 10 min. Try 2 failed: This box could not reach BB's address in time: the connection timed out (curl: (28) Connection timed out)."]);
@@ -11544,7 +11545,7 @@ function keepPreviewOf(until: number, overrides: Partial<NonNullable<KeepPreview
   };
 }
 
-test("070 unit 8: Keep… opens on the date bb-box plans, says what keeping costs, keeps until the date chosen, and returns focus to the menu's button", async () => {
+test("070 unit 8: Keep… opens on the date BB Box plans, says what keeping costs, keeps until the date chosen, and returns focus to the menu's button", async () => {
   const until = Date.UTC(2026, 10, 29, 23, 59, 59, 999);
   const asked: { days?: number; until?: string }[] = [];
   const { handlers, changes } = server([box()], {
@@ -11687,6 +11688,7 @@ test("070 unit 8: the Snapshots tab: its count, the line under the tabs, a card 
   const tab = await list.findByRole("tab", { name: "Snapshots 2" });
   expect(tab.getAttribute("aria-selected")).toBe("true");
   expect(await list.findByText("2 snapshots, 1 by agents · 2.4 GB on pve-1")).toBeTruthy();
+  expect(await list.findByRole("button", { name: "UI thread" })).toBeTruthy();
   const released = await list.findByRole("region", { name: "grey-ridge's snapshots" });
   expect(within(released).getByText(/released/)).toBeTruthy();
   expect(within(released).getByText("Your machine")).toBeTruthy();
@@ -11710,7 +11712,7 @@ test("070 unit 8: the Snapshots tab: its count, the line under the tabs, a card 
 });
 
 test("070 unit 8: a release that stopped for a snapshot you kept offers Release again, and Release and delete what you kept", async () => {
-  const stopped = box({ state: "releasing", error: 'Release did not finish: bb-box could not copy "kept one", which you kept: pve-1\'s storage fast has 6 GB free. BB Box tries again in a few minutes.', releaseHeldForKept: true });
+  const stopped = box({ state: "releasing", error: 'Release did not finish: BB Box could not copy "kept one", which you kept: pve-1\'s storage fast has 6 GB free. BB Box tries again in a few minutes.', releaseHeldForKept: true });
   const { handlers } = server([stopped]);
   const slot = boxPageAt(handlers, "box/box_1");
   const menu = await openMenu(await slot.findByRole("button", { name: "calm-otter actions" }));
@@ -11757,16 +11759,16 @@ test("070 unit 8 review: the Snapshots tab says it is reading them until its ans
   forgetLive();
   const { handlers: failing } = server([box()], {
     tab: () => {
-      throw new Error("bb-box cannot read snapshots.db.");
+      throw new Error("BB Box cannot read snapshots.db.");
     },
   });
   const failed = renderSlot(page!, { subPath: "snapshots" }, { rpc: failing, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
-  await waitFor(() => expect(failed.getAllByRole("alert").some((each) => /bb-box cannot read snapshots\.db/.test(each.textContent ?? ""))).toBe(true));
+  await waitFor(() => expect(failed.getAllByRole("alert").some((each) => /BB Box cannot read snapshots\.db/.test(each.textContent ?? ""))).toBe(true));
   expect(failed.queryByText("Reading the snapshots…")).toBeNull();
 });
 
 test("070 unit 8 review: Release and delete what you kept, then Release anyway for the threads on it, keeps the choice", async () => {
-  const stopped = box({ state: "releasing", error: "Release did not finish: bb-box could not copy \"kept one\", which you kept.", releaseHeldForKept: true });
+  const stopped = box({ state: "releasing", error: "Release did not finish: BB Box could not copy \"kept one\", which you kept.", releaseHeldForKept: true });
   const { handlers } = server([stopped], { inUse: [{ id: "thr_other", title: "Run the tests", running: true }] });
   const slot = boxPageAt(handlers, "box/box_1");
   const menu = await openMenu(await slot.findByRole("button", { name: "calm-otter actions" }));
@@ -12210,14 +12212,14 @@ test("polish P1: a Boxes page list that does not load says so with Try again, wh
   let tabFailures = 1;
   const snapshots = server([box()], {
     tab: () => {
-      if (tabFailures-- > 0) throw new Error("bb-box cannot read snapshots.db.");
+      if (tabFailures-- > 0) throw new Error("BB Box cannot read snapshots.db.");
       return tabView();
     },
   });
   const tab = renderSlot(app.navPanels[0]!, { subPath: "snapshots" }, { rpc: snapshots.handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: "UI thread" }) } } });
   const failed = await tab.findByRole("alert");
   expect(within(failed).getByText("The snapshots did not load.")).toBeTruthy();
-  expect(within(failed).getByText("bb-box cannot read snapshots.db.")).toBeTruthy();
+  expect(within(failed).getByText("BB Box cannot read snapshots.db.")).toBeTruthy();
   fireEvent.click(within(failed).getByRole("button", { name: "Try again" }));
   expect(await tab.findByRole("button", { name: "Select" })).toBeTruthy();
   expect(tab.queryByRole("alert")).toBeNull();
@@ -12324,13 +12326,13 @@ test("polish P1: the Images page shows skeleton rows under Standard images while
   const flaky = settings({
     ...handlers,
     "images.list": (input) => {
-      if (failures-- > 0) throw new Error("bb-box could not list the images.");
+      if (failures-- > 0) throw new Error("BB Box could not list the images.");
       return handlers["images.list"]!(input);
     },
   }, "#option/images");
   const alert = await flaky.findByRole("alert");
   expect(within(alert).getByText("The standard images did not load.")).toBeTruthy();
-  expect(within(alert).getByText("bb-box could not list the images.")).toBeTruthy();
+  expect(within(alert).getByText("BB Box could not list the images.")).toBeTruthy();
   fireEvent.click(within(alert).getByRole("button", { name: "Try again" }));
   expect(await flaky.findByText("1 of 1 image due.", { exact: false })).toBeTruthy();
   expect(flaky.queryByRole("alert")).toBeNull();
@@ -12366,6 +12368,16 @@ test("a side-label field and a stacked field put the error directly under the co
   const portAlert = screen.getByRole("alert");
   expect(port.getAttribute("aria-describedby")).toBe("port-problem");
   expect(port.parentElement?.nextElementSibling).toBe(portAlert);
+  cleanup();
+  render(
+    <SettingRow label="Export" description={<>The whole configuration, as <code>bb box config show --json</code> prints it.</>}>
+      <button type="button">Copy</button>
+    </SettingRow>,
+  );
+  const command = screen.getByText("bb box config show --json");
+  const help = command.closest("p");
+  expect(help?.className).toContain("text-xs");
+  expect(help?.className).toContain("text-subtle-foreground");
 });
 
 test("dialog buttons keep BB's own weight, and a closed dialog clears its refusal", async () => {
@@ -12486,12 +12498,23 @@ test("Fork leaves an untitled thread unquoted", async () => {
   expect(within(dialog).queryByRole("radio", { name: 'In "this box\'s thread"' })).toBeNull();
 });
 
+test("a snapshot group with no thread title says Untitled thread", async () => {
+  forgetThreadTitles();
+  const { handlers } = server([box()], { tab: tabView });
+  const [page] = app.navPanels;
+  const list = renderSlot(page!, { subPath: "snapshots" }, { rpc: handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: null, titleFallback: null }) } } });
+  expect(await list.findByRole("button", { name: "Untitled thread" })).toBeTruthy();
+  expect(list.queryByRole("button", { name: "this box's thread" })).toBeNull();
+  cleanup();
+});
+
 test("a thread with no title is headed Untitled thread", async () => {
   forgetThreadTitles();
   const [page] = app.navPanels;
   const list = renderSlot(page!, { subPath: "" }, { rpc: server([box()]).handlers, pluginId: "bb-box", sdk: { threads: { get: async () => makeThreadResponse({ title: null, titleFallback: null }) } } });
   expect(await list.findByRole("button", { name: "Untitled thread" })).toBeTruthy();
   expect(threadGroupHeading(undefined)).toBe("Thread");
+  expect(threadGroupHeading(null)).toBe("Untitled thread");
   expect(threadGroupHeading("this box's thread")).toBe("Untitled thread");
   expect(threadGroupHeading("UI thread")).toBe("UI thread");
 });
@@ -12535,7 +12558,8 @@ test("an open link error sits under the field", async () => {
   fireEvent.click(within(dialog).getByRole("button", { name: "Open" }));
   const input = within(dialog).getByPlaceholderText("https://example.com");
   const alert = within(dialog).getByRole("alert");
-  expect(input.closest("label")?.textContent?.startsWith("Link")).toBe(true);
+  expect(input.closest("label")).toBeNull();
+  expect(alert.closest("label")).toBeNull();
   expect(alert.textContent).toBe("Write a link to open.");
   expect(input.getAttribute("aria-describedby")).toBe(alert.id);
   expect(input.nextElementSibling).toBe(alert);
@@ -12558,4 +12582,54 @@ test("removing the old settings copy stays open when it fails", async () => {
   const dialog = await screen.findByRole("alertdialog", { name: "Remove the copy of BB's earlier settings?" });
   expect((await within(dialog).findByRole("alert")).textContent).toContain("The copy was not removed: the configuration is locked.");
   expect(screen.getByRole("alertdialog", { name: "Remove the copy of BB's earlier settings?" })).toBeTruthy();
+});
+
+test("removing the old settings copy keeps its last time while the dialog closes", async () => {
+  const fake = server([]);
+  const get = fake.handlers["config.get"]!;
+  const kept = { ...(get(null) as ConfigState), migrated: { at: Date.now() - 2 * 3_600_000, version: "0.2.0" } };
+  const cleared = { ...kept, migrated: null };
+  let reads = 0;
+  let releaseRead: (value: ConfigState) => void = () => {};
+  const handlers: PluginRpcTestHandlers<Contract> = {
+    ...fake.handlers,
+    "config.get": () => {
+      reads += 1;
+      if (reads === 1) return kept;
+      return new Promise<ConfigState>((resolve) => {
+        releaseRead = resolve;
+      });
+    },
+    "config.migrated.remove": () => ({ removed: true, state: cleared }),
+  };
+  const slot = settings(handlers, "#option/configuration");
+  fireEvent.click(await slot.findByRole("button", { name: "Remove copy…" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Remove the copy of BB's earlier settings?" });
+  expect(dialog.textContent).toMatch(/made it \d+ h ago, when/);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Remove copy" }));
+  await waitFor(() => expect(reads).toBeGreaterThan(1));
+  let broken = false;
+  const observer = new MutationObserver(() => {
+    if (document.body.textContent?.includes("made it ,")) broken = true;
+  });
+  observer.observe(document.body, { subtree: true, characterData: true, childList: true });
+  await act(async () => {
+    releaseRead(cleared);
+  });
+  observer.disconnect();
+  expect(broken).toBe(false);
+});
+
+test("Default kind and iOS video encoding point at their errors", async () => {
+  const boxes = settings(server([], { config: { problems: [{ path: "general.defaultKind", message: "Choose a kind that is on." }] } }).handlers, "#option/boxes");
+  const kind = await boxes.findByRole("combobox", { name: "Default kind" });
+  const kindAlert = document.getElementById(kind.getAttribute("aria-describedby")!)!;
+  expect(kindAlert.textContent).toBe("Choose a kind that is on.");
+  expect(kindAlert.getAttribute("role")).toBe("alert");
+  cleanup();
+  const devices = settings(server([], { config: { problems: [{ path: "general.iosEncoder", message: "Choose an encoder." }] } }).handlers, "#option/devices");
+  const encoder = await devices.findByRole("combobox", { name: "iOS video encoding" });
+  const encoderAlert = document.getElementById(encoder.getAttribute("aria-describedby")!)!;
+  expect(encoderAlert.textContent).toBe("Choose an encoder.");
+  expect(encoder.getAttribute("aria-describedby")).toBe(encoderAlert.id);
 });

@@ -1,4 +1,4 @@
-// How bb-box's server calls its host entry to hold the thread's access on a
+// How BB Box's server calls its host entry to hold the thread's access on a
 // box (src/plugin/holder.ts), and the host entry itself (src/host/access.ts).
 
 import assert from "node:assert/strict";
@@ -73,11 +73,11 @@ test("a machine's access is held with one call, called again after 30 s or for o
 
   await settle();
   assert.equal(w.sessions.get("term_old")?.status, "exited");
-  assert.equal(w.sessions.get("term_mine")?.status, "running", "only bb-box's own terminal is closed");
+  assert.equal(w.sessions.get("term_mine")?.status, "running", "only BB Box's own terminal is closed");
   assert.deepEqual(w.errors, []);
 });
 
-test("after 30 s a command goes on while bb-box calls again, but waits for a call for other names or after the worker ended", async () => {
+test("after 30 s a command goes on while BB Box calls again, but waits for a call for other names or after the worker ended", async () => {
   const w = world();
   await w.holders.ensure("host_a", ["GH_TOKEN"]);
   w.advance(30_000);
@@ -113,7 +113,7 @@ test("after 30 s a command goes on while bb-box calls again, but waits for a cal
   assert.deepEqual(w.errors, ["access holder", "access holder"]);
 });
 
-test("a call that fails is logged, commands go on, bb-box calls again after 2 s, and the old terminal stays until a call works", async () => {
+test("a call that fails is logged, commands go on, BB Box calls again after 2 s, and the old terminal stays until a call works", async () => {
   const w = world();
   w.fail("the worker did not answer");
   await w.holders.ensure("host_a", ["GH_TOKEN"]);

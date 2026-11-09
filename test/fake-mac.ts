@@ -155,7 +155,7 @@ export function tartConfig(values: Record<string, unknown> = {}): TartConfig {
 }
 
 /**
- * Gives a Mac what bb-box's capability probe (065) reads, in `bin`: Xcode
+ * Gives a Mac what BB Box's capability probe (065) reads, in `bin`: Xcode
  * through xcode-select and xcodebuild, its iOS runtimes through `xcrun
  * simctl`, and a hardware check that `xcrun swiftc` builds, which says
  * `hardware` (yes, or no as VideoToolbox's -12903). Each xcrun call is noted

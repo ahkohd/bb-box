@@ -15,7 +15,7 @@
 // list and never becomes the active window: keys reach it only on the
 // desktop, where Escape closes it. With misreadPopups, a read of a menu gives
 // its window's elements instead, as Cua does for some popups. A window of
-// app "wide" is wider than the longest edge bb-box gives the agent. A click
+// app "wide" is wider than the longest edge BB Box gives the agent. A click
 // on the desktop works only in the foreground. Like Cua, it takes pixels of
 // the session's latest image of the desktop, or of the screen before one.
 //

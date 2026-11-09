@@ -126,7 +126,7 @@ describe("SSH host pool settings", () => {
       reset: "machine",
       labels: ["fast", "big"],
     });
-    assert.equal(parsed.privateKey, null, "bb-box makes a key when none is given");
+    assert.equal(parsed.privateKey, null, "BB Box makes a key when none is given");
   });
 
   it("give Docker on a machine with reset=machine, and accept the kind IDs from before 027 and linux-docker on its line (041)", () => {
@@ -460,7 +460,7 @@ describe("SSH host pool", () => {
     await assert.rejects(backend.release(guest, releaseHooks().hooks), /stopped answering during its reset/);
     assert.equal((await member(backend, "c")).state, "resetting");
     assert.equal(await backend.power(guest), null);
-    // As after a restart that lost bb-box's storage: the machine says it is part-way through a reset.
+    // As after a restart that lost BB Box's storage: the machine says it is part-way through a reset.
     const fresh = pool("c 192.0.2.52 linux").backend;
     const [held] = await fresh.held();
     assert.ok(held);
@@ -516,7 +516,7 @@ describe("SSH host pool", () => {
     try {
       assert.equal(await backend.power(guest), "unknown");
       const [held] = await backend.held();
-      assert.equal(held?.owner?.boxId, box.boxId, "bb-box's record names the box");
+      assert.equal(held?.owner?.boxId, box.boxId, "BB Box's record names the box");
       assert.equal(held?.power, "unknown");
       const out = await member(backend, "u");
       assert.equal(out.state, "out-of-service");
@@ -657,7 +657,7 @@ describe("SSH host pool", () => {
     assert.equal(tools("nogit").fix, "On nogit: Install git and gh. On Debian or Ubuntu: sudo apt-get install git gh.");
     assert.equal(tools("older").status, "warn");
     assert.match(tools("older").detail, /^The helper does not say whether older has Node\.js, npm, git and gh/);
-    assert.equal(tools("older").fix, "Run this bb-box's setup/ssh-pool/setup.sh on older as root.");
+    assert.equal(tools("older").fix, "Run this BB Box's setup/ssh-pool/setup.sh on older as root.");
     assert.equal(doctor.checks.find((check) => check.id === "machine.older.helper")!.status, "ok", "the helper's version has not changed");
     // A box there still runs commands, so the machine stays in service.
     assert.equal((await member(backend, "bare")).state, "free");
@@ -674,7 +674,7 @@ describe("SSH host pool", () => {
     assert.match(doctor.notes.join("\n"), /This install's ID is other/);
     assert.match(doctor.notes.join("\n"), /leaves alone 1 machine held by install mine\. They still count against capacity/);
     assert.match(doctor.checks.find((check) => check.id === "machine.o.state")!.detail, /Held by install mine/);
-    await assert.rejects(other.returnToService!("o"), /o is held by box .+ of bb-box install mine\. Release the box first\./);
+    await assert.rejects(other.returnToService!("o"), /o is held by box .+ of BB Box install mine\. Release the box first\./);
     assert.equal(await mine.power(guest), "running", "the box's machine was not reset");
     await mine.release(guest, releaseHooks().hooks);
     await mine.dispose();
@@ -1054,7 +1054,7 @@ describe("An SSH host pool of Macs (047)", () => {
     assert.equal(check("machine.bad.homes")?.fix, "On bad, as an administrator: sudo chmod 700 /Users/person /Users/other");
     // SIP's state, either way ok, saying what it gives (058).
     assert.match(check("machine.good.sip")!.detail, /^On\. Cua Driver has its grants/);
-    assert.match(check("machine.away.sip")!.detail, /^Off, so bb-box grants box users' programs the macOS permissions they ask for/);
+    assert.match(check("machine.away.sip")!.detail, /^Off, so BB Box grants box users' programs the macOS permissions they ask for/);
     assert.match(check("machine.bad.signin")!.detail, /^Box user bbx-0 is at the console, but the automatic login is off/);
     assert.match(check("machine.bad.fulldisk")!.fix!, /^On bad: In System Settings, General, Sharing, select the \(i\) beside Remote Login/);
     assert.equal(check("machine.bad.grants")?.detail, "Cua Driver lacks Screen Recording, so computer use cannot see the desktop.");
@@ -1066,7 +1066,7 @@ describe("An SSH host pool of Macs (047)", () => {
     assert.deepEqual(status("headless"), ["ssh ok", "helper ok", "arch ok", "tools fail", "filevault ok", "signin ok", "fulldisk ok", "homes ok", "sip ok", "xcode ok", "state ok", "sizes warn"]);
     assert.equal(check("machine.headless.tools")?.fix, "On headless: Install Node.js 22.19 or newer with Homebrew: brew install node. BB's installer needs it to enrol a box. Install git and gh with Homebrew: brew install git gh.");
     assert.equal(check("machine.headless.sizes")?.detail, "headless has 8 cores, 6 GiB memory, 200 GiB free disk. It cannot hold a macos box at any of its presets, the smallest 4 cores, 8 GiB memory.");
-    assert.equal(check("machine.headless.sizes")?.fix, "Give headless more memory, or make the presets of macos smaller in bb-box's settings, under Kinds.");
+    assert.equal(check("machine.headless.sizes")?.fix, "Give headless more memory, or make the presets of macos smaller in BB Box's settings, under Kinds.");
     for (const [host, asked] of [["192.0.2.91", 1], ["192.0.2.92", 1], ["192.0.2.93", 1], ["192.0.2.94", 0]] as const) {
       assert.equal(helperCalls(host).filter((call) => call === "status grants").length, asked, host);
       assert.equal(helperCalls(host).filter((call) => call === "status xcode").length, 1, host);
@@ -1124,7 +1124,7 @@ describe("An SSH host pool of Macs (047)", () => {
         name: "ready: Xcode",
         status: "warn",
         detail: "The helper did not say whether the Mac has Xcode. xcrun simctl did not list the Simulator's runtimes within 10 seconds. The offers keep what it found before.",
-        fix: "Run this bb-box's setup/ssh-pool/setup-mac.sh on ready with sudo, which updates the helper and prepares Xcode. Then run the doctor again.",
+        fix: "Run this BB Box's setup/ssh-pool/setup-mac.sh on ready with sudo, which updates the helper and prepares Xcode. Then run the doctor again.",
       });
       assert.equal(await check(restarted, "xcode"), undefined);
       assert.deepEqual(await features(restarted), both, "a failed call keeps what the Mac found before");
@@ -1166,7 +1166,7 @@ describe("An SSH host pool of Macs (047)", () => {
       name: "old: Xcode",
       status: "warn",
       detail: "The helper did not say whether the Mac has Xcode. usage: machine status [grants]. Until it does, boxes here have neither Xcode nor the iOS Simulator.",
-      fix: "Run this bb-box's setup/ssh-pool/setup-mac.sh on old with sudo, which updates the helper and prepares Xcode. Then run the doctor again.",
+      fix: "Run this BB Box's setup/ssh-pool/setup-mac.sh on old with sudo, which updates the helper and prepares Xcode. Then run the doctor again.",
     });
     assert.deepEqual(found("xcode"), {
       id: "xcode",

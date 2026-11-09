@@ -14,7 +14,7 @@ function facts(overrides: Partial<SetupFacts> = {}): SetupFacts {
   return { hostname: "devpc", user: "dev", socketGroup: "docker", inSocketGroup: true, restart: "sudo systemctl restart user@1000.service", kvm: "ok", freeGb: 120, ...overrides };
 }
 
-test("BB's daemon restarts with new groups through its user's manager for a user service, itself for a system one, and in words when bb-box cannot tell", () => {
+test("BB's daemon restarts with new groups through its user's manager for a user service, itself for a system one, and in words when BB Box cannot tell", () => {
   assert.equal(restartFor("0::/user.slice/user-1000.slice/user@1000.service/app.slice/bb-host-daemon-bb-host_x.service\n", 1000), "sudo systemctl restart user@1000.service");
   assert.equal(restartFor("0::/system.slice/bb.service\n", 999), "sudo systemctl restart bb.service");
   assert.equal(restartFor("0::/user.slice/user-1000.slice/session-3.scope\n", 1000), null);
@@ -46,7 +46,7 @@ test("each BB machine's setup: the server's first, ready where Docker answers, a
   );
   const far = setups.find((setup) => setup.name === "far")!;
   assert.equal(far.fix, "sudo usermod -aG docker bb");
-  assert.equal(far.restart, null, "bb-box cannot tell how BB runs there, so the panel says it in words");
+  assert.equal(far.restart, null, "BB Box cannot tell how BB runs there, so the panel says it in words");
   assert.match(far.problem!, /^Docker is on far, but BB's user, bb, cannot use it\./);
   assert.equal(setups[0]!.docker, "29.8.1");
 });
@@ -65,7 +65,7 @@ test("the fix for a machine's Docker holds for one in use too: BB's user outside
     command: "sudo usermod -aG docker bb",
     restart: "sudo systemctl restart user@1000.service",
   });
-  assert.equal(dockerFix(refused, facts({ inSocketGroup: true }), false), null, "refused for another reason: no fix bb-box knows");
+  assert.equal(dockerFix(refused, facts({ inSocketGroup: true }), false), null, "refused for another reason: no fix BB Box knows");
   assert.equal(dockerFix({ ...refused, connected: false }, facts({ inSocketGroup: false }), false), null);
   assert.equal(dockerFix(host({ backend: { id: "docker:devpc", enabled: true, boxes: 0 } }), facts({ freeGb: 6 }), false), null, "in use, its images are built already");
   assert.match(dockerFix(host(), facts({ freeGb: 6 }), true)!.problem, /and this machine has 6 GB/);
@@ -82,7 +82,7 @@ test("BB's machine access stands in the way of boxes joining when the way BB use
     message: "Sign in to your bb account to use bb connect",
   });
   assert.equal(machineAccessProblem({ generalSettings: { defaultMachineAccess: "manual" }, serverAccess: { defaultProviderId: "bb-connect", providers } }), null);
-  assert.equal(machineAccessProblem(null), null, "bb-box cannot tell");
+  assert.equal(machineAccessProblem(null), null, "BB Box cannot tell");
   assert.equal(needsSignIn("Enrolling box calm-otter failed: Sign in to your bb account to use bb connect"), true);
   assert.equal(needsSignIn("BB removed the machine before it connected"), false);
 });

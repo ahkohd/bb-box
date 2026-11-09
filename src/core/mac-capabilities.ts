@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type { DoctorCheck } from "../backends/types.ts";
 import type { CheckId } from "./checks.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export type Measured<T> = { readonly is: "yes"; readonly what: T } | { readonly is: "no"; readonly why: string } | { readonly is: "unknown"; readonly why: string };
 
@@ -319,7 +321,7 @@ export function checkSlug(text: string): string {
 export function capabilityCheck(id: string, label: string, report: MacReport | null, now = Date.now()): DoctorCheck {
   const checkId = `devices.${checkSlug(id)}` as CheckId;
   const name = `iOS devices on ${label}`;
-  if (!report) return { id: checkId, name, status: "skipped", detail: "Not measured yet. bb-box measures it the next time it reaches the Mac.", fix: null };
+  if (!report) return { id: checkId, name, status: "skipped", detail: `Not measured yet. ${PRODUCT} measures it the next time it reaches the Mac.`, fix: null };
   const room = deviceRoom(report.capabilities);
   const chip = report.chip ? `, an ${report.chip}` : "";
   const varied = variedEncoderWords(report);
@@ -331,8 +333,8 @@ export function capabilityCheck(id: string, label: string, report: MacReport | n
 }
 
 function unknownFix(capabilities: MacCapabilities): string {
-  if (capabilities.hardwareEncoder.is === "unknown" && /Swift compiler/.test(capabilities.hardwareEncoder.why)) return "Install Xcode, or its command line tools, on the Mac, so bb-box can build its encoder check, then run bb box doctor again.";
-  return "Run bb box doctor again once the Mac answers; bb-box measures it then.";
+  if (capabilities.hardwareEncoder.is === "unknown" && /Swift compiler/.test(capabilities.hardwareEncoder.why)) return `Install Xcode, or its command line tools, on the Mac, so ${PRODUCT} can build its encoder check, then run bb box doctor again.`;
+  return `Run bb box doctor again once the Mac answers; ${PRODUCT} measures it then.`;
 }
 
 function noRoomFix(capabilities: MacCapabilities): string {

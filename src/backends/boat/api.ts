@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { freshFetch } from "../../core/fresh-fetch.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const BOAT_API = "https://boat.dev/api/v1";
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -501,7 +503,7 @@ export class BoatApi {
 
   async savedSnapshots(signal?: AbortSignal): Promise<SavedSnapshots> {
     const answer = await this.#call("GET", "/saved-snapshots", undefined, {}, signal);
-    if (!Array.isArray(answer.snapshots)) throw new BoatError("failed", 200, "not_a_list", "boat's answer to the list of saved snapshots held no list, so bb-box changes nothing by it.");
+    if (!Array.isArray(answer.snapshots)) throw new BoatError("failed", 200, "not_a_list", `boat's answer to the list of saved snapshots held no list, so ${PRODUCT} changes nothing by it.`);
     const snapshots = (answer.snapshots as Record<string, unknown>[]).map(savedSnapshotFrom);
     return { snapshots, allowance: allowanceFrom(answer.allowance) };
   }

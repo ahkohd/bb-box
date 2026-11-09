@@ -34,6 +34,8 @@ import {
   type KindEdit,
 } from "./config-edits.ts";
 import { doctorText, problemsText } from "./views.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 const MOST_TRIES = 3;
 const SAVED_WITH_FAILED_CHECK = 2;
@@ -366,7 +368,7 @@ export function configCommands(configuration: Configuration) {
       },
     }),
     "backend types": cliCommand({
-      summary: "List the types of backend bb-box has: what each is for, what setting it up needs, the kinds it makes, and its setup guide and scripts in bb-box's repository.",
+      summary: `List the types of backend ${PRODUCT} has: what each is for, what setting it up needs, the kinds it makes, and its setup guide and scripts in ${PRODUCT}'s repository.`,
       options: jsonOption,
       async run({ options }) {
         const state = await configuration.state();
@@ -549,7 +551,7 @@ export function configCommands(configuration: Configuration) {
         "largest-disk-gib": { type: "string", description: "The most disk in GiB a custom size may ask for." },
         spares: { type: "integer", min: 0, max: 100, description: "Spare boxes to keep ready, enrolled and owned by no thread; 0 keeps none." },
         gpu: { type: "enum", values: GPU_PARTS, description: "The GPU a box of the kind gets when a request leaves gpu out, and the New box form's first choice: none, shared or whole. linux and linux-desktop only." },
-        reset: { type: "boolean", description: "Go back to bb-box's own sizes and switch for the kind first." },
+        reset: { type: "boolean", description: `Go back to ${PRODUCT}'s own sizes and switch for the kind first.` },
       },
       run: async ({ positionals, options }, ctx) => {
         const enabled = switchOf(options);

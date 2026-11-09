@@ -1,4 +1,6 @@
 import type { CardHolding, CardInUse, LimitCounts } from "./types.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export function cardTitle(index: number | null): string {
   return index === null ? "A card" : `Card ${index}`;
@@ -7,7 +9,7 @@ export function cardTitle(index: number | null): string {
 export function holdingName(holding: CardHolding): string {
   if (holding.is === "box") return holding.name;
   if (holding.is === "warm") return "a warm box";
-  return `${holding.guest} (${holding.is === "other-install" ? "another install's" : "not bb-box's"})`;
+  return `${holding.guest} (${holding.is === "other-install" ? "another install's" : `not ${PRODUCT}'s`})`;
 }
 
 function inWords(items: readonly string[]): string {

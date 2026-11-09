@@ -234,7 +234,7 @@ test("a command spawned on a Windows box runs in PowerShell, with its stdin and 
   await assert.rejects(ssh.spawn(at("192.0.2.34"), `: ${"x".repeat(40_000)}`, undefined, "windows"), (error: unknown) => error instanceof SshError && /could not start: .*Connection refused/.test(error.message));
 });
 
-/** A sh stand-in for PowerShell that writes and reads files as bb-box's Windows file copies do, and runs any other script with sh. */
+/** A sh stand-in for PowerShell that writes and reads files as BB Box's Windows file copies do, and runs any other script with sh. */
 const FILES = String.raw`p=$(printf '%s' "$1" | sed -n "1s/^try{\$p=\$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath('\(.*\)');if(\[IO.Directory\].*/\1/p" | sed "s/''/'/g")
 sum() { printf '%s %s' "$(sha256sum < "$p" | cut -d' ' -f1)" "$(wc -c < "$p" | tr -d ' ')"; }
 case "$1" in
@@ -304,7 +304,7 @@ test("a Windows box's copy gives the file's size and SHA-256 from the same Power
   assert.equal(await linux.readFileSummed("x", { maxBytes: 10 }), null);
 });
 
-test("commands to one box share a connection that bb-box opens once", async () => {
+test("commands to one box share a connection that BB Box opens once", async () => {
   const { ssh, log, dir } = fakeSsh({ share: true });
   const box = at("192.0.2.20");
   const results = await Promise.all([1, 2, 3].map((n) => ssh.run(box, `echo ${n}`)));
@@ -400,7 +400,7 @@ test("a box that cannot be reached gets no shared connection for 5 s, and SSH's 
   await ssh.dispose();
 });
 
-/** The sockets of the shared connections bb-box opened to `target`, in order. */
+/** The sockets of the shared connections BB Box opened to `target`, in order. */
 function sockets(entries: ReturnType<ReturnType<typeof fakeSsh>["log"]>, target: string): string[] {
   return entries
     .filter((entry) => entry.control === "master" && entry.target === target)
@@ -433,7 +433,7 @@ test("a command that times out retires its shared connection, and forget and dis
   await ssh.forget(box);
   assert.deepEqual(closed().sort(), [...paths].sort(), "forget closes the retired connection too");
 
-  // A connection retired by a write that timed out is closed when bb-box stops.
+  // A connection retired by a write that timed out is closed when BB Box stops.
   const other = at("192.0.2.27");
   await ssh.run(other, "true");
   await assert.rejects(ssh.writeFile(other, "f", new Uint8Array(), { timeoutMs: 1 }), /timed out/);

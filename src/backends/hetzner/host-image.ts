@@ -10,6 +10,8 @@ import type { BackendStorage } from "../types.ts";
 import { hostSetupScript } from "./cloud-init.ts";
 import { LABEL, type HetznerHosts, type HostRecord, type HostSpec } from "./hosts.ts";
 import { timedSpawn } from "../../transports/spawns.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const HOST_IMAGE_ROLE = "host-image";
 export const BUILD_LABEL = "bbbox-build";
@@ -270,7 +272,7 @@ export class HostImages {
     for (const record of await this.#builds.records()) {
       if (this.#builds.isMakingInThisProcess(record.hostId) || making.has(record.hostId)) continue;
       if (!(await this.#leftForItsSnapshot(record.hostId))) continue;
-      log(`The build server ${record.serverName} waited for its snapshot, which is no longer being made: bb-box deletes it.`);
+      log(`The build server ${record.serverName} waited for its snapshot, which is no longer being made: ${PRODUCT} deletes it.`);
       await this.#builds.delete(record.hostId, signal);
       await this.#storage?.delete(leftKey(record.hostId));
     }
@@ -299,7 +301,7 @@ export class HostImages {
 
   whyBuild(newest: HetznerImage | null, nowMs: number, appSha256: string | null = null): string | null {
     if (!newest) return "there is no host image yet";
-    if (newest.labels[SETUP_LABEL] !== this.#fingerprint()) return "bb-box's image scripts changed since the host image was built";
+    if (newest.labels[SETUP_LABEL] !== this.#fingerprint()) return `${PRODUCT}'s image scripts changed since the host image was built`;
     const app = appLabel(appSha256);
     if (app && newest.labels[APP_LABEL] !== app) return "BB's server gives another build of its app than the host image has";
     if (nowMs - newest.createdAtMs > HOST_IMAGE_REBUILT_AFTER_MS) return "the host image is more than a week old";
@@ -354,7 +356,7 @@ export class HostImages {
         const started = await this.#api.startSnapshot(
           record.serverId!,
           {
-            description: `bb-box host image ${record.hostId}`,
+            description: `${PRODUCT} host image ${record.hostId}`,
             labels: { ...this.#installLabels, [LABEL.role]: HOST_IMAGE_ROLE, [BUILD_LABEL]: record.hostId, [SETUP_LABEL]: saved.fingerprint, [ARCH_LABEL]: architecture, ...(appLabel(saved.appSha256) ? { [APP_LABEL]: appLabel(saved.appSha256)! } : {}) },
           },
           signal,
@@ -375,7 +377,7 @@ export class HostImages {
     } catch (error) {
       if (givingWay.signal.aborted && !given.aborted) {
         ending = "gave way";
-        throw new BuildGaveWayToBoxes(`bb-box stopped the ${architecture} host image build on ${record.serverName}, at its ${saved.phase} step, and deleted the server, so a box gets its room. It builds again once boxes have not waited for room for 30 minutes.`);
+        throw new BuildGaveWayToBoxes(`${PRODUCT} stopped the ${architecture} host image build on ${record.serverName}, at its ${saved.phase} step, and deleted the server, so a box gets its room. It builds again once boxes have not waited for room for 30 minutes.`);
       }
       if (bbBoxIsStopping(error, signal)) ending = "left";
       throw error;

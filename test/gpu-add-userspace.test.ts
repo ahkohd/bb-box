@@ -177,13 +177,13 @@ async function rejectionOf(work: Promise<unknown>): Promise<BoxError> {
 
 const noUserspace = () => fakeNvidia({ file: "none", library: "none", card: null });
 
-test("071 unit 10: none to shared on a linux box with no NVIDIA userspace: the check says the install, runs bb-box's check in the box and changes nothing; the resize installs it first, in the same restart, then checks the card, and says so for each audience", async () => {
+test("071 unit 10: none to shared on a linux box with no NVIDIA userspace: the check says the install, runs BB Box's check in the box and changes nothing; the resize installs it first, in the same restart, then checks the card, and says so for each audience", async () => {
   const events: { readonly kind: string; readonly words?: string | null }[] = [];
   const state = world(noUserspace(), true, events);
   const box = await made(state, "linux");
   const checked = await state.boxes.resize(THREAD, box.id, { gpu: "shared" }, { check: true });
   assert.equal(checked.plan?.gpu?.installs, DRIVER);
-  assert.deepEqual(updateCalls(state.nvidia), ["check"], "the check runs bb-box's check in the box, and installs nothing");
+  assert.deepEqual(updateCalls(state.nvidia), ["check"], "the check runs BB Box's check in the box, and installs nothing");
   const said = resizeText(checked, true);
   assert.match(said, /^GPU: none → shared, card 0 · Restart\. \S+ restarts, gets NVIDIA's userspace 580\.142 and card 0\.$/m);
   assert.match(said, /^It has no NVIDIA userspace for the host's driver 580\.142, which a card needs, so BB Box installs it first, while it runs with no GPU, then restarts it with the card: about 60 s more\. If the install fails, it goes on running with no GPU, as it was\.$/m);
@@ -194,7 +194,7 @@ test("071 unit 10: none to shared on a linux box with no NVIDIA userspace: the c
 
   const refused = await rejectionOf(state.boxes.resize(THREAD, box.id, { gpu: "shared" }, {}));
   assert.equal(refused.code, "needs_restart");
-  assert.match(refused.message, /needs a restart for its GPU: the box shuts down and starts again, for about \d+ s, and installs NVIDIA's userspace 580\.142 in it first, which ends everything running in it\. bb-box changed nothing\.$/);
+  assert.match(refused.message, /needs a restart for its GPU: the box shuts down and starts again, for about \d+ s, and installs NVIDIA's userspace 580\.142 in it first, which ends everything running in it\. BB Box changed nothing\.$/);
   assert.deepEqual(state.backend.order, []);
 
   const states: string[] = [];
@@ -224,7 +224,7 @@ test("071 unit 10: none to shared on a linux box with no NVIDIA userspace: the c
   assert.equal(done.userspaceUpdate?.step, "check");
   for (const audience of ["person", "agent"] as const) {
     const text = resizeText(answer, false, audience);
-    assert.match(text, /^bb-box installed NVIDIA's userspace 580\.142 in it, where it had none, before the restart\. nvidia-smi in it lists card 0, shared, Fake RTX, 24 GiB, and CUDA's driver initialises\.$/m, audience);
+    assert.match(text, /^BB Box installed NVIDIA's userspace 580\.142 in it, where it had none, before the restart\. nvidia-smi in it lists card 0, shared, Fake RTX, 24 GiB, and CUDA's driver initialises\.$/m, audience);
     assert.doesNotMatch(text, /GPU desktop/, "a server's kind does not change");
   }
   assert.ok(state.logs.some((line) => new RegExp(`^Installing NVIDIA's userspace 580\\.142 in box ${box.name} of thread ${THREAD}, over none, to add its GPU\\.$`).test(line)), state.logs.join("\n"));
@@ -328,7 +328,7 @@ test("071 unit 10: a GPU desktop whose display does not come up on the GPU after
   assert.equal(answer.installed?.problem, "its desktop came up on the CPU (no NVIDIA device nodes)");
   assert.equal(answer.box.userspaceUpdate?.state, "failed");
   assert.equal(answer.box.userspaceUpdate?.step, "check");
-  assert.match(resizeText(answer, false, "person"), new RegExp(`^bb-box installed NVIDIA's userspace 580\\.142 in it, where it had none, before the restart, but its check after the restart failed: its desktop came up on the CPU \\(no NVIDIA device nodes\\)\\. Update it again: bb box gpu update ${box.name} --thread ${THREAD}$`, "m"));
+  assert.match(resizeText(answer, false, "person"), new RegExp(`^BB Box installed NVIDIA's userspace 580\\.142 in it, where it had none, before the restart, but its check after the restart failed: its desktop came up on the CPU \\(no NVIDIA device nodes\\)\\. Update it again: bb box gpu update ${box.name} --thread ${THREAD}$`, "m"));
   assert.match(resizeText(answer, false, "agent"), /but its check after the restart failed: its desktop came up on the CPU \(no NVIDIA device nodes\)\. Ask the user to update it again\.$/m);
 });
 
@@ -337,8 +337,8 @@ test("071 unit 10: a linux-desktop-cpu box is refused a GPU, with words for each
   const box = await made(state, "linux-desktop-cpu");
   const refused = await rejectionOf(state.boxes.resize(THREAD, box.id, { gpu: "shared" }, { restart: true }));
   assert.equal(refused.code, "unsupported");
-  assert.equal(refused.message, `Not resized: Fake host offers no linux-desktop box with a GPU, so box ${box.name}, a desktop drawn by the CPU, cannot become a GPU desktop there. List a GPU desktop template in BB Box's settings, or make a new linux-desktop box with a GPU. bb-box changed nothing.`);
-  assert.equal(refused.agentMessage, `Not resized: Fake host offers no linux-desktop box with a GPU, so box ${box.name}, a desktop drawn by the CPU, cannot become a GPU desktop there. Acquire a linux-desktop box with the GPU it needs, or ask the user. bb-box changed nothing.`);
+  assert.equal(refused.message, `Not resized: Fake host offers no linux-desktop box with a GPU, so box ${box.name}, a desktop drawn by the CPU, cannot become a GPU desktop there. List a GPU desktop template in BB Box's settings, or make a new linux-desktop box with a GPU. BB Box changed nothing.`);
+  assert.equal(refused.agentMessage, `Not resized: Fake host offers no linux-desktop box with a GPU, so box ${box.name}, a desktop drawn by the CPU, cannot become a GPU desktop there. Acquire a linux-desktop box with the GPU it needs, or ask the user. BB Box changed nothing.`);
   assert.deepEqual(state.backend.kindsAsked, [], "the backend is not asked");
   assert.equal((await state.boxes.find(box.id))!.kind, "linux-desktop-cpu");
 });
@@ -350,7 +350,7 @@ test("071 unit 10, section 6: a box with NVIDIA or CUDA packages from apt is ref
     const refused = await rejectionOf(state.boxes.resize(THREAD, box.id, { gpu: "shared" }, { check, restart: true }));
     assert.equal(refused.code, "unsupported");
     assert.equal(refused.message, `Not changed: ${box.name} has nvidia-driver-570 from apt, which NVIDIA's installer would conflict with. Remove it, or make a new box with a GPU.`);
-    assert.equal(refused.agentMessage, `Not resized: ${box.name} has nvidia-driver-570 from apt, which NVIDIA's installer would conflict with. Remove it, or make a new box with a GPU. bb-box changed nothing.`);
+    assert.equal(refused.agentMessage, `Not resized: ${box.name} has nvidia-driver-570 from apt, which NVIDIA's installer would conflict with. Remove it, or make a new box with a GPU. BB Box changed nothing.`);
   }
   assert.deepEqual(state.backend.order, [], "nothing stopped");
   assert.deepEqual(updateCalls(state.nvidia), ["check", "check"], "nothing downloaded or installed");
@@ -363,14 +363,14 @@ test("071 unit 10, section 6: a box with NVIDIA or CUDA packages from apt is ref
   state.nvidia.freeMiB = 1000;
   const small = await rejectionOf(state.boxes.resize(THREAD, box.id, { gpu: "shared" }, { restart: true }));
   assert.equal(small.message, `Not changed: ${box.name} has 1000 MiB free in /var/tmp, and NVIDIA's installer and its files need 2 GiB. Make a new box with the GPU it needs.`);
-  assert.equal(small.agentMessage, `Not resized: ${box.name} has 1000 MiB free in /var/tmp, and NVIDIA's installer and its files need 2 GiB. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.`);
+  assert.equal(small.agentMessage, `Not resized: ${box.name} has 1000 MiB free in /var/tmp, and NVIDIA's installer and its files need 2 GiB. Acquire a new box with the GPU it needs, or ask the user. BB Box changed nothing.`);
 
   state.nvidia.freeMiB = 20_000;
   state.nvidia.running = true;
   const running = await rejectionOf(state.boxes.resize(THREAD, box.id, { gpu: "shared" }, { restart: true }));
   assert.equal(running.code, "try_again");
-  assert.equal(running.message, `Not changed: an earlier update of NVIDIA's userspace is still running in box ${box.name}: bb-box reads its userspace once it ends, and starts no other update until then. Resize it again once it has ended.`);
-  assert.equal(running.agentMessage, `Not resized: an earlier update of NVIDIA's userspace is still running in box ${box.name}: bb-box reads its userspace once it ends, and starts no other update until then. Call box_resize again once it has ended, or ask the user. bb-box changed nothing.`);
+  assert.equal(running.message, `Not changed: an earlier update of NVIDIA's userspace is still running in box ${box.name}: BB Box reads its userspace once it ends, and starts no other update until then. Resize it again once it has ended.`);
+  assert.equal(running.agentMessage, `Not resized: an earlier update of NVIDIA's userspace is still running in box ${box.name}: BB Box reads its userspace once it ends, and starts no other update until then. Call box_resize again once it has ended, or ask the user. BB Box changed nothing.`);
   assert.deepEqual(state.backend.order, []);
 });
 
@@ -378,7 +378,7 @@ test("071 unit 10, section 6: an install that fails leaves the box running with 
   const state = world({ ...noUserspace(), install: "fails-before" });
   const box = await made(state, "linux");
   const failed = await rejectionOf(state.boxes.resize(THREAD, box.id, { gpu: "shared" }, { restart: true }));
-  assert.equal(failed.message, `Not resized: bb-box could not install NVIDIA's userspace 580.142 in box ${box.name}: nvidia-userspace: the NVIDIA installer failed before it changed anything. It has no NVIDIA userspace now. It goes on running with no GPU, as it was, and was not restarted. Resize it again to try once more.`);
+  assert.equal(failed.message, `Not resized: BB Box could not install NVIDIA's userspace 580.142 in box ${box.name}: nvidia-userspace: the NVIDIA installer failed before it changed anything. It has no NVIDIA userspace now. It goes on running with no GPU, as it was, and was not restarted. Resize it again to try once more.`);
   assert.match(failed.agentMessage ?? "", /It goes on running with no GPU, as it was, and was not restarted\. Ask the user\.$/);
   assert.deepEqual(state.backend.order, ["install"], "nothing stopped");
   let after = (await state.boxes.find(box.id))!;
@@ -391,7 +391,7 @@ test("071 unit 10, section 6: an install that fails leaves the box running with 
   state.nvidia.install = "works";
   state.nvidia.fetchFails = "could not download NVIDIA-Linux-x86_64-580.142.run";
   const fetch = await rejectionOf(state.boxes.resize(THREAD, box.id, { gpu: "shared" }, { restart: true }));
-  assert.equal(fetch.message, `Not resized: bb-box could not download NVIDIA's installer 580.142 into box ${box.name}: nvidia-userspace-update: could not download NVIDIA-Linux-x86_64-580.142.run. Nothing in it changed, and it keeps no GPU. Try again later.`);
+  assert.equal(fetch.message, `Not resized: BB Box could not download NVIDIA's installer 580.142 into box ${box.name}: nvidia-userspace-update: could not download NVIDIA-Linux-x86_64-580.142.run. Nothing in it changed, and it keeps no GPU. Try again later.`);
   after = (await state.boxes.find(box.id))!;
   assert.equal(after.userspaceUpdate?.step, "fetch");
   assert.equal(after.size?.gpu, "none");
@@ -412,7 +412,7 @@ test("071 unit 10: the restart's guard asked again after the install can stop th
     }),
   );
   assert.equal(refused.code, "in_use");
-  assert.equal(refused.message, `Not resized: bb-box installed NVIDIA's userspace 580.142 in box ${box.name}, but did not restart it to add its GPU: thread thr_other began working on it. It goes on running with no GPU. Resize it again once it can restart.`);
+  assert.equal(refused.message, `Not resized: BB Box installed NVIDIA's userspace 580.142 in box ${box.name}, but did not restart it to add its GPU: thread thr_other began working on it. It goes on running with no GPU. Resize it again once it can restart.`);
   assert.deepEqual(state.backend.order, ["install"]);
   const after = (await state.boxes.find(box.id))!;
   assert.equal(after.state, "ready");
@@ -424,7 +424,7 @@ test("071 unit 10: the restart's guard asked again after the install can stop th
   assert.equal(again.plan?.gpu?.installs, null, "the userspace is there now");
   assert.equal(again.installed ?? null, null);
   assert.deepEqual(state.backend.order, ["install", "stop", "start"]);
-  assert.equal(again.box.userspaceUpdate?.state, "done", "the start bb-box made, and a reading of the host's driver, settle the install");
+  assert.equal(again.box.userspaceUpdate?.state, "done", "the start BB Box made, and a reading of the host's driver, settle the install");
   assert.equal(again.box.nvidiaUserspace, DRIVER);
 });
 
@@ -443,7 +443,7 @@ test("071 unit 10, Astra 1: a GPU restart of a running box is refused while an e
   for (const check of [true, false]) {
     const refused = await rejectionOf(state.boxes.resize(THREAD, box.id, { gpu: "shared" }, { check, restart: true }));
     assert.equal(refused.code, "try_again");
-    assert.equal(refused.message, `Not changed: an earlier update of NVIDIA's userspace is still running in box ${box.name}: bb-box reads its userspace once it ends, and starts no other update until then. Resize it again once it has ended.`);
+    assert.equal(refused.message, `Not changed: an earlier update of NVIDIA's userspace is still running in box ${box.name}: BB Box reads its userspace once it ends, and starts no other update until then. Resize it again once it has ended.`);
   }
   assert.deepEqual(state.backend.order, [], "nothing stopped");
   assert.equal((await state.boxes.find(box.id))!.size?.gpu, "none");
@@ -453,7 +453,7 @@ test("071 unit 10, Astra 1: a GPU restart of a running box is refused while an e
   assert.equal(done.installed ?? null, null);
 });
 
-test("071 unit 10, Astra 2: a resize cut short by bb-box stopping takes the claim its backend holds and the kind that goes with it, so a later resize to none takes the card away", async () => {
+test("071 unit 10, Astra 2: a resize cut short by BB Box stopping takes the claim its backend holds and the kind that goes with it, so a later resize to none takes the card away", async () => {
   const state = world(fakeNvidia({ file: DRIVER, library: DRIVER, card: null }));
   const box = await made(state, "linux-desktop-cpu");
   const ref = { threadId: THREAD, id: box.id };
@@ -487,7 +487,7 @@ test("071 unit 10, Astra 3: an install cut short on a box that has no GPU yet st
   await state.boxes.sweep();
   const read = (await state.boxes.find(box.id))!;
   assert.equal(read.userspaceUpdate?.state, "failed", "the sweep read the box, though it has no GPU");
-  assert.match(read.userspaceUpdate?.error ?? "", /When bb-box read the box again, it had no NVIDIA userspace\.$/);
+  assert.match(read.userspaceUpdate?.error ?? "", /When BB Box read the box again, it had no NVIDIA userspace\.$/);
   assert.equal(boxView(read, true, { owner: "agent", holder: null }).userspaceNotice?.action, "resize-again");
   assert.match(userspaceFixLine(read) ?? "", new RegExp(`Its GPU was not added\\. Resize it again: bb box resize ${box.name} --gpu shared --restart --thread ${THREAD}$`));
   assert.match(boxDetail(read), /^GPU: .*Its GPU was not added\. Call box_resize with gpu shared and restart true to try again, or ask the user\.$/m);
@@ -514,10 +514,10 @@ test("071 unit 10, Fable 1: a check in the box that does not finish, or finds an
   const box = await made(state, "linux");
   const refused = await rejectionOf(state.boxes.resize(THREAD, box.id, { gpu: "shared" }, { restart: true }));
   assert.equal(refused.code, "try_again");
-  assert.equal(refused.message, `Not changed: ${box.name} did not finish bb-box's check. Try again in a minute.`);
-  assert.equal(refused.agentMessage, `Not resized: ${box.name} did not finish bb-box's check. Try again in a minute, or ask the user. bb-box changed nothing.`);
+  assert.equal(refused.message, `Not changed: ${box.name} did not finish BB Box's check. Try again in a minute.`);
+  assert.equal(refused.agentMessage, `Not resized: ${box.name} did not finish BB Box's check. Try again in a minute, or ask the user. BB Box changed nothing.`);
   assert.deepEqual(state.backend.order, []);
-  assert.deepEqual(cannotInstallWords("amber-fox", "is still running an earlier update of NVIDIA's userspace, which must end before bb-box starts another", true).person, "Not changed: amber-fox is still running an earlier update of NVIDIA's userspace, which must end before bb-box starts another. Try again in a minute.");
+  assert.deepEqual(cannotInstallWords("amber-fox", "is still running an earlier update of NVIDIA's userspace, which must end before BB Box starts another", true).person, "Not changed: amber-fox is still running an earlier update of NVIDIA's userspace, which must end before BB Box starts another. Try again in a minute.");
 });
 
 test("071 unit 10, Fable 3: a stopped box whose own last reading is not the host's driver is told to start first before its backend plans, whatever its template has", async () => {
@@ -529,7 +529,7 @@ test("071 unit 10, Fable 3: a stopped box whose own last reading is not the host
   state.backend.kindsAsked.length = 0;
   const refused = await rejectionOf(state.boxes.resize(THREAD, box.id, { gpu: "shared" }, { restart: true }));
   assert.equal(refused.message, `Start ${box.name} first: NVIDIA's userspace 580.142, which a card needs, is installed in a running box. Nothing changes.`);
-  assert.equal(refused.agentMessage, `Not resized: ${box.name} is stopped, and a card needs NVIDIA's userspace 580.142 in it, which bb-box installs only in a running box. Start it with box_start, then resize it again, or ask the user. bb-box changed nothing.`);
+  assert.equal(refused.agentMessage, `Not resized: ${box.name} is stopped, and a card needs NVIDIA's userspace 580.142 in it, which BB Box installs only in a running box. Start it with box_start, then resize it again, or ask the user. BB Box changed nothing.`);
   assert.deepEqual(state.backend.kindsAsked, [], "its backend was not asked to plan");
   assert.equal((await state.boxes.find(box.id))!.state, "stopped");
 });
@@ -550,7 +550,7 @@ test("071 unit 10, Astra's final check 1: a claim that cannot be read keeps a cu
   assert.equal(after.kind, "linux-desktop-cpu");
   const refused = await rejectionOf(state.boxes.resize(THREAD, box.id, { gpu: "none" }, { restart: true }));
   assert.equal(refused.code, "try_again");
-  assert.equal(refused.message, `Not changed: bb-box could not yet read which GPU box ${box.name} holds after its last resize, which was cut short. Try again in a minute.`);
+  assert.equal(refused.message, `Not changed: BB Box could not yet read which GPU box ${box.name} holds after its last resize, which was cut short. Try again in a minute.`);
   assert.deepEqual(state.backend.order, []);
   const none = await state.boxes.resize(THREAD, box.id, { gpu: "none" }, { restart: true });
   assert.equal(none.changed, true, "the resize read the claim first, so it knew the box held a card");

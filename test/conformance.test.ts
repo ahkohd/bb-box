@@ -254,7 +254,7 @@ await conformance({
     "computer-use": "the fake Mac and the fake container have no computer-use driver",
     "desktop-session": "the fake ssh runs commands on the test machine, which has no launchctl",
     size: "the fake ssh and the fake docker run commands on the test machine",
-    images: "Namespace's Macs start from its own macOS images, and its Linux boxes from images bb-box builds into the workspace's registry, which test/namespace-linux-images.test.ts checks",
+    images: "Namespace's Macs start from its own macOS images, and its Linux boxes from images BB Box builds into the workspace's registry, which test/namespace-linux-images.test.ts checks",
     "exact-size": "Namespace's Macs come only in fixed shapes, so a box gets the smallest with at least its cores and memory",
   },
   timeoutMs: 20_000,

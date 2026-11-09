@@ -15,7 +15,7 @@ The tools bb-box gives a thread's agent, with their parameters as the agent sees
 | [`box_image_draft`](#box_image_draft) | Draft a project image's script (049) from the project's own files, for you to finish, try with box_image_try and register with box_image_set. |
 | [`box_image_set`](#box_image_set) | Set this thread's project's image (049): a shell script run as root on the standard image of its kinds, so the project's boxes start with what it needs, such as a language's toolchain. |
 | [`box_image_try`](#box_image_try) | Try a project image's script as a build runs it (049), before box_image_set: in a new box of the kind's current standard image, on a backend that builds images, the script runs as root with BB_BOX_IMAGE, BB_BOX_KIND, BB_BOX_BACKEND and BB_BOX_ARCH, then the check as the box user, then finalizing, which empties /tmp, /var/tmp and the caches. |
-| [`box_job`](#box_job) | Get the exit code and output of a box_run command that went on in its box as a job: one still running after 270 s, or when bb-box restarted, as for an update. |
+| [`box_job`](#box_job) | Get the exit code and output of a box_run command that went on in its box as a job: one still running after 270 s, or when BB Box restarted, as for an update. |
 | [`box_list`](#box_list) | List this thread's boxes and the kinds of box you can acquire. |
 | [`box_record`](#box_record) | Record a desktop box's screen, to show your work in the thread as a short video (059). |
 | [`box_release`](#box_release) | Release a box you no longer need. |
@@ -59,7 +59,7 @@ Get a fresh box for this thread: a Linux or macOS computer for commands, builds,
 
 ## box_copy
 
-Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. Every copy's size and SHA-256 are checked at both ends, and one that does not match fails. A file over 16 MiB streams through bb-box's worker on the thread's machine. A relative path on this side is under the workspace; a path under the storage folder, absolute or starting with $BB_THREAD_STORAGE/, is there. A relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.
+Copy one file, of any size, between this thread's workspace or its storage folder ($BB_THREAD_STORAGE) and a box. Every copy's size and SHA-256 are checked at both ends, and one that does not match fails. A file over 16 MiB streams through BB Box's worker on the thread's machine. A relative path on this side is under the workspace; a path under the storage folder, absolute or starting with $BB_THREAD_STORAGE/, is there. A relative box path, or one starting with ~/, is under the box user's home. Tar a directory first.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -117,7 +117,7 @@ Grant a program in a macOS box macOS permissions, such as Accessibility or Scree
 
 ## box_image_draft
 
-Draft a project image's script (049) from the project's own files, for you to finish, try with box_image_try and register with box_image_set. Read these from the repository and pass each one's path and text: .devcontainer/devcontainer.json (or .devcontainer.json, or one in a subfolder of .devcontainer) and the Dockerfile it names; a Dockerfile; .tool-versions; mise.toml; .nvmrc or .node-version; .python-version; rust-toolchain.toml or rust-toolchain; flake.nix with flake.lock, or shell.nix. It returns a script for .bb/box-setup.sh, each part commented with the file it came from, a check for .bb/box-check.sh, and what it could not translate. The script runs as root on bb-box's standard Ubuntu 24.04 image, with no checkout of the repository: what needs one, such as npm ci, stays in the thread. With `box`, it also reads what a Linux box of this thread has that its image had not, for a box someone set up by hand: packages, package sources, npm globals, mise's tools, the Rust toolchain, uv tools, and what is new in /usr/local, /opt and ~/.local/bin.
+Draft a project image's script (049) from the project's own files, for you to finish, try with box_image_try and register with box_image_set. Read these from the repository and pass each one's path and text: .devcontainer/devcontainer.json (or .devcontainer.json, or one in a subfolder of .devcontainer) and the Dockerfile it names; a Dockerfile; .tool-versions; mise.toml; .nvmrc or .node-version; .python-version; rust-toolchain.toml or rust-toolchain; flake.nix with flake.lock, or shell.nix. It returns a script for .bb/box-setup.sh, each part commented with the file it came from, a check for .bb/box-check.sh, and what it could not translate. The script runs as root on BB Box's standard Ubuntu 24.04 image, with no checkout of the repository: what needs one, such as npm ci, stays in the thread. With `box`, it also reads what a Linux box of this thread has that its image had not, for a box someone set up by hand: packages, package sources, npm globals, mise's tools, the Rust toolchain, uv tools, and what is new in /usr/local, /opt and ~/.local/bin.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -153,7 +153,7 @@ Try a project image's script as a build runs it (049), before box_image_set: in 
 
 ## box_job
 
-Get the exit code and output of a box_run command that went on in its box as a job: one still running after 270 s, or when bb-box restarted, as for an update. box_run's answer names the job.
+Get the exit code and output of a box_run command that went on in its box as a job: one still running after 270 s, or when BB Box restarted, as for an update. box_run's answer names the job.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -168,7 +168,7 @@ It takes no parameters.
 
 ## box_record
 
-Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. The clip draws a larger pointer that glides to each click, a ring where each click lands, a pill for each shortcut or special key and one "Typing" pill for typing into an element by its ref, never the text typed; nothing shows for a password, or for typing whose field bb-box cannot tell, as into a window, single keys, or a person's typing. It zooms in gently where you click, drag and type by ref, and shows the screen inset on a plain background (073): zoom false or frame false at stop turns either off. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after 5 minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops. On an ios or android box it records the device's own screen, not the host's: the device in its frame, turning as it turns, with touches shown as circles and the captions in a band above or below it; a stretch the device or its server lost is captioned in the clip.
+Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. The clip draws a larger pointer that glides to each click, a ring where each click lands, a pill for each shortcut or special key and one "Typing" pill for typing into an element by its ref, never the text typed; nothing shows for a password, or for typing whose field BB Box cannot tell, as into a window, single keys, or a person's typing. It zooms in gently where you click, drag and type by ref, and shows the screen inset on a plain background (073): zoom false or frame false at stop turns either off. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Still stretches are cut to half a second unless stills is "keep". A recording ends by itself after 5 minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops. On an ios or android box it records the device's own screen, not the host's: the device in its frame, turning as it turns, with touches shown as circles and the captions in a band above or below it; a stretch the device or its server lost is captioned in the clip.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -207,7 +207,7 @@ Change a box's size: its cores, memory or disk, by a preset or by parts, and its
 
 ## box_restore
 
-Restore a box to one of its snapshots when an attempt went wrong, rather than undoing it by hand. Everything on its disk since then goes, and the box restarts, so every process in it ends. bb-box always takes an undo first, a snapshot of the box once stopped. While Settings turn agents' restores off, this opens a form for a yes given in the thread and answers at once: then end your turn. A box this thread or another runs on, or one of the person's machines, is restored only through such a form, and only where bb-box allows it; this says so when it does not.
+Restore a box to one of its snapshots when an attempt went wrong, rather than undoing it by hand. Everything on its disk since then goes, and the box restarts, so every process in it ends. BB Box always takes an undo first, a snapshot of the box once stopped. While Settings turn agents' restores off, this opens a form for a yes given in the thread and answers at once: then end your turn. A box this thread or another runs on, or one of the person's machines, is restored only through such a form, and only where BB Box allows it; this says so when it does not.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

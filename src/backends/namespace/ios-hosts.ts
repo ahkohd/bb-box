@@ -16,6 +16,8 @@ import { DEVICE_HOST_EXITS, claimantInput, helperCommand, parseHostStatus, slotD
 import { BackendError, type AcquireHooks, type BackendStorage, type BoxIdentity, type BoxTransports, type DoctorCheck, type Guest, type HeldGuest, type PowerState } from "../types.ts";
 import type { Instance, InstanceStatus } from "./api.ts";
 import type { MacShape } from "./config.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const NAMESPACE_HOST_ROLE = "device-host";
 export const HOST_RECORD_KEY = "ios-host";
@@ -142,16 +144,16 @@ export function companionPin(setup = setupDir()): string | null {
 export type HostOffer = { readonly ok: true; readonly device: DeviceOffer } | { readonly ok: false; readonly why: string };
 
 export function namespaceDeviceOffer(report: MacReport | null, setup = setupDir()): HostOffer {
-  if (!report) return { ok: false, why: "bb-box has not measured a Namespace Mac yet; it does when one starts, as for a macos box, or when the doctor runs while one is held" };
+  if (!report) return { ok: false, why: `${PRODUCT} has not measured a Namespace Mac yet; it does when one starts, as for a macos box, or when the doctor runs while one is held` };
   const simulator = report.capabilities.simulator;
   if (simulator.is !== "yes") return { ok: false, why: `Namespace's last Mac measured, an ${report.chip ?? "unknown chip"}, cannot run the iOS Simulator: ${simulator.is === "no" ? simulator.why : "not known"}` };
   const newest = simulator.what.newest;
-  if (!newest) return { ok: false, why: "Namespace's last Mac was measured by an older bb-box, which did not ask its newest iOS runtime; bb-box starts a Namespace Mac for a few minutes to measure it again" };
+  if (!newest) return { ok: false, why: `Namespace's last Mac was measured by an older bb-box, which did not ask its newest iOS runtime; ${PRODUCT} starts a Namespace Mac for a few minutes to measure it again` };
   const slim = slimList(newest.os, newest.build, setup);
-  if (!slim) return { ok: false, why: `bb-box has no slimming list for iOS ${newest.os} (${newest.build}), the newest runtime of Namespace's Macs: make one as docs/research/ios-simulator-slimming.md says, as setup/tart/ios/slim/ios-${newest.os}-${newest.build}.txt` };
+  if (!slim) return { ok: false, why: `${PRODUCT} has no slimming list for iOS ${newest.os} (${newest.build}), the newest runtime of Namespace's Macs: make one as docs/research/ios-simulator-slimming.md says, as setup/tart/ios/slim/ios-${newest.os}-${newest.build}.txt` };
   const types = new Set(simulator.what.deviceTypes ?? []);
   const row = setupModels(setup).find((each) => types.has(each.native));
-  if (!row) return { ok: false, why: `Namespace's Macs have Xcode ${simulator.what.xcode}, which can make none of bb-box's iOS devices` };
+  if (!row) return { ok: false, why: `Namespace's Macs have Xcode ${simulator.what.xcode}, which can make none of ${PRODUCT}'s iOS devices` };
   const companion = companionPin(setup) ?? "";
   return {
     ok: true,
@@ -313,7 +315,7 @@ export class NamespaceHosts implements SlotLender {
 
   async offer(kind: SlotKind, model: string | null, signal: AbortSignal): Promise<SlotTier> {
     if (kind !== "ios") return { tier: "wait", words: "Namespace hosts lend only ios boxes." };
-    if (!this.#access.settings().on) return { tier: "wait", words: "Shared iOS hosts are off in bb-box's Namespace settings." };
+    if (!this.#access.settings().on) return { tier: "wait", words: `Shared iOS hosts are off in ${PRODUCT}'s Namespace settings.` };
     const offerable = this.offerable();
     if (!offerable.ok) return { tier: "wait", words: `No Namespace host can start: ${offerable.why}.` };
     const slotModel = offerable.device.devices[0].model;
@@ -338,7 +340,7 @@ export class NamespaceHosts implements SlotLender {
       if (status.counted + status.promises.length < status.most && (status.diskGiB === null || status.diskGiB >= status.diskReserveGiB)) return { tier: "make", host: record.tag, waitMs: SLOT_MAKING_MS };
       return { tier: "wait", words: `The Namespace host has all its ${status.most} slots making, ready, held or promised (${heldCount(status)} held). A slot is likely free when one of its boxes is released.` };
     }
-    if (record?.phase === "failed") return { tier: "wait", words: `The last Namespace host failed, and bb-box removes it before it starts another: ${record.failure ?? "no reason recorded"}` };
+    if (record?.phase === "failed") return { tier: "wait", words: `The last Namespace host failed, and ${PRODUCT} removes it before it starts another: ${record.failure ?? "no reason recorded"}` };
     const room = await this.#access.room(signal);
     if (!room.shape) return { tier: "wait", words: `No Namespace host can start: ${room.words ?? "Namespace has no Mac for it now"}` };
     if (room.words) return { tier: "wait", words: `No Namespace host can start now: ${room.words}` };
@@ -500,7 +502,7 @@ export class NamespaceHosts implements SlotLender {
       this.#access.log(`The Namespace host's Mac ${failed.instance} did not start, so bb-box destroys it and starts a fresh Namespace Mac, once: ${firstWords}`);
       await this.#access.leaveTailnet?.(failed.instance).catch((error) => this.#access.logError("take the Namespace host's first Mac off the tailnet", error));
       await this.#access.destroy(failed.instance, "bb-box: the Namespace host's Mac did not start, so a fresh one replaces it", signal).catch((error: unknown) => {
-        throw new Error(`${firstWords} bb-box could not destroy its Mac to start a fresh one: ${words(error)}`);
+        throw new Error(`${firstWords} ${PRODUCT} could not destroy its Mac to start a fresh one: ${words(error)}`);
       });
       const fresh = (await this.#update((current) => ({ ...current, instance: null, firstStartFailure: firstWords })))!;
       try {
@@ -535,7 +537,7 @@ export class NamespaceHosts implements SlotLender {
     if (measured.capabilities.simulator.is !== "yes") throw new Error(`its Mac cannot run the iOS Simulator: ${measured.capabilities.simulator.is === "no" ? measured.capabilities.simulator.why : "not known"}`);
     const command = await this.#access.command(instance);
     const unpacked = await command.run(UNPACK_SETUP, { stdin: await this.#access.setupArchive(), timeoutMs: 120_000, signal });
-    if (unpacked.exitCode !== 0) throw new Error(`bb-box's setup did not unpack on it: ${unpacked.stderr.trim() || `exit code ${unpacked.exitCode}`}`);
+    if (unpacked.exitCode !== 0) throw new Error(`${PRODUCT}'s setup did not unpack on it: ${unpacked.stderr.trim() || `exit code ${unpacked.exitCode}`}`);
     const setUp = await command.run(hostSetupScript(record), { timeoutMs: HOST_SETUP_MS, signal, maxOutputBytes: 1 << 20 });
     if (setUp.exitCode !== 0) throw new Error(`its iOS slots were not set up: ${setUp.stderr.trim().split("\n").slice(-3).join(" ") || `exit code ${setUp.exitCode}`}`);
     const hardware = measured.capabilities.hardwareEncoder.is === "yes" ? true : measured.capabilities.hardwareEncoder.is === "no" ? false : null;
@@ -809,21 +811,21 @@ export class NamespaceHosts implements SlotLender {
   async doctor(signal?: AbortSignal): Promise<DoctorCheck> {
     const id = "ios-hosts.namespace" as DoctorCheck["id"];
     const name = "Shared iOS hosts on Namespace";
-    if (!this.#access.settings().on) return { id, name, status: "skipped", detail: "Shared iOS hosts are off in bb-box's Namespace settings.", fix: null };
+    if (!this.#access.settings().on) return { id, name, status: "skipped", detail: `Shared iOS hosts are off in ${PRODUCT}'s Namespace settings.`, fix: null };
     const offerable = this.offerable();
     const record = await this.record();
     if (!record) {
-      if (!offerable.ok) return { id, name, status: "warn", detail: `No Namespace host can start: ${offerable.why}.`, fix: "Run bb box doctor again once bb-box has measured a Namespace Mac; it measures each one it starts." };
+      if (!offerable.ok) return { id, name, status: "warn", detail: `No Namespace host can start: ${offerable.why}.`, fix: `Run bb box doctor again once ${PRODUCT} has measured a Namespace Mac; it measures each one it starts.` };
       const device = offerable.device.devices[0];
       const os = "os" in device.runtime ? device.runtime.os : "";
       return { id, name, status: "ok", detail: `No Namespace host runs. One starts when an ios box finds no slot on a pool Mac or a Tart host: a ${device.model} on iOS ${os}, on the workspace's one Mac, which then holds no macos box. It lives until its last box goes, or an hour before the plan's longest life.`, fix: null };
     }
     if (record.phase !== "serving" || !record.instance) {
       const again = record.phase === "starting" && record.firstStartFailure ? `, on a fresh Namespace Mac as its first start failed (${record.firstStartFailure})` : "";
-      return { id, name, status: record.phase === "failed" ? "warn" : "ok", detail: `The Namespace host is ${record.phase}${record.failure ? `: ${record.failure}` : ""}, with ${record.promised.length} boxes promised, made ${Math.round((this.#access.now() - record.made) / 1000)} s ago${again}.`, fix: record.phase === "failed" ? "bb-box removes it at its next upkeep." : null };
+      return { id, name, status: record.phase === "failed" ? "warn" : "ok", detail: `The Namespace host is ${record.phase}${record.failure ? `: ${record.failure}` : ""}, with ${record.promised.length} boxes promised, made ${Math.round((this.#access.now() - record.made) / 1000)} s ago${again}.`, fix: record.phase === "failed" ? `${PRODUCT} removes it at its next upkeep.` : null };
     }
     const status = await this.#status(record.instance, signal).catch((error: unknown) => error as Error);
-    if (status instanceof Error) return { id, name, status: "warn", detail: `The Namespace host on ${record.instance} did not answer: ${status.message}`, fix: "bb-box tries again at its next upkeep." };
+    if (status instanceof Error) return { id, name, status: "warn", detail: `The Namespace host on ${record.instance} did not answer: ${status.message}`, fix: `${PRODUCT} tries again at its next upkeep.` };
     const count = (is: string) => status.slots.filter((slot) => slot.is === is).length;
     const ending = this.#ending(record) ? " It lends no new slot, as it ends within the hour." : "";
     return {
@@ -836,6 +838,6 @@ export class NamespaceHosts implements SlotLender {
   }
 
   dispose(): void {
-    this.#stopping.abort(new Error("bb-box stopped."));
+    this.#stopping.abort(new Error(`${PRODUCT} stopped.`));
   }
 }

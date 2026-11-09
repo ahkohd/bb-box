@@ -6,7 +6,8 @@ import { useId, useState, type MouseEvent, type ReactNode } from "react";
 import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
 import { cn } from "@/lib/utils";
 import type { BoxView } from "../plugin/views.ts";
-import { deviceModelOf, IconButton, osName, relativeTime, RowTitle, boxTitleBadges, StatusLine, systemName } from "./common.tsx";
+import { ago } from "./box-words.ts";
+import { deviceModelOf, IconButton, osName, RowTitle, boxTitleBadges, StatusLine, systemName } from "./common.tsx";
 import { DESKTOP_PAGE, MACHINES_TAB, useOpenScreen } from "./desktop.tsx";
 import { JoinHelp, joinAdvice } from "./first-run.tsx";
 import { enrolWords, startWords, statusOf, timingWords } from "./status.ts";
@@ -236,7 +237,7 @@ export function BoxRow({
             <Detail label="BB machine">{enrolWords(box)}</Detail>
             {timingWords(box) ? <Detail label="Timings">{timingWords(box)}</Detail> : null}
             {startWords(box) ? <Detail label="Last start">{startWords(box)}</Detail> : null}
-            <Detail label="Made">{relativeTime(box.createdAt, now)}</Detail>
+            <Detail label="Made">{ago(box.createdAt, now)}</Detail>
           </dl>
         ) : null}
       </div>

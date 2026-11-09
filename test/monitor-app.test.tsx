@@ -140,7 +140,7 @@ afterEach(() => {
   localStorage.clear();
 });
 
-test("the footer keeps Beacon's entry: Machine status, with the server icon under a name of bb-box's own", async () => {
+test("the footer keeps Beacon's entry: Machine status, with the server icon under a name of BB Box's own", async () => {
   expect(footer?.label).toBe("Machine status");
   expect(footer?.icon).toBe("bb-box-machine-status");
   const app = await loadPluginApp(() => import("../app.tsx"));
@@ -193,7 +193,7 @@ test("long names and addresses truncate in the middle, keeping both ends, with t
   }
 });
 
-test("with the Monitor off, BB's next load of bb-box's app has no machine status in the footer", async () => {
+test("with the Monitor off, BB's next load of BB Box's app has no machine status in the footer", async () => {
   localStorage.setItem("bb-box:monitor:on", "off");
   const app = await loadPluginApp(() => import("../app.tsx"));
   expect(app.experimentalSidebarFooterItems.some((item) => item.id === "status")).toBe(false);

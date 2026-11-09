@@ -1,4 +1,6 @@
 import type { DoctorCheck } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const GPU_HELPER_PROTOCOL = 1;
 export const GPU_HELPER_FRESH_MS = 3 * 60_000;
@@ -107,7 +109,7 @@ export function judgeGpuHelper(helper: GpuHelperState, seen: GpuHelperSeen): Gpu
   const setUpAgain = `Run host/setup-gpu.sh again, from this BB Box's setup guide, as root on ${node}.`;
   const checkClock = `Run systemctl status bb-box-gpu as root on ${node}, and check the host's clock.`;
   if (ageMs !== null && Number.isFinite(ageMs) && ageMs <= -GPU_HELPER_CLOCK_AHEAD_MS) {
-    return { status: "fail", detail: `The GPU helper's report in VM ${vmid} is dated ${span(-ageMs)} ahead of this BB server's clock, so bb-box cannot tell whether the helper still runs.`, fix: checkClock };
+    return { status: "fail", detail: `The GPU helper's report in VM ${vmid} is dated ${span(-ageMs)} ahead of this BB server's clock, so ${PRODUCT} cannot tell whether the helper still runs.`, fix: checkClock };
   }
   if (ageMs === null || !Number.isFinite(ageMs) || ageMs >= GPU_HELPER_FRESH_MS) {
     return {
@@ -132,7 +134,7 @@ export function judgeGpuHelper(helper: GpuHelperState, seen: GpuHelperSeen): Gpu
   if (!served?.listed.includes(pool)) {
     const serveIt = `Run host/setup-gpu.sh --pool ${pool} as root on ${node}.`;
     if (served && served.unlisted > 0) {
-      return { status: "warn", detail: `${named} serves more pools than its report lists, so bb-box cannot tell whether it serves this install's pool ${pool}.`, fix: serveIt };
+      return { status: "warn", detail: `${named} serves more pools than its report lists, so ${PRODUCT} cannot tell whether it serves this install's pool ${pool}.`, fix: serveIt };
     }
     return { status: "fail", detail: `${named} serves ${poolsInWords(served?.listed ?? [])}, not this install's pool ${pool}.`, fix: serveIt };
   }
@@ -146,14 +148,14 @@ export function judgeGpuHelper(helper: GpuHelperState, seen: GpuHelperSeen): Gpu
   if (!helper.tested) {
     return {
       status: "warn",
-      detail: `${named} was not tested on pve-container ${helper.pveContainer}, so it changes no guest: it runs as with writes off, and bb-box moves no box to another card.`,
+      detail: `${named} was not tested on pve-container ${helper.pveContainer}, so it changes no guest: it runs as with writes off, and ${PRODUCT} moves no box to another card.`,
       fix: `Run host/setup-gpu.sh from a BB Box release tested on pve-container ${helper.pveContainer}, as root on ${node}.`,
     };
   }
   if (helper.writes === "off") {
     return {
       status: "warn",
-      detail: `${named} runs with writes off, a dry run: it writes the GPU report, answers markers that need no write, and changes no guest. Until writes are on, bb-box moves no box to another card, and a stopped box starts on the card its lines name (071).`,
+      detail: `${named} runs with writes off, a dry run: it writes the GPU report, answers markers that need no write, and changes no guest. Until writes are on, ${PRODUCT} moves no box to another card, and a stopped box starts on the card its lines name (071).`,
       fix: `Once bb box gpu mark has marked this install's guests and a day of dry run shows no write the helper would make, run host/setup-gpu.sh --writes on --check, then host/setup-gpu.sh --writes on, as root on ${node}.`,
     };
   }

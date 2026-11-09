@@ -98,7 +98,7 @@ test("a viewer joins as a Selkies viewer, gets what Selkies sends, and may only 
   await box.close();
 });
 
-test("Selkies' own cursor message reaches a viewer, unless bb-box sends the box's cursor itself; bb-box's own messages reach it whatever (060)", async () => {
+test("Selkies' own cursor message reaches a viewer, unless BB Box sends the box's cursor itself; BB Box's own messages reach it whatever (060)", async () => {
   let own = false;
   const { server, box, relay, settle } = setup({ ownCursor: () => own });
   const a = relay("a");
@@ -245,7 +245,7 @@ test("where the video comes from elsewhere, the box's server takes the keys and 
   await server.pages[0]!.send('cursor,{"curdata":"x","hotx":0,"hoty":0}');
   await server.pages[0]!.send("BB_PONG,1");
   await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.ok(!a.got.some((message) => typeof message === "string" && (message.includes('"curdata":"x"') || message.startsWith("BB_PONG"))), "bb-box's own cursor wins, and the rest stays");
+  assert.ok(!a.got.some((message) => typeof message === "string" && (message.includes('"curdata":"x"') || message.startsWith("BB_PONG"))), "BB Box's own cursor wins, and the rest stays");
 
   // The box's server captures nothing: it is asked for no size, colour or key frame, which the viewers ask their source.
   const before = [...server.pages[0]!.received];
@@ -464,12 +464,12 @@ test("a viewer's word on the largest frame it decodes goes to bb-box, not to Sel
   await relay.receive("STOP_VIDEO");
   await until("the video request", () => page.received.at(-1) === "STOP_VIDEO");
   assert.deepEqual(said, [139264]);
-  assert.ok(!page.received.some((message) => typeof message === "string" && message.startsWith("BB_DECODES")), "Selkies never sees bb-box's own message");
+  assert.ok(!page.received.some((message) => typeof message === "string" && message.startsWith("BB_DECODES")), "Selkies never sees BB Box's own message");
   await relay.close();
   await box.close();
 });
 
-test("a viewer's word on 4:4:4 goes to bb-box, not to Selkies; bb-box asks the display for it over its controller connection", async () => {
+test("a viewer's word on 4:4:4 goes to bb-box, not to Selkies; BB Box asks the display for it over its controller connection", async () => {
   const { server, box } = setup();
   const open = async () => server.channel();
   const end = viewer();
@@ -483,14 +483,14 @@ test("a viewer's word on 4:4:4 goes to bb-box, not to Selkies; bb-box asks the d
   await relay.receive("STOP_VIDEO");
   await until("the video request", () => page.received.at(-1) === "STOP_VIDEO");
   assert.deepEqual(said, [true, false]);
-  assert.deepEqual(page.received, ["STOP_VIDEO"], "Selkies never sees bb-box's own message");
+  assert.deepEqual(page.received, ["STOP_VIDEO"], "Selkies never sees BB Box's own message");
   await box.fullColour(true);
   await until("the setting", () => !!server.pages.find((one) => one.role === "controller")?.received.includes('SETTINGS,{"displayId":"primary","video_fullcolor":true}'));
   await relay.close();
   await box.close();
 });
 
-test("bb-box follows a Windows box's pointer through bb-box-stream.exe, which says where it is once asked, and what it looks like (#865)", async () => {
+test("BB Box follows a Windows box's pointer through bb-box-stream.exe, which says where it is once asked, and what it looks like (#865)", async () => {
   const server = new FakeSelkies();
   const events: BoxPointer[] = [];
   const stop = new AbortController();

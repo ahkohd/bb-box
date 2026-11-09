@@ -1,6 +1,8 @@
 import { endOfUtcDay } from "../../core/snapshot.ts";
 import type { BoxOwner, HeldSnapshot, HeldSnapshotState, Price, SnapshotBill, SnapshotStorage, Snapshotting } from "../types.ts";
 import { isTrial, perWindow, type BoatLimits, type SavedAllowance, type SavedSnapshot, type StartWindow } from "./api.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const SAVED_DAY_DOLLARS = 0.056;
 export const SAVE_RUNNING_ABOUT_MS = 60_000;
@@ -10,8 +12,8 @@ export const SAVE_POLL_MS = 2_000;
 export const BOAT_EXCLUDES = "/tmp, ~/.cache, the build cache, the hostname, the address and the SSH host keys";
 export const BOAT_FORK_SAFE_FROM = 8;
 export const SAVED_FACTS_KEY = "saved-snapshot-facts";
-export const TRIAL_NO_SAVED = "boat's free trial has no saved snapshots, so bb-box takes, restores and keeps no snapshot of a boat box there. A payment in boat's dashboard ends the trial";
-export const PLAN_UNREAD = "bb-box does not recognise boat's plan as a paid plan with saved snapshots, and a saved snapshot can cost money, so it takes none there";
+export const TRIAL_NO_SAVED = `boat's free trial has no saved snapshots, so ${PRODUCT} takes, restores and keeps no snapshot of a boat box there. A payment in boat's dashboard ends the trial`;
+export const PLAN_UNREAD = `${PRODUCT} does not recognise boat's plan as a paid plan with saved snapshots, and a saved snapshot can cost money, so it takes none there`;
 
 const SAVED_NAME = /^([a-z0-9][a-z0-9-]*)-(bx[a-z2-7]{12})-(sn[a-z2-7]{12})$/;
 

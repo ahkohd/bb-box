@@ -124,7 +124,7 @@ test("071 unit 7: a server's shared GPU is refused before any copy, with words f
   const room = await backend.capacity("linux", shared, []);
   assert.equal(room.ok, false);
   assert.equal(room.message, "pve cannot give a server a shared GPU now: no Linux template there has NVIDIA's userspace for its driver 580.142: template 9000 has none. Rebuild one with bb box images build proxmox-lxc/<vmid>, or with build.sh linux <vmid> --replace as root on pve.");
-  assert.equal(room.agentMessage, "Not made: pve cannot give a server a shared GPU now: no Linux template there has NVIDIA's userspace for its driver 580.142: template 9000 has none. Ask for gpu none, or ask the user. bb-box changed nothing.");
+  assert.equal(room.agentMessage, "Not made: pve cannot give a server a shared GPU now: no Linux template there has NVIDIA's userspace for its driver 580.142: template 9000 has none. Ask for gpu none, or ask the user. BB Box changed nothing.");
   assert.doesNotMatch(room.agentMessage!, /release|raise|settings|setup-gpu|build\.sh/i, "an agent is never told to release a box or change a setting");
   const before = clones(bare);
   await assert.rejects(backend.acquire(box("linux", "shared"), null, hooks(), signal()), (error: unknown) => error instanceof BackendError && error.code === "no_capacity" && /has NVIDIA's userspace/.test(error.message));
@@ -142,7 +142,7 @@ test("071 unit 7: a server's shared GPU is refused before any copy, with words f
   withUserspace(off);
   const offRoom = await off.backend().capacity("linux", shared, []);
   assert.equal(offRoom.message, "pve cannot give a server a shared GPU now: its GPU helper has writes off, so it gives no box a card. Turn writes on with host/setup-gpu.sh --writes on --check, then --writes on, as root on pve.");
-  assert.equal(offRoom.agentMessage, "Not made: pve cannot give a server a shared GPU now: its GPU helper has writes off, so it gives no box a card. Ask for gpu none, or ask the user. bb-box changed nothing.");
+  assert.equal(offRoom.agentMessage, "Not made: pve cannot give a server a shared GPU now: its GPU helper has writes off, so it gives no box a card. Ask for gpu none, or ask the user. BB Box changed nothing.");
   assert.deepEqual(await off.backend().gpuRoom("linux"), { readings: [], fullUntil: null, parts: ["none"], withheld: "pve: its GPU helper has writes off, so it gives no box a card" });
 });
 
@@ -157,7 +157,7 @@ test("071 unit 7: a server needs 1024 MiB free on its card, and a card at its li
   const room = await backend.capacity("linux", { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "shared" }, []);
   assert.equal(room.ok, false);
   assert.match(room.message!, /^No card on pve can take a shared GPU now: card 0 has 1 of this install's boxes, the most a card may have \(gpu-box-\d+\); card 1 has 1 of this install's boxes, the most a card may have \(gpu-box-\d+\)\. Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's settings\.$/);
-  assert.match(room.agentMessage!, /^Not made: no card on pve can take a shared GPU now: .* Ask for gpu none, or ask the user\. bb-box changed nothing\.$/);
+  assert.match(room.agentMessage!, /^Not made: no card on pve can take a shared GPU now: .* Ask for gpu none, or ask the user\. BB Box changed nothing\.$/);
   const room2 = await bridge.backend().gpuRoom("linux");
   assert.deepEqual(room2.parts, ["none", "shared", "whole"]);
   assert.deepEqual(room2.cards?.map((card) => [card.index, card.boxes, card.whole]), [[0, 1, false], [1, 1, false]]);
@@ -207,7 +207,7 @@ test("071 unit 7: a desktop with no GPU is cloned from the desktop template with
   await assert.rejects(only.acquire(box("linux-desktop", "none"), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
     assert.match(error.message, /^Every desktop template on pve carries a card's device lines/);
-    assert.match(error.agentMessage!, /^Not made: every desktop template on pve carries a card\. Ask for linux-desktop-cpu, or ask the user\. bb-box changed nothing\.$/);
+    assert.match(error.agentMessage!, /^Not made: every desktop template on pve carries a card\. Ask for linux-desktop-cpu, or ask the user\. BB Box changed nothing\.$/);
     return true;
   });
 });
@@ -279,9 +279,9 @@ test("071 unit 7: the sweep's nvidia-smi in each running box with a GPU finds a 
   const report = await backend.doctor();
   const cards = report.checks.find((check) => check.id === "proxmox.gpu-cards");
   assert.equal(cards?.status, "fail", JSON.stringify(cards));
-  assert.match(cards!.detail, new RegExp(`^CT ${vmid} holds card \\d, and nvidia-smi in it listed card \\d, (just now|\\d+ \\w+ ago)\\. bb-box places no new box on those cards until it is put right, and does not stop the boxes\\.$`));
+  assert.match(cards!.detail, new RegExp(`^CT ${vmid} holds card \\d, and nvidia-smi in it listed card \\d, (just now|\\d+ \\w+ ago)\\. BB Box places no new box on those cards until it is put right, and does not stop the boxes\\.$`));
   await assert.rejects(backend.acquire(box("linux", "shared"), null, hooks(), signal()), /takes no new box while a box there is on another card's lines or lists another card/);
-  assert.equal(bridge.proxmox.guests.get(vmid)!.status, "running", "bb-box never stops it by itself");
+  assert.equal(bridge.proxmox.guests.get(vmid)!.status, "running", "BB Box never stops it by itself");
   bridge.seenInBox.delete(vmid);
   bridge.pass();
 });
@@ -396,7 +396,7 @@ test("071 unit 7, Astra 2 and Fable 3: a restore's start on the card it holds ne
   const before = bridge.gpuTags(vmid);
   await assert.rejects(backend.start(made, signal()), (error: unknown) => {
     assert.ok(error instanceof AudienceError, String(error));
-    assert.match(error.message, /^The box did not get card \d: nvidia-smi in it listed no card, .* A restore starts a box only on the card it holds, so bb-box did not move it\. It is stopped, with its disk as it was\. Start tries again; bb box doctor has more\.$/);
+    assert.match(error.message, /^The box did not get card \d: nvidia-smi in it listed no card, .* A restore starts a box only on the card it holds, so BB Box did not move it\. It is stopped, with its disk as it was\. Start tries again; bb box doctor has more\.$/);
     assert.match(error.agentMessage, /It is stopped, with its disk as it was\. Start it again later, or ask the user\.$/);
     return true;
   });
@@ -421,7 +421,7 @@ test("071 unit 7, Astra 1 and Fable 1: a server with a shared GPU from a project
   await assert.rejects(backend.acquire(fromImage("linux", "shared", 9051), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
     assert.match(error.message, /the image this box starts from has no NVIDIA userspace for its driver 580\.142: image build 9051 has none/);
-    assert.match(error.agentMessage ?? "", /^Not made: .* Ask for gpu none, or ask the user\. bb-box changed nothing\.$/);
+    assert.match(error.agentMessage ?? "", /^Not made: .* Ask for gpu none, or ask the user\. BB Box changed nothing\.$/);
     return true;
   });
   assert.equal(clones(bridge), before, "refused before any copy");
@@ -445,7 +445,7 @@ test("071 unit 7, Fable 1: a desktop from an image takes a placed card's lines w
   await assert.rejects(off.backend().acquire(fromImage("linux-desktop", "none", 9052), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
     assert.match(error.message, /carries a card's device lines, and the GPU helper on pve has writes off/);
-    assert.match(error.agentMessage ?? "", /^Not made: .* Ask for gpu shared, or ask the user\. bb-box changed nothing\.$/);
+    assert.match(error.agentMessage ?? "", /^Not made: .* Ask for gpu shared, or ask the user\. BB Box changed nothing\.$/);
     return true;
   });
   assert.equal(clones(off), before);
@@ -460,7 +460,7 @@ test("071 unit 7, Astra 8 and Fable 4: a refusal inside an acquire and a start c
   await assert.rejects(backend.acquire(box("linux", "shared"), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
     assert.match(error.message, /Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's settings\.$/);
-    assert.match(error.agentMessage ?? "", /^Not made: no card on pve can take a shared GPU now: .* Ask for gpu none, or ask the user\. bb-box changed nothing\.$/);
+    assert.match(error.agentMessage ?? "", /^Not made: no card on pve can take a shared GPU now: .* Ask for gpu none, or ask the user\. BB Box changed nothing\.$/);
     assert.doesNotMatch(error.agentMessage!, /release|raise|settings/i);
     return true;
   });
@@ -504,7 +504,7 @@ test("071 unit 7 round 2, Astra 1: an acquire resumed after its clone and before
   const running = box("linux", "shared");
   bridge.plain(7005, running, INSTALL, { running: true });
   bridge.pass();
-  await assert.rejects(backend.acquire(running, stoppedGuestOf(7005, running, 9000), hooks(), signal()), /was running before bb-box gave it its card, so bb-box released it/);
+  await assert.rejects(backend.acquire(running, stoppedGuestOf(7005, running, 9000), hooks(), signal()), /was running before bb-box gave it its card, so BB Box released it/);
   assert.equal(bridge.proxmox.guests.has(7005), false);
 });
 
@@ -519,7 +519,7 @@ test("071 unit 7 round 2, Astra 2: a desktop template listed without a GPU ID th
   await assert.rejects(off.backend({ templates: "9001" }).acquire(box("linux-desktop", "none"), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
     assert.match(error.message, /^Desktop template 9001 carries a card's device lines, and the GPU helper on pve has writes off/);
-    assert.match(error.agentMessage ?? "", /^Not made: desktop template 9001 carries a card's device lines on pve, .* Ask for gpu shared, or ask the user\. bb-box changed nothing\.$/);
+    assert.match(error.agentMessage ?? "", /^Not made: desktop template 9001 carries a card's device lines on pve, .* Ask for gpu shared, or ask the user\. BB Box changed nothing\.$/);
     return true;
   });
   assert.equal(clones(off), before);
@@ -553,8 +553,8 @@ test("071 unit 7 round 2, Astra 4: a start's move and a fork's placement keep th
   bridge.seenInBox.set(Number(server.ref), { shows: "No devices were found" });
   await assert.rejects(backend.start(server, signal()), (error: unknown) => {
     assert.ok(error instanceof AudienceError, String(error));
-    assert.match(error.message, /bb-box could not place it on another card: .*Release another desktop box/);
-    assert.match(error.agentMessage, /bb-box could not place it on another card: .*Start it again later, or ask the user\./);
+    assert.match(error.message, /BB Box could not place it on another card: .*Release another desktop box/);
+    assert.match(error.agentMessage, /BB Box could not place it on another card: .*Start it again later, or ask the user\./);
     assert.doesNotMatch(error.agentMessage, /release|raise|settings/i);
     return true;
   });
@@ -563,7 +563,7 @@ test("071 unit 7 round 2, Astra 4: a start's move and a fork's placement keep th
   await assert.rejects(backend.placeForkGpu(box("linux-desktop", "shared"), "shared", signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
     assert.match(error.message, /^Not forked: /);
-    assert.match(error.agentMessage ?? "", /^Not forked: No card on pve can take another box now: .* Fork it with gpu none, or ask the user\. bb-box copied nothing\.$/);
+    assert.match(error.agentMessage ?? "", /^Not forked: No card on pve can take another box now: .* Fork it with gpu none, or ask the user\. BB Box copied nothing\.$/);
     assert.doesNotMatch(error.agentMessage!, /release|raise|settings/i);
     return true;
   });

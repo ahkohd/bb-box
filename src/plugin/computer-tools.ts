@@ -10,9 +10,11 @@ import type { BoxRecord } from "../core/boxes.ts";
 import type { BbBox } from "./setup.ts";
 import { boxParam, failure, thread } from "./tools.ts";
 import { next } from "./views.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 const INSTRUCTIONS =
-  "bb-box computer use: to use the apps on a desktop box, get a window ID from computer_windows or computer_launch, read the window with computer_observe, " +
+  `${PRODUCT} computer use: to use the apps on a desktop box, get a window ID from computer_windows or computer_launch, read the window with computer_observe, ` +
   "then act with computer_act or computer_type, giving an element's reference such as e12. Each action says what changed, so observe again only to see the whole window. " +
   "An action that opens a menu or popup says so, with its items' references; press keys in it with its window ID, or window \"desktop\". " +
   "Use computer_screenshot when appearance matters, and give pixels only from your latest image. " +

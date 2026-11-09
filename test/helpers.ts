@@ -165,7 +165,7 @@ export function lxcWarm(values: Readonly<Record<string, unknown>>): Record<strin
   return Object.fromEntries(Object.entries(kinds).map(([flavour, kind]) => [kind, Number(values[`proxmox-lxc-${flavour}-warm`] ?? 0)]));
 }
 
-/** A kind as bb-box ships it, switched on. */
+/** A kind as BB Box ships it, switched on. */
 export function shippedKind(id: string): KindSettings {
   const sizes = kindSizes(id);
   return { enabled: true, defaultSize: defaultSize(sizes), presets: presetSizes(sizes) };
@@ -272,7 +272,7 @@ export async function fakeDaemon(
   };
 }
 
-/** A route of bb-box's that a worker's WebSocket connects to, as a RelayHub's or FileRelay's. */
+/** A route of BB Box's that a worker's WebSocket connects to, as a RelayHub's or FileRelay's. */
 export interface Routed {
   route(url: URL): { onOpen(socket: RelaySocket): void; onMessage(socket: RelaySocket, data: string | Uint8Array): void; onClose(): void };
 }

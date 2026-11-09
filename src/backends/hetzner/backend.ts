@@ -33,6 +33,8 @@ import {
 import { Hetzner, HetznerError, type EurosBeforeVat, type HetznerFetch, type ServerType } from "./api.ts";
 import { HetznerHosts, IMAGE_BUILD_ROLE, serverNamePrefix, serverNamePrefixBeforeHz, type HostRecord } from "./hosts.ts";
 import { euros, serverAndIpv4, spentThisMonth, startOfMonthUtc, type BilledServer } from "./spend.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export interface HetznerConfig {
   readonly token: string;
@@ -223,7 +225,7 @@ export class HetznerBackend implements Backend {
   readonly #disposed = new AbortController();
 
   async dispose(): Promise<void> {
-    this.#disposed.abort(new Error("bb-box disposed this Hetzner Cloud backend, as it reloaded or disabled it"));
+    this.#disposed.abort(new Error(`${PRODUCT} disposed this Hetzner Cloud backend, as it reloaded or disabled it`));
     await this.#reach?.dispose();
   }
 
@@ -420,11 +422,11 @@ export class HetznerBackend implements Backend {
           "hetzner.unclaimed",
           "Servers no host claims",
           "warn",
-          `${unclaimed.map((each) => `${each.name} (made ${new Date(each.createdAtMs).toISOString()})`).join(", ")} carry this install's label, but are not hosts bb-box knows. The sweep adopts a host's server, as after lost storage, and deletes any other 10 minutes after it was made.`,
+          `${unclaimed.map((each) => `${each.name} (made ${new Date(each.createdAtMs).toISOString()})`).join(", ")} carry this install's label, but are not hosts ${PRODUCT} knows. The sweep adopts a host's server, as after lost storage, and deletes any other 10 minutes after it was made.`,
           "Wait for the next sweep, or delete them in Hetzner's Console.",
         );
       } else {
-        push("hetzner.unclaimed", "Servers no host claims", "ok", "Every server with this install's label is a host bb-box knows.");
+        push("hetzner.unclaimed", "Servers no host claims", "ok", `Every server with this install's label is a host ${PRODUCT} knows.`);
       }
     } catch (error) {
       if (signal?.aborted) throw error;
@@ -436,7 +438,7 @@ export class HetznerBackend implements Backend {
     const unreachable = this.#reach?.canReach() ?? null;
     const tailnetOn = (this.#context.tailnet?.() ?? null) !== null;
     if (unreachable) push("hetzner.reach", "Reaching hosts", "fail", unreachable + ".", "Turn the tailnet on, or set SSH from.");
-    else push("hetzner.reach", "Reaching hosts", "ok", tailnetOn ? "Over the tailnet: each host joins it as it starts, with a key bb-box makes for it, and its SSH is closed to the internet." : `Over the internet, from ${this.#config.sshFrom.join(", ")}, with bb-box's own SSH key.`);
+    else push("hetzner.reach", "Reaching hosts", "ok", tailnetOn ? `Over the tailnet: each host joins it as it starts, with a key ${PRODUCT} makes for it, and its SSH is closed to the internet.` : `Over the internet, from ${this.#config.sshFrom.join(", ")}, with ${PRODUCT}'s own SSH key.`);
 
     for (const architecture of this.#architectures) {
       await this.#serverTypeCheck(architecture, push, signal);
@@ -466,12 +468,12 @@ export class HetznerBackend implements Backend {
       const running = live.length;
       const projected = spent + (await this.#nextHourWithANewHost("x86", signal).catch(() => 0));
       const projection = `An hour more of ${running ? `the ${running} host${running === 1 ? "" : "s"} and ` : ""}a new one would take it to ${euros(projected)}${limit !== null && projected > limit ? ", past the limit, so no new host is made now" : ""}.`;
-      push("hetzner.spend", "This month's spend", status, `${euros(spent)} before VAT so far this month${limit === null ? ", with no limit set" : ` of the ${euros(limit)} limit`}. ${projection}`, status === "warn" ? "bb-box makes no host past the limit. Raise it in the backend's settings, or wait for next month." : null);
+      push("hetzner.spend", "This month's spend", status, `${euros(spent)} before VAT so far this month${limit === null ? ", with no limit set" : ` of the ${euros(limit)} limit`}. ${projection}`, status === "warn" ? `${PRODUCT} makes no host past the limit. Raise it in the backend's settings, or wait for next month.` : null);
     }
 
     for (const record of live.filter((each) => each.state === "ready")) {
       const part = await this.#partOf(record.hostId, signal).catch(() => null);
-      const report = part ? await part.docker.doctor(signal).catch((error: unknown) => error as Error) : new Error("bb-box cannot reach it");
+      const report = part ? await part.docker.doctor(signal).catch((error: unknown) => error as Error) : new Error(`${PRODUCT} cannot reach it`);
       if (report instanceof Error) push(`hetzner.host.${record.serverName}`, `Docker on ${record.serverName}`, "fail", message(report), "Check the host's network, or let the sweep delete it.");
       else push(`hetzner.host.${record.serverName}`, `Docker on ${record.serverName}`, report.ok ? "ok" : "fail", report.summary, report.ok ? null : report.checks.find((each) => each.status === "fail")?.fix ?? null);
     }
@@ -538,7 +540,7 @@ export class HetznerBackend implements Backend {
   async #whyNoNewHost(size: MachineSize, architecture: Architecture, signal?: AbortSignal, options: { readonly hostLimit?: boolean } = {}): Promise<string | null> {
     const unreachable = this.#reach?.canReach() ?? null;
     if (unreachable) return unreachable;
-    if (size.diskGiB !== null) return `a Docker box shares its host's disk, so bb-box cannot give it a ${size.diskGiB} GiB disk of its own. Ask for the base disk`;
+    if (size.diskGiB !== null) return `a Docker box shares its host's disk, so ${PRODUCT} cannot give it a ${size.diskGiB} GiB disk of its own. Ask for the base disk`;
     const live = (await this.hostRecords.records()).filter((record) => record.state !== "deleting");
     if (options.hostLimit !== false && live.length >= this.#config.mostHosts) return `it has the ${this.#config.mostHosts} host${this.#config.mostHosts === 1 ? "" : "s"} it may have at once. Release a box, or raise the most hosts in the backend's settings`;
     const type = await this.#serverTypeNow(this.#typeOf(architecture), signal).catch(() => null);
@@ -551,7 +553,7 @@ export class HetznerBackend implements Backend {
     if (limit !== null) {
       const spent = await this.#spentThisMonth(signal).catch(() => null);
       const more = await this.#nextHourWithANewHost(architecture, signal).catch(() => null);
-      if (spent === null || more === null) return "bb-box could not read Hetzner Cloud's prices to keep to the monthly limit";
+      if (spent === null || more === null) return `${PRODUCT} could not read Hetzner Cloud's prices to keep to the monthly limit`;
       if (spent + more > limit) return `another host would take this month's spend from ${euros(spent)} to ${euros(spent + more)} within the hour, past the ${euros(limit)} limit`;
     }
     return null;
@@ -697,7 +699,7 @@ export class HetznerBackend implements Backend {
         return `${record.serverName}, a ${record.serverType}${cores ? ` of ${cores} vCPUs` : ""}, since ${new Date(record.claimedAtMs).toISOString()}, which ends by about ${endsBy}`;
       }),
     );
-    return ` bb-box's own host image build holds some of that room: ${told.join("; ")}. bb-box starts no other build while boxes wait for room.`;
+    return ` ${PRODUCT}'s own host image build holds some of that room: ${told.join("; ")}. ${PRODUCT} starts no other build while boxes wait for room.`;
   }
 
   async #boxesWaitedForRoomAt(): Promise<number | null> {
@@ -707,7 +709,7 @@ export class HetznerBackend implements Backend {
 
   async #userData(serverName: string, signal: AbortSignal | undefined): Promise<string> {
     const tailnet = this.#context.tailnet?.() ?? null;
-    const minted = tailnet ? await tailnet.mintKey({ description: keyDescription(`bb-box host ${serverName}`) }, signal) : null;
+    const minted = tailnet ? await tailnet.mintKey({ description: keyDescription(`${PRODUCT} host ${serverName}`) }, signal) : null;
     return hostUserData({ serverName, tailnetKey: minted?.key ?? null });
   }
 
@@ -739,7 +741,7 @@ export class HetznerBackend implements Backend {
     const id: CheckId = architecture === "arm" ? "hetzner.arm-image" : "hetzner.image";
     const name = architecture === "arm" ? "Arm host image" : "Host image";
     if (typeof this.#config.hostImage === "number" && architecture === "x86") {
-      push(id, name, "ok", `Hosts start from snapshot ${this.#config.hostImage}, as the settings say; bb-box builds none.`);
+      push(id, name, "ok", `Hosts start from snapshot ${this.#config.hostImage}, as the settings say; ${PRODUCT} builds none.`);
       return;
     }
     const snapshots = await this.#hostImages.snapshots(signal, architecture).catch((error: unknown) => error as Error);
@@ -753,12 +755,12 @@ export class HetznerBackend implements Backend {
     const sizes = snapshots.reduce((sum, each) => sum + (each.compressedSizeGB ?? 0), 0);
     const kept = snapshots.length ? ` ${snapshots.length} kept, ${sizes.toFixed(1)} GB, about ${euros(sizes * SNAPSHOT_EUROS_A_GB_A_MONTH)} a month.` : "";
     const making = this.#buildingHostImage.has(architecture) ? null : await this.#hostImages.beingMade(signal, architecture).catch(() => null);
-    const building = this.#buildingHostImage.has(architecture) ? " A new one is being built." : making ? ` Hetzner Cloud is making a new one, snapshot ${making.id}, which bb-box takes once it is ready.` : "";
+    const building = this.#buildingHostImage.has(architecture) ? " A new one is being built." : making ? ` Hetzner Cloud is making a new one, snapshot ${making.id}, which ${PRODUCT} takes once it is ready.` : "";
     const failed = failures
-      ? ` The last build failed at ${new Date(failures.atMs).toISOString()}${failures.inARow > 1 ? `, the ${failures.inARow}${ordinal(failures.inARow)} failure in a row` : ""}${building ? "." : `; bb-box tries again at ${new Date(failures.atMs + retryAfterMs(failures)).toISOString()}.`}`
+      ? ` The last build failed at ${new Date(failures.atMs).toISOString()}${failures.inARow > 1 ? `, the ${failures.inARow}${ordinal(failures.inARow)} failure in a row` : ""}${building ? "." : `; ${PRODUCT} tries again at ${new Date(failures.atMs + retryAfterMs(failures)).toISOString()}.`}`
       : "";
     const waiting = await this.#context.storage.get<WaitingForRoom>(HOST_IMAGE_WAITING_KEY[architecture]);
-    const waits = waiting && !this.#buildingHostImage.has(architecture) ? ` The last build waited for room: at ${new Date(waiting.atMs).toISOString()} Hetzner Cloud refused its server (${waiting.why.replace(/^Hetzner Cloud POST \/servers failed /, "")}); bb-box tries again at its next check. ${ROOM_ADVICE}` : "";
+    const waits = waiting && !this.#buildingHostImage.has(architecture) ? ` The last build waited for room: at ${new Date(waiting.atMs).toISOString()} Hetzner Cloud refused its server (${waiting.why.replace(/^Hetzner Cloud POST \/servers failed /, "")}); ${PRODUCT} tries again at its next check. ${ROOM_ADVICE}` : "";
     const fix = failedAt !== undefined ? "See BB Box's log for the build's last lines." : null;
     const why = this.#hostImages.whyBuild(newest, this.#now(), await this.#bbApp(signal));
     const held = why && !building ? await this.#whyBuildWaits(architecture) : "";
@@ -773,7 +775,7 @@ export class HetznerBackend implements Backend {
 
   async #whyBuildWaits(architecture: Architecture): Promise<string> {
     const otherBuilding = [...this.#buildingHostImage.keys()].find((other) => other !== architecture);
-    if (otherBuilding) return ` It waits for the ${ARCHITECTURE_WORDS[otherBuilding]} host image's build to finish, as bb-box builds one at a time.`;
+    if (otherBuilding) return ` It waits for the ${ARCHITECTURE_WORDS[otherBuilding]} host image's build to finish, as ${PRODUCT} builds one at a time.`;
     const boxesWaited = await this.#boxesWaitedForRoomAt();
     if (boxesWaited === null || (await this.#hostImages.resumable(architecture))) return "";
     return ` It waits until ${new Date(boxesWaited + BUILDS_WAIT_AFTER_BOXES_REFUSED_MS).toISOString()}, as boxes waited for room at ${new Date(boxesWaited).toISOString()}, and they come first.`;

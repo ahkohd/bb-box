@@ -8,6 +8,8 @@
 
 import { normalisePrivateKey } from "../../transports/ssh.ts";
 import type { Footprint } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export interface ProxmoxConnection {
   readonly apiUrl: string;
@@ -210,7 +212,7 @@ export function checkNetwork(values: Values, keys: ProxmoxKeys, defaults: Proxmo
 export function checkSsh(values: Values, keys: ProxmoxKeys, defaults: ProxmoxDefaults, problem: Problem): { privateKey: string | null; user: string } {
   const keyText = text(values, keys.sshPrivateKey);
   const privateKey = keyText ? normalisePrivateKey(keyText) : null;
-  if (keyText && !privateKey) problem(keys.sshPrivateKey, "Use an unencrypted OpenSSH private key, or leave it empty for bb-box to make one.");
+  if (keyText && !privateKey) problem(keys.sshPrivateKey, `Use an unencrypted OpenSSH private key, or leave it empty for ${PRODUCT} to make one.`);
   const user = text(values, keys.sshUser) || defaults.sshUser;
   if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(user)) problem(keys.sshUser, "Use a Linux user name for SSH.");
   return { privateKey, user };

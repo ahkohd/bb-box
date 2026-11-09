@@ -1,5 +1,7 @@
 import type { SnapshotBill, Snapshotting } from "../backends/types.ts";
 import { MACHINE_RESTORES_SHIP } from "../core/snapshot.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export const LIVE_CHECKS_VARIABLE = "BB_BOX_LIVE_CHECKS";
 export const DROPPED_REPLY_MESSAGE = "BB Box saved this and dropped its reply, as a live check asked.";
@@ -64,7 +66,7 @@ export class SnapshotHolds {
     const forMs = this.#forMs;
     this.#armed = null;
     this.#forMs = null;
-    log(`Holding snapshot operation ${operation.id} (${operation.kind}) after ${HOLD_WORDS[step]}, as a live check asked, ${forMs === null ? "until bb-box stops" : `for ${forMs / 1000} s`}.`);
+    log(`Holding snapshot operation ${operation.id} (${operation.kind}) after ${HOLD_WORDS[step]}, as a live check asked, ${forMs === null ? `until ${PRODUCT} stops` : `for ${forMs / 1000} s`}.`);
     await new Promise<void>((resolve, reject) => {
       if (signal.aborted) return reject(signal.reason);
       const timer = forMs === null ? null : setTimeout(resolve, forMs);

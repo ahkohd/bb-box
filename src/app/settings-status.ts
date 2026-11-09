@@ -1,7 +1,8 @@
 import type { DoctorReport } from "../backends/types.ts";
 import type { BackendConfig } from "../core/document.ts";
 import type { BackendState, ConfigState, KindInfoView } from "../plugin/configuration.ts";
-import { relativeTime, type Tone } from "./common.tsx";
+import { ago } from "./box-words.ts";
+import type { Tone } from "./common.tsx";
 import { effectiveKind, problemsUnder } from "./config.ts";
 import type { SettingsView } from "./settings-route.ts";
 import { buildWords, machineOf, machineTrouble, type MachineHosts } from "./settings-machine-docker.ts";
@@ -143,7 +144,7 @@ export function backendLine(state: ConfigState, config: BackendConfig, health: B
   const live = state.backends.find((candidate) => candidate.id === config.id);
   const boxes = live?.boxes ?? 0;
   const kinds = live?.kinds.length ?? 0;
-  const age = showAge && health.checkedAt !== null && (health.status === "stale" || health.status === "ready") ? [relativeTime(health.checkedAt, now)] : [];
+  const age = showAge && health.checkedAt !== null && (health.status === "stale" || health.status === "ready") ? [ago(health.checkedAt, now)] : [];
   if (health.status === "off" || health.status === "unfinished") return [...(boxes ? [plural(boxes, "box", "boxes")] : []), ...(health.detail ? [health.detail] : [])];
   if (health.status === "failing") return health.detail ? [health.detail] : [];
   return [...age, ...(boxes ? [plural(boxes, "box", "boxes")] : []), ...(health.status === "never" || health.status === "changed" ? [] : [plural(kinds, "kind")])];
@@ -199,7 +200,7 @@ export function statusLine(state: ConfigState, now: number, checking: number, ma
         ? `All ${plural(on.length, "backend")} ${words}`
         : `${passed} of ${plural(on.length, "backend")} ${words}`;
   const ages = checkAges(healths);
-  const age = ages === null ? null : ages.newest - ages.oldest < SAME_AGE_MS ? `checked ${relativeTime(ages.oldest, now)}` : `checked between ${relativeTime(ages.newest, now)} and ${relativeTime(ages.oldest, now)}`;
+  const age = ages === null ? null : ages.newest - ages.oldest < SAME_AGE_MS ? `checked ${ago(ages.oldest, now)}` : `checked between ${ago(ages.newest, now)} and ${ago(ages.oldest, now)}`;
   const details = [
     ...(never && on.length > 1 ? [`${never} not checked yet`] : []),
     ...(changed && on.length > 1 ? [`${changed} not checked since ${changed === 1 ? "it" : "they"} changed`] : []),

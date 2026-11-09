@@ -262,7 +262,7 @@ describe("SSH host pool on the Docker rig", { skip: rig ? false : "set SSH_POOL_
     const guest = await acquire(pool, "linux");
     const user = String(guest.data?.user);
     try {
-      // The helper refuses, from bb-box and from an operator.
+      // The helper refuses, from BB Box and from an operator.
       assert.equal(await onMachine("plain", `printf 'install=live\\n' | ${HELPER} reset; echo $?`), "4");
       assert.equal(await onMachine("plain", `${HELPER} reset </dev/null; echo $?`), "4");
       // As after an upgrade that needs a newer helper.

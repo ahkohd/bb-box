@@ -1,5 +1,7 @@
 import type { CaptionPosition, RecordingSummary, StepKind } from "./device-recording.ts";
 import { DEVICE_MODELS, type AndroidModelName, type AndroidModelNameOfForm, type FoldableModelName, type IosModelName, type ModelName, type TableModel } from "./device-models.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export type { AndroidModelName, FoldableModelName, IosModelName, ModelName, TableModel } from "./device-models.ts";
 
@@ -592,7 +594,7 @@ function lacking(model: DeviceModel, action: DeviceAction): string | null {
       if (model.platform === "ios") return "No iOS device folds.";
       return `The ${model.name} does not fold. ${foldablesWords()}`;
     case "network":
-      return model.platform === "ios" ? "bb-box has no network control for iOS devices." : null;
+      return model.platform === "ios" ? `${PRODUCT} has no network control for iOS devices.` : null;
     default:
       return null;
   }
@@ -692,7 +694,7 @@ export function supports(model: DeviceModel, control: DeviceControl): Support {
 
 export const DEVICE_PROTOCOL = 2;
 export const DEVICE_PROTOCOLS = { least: 1, most: 2 } as const;
-export const DEVICE_SERVER_VERSION = 36;
+export const DEVICE_SERVER_VERSION = 37;
 export const CLIPBOARD_READ_SINCE_VERSION = 28;
 export const PASTE_REQUEST_SINCE_VERSION = 29;
 export const DEVICE_CLIPBOARD_MOST = 100_000;
@@ -739,7 +741,7 @@ export function companionWorksWith(xcode: string, companion: string): boolean {
 
 export const TEST_DEVICE_NAME = "Test device";
 export const TEST_DEVICE_NATIVE = "bb-box-test-device";
-export const TEST_DEVICE_DRIVER = "bb-box test driver";
+export const TEST_DEVICE_DRIVER = `${PRODUCT} test driver`;
 
 const TEST_RUNTIMES: { readonly [P in DevicePlatform]: PlatformParts[P]["runtime"] } = {
   ios: { platform: "ios", os: "test", build: "test", xcode: "none", companion: TEST_DEVICE_DRIVER },

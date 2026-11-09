@@ -255,7 +255,7 @@ test("bb box images versions says what a rebuild takes, a line per tool, its arc
   assert.equal(
     text,
     [
-      "A rebuild of the standard Linux images now takes, against this bb-box's pins:",
+      "A rebuild of the standard Linux images now takes, against this BB Box's pins:",
       "  claude-code 2.1.288, pinned 2.1.283, for x86_64 and arm64: latest channel; manifest.json SHA-256 of 2.1.288.",
       "  gh 2.101.0, as pinned, for x86_64: nothing newer.",
       "  gh 2.101.0, as pinned, for arm64: upstream could not be read: HTTP 403.",

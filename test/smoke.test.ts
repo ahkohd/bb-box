@@ -33,7 +33,7 @@ test("the example settings read the setup guide's token file and key, and parse"
   writeFileSync(
     join(dir, "proxmox-token.env"),
     [
-      "# bb-box plugin: Proxmox API access. Secret: keep 0600.",
+      "# BB Box plugin: Proxmox API access. Secret: keep 0600.",
       "PROXMOX_API_URL=https://192.0.2.10:8006/api2/json",
       "PROXMOX_NODE=pve",
       "PROXMOX_TOKEN_ID=bbbox@pve!plugin",
@@ -56,7 +56,7 @@ test("the example settings read the setup guide's token file and key, and parse"
   assert.equal(parsed.config.proxmox.tlsFingerprint, FINGERPRINT);
 });
 
-test("a settings file may hold BB's settings from before the configuration, moved as bb-box moves them", () => {
+test("a settings file may hold BB's settings from before the configuration, moved as BB Box moves them", () => {
   const configuration = toConfiguration({ ...VALID, "proxmox-lxc-linux-warm": 2, "boxes-per-thread": 3 });
   const [backend] = configuration.document.backends;
   assert.equal(backend!.id, "proxmox-lxc");

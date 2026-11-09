@@ -1,4 +1,4 @@
-// A small in-memory Proxmox API with the behaviour bb-box relies on, for
+// A small in-memory Proxmox API with the behaviour BB Box relies on, for
 // containers and VMs: linked clones that reject `storage`, need a template
 // that is not locked and inherit its protection, "already exists" for used
 // VMIDs, asynchronous tasks, tags, pools, /cluster/resources with the status

@@ -95,7 +95,7 @@ function jobs(backends: Backend[], options: { app?: string | { value: string }; 
   return { job, refreshed, storage, clock };
 }
 
-test("an image is due when its guest program or prepare script is not the one this bb-box would build", async () => {
+test("an image is due when its guest program or prepare script is not the one this BB Box would build", async () => {
   const lxc = backend("proxmox-lxc", [
     build("9100", "linux", record(1, { program: "same" })),
     build("9101", "linux", record(1, { program: "other" })),
@@ -136,7 +136,7 @@ test("images are due in 049's order: failing the doctor, past their interval, an
       ["proxmox-lxc/9103", "it fails the doctor"],
       ["proxmox-lxc/9101", "it is 10 days old, past its 7-day interval"],
       ["tart/mac1/bb-box-linux", "it has another build of BB's app than BB's server gives"],
-      ["proxmox-lxc/9102", "it was built with other pins than this bb-box's"],
+      ["proxmox-lxc/9102", "it was built with other pins than this BB Box's"],
       ["proxmox-lxc/9100", null],
       ["tart/mac1/bb-box-macos", null],
     ],

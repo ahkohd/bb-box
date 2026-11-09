@@ -11,6 +11,8 @@ import { POINTS_JOIN_MS } from "../monitor/busy-times.ts";
 import { TransportError } from "../transports/types.ts";
 import type { BoxLogStore } from "./box-log-store.ts";
 import { MINUTES_KEPT_MS, type BoxHistoryStore } from "./box-history-store.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 const ROUTE_OUTPUT_BYTES = 512 * 1024;
 const HOUR_MS = 60 * 60_000;
@@ -76,9 +78,9 @@ function percent(part: number, whole: number): string {
 }
 
 export function historyStateWords(config: MonitorConfig, boxes: number, workers: number, hour: Tally | null): string {
-  if (!config.enabled) return "Off, as the Monitor is off: bb-box reads no box in the background.";
-  if (!config.boxHistory) return "Off: bb-box reads no box in the background, and what it kept stays until it ages out.";
-  const read = `On: bb-box reads ${boxes} ${boxes === 1 ? "box" : "boxes"} once a minute, with up to ${workers} readings at once.`;
+  if (!config.enabled) return `Off, as the Monitor is off: ${PRODUCT} reads no box in the background.`;
+  if (!config.boxHistory) return `Off: ${PRODUCT} reads no box in the background, and what it kept stays until it ages out.`;
+  const read = `On: ${PRODUCT} reads ${boxes} ${boxes === 1 ? "box" : "boxes"} once a minute, with up to ${workers} readings at once.`;
   if (!hour || hour.due + hour.unanswered === 0) return `${read} Nothing was due this hour or the last.`;
   return `${read} This hour and the last, ${hour.taken} of ${hour.due} readings due were taken within 10 s of their second (${percent(hour.taken, hour.due)}); ${hour.skipped} skipped, ${hour.failed} failed, and ${hour.unanswered} not tried as their box did not answer.`;
 }
@@ -127,10 +129,10 @@ export function historyRead(deps: HistoryReadDeps) {
     if (!os) {
       const current = hostId ? await stillReady(box) : null;
       if (current && hostId) await deps.unreachableHost(current, hostId).catch(() => undefined);
-      throw new Error(`bb-box cannot read box ${box.name} now: its BB machine is not answering BB, and it runs no shell bb-box can read without it.`);
+      throw new Error(`${PRODUCT} cannot read box ${box.name} now: its BB machine is not answering BB, and it runs no shell ${PRODUCT} can read without it.`);
     }
     const { command } = await deps.boxes.transports(box);
-    if (!command) throw new Error(`bb-box cannot run commands in box ${box.name}.`);
+    if (!command) throw new Error(`${PRODUCT} cannot run commands in box ${box.name}.`);
     try {
       const result = await command.run(lightScript(os, request), { timeoutMs: READING_TIMEOUT_MS, maxOutputBytes: ROUTE_OUTPUT_BYTES, signal });
       if (result.timedOut) throw new Error(`It did not answer within ${READING_TIMEOUT_MS / 1000} s.`);

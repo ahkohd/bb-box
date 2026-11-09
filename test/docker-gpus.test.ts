@@ -143,9 +143,9 @@ test("071 unit 11: shared boxes per card count stopped boxes, boxes being made a
   const full = await backend.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal(), { threadId: "thr_abc123" });
   assert.equal(full.ok, false);
   assert.equal(full.message, "No card on fake-docker can take a shared GPU now: card 0 has 1 box, the most a card may have (lone-pine in thread \"Train the model\"). Release a box on a card, ask for gpu none, or raise the boxes per card in BB Box's Docker settings.");
-  assert.equal(full.agentMessage, "Not made: no card on fake-docker can take a shared GPU now: card 0 has 1 box, the most a card may have (lone-pine). Release one of your own boxes on card 0 (lone-pine), ask for gpu none, or ask the user. bb-box changed nothing.");
+  assert.equal(full.agentMessage, "Not made: no card on fake-docker can take a shared GPU now: card 0 has 1 box, the most a card may have (lone-pine). Release one of your own boxes on card 0 (lone-pine), ask for gpu none, or ask the user. BB Box changed nothing.");
   const other = await backend.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal(), { threadId: "thr_other" });
-  assert.equal(other.agentMessage, "Not made: no card on fake-docker can take a shared GPU now: card 0 has 1 box, the most a card may have (lone-pine). Ask for gpu none, or ask the user. bb-box changed nothing.");
+  assert.equal(other.agentMessage, "Not made: no card on fake-docker can take a shared GPU now: card 0 has 1 box, the most a card may have (lone-pine). Ask for gpu none, or ask the user. BB Box changed nothing.");
   await assert.rejects(backend.acquire(identity("linux", "shared"), null, hooks(), signal()), (error: unknown) => error instanceof BackendError && error.code === "no_capacity" && /^Not made: no card/.test(error.agentMessage ?? ""));
   await backend.release(mine, { resetting: async () => {}, timing: () => {} }, signal());
   const theirs = make("other-install");
@@ -177,11 +177,11 @@ test("071 unit 11: a whole box takes a card no box holds, and the card then take
   assert.equal(next.claim?.card, CARD_A, "a card held whole takes no shared box");
   const refused = await backend.capacity("linux", { ...SMALL, gpu: "whole" }, [], signal(), { threadId: "thr_abc123" });
   assert.equal(refused.message, "No card on fake-docker is free for a whole card now: card 0 has lone-pine and quiet-elm-" + String(counter) + " running and card 1 is quiet-elm's whole card (in thread \"Long job\"). Release a box on one of the cards, or ask for gpu shared.");
-  assert.equal(refused.agentMessage, "Not made: no card on fake-docker is free for a whole card now: card 0 has lone-pine and quiet-elm-" + String(counter) + " running and card 1 is quiet-elm's whole card. Release one of your own boxes on card 0 (lone-pine and quiet-elm-" + String(counter) + "), ask for gpu shared, or ask the user. bb-box changed nothing.");
+  assert.equal(refused.agentMessage, "Not made: no card on fake-docker is free for a whole card now: card 0 has lone-pine and quiet-elm-" + String(counter) + " running and card 1 is quiet-elm's whole card. Release one of your own boxes on card 0 (lone-pine and quiet-elm-" + String(counter) + "), ask for gpu shared, or ask the user. BB Box changed nothing.");
   const off = setup().backend;
   const said = await off.capacity("linux", { ...SMALL, gpu: "whole" }, [], signal());
   assert.equal(said.message, "Whole cards are off on Docker, so no box gets a card to itself there. Ask for gpu shared, or turn Whole cards on in Docker's GPUs section in BB Box's settings, or with bb box backend set test --field whole-cards=true.");
-  assert.equal(said.agentMessage, "Not made: whole cards are off on Docker. Ask for gpu shared, or ask the user. bb-box changed nothing.");
+  assert.equal(said.agentMessage, "Not made: whole cards are off on Docker. Ask for gpu shared, or ask the user. BB Box changed nothing.");
   await assert.rejects(off.acquire(identity("linux", "whole"), null, hooks(), signal()), (error: unknown) => error instanceof BackendError && /whole cards are off/.test(error.agentMessage ?? ""));
 });
 
@@ -214,7 +214,7 @@ test("071 unit 11: shared to whole and back are live on Docker: the plan says so
   const refused = await backend.planResize(back, "linux", { ...SMALL, gpu: "whole" }, [], signal());
   assert.deepEqual(refused.gpu?.refusal, {
     person: "No card is free for amber-fox alone. Card 0 has lone-pine on it, and on Docker a box cannot move to another card. Release it, or keep the GPU shared.",
-    agent: "Not resized: no card is free for amber-fox alone. Card 0 has lone-pine on it, and on Docker a box cannot move to another card. Keep the GPU shared, or ask the user. bb-box changed nothing.",
+    agent: "Not resized: no card is free for amber-fox alone. Card 0 has lone-pine on it, and on Docker a box cannot move to another card. Keep the GPU shared, or ask the user. BB Box changed nothing.",
   });
   await assert.rejects(backend.resize(back, "linux", { ...SMALL, gpu: "whole" }, { restart: false }, signal()), (error: unknown) => error instanceof BackendError && error.code === "no_capacity");
   const fixed = await backend.planResize(other, "linux", { ...SMALL, gpu: "none" }, [], signal());
@@ -222,7 +222,7 @@ test("071 unit 11: shared to whole and back are live on Docker: the plan says so
   assert.match(fixed.gpu!.words, /^GPU: shared → none · Cannot change on Docker\. A container's devices are fixed when it is made, so lone-pine cannot lose card 0\. Make a new box with the GPU it needs\.$/);
   assert.deepEqual(fixed.gpu!.refusal, {
     person: "Lone-pine cannot lose card 0 on Docker: a container's devices are fixed when it is made. Make a new box with the GPU it needs.",
-    agent: "Not resized: lone-pine cannot lose card 0 on Docker: a container's devices are fixed when it is made. Acquire a new box with the GPU it needs, or ask the user. bb-box changed nothing.",
+    agent: "Not resized: lone-pine cannot lose card 0 on Docker: a container's devices are fixed when it is made. Acquire a new box with the GPU it needs, or ask the user. BB Box changed nothing.",
   });
   await assert.rejects(backend.resize(other, "linux", { ...SMALL, gpu: "none" }, { restart: true }, signal()), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && /^Not resized: lone-pine cannot lose card 0 on Docker/.test(error.agentMessage ?? ""));
   const plain = await backend.acquire(identity("linux", "none"), null, hooks(), signal());
@@ -250,16 +250,16 @@ test("071 unit 11: a fresh box whose CUDA finds no card, as cuInit 100 says, is 
   await assert.rejects(both.backend.acquire(identity("linux", "shared", "thr_abc123", "tidy-glade"), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError && error.code === "no_capacity");
     const why = (card: string) => `CUDA in it found no card it may use with CUDA_VISIBLE_DEVICES=GPU-${card}: it returned 100`;
-    assert.equal(error.message, `tidy-glade did not get its card on fake-docker: card 0: ${why(CARD_A)}; then card 1: ${why(CARD_B)}. bb-box removed what it made, and new boxes leave card 0 and card 1 out for 10 minutes. Run bb box doctor.`);
-    assert.equal(error.agentMessage, `Not made: tidy-glade did not get its card: card 0: ${why(CARD_A)}; then card 1: ${why(CARD_B)}. bb-box removed what it made. Ask the user.`);
+    assert.equal(error.message, `tidy-glade did not get its card on fake-docker: card 0: ${why(CARD_A)}; then card 1: ${why(CARD_B)}. BB Box removed what it made, and new boxes leave card 0 and card 1 out for 10 minutes. Run bb box doctor.`);
+    assert.equal(error.agentMessage, `Not made: tidy-glade did not get its card: card 0: ${why(CARD_A)}; then card 1: ${why(CARD_B)}. BB Box removed what it made. Ask the user.`);
     return true;
   });
   assert.deepEqual(both.fake.containers(), []);
   const one = setup({}, { gpus: [DEVICE_A], cards: [card(0, CARD_A, DEVICE_A)], cudaNoDevice: true });
   await assert.rejects(one.backend.acquire(identity("linux", "shared", "thr_abc123", "tidy-glade"), null, hooks(), signal()), (error: unknown) => {
     assert.ok(error instanceof BackendError);
-    assert.match(error.message, /^tidy-glade did not get its card on fake-docker: card 0: CUDA in it found no card .*\. bb-box removed what it made, and new boxes leave card 0 out for 10 minutes\. No other card could take it: No card on fake-docker can take a shared GPU now: card 0 is left out for now, as a box lately did not see it\. Release a box on a card, ask for gpu none/);
-    assert.match(error.agentMessage ?? "", /^Not made: tidy-glade did not get its card: card 0: .*\. bb-box removed what it made\. No other card could take it: no card on fake-docker can take a shared GPU now: card 0 is left out for now, as a box lately did not see it\. Ask for gpu none, or ask the user\.$/);
+    assert.match(error.message, /^tidy-glade did not get its card on fake-docker: card 0: CUDA in it found no card .*\. BB Box removed what it made, and new boxes leave card 0 out for 10 minutes\. No other card could take it: No card on fake-docker can take a shared GPU now: card 0 is left out for now, as a box lately did not see it\. Release a box on a card, ask for gpu none/);
+    assert.match(error.agentMessage ?? "", /^Not made: tidy-glade did not get its card: card 0: .*\. BB Box removed what it made\. No other card could take it: no card on fake-docker can take a shared GPU now: card 0 is left out for now, as a box lately did not see it\. Ask for gpu none, or ask the user\.$/);
     return true;
   });
   assert.deepEqual(one.fake.containers(), []);
@@ -281,11 +281,11 @@ test("071 unit 11: two backends of one install on one Docker daemon share its ca
   assert.equal((await second.capacity("linux", { ...SMALL, gpu: "none" }, [], signal())).ok, true, "a box with no GPU is never stopped by another backend on the daemon");
   const plain = await second.acquire(identity("linux", "none"), null, hooks(), signal());
   const shared = await second.planResize(whole, "linux", { ...SMALL, gpu: "shared" }, [], signal());
-  assert.match(shared.gpu?.refusal?.agent ?? "", /^Not resized: Docker on fake-docker reaches the same Docker daemon as another backend, so bb-box places no GPU box through it/);
+  assert.match(shared.gpu?.refusal?.agent ?? "", /^Not resized: Docker on fake-docker reaches the same Docker daemon as another backend, so BB Box places no GPU box through it/);
   await first.release(whole, { resetting: async () => {}, timing: () => {} }, signal());
   const refused = await second.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal());
-  assert.equal(refused.message, "Docker on fake-docker reaches the same Docker daemon as the backend docker, so bb-box places no GPU box through it: two backends on one daemon would each count only their own boxes on its cards. Ask for gpu none here, or remove one of them in BB Box's settings.");
-  assert.equal(refused.agentMessage, "Not made: Docker on fake-docker reaches the same Docker daemon as another backend, so bb-box places no GPU box through it. Ask for gpu none, or for another provider, or ask the user. bb-box changed nothing.");
+  assert.equal(refused.message, "Docker on fake-docker reaches the same Docker daemon as the backend docker, so BB Box places no GPU box through it: two backends on one daemon would each count only their own boxes on its cards. Ask for gpu none here, or remove one of them in BB Box's settings.");
+  assert.equal(refused.agentMessage, "Not made: Docker on fake-docker reaches the same Docker daemon as another backend, so BB Box places no GPU box through it. Ask for gpu none, or for another provider, or ask the user. BB Box changed nothing.");
   await assert.rejects(second.acquire(identity("linux", "shared"), null, hooks(), signal()), (error: unknown) => error instanceof BackendError && /places no GPU box through it/.test(error.message));
   assert.equal((await first.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, true);
   const doctor = async (backend: DockerBackend) => (await backend.doctor(signal())).checks.find((check) => check.id === "docker.one-backend");
@@ -365,7 +365,7 @@ test("071 unit 11: a share switch holds for every backend on the daemon, one tur
   assert.equal((await everyBackend.list("docker/gpu-part/")).length, 1);
   execFileSync(fake.binary, ["container", "rm", "--force", fake.inspect(box.ref).Id]);
   await next.maintain(signal());
-  assert.deepEqual(await everyBackend.list("docker/gpu-part/"), [], "a container removed outside bb-box loses its record at the next upkeep");
+  assert.deepEqual(await everyBackend.list("docker/gpu-part/"), [], "a container removed outside BB Box loses its record at the next upkeep");
   const again = await next.acquire(identity("linux", "shared", "thr_abc123", "birch-owl"), null, hooks(), signal());
   await next.resize(again, "linux", { ...SMALL, gpu: "whole" }, { restart: false }, signal());
   assert.equal((await everyBackend.list("docker/gpu-part/")).length, 1);
@@ -404,7 +404,7 @@ test("071 unit 11: a switched part is found by its container's ID, so a box swit
   execFileSync(fake.binary, ["container", "rm", "--force", fake.inspect(box.ref).Id]);
   reachKnown = false;
   await reconnected.maintain(signal());
-  assert.equal((await everyBackend.list("docker/gpu-part/")).length, 1, "while bb-box cannot tell which daemons it reaches, a record written under another name is kept");
+  assert.equal((await everyBackend.list("docker/gpu-part/")).length, 1, "while BB Box cannot tell which daemons it reaches, a record written under another name is kept");
   reachKnown = true;
   await reconnected.maintain(signal());
   assert.deepEqual(await everyBackend.list("docker/gpu-part/"), [], "written under this daemon's engine ID with a name no daemon reached has now, so its upkeep drops it once its container is gone");
@@ -486,7 +486,7 @@ test("071 unit 11: Astra's round 5: a rename while an acquire is making its box 
     await claimed;
     assert.equal(fake.containers().length, 0);
     fake.set({ name: "after-reservation-rename" });
-    await assert.rejects(backend.acquire(identity("linux", "shared", "thr_abc123", "intruder-pending"), null, hooks(), signal()), /card 0 is kept whole for pending-whole, which bb-box is making/);
+    await assert.rejects(backend.acquire(identity("linux", "shared", "thr_abc123", "intruder-pending"), null, hooks(), signal()), /card 0 is kept whole for pending-whole, which BB Box is making/);
   } finally {
     resume();
   }
@@ -535,9 +535,9 @@ test("071 unit 11: Astra's round 6: after a rename, another backend on the daemo
     await claimed;
     assert.equal((await b.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).ok, false);
     fake.set({ name: "after-rename" });
-    await assert.rejects(b.acquire(identity("linux", "shared", "thr_abc123", "second-box"), null, hooks(), signal()), /card 0 is kept whole for pending-whole, which bb-box is making/);
+    await assert.rejects(b.acquire(identity("linux", "shared", "thr_abc123", "second-box"), null, hooks(), signal()), /card 0 is kept whole for pending-whole, which BB Box is making/);
     await a.dispose();
-    await assert.rejects(b.acquire(identity("linux", "shared", "thr_abc123", "third-box"), null, hooks(), signal()), /card 0 is kept whole for pending-whole, which bb-box is making/, "a reservation whose owner cannot be asked still counts");
+    await assert.rejects(b.acquire(identity("linux", "shared", "thr_abc123", "third-box"), null, hooks(), signal()), /card 0 is kept whole for pending-whole, which BB Box is making/, "a reservation whose owner cannot be asked still counts");
   } finally {
     resume();
   }
@@ -676,7 +676,7 @@ test("071 unit 11: after a rename, a backend still counts its own pending whole 
     await claimed;
     await check.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal());
     fake.set({ name: "after-rename" });
-    await assert.rejects(live.acquire(identity("linux", "shared"), null, hooks(), signal()), /card 0 is kept whole for pending-whole, which bb-box is making/);
+    await assert.rejects(live.acquire(identity("linux", "shared"), null, hooks(), signal()), /card 0 is kept whole for pending-whole, which BB Box is making/);
   } finally {
     resume();
   }
@@ -729,7 +729,7 @@ test("071 unit 11: a failed probe keeps each card's key and its last reading's n
   assert.equal(shared.claim?.card, CARD_B, "the shared box goes on the card that is not held whole");
   const doctor = (await backend.doctor(signal())).checks.find((check) => check.id === "docker.gpus")!;
   assert.equal(doctor.status, "warn");
-  assert.match(doctor.detail, /bb-box could not read them just now \(nvidia-smi in a container given the cards answered docker: Error response from daemon: the toolkit's hook failed\), so it names them as last read/);
+  assert.match(doctor.detail, /BB Box could not read them just now \(nvidia-smi in a container given the cards answered docker: Error response from daemon: the toolkit's hook failed\), so it names them as last read/);
 });
 
 test("071 unit 11: with no reading at all, a box's card is matched by its device, so a card held whole takes no shared box; a whole holder that matches no card stops every GPU placement", async () => {
@@ -744,12 +744,12 @@ test("071 unit 11: with no reading at all, a box's card is matched by its device
   fake.set({ gpus: [devices[1]] });
   const lost = await restarted.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal());
   assert.equal(lost.ok, false);
-  assert.match(lost.message!, /^Fake-docker cannot give a box a GPU now: quiet-elm holds a card whole that bb-box cannot match to a card it reads now, as it could not read the cards: .*\. Run bb box doctor\.$/);
-  assert.match(lost.agentMessage!, /^Not made: fake-docker cannot give a box a GPU now: quiet-elm holds a card whole .* Ask for gpu none, or ask the user\. bb-box changed nothing\.$/);
+  assert.match(lost.message!, /^Fake-docker cannot give a box a GPU now: quiet-elm holds a card whole that BB Box cannot match to a card it reads now, as it could not read the cards: .*\. Run bb box doctor\.$/);
+  assert.match(lost.agentMessage!, /^Not made: fake-docker cannot give a box a GPU now: quiet-elm holds a card whole .* Ask for gpu none, or ask the user\. BB Box changed nothing\.$/);
   assert.equal((await restarted.capacity("linux", { ...SMALL, gpu: "none" }, [], signal())).ok, true);
   const doctor = (await restarted.doctor(signal())).checks.find((check) => check.id === "docker.gpus")!;
   assert.equal(doctor.status, "fail");
-  assert.match(doctor.detail, / quiet-elm holds a card whole that bb-box cannot match to a card it reads now, so it places no GPU box on fake-docker until it can\.$/);
+  assert.match(doctor.detail, / quiet-elm holds a card whole that BB Box cannot match to a card it reads now, so it places no GPU box on fake-docker until it can\.$/);
   assert.match(doctor.fix!, /^Release quiet-elm, or give fake-docker its card back\. Check that nvidia-smi answers/);
 });
 
@@ -785,7 +785,7 @@ test("071 unit 11: devices named by index whose cards could not be read still ta
   assert.deepEqual((await backend.held(signal())).map((each) => each.data?.part).sort(), ["shared", "shared"]);
   assert.match((await backend.capacity("linux", { ...SMALL, gpu: "whole" }, [], signal())).message!, /^No card on fake-docker is free for a whole card now: card 0 has .* running and card 1 has .* running\./);
   const plan = await backend.planResize(desktop, "linux-desktop", { ...SMALL, gpu: "whole" }, [], signal());
-  assert.match(plan.gpu?.refusal?.agent ?? "", /^Not resized: no card is free for quiet-elm-\d+ alone: bb-box could not read card 0\. Keep the GPU shared, or ask the user\. bb-box changed nothing\.$/);
+  assert.match(plan.gpu?.refusal?.agent ?? "", /^Not resized: no card is free for quiet-elm-\d+ alone: BB Box could not read card 0\. Keep the GPU shared, or ask the user\. BB Box changed nothing\.$/);
   const empty = setup({}, { gpus: ["nvidia.com/gpu=0"], probeFails: "docker: Error response from daemon: unknown" }, { whole: true });
   assert.match((await empty.backend.capacity("linux", { ...SMALL, gpu: "whole" }, [], signal())).message!, /card 0's free memory could not be read/);
 });
@@ -882,7 +882,7 @@ test("071 unit 11: the doctor lists the cards, warns of another install's GPU bo
   const report = await backend.doctor(signal());
   const listed = report.checks.find((check) => check.id === "docker.gpus")!;
   assert.equal(listed.status, "warn");
-  assert.match(listed.detail, /Another install's GPU boxes are on fake-docker: amber-fox and calm-reef\. bb-box counts them on their cards, but sees the GPU part they were made with, not a later switch/);
+  assert.match(listed.detail, /Another install's GPU boxes are on fake-docker: amber-fox and calm-reef\. BB Box counts them on their cards, but sees the GPU part they were made with, not a later switch/);
   const wrong = report.checks.find((check) => check.id === `gpu.${CARD_A}.whole`)!;
   assert.equal(wrong.status, "fail");
   assert.equal(wrong.detail, "Card 0 is held whole by quiet-elm, and calm-reef of another install is on it too: a placement went wrong.");
@@ -931,7 +931,7 @@ test("071 unit 11: placement's order: shared goes to the fewest boxes, then the 
   const refused = placeCard({ ...ask, part: "whole", holders: [holder(CARD_A), making] });
   assert.equal(refused.is, "refused");
   const words = placementRefusal("docker-1", "whole", "server", refused.is === "refused" ? refused.blocks : [], new Map(), null);
-  assert.equal(words.agent, "Not made: no card on docker-1 is free for a whole card now: card 0 has x running and card 1 has x, which bb-box is making. Ask for gpu shared, or ask the user. bb-box changed nothing.");
+  assert.equal(words.agent, "Not made: no card on docker-1 is free for a whole card now: card 0 has x running and card 1 has x, which BB Box is making. Ask for gpu shared, or ask the user. BB Box changed nothing.");
 });
 
 test("071 unit 11: the card check names a CUDA that picks no card or another, and passes a box with no Python on nvidia-smi alone; a cuInit of 100 with the card listed is a wrong card", () => {
@@ -1018,7 +1018,7 @@ test("071 unit 15 gate: a Docker limit lowered below a card's boxes names them i
   assert.deepEqual(inUse.cards[0]!.holders.map((holder) => holder.is === "box" && [holder.name, holder.part, holder.running]).sort(), [["calm-reef", "shared", true], ["lone-pine", "shared", true]]);
   assert.equal(fake.containers().length, 2, "a lower limit stops nothing");
   const off = setup({ "gpu-desktops": false }, one).backend;
-  assert.deepEqual(await off.cardsInUse(signal()), { is: "unread", host: "the local Docker host", why: "GPU boxes are off, so bb-box does not read the cards.", setup: "setup/docker/README.md#gpu-boxes" });
+  assert.deepEqual(await off.cardsInUse(signal()), { is: "unread", host: "the local Docker host", why: "GPU boxes are off, so BB Box does not read the cards.", setup: "setup/docker/README.md#gpu-boxes" });
 });
 
 test("071 unit 15 gate: turning whole cards off on Docker leaves a whole box whole, and refuses only new whole cards", async () => {

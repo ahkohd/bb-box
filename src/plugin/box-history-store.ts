@@ -3,6 +3,8 @@ import type { QuietWhy, Tally } from "../monitor/box-history.ts";
 import { lightReadingSchema, type Kept, type Point } from "../monitor/light.ts";
 import type { GpuHour, GpuMinute } from "../monitor/history-view.ts";
 import { SCHEMA, type AttachedFile } from "./attached-files.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export const MINUTES_KEPT_MS = 24 * 60 * 60_000;
 export const HOURS_KEPT_MS = 7 * 24 * 60 * 60_000;
@@ -239,7 +241,7 @@ export class BoxHistoryStore {
     if (this.#file.attached) return true;
     this.#minuteRows ??= this.#countRows();
     if (this.#minuteRows < this.#sharedMinuteRows) return true;
-    this.#fill(`box history keeps at most ${this.#sharedMinuteRows} minute points, each GPU's counted as one, in bb-box's database`);
+    this.#fill(`box history keeps at most ${this.#sharedMinuteRows} minute points, each GPU's counted as one, in ${PRODUCT}'s database`);
     return false;
   }
 
@@ -652,12 +654,12 @@ export class BoxHistoryStore {
   fullWords(): string | null {
     const full = this.#full;
     if (!full) return null;
-    return `Box history's file is full, so bb-box stopped keeping box history at ${new Date(full.since).toISOString()}: ${sentence(full.error)} It starts again once old points age out and make room. The Monitor's alerts and the box log are not affected.`;
+    return `Box history's file is full, so ${PRODUCT} stopped keeping box history at ${new Date(full.since).toISOString()}: ${sentence(full.error)} It starts again once old points age out and make room. The Monitor's alerts and the box log are not affected.`;
   }
 
   checks(state: string): DoctorCheck[] {
     const file = this.#file;
-    if (file.problem) return [{ id: "box-history", name: "Box history", status: "fail", detail: `bb-box could not set up ${file.spec.file}: ${sentence(file.problem)}`, fix: "Check that BB's data folder has room and that bb-box's files in it are writable, then restart bb-box." }];
+    if (file.problem) return [{ id: "box-history", name: "Box history", status: "fail", detail: `${PRODUCT} could not set up ${file.spec.file}: ${sentence(file.problem)}`, fix: `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart bb-box.` }];
     const used = this.usedBytes();
     let cap: number | null = null;
     try {
@@ -665,11 +667,11 @@ export class BoxHistoryStore {
     } catch {
       cap = null;
     }
-    const where = file.attached ? `${file.spec.file}, attached to bb-box's database` : `bb-box's database, as its handle refused to attach ${file.spec.file}${file.refusal ? `: ${file.refusal}` : ""}`;
+    const where = file.attached ? `${file.spec.file}, attached to ${PRODUCT}'s database` : `${PRODUCT}'s database, as its handle refused to attach ${file.spec.file}${file.refusal ? `: ${file.refusal}` : ""}`;
     const size = file.attached && used !== null && cap !== null ? `${(used / 1024 / 1024).toFixed(1)} MB used of its cap of ${(cap / 1024 / 1024).toFixed(1)} MB` : `at most ${this.#sharedMinuteRows} minute points, each GPU's counted as one, in a database capped at ${cap !== null ? `${(cap / 1024 / 1024).toFixed(1)} MB` : "an unknown size"}`;
     const full = this.fullWords();
     if (full) return [{ id: "box-history", name: "Box history", status: "warn", detail: `${full} In ${where}, ${size}.`, fix: "Nothing else is affected. If it stays full, see bb box monitor history for what it keeps." }];
-    if (this.#failed) return [{ id: "box-history", name: "Box history", status: "warn", detail: `${state} Its last write failed at ${new Date(this.#failed.at).toISOString()}: ${sentence(this.#failed.error)} In ${where}, ${size}.`, fix: "Check that BB's data folder has room and that bb-box's files in it are writable." }];
-    return [{ id: "box-history", name: "Box history", status: file.attached ? "ok" : "warn", detail: `${state} In ${where}, ${size}.`, fix: file.attached ? null : "Nothing is lost: box history keeps fewer points in bb-box's database." }];
+    if (this.#failed) return [{ id: "box-history", name: "Box history", status: "warn", detail: `${state} Its last write failed at ${new Date(this.#failed.at).toISOString()}: ${sentence(this.#failed.error)} In ${where}, ${size}.`, fix: `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable.` }];
+    return [{ id: "box-history", name: "Box history", status: file.attached ? "ok" : "warn", detail: `${state} In ${where}, ${size}.`, fix: file.attached ? null : `Nothing is lost: box history keeps fewer points in ${PRODUCT}'s database.` }];
   }
 }

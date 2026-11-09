@@ -1,4 +1,6 @@
 import type { TailnetCredentials } from "./tailnet.ts";
+import { PRODUCT } from "../brand.ts";
+
 
 export const DEFAULT_TAILNET_TAGS: readonly string[] = ["tag:bb-box"];
 
@@ -55,7 +57,7 @@ export function readTailnet(value: unknown, problem: (path: string, message: str
   }
   const mode = value.mode ?? "off";
   if (typeof mode !== "string" || !(MODES as readonly string[]).includes(mode)) {
-    problem("general.tailnet.mode", 'The tailnet\'s mode is "off", for a BB that machines reach without it, or "oauth", for a Tailscale OAuth client that bb-box makes keys with.');
+    problem("general.tailnet.mode", `The tailnet's mode is "off", for a BB that machines reach without it, or "oauth", for a Tailscale OAuth client that ${PRODUCT} makes keys with.`);
     return undefined;
   }
   let tags: string[] | undefined;

@@ -88,7 +88,7 @@ class FakeCards {
     backend.holdGpuCard = async (guest: Guest, held: GpuHandoff, signal?: AbortSignal) => {
       await this.#step("hold", guest, signal);
       if (this.pins.get(boxOf(guest)) === held.card) return;
-      if ((this.taken.get(held.card!) ?? 0) >= 1) throw new BackendError("no_capacity", `Card ${held.card}, which the box holds, cannot take it now: it has another box of this install, the most a card may have. A restore keeps a box on its card, so bb-box does not move it to another one.`);
+      if ((this.taken.get(held.card!) ?? 0) >= 1) throw new BackendError("no_capacity", `Card ${held.card}, which the box holds, cannot take it now: it has another box of this install, the most a card may have. A restore keeps a box on its card, so BB Box does not move it to another one.`);
       this.pins.set(boxOf(guest), held.card!);
     };
     backend.dropGpuCard = (boxId: string) => {
@@ -182,7 +182,7 @@ test("071 unit 6, Astra 2: a restore whose box's card has no room for it now is 
   cards.events.length = 0;
   const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), snapshot));
   assert.equal(refused.code, "no_capacity");
-  assert.match(refused.message, new RegExp(`^BB Box did not restore box ${box.name}: Card card-b, which the box holds, cannot take it now: .* bb-box does not move it to another one\\. BB Box changed nothing\\.$`));
+  assert.match(refused.message, new RegExp(`^BB Box did not restore box ${box.name}: Card card-b, which the box holds, cannot take it now: .* BB Box does not move it to another one\\. BB Box changed nothing\\.$`));
   assert.deepEqual(cards.events, [`hold ${box.guest!.ref}`]);
   assert.equal(cards.claims.get(box.guest!.ref)?.card, CARD_B);
   const operation = state.store.operations({ box: box.id, kind: "restore" })[0]!;
@@ -231,7 +231,7 @@ test("071 unit 6, Fable 5: a restart between the rollback and the re-tag, and on
     assert.deepEqual(cards.events, [`hold ${ref}`], "no keep again, and no start");
     const after = await current(state, box);
     assert.equal(after.state, "stopped");
-    assert.match(after.error ?? "", /cannot take it now: .* bb-box does not move it to another one/);
+    assert.match(after.error ?? "", /cannot take it now: .* BB Box does not move it to another one/);
     assert.equal(cards.claims.get(ref)?.card, CARD_B, "the box keeps its claim, and is not moved");
     assert.equal(state.store.operations({ box: box.id, kind: "restore" })[0]!.state, "failed");
   }
@@ -291,7 +291,7 @@ test("071 unit 6, Astra 4 and Fable 2: a swap whose new guest cannot be made giv
     const { state, cards, box, undo, old } = await swapOnCardB();
     cards.failing.add("adopt");
     const failed = await rejection(state.snapshots.restore(COMMAND, box, standing(box), undo));
-    assert.match(failed.message, /Every VMID from 3240 to 3244 is in use\. Nothing on its disk changed, and bb-box started box \S+ again as it was\./);
+    assert.match(failed.message, /Every VMID from 3240 to 3244 is in use\. Nothing on its disk changed, and BB Box started box \S+ again as it was\./);
     assert.deepEqual(cards.events, [`hold ${old}`, `stop ${old}`, `release ${old}`, `return ${old}`, `hold ${old}`, `start ${old} on ${CARD_B}`]);
     assert.deepEqual(cards.holdersOf(CARD_B), [old]);
     assert.equal(cards.bootAtStart.get(old), true, "it starts with the node again, as before the swap, once its claim is back");
@@ -302,7 +302,7 @@ test("071 unit 6, Astra 4 and Fable 2: a swap whose new guest cannot be made giv
     cards.failing.add("return");
     const unsure = await rejection(state.snapshots.restore(COMMAND, box, standing(box), undo));
     assert.equal(unsure.code, "unreachable");
-    assert.match(unsure.message, /could not give its GPU claim back to its old guest \S+: the host's GPU helper did not answer the return within 10 s\. It stays stopped, as it would start with no card, and bb-box tries again at its next sweep\./);
+    assert.match(unsure.message, /could not give its GPU claim back to its old guest \S+: the host's GPU helper did not answer the return within 10 s\. It stays stopped, as it would start with no card, and BB Box tries again at its next sweep\./);
     assert.ok(!cards.events.some((event) => event.startsWith("start")), "the old guest, with no card, was not started");
     assert.equal(cards.onboot.get(old), false, "nor does it start with the node");
     const stopped = await current(state, box);
@@ -342,11 +342,11 @@ test("071 unit 6, Fable 4: a fork with gpu shared of a box that is not a linux-d
   const records = state.store.records().length;
   const checked = await rejection(state.snapshots.checkFork(COMMAND, box, standing(box), "set up", { gpu: "shared" }));
   assert.equal(checked.code, "unsupported");
-  assert.match(checked.message, /^Not forked: a fork of a linux box takes gpu none, as only a linux-desktop fork may have a card now\. Fork it with gpu none\. bb-box copied nothing\.$/);
+  assert.match(checked.message, /^Not forked: a fork of a linux box takes gpu none, as only a linux-desktop fork may have a card now\. Fork it with gpu none\. BB Box copied nothing\.$/);
   const forked = await rejection(state.snapshots.fork(COMMAND, box, standing(box), "set up", { gpu: "shared" }));
   assert.match(forked.message, /a fork of a linux box takes gpu none/);
   const whole = await rejection(state.snapshots.checkFork(COMMAND, box, standing(box), "set up", { gpu: "whole" }));
-  assert.equal(whole.message, "Not forked: a fork of a linux box takes gpu none, as only a linux-desktop fork may have a card now. Fork it with gpu none. bb-box copied nothing.", "a whole card is refused as a shared one is, for the kind, not as not offered");
+  assert.equal(whole.message, "Not forked: a fork of a linux box takes gpu none, as only a linux-desktop fork may have a card now. Fork it with gpu none. BB Box copied nothing.", "a whole card is refused as a shared one is, for the kind, not as not offered");
   assert.equal(state.store.records().length, records);
   assert.equal(state.store.operations({ box: box.id, kind: "fork" }).length, 0);
   assert.equal((await state.boxes.list(THREAD)).length, 1, "no fork's box record was made");

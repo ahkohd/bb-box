@@ -14,7 +14,7 @@ function setup(options: ConstructorParameters<typeof FakeNamespace>[0] = {}) {
 test("an instance is made with its shape, labels, deadline, unique tag and SSH key, and a second make with the same tag finds the first", async () => {
   const { fake, api } = setup();
   const deadline = Date.parse("2030-01-01T01:00:00Z");
-  const request = { shape: MAC, labels: { "bbbox-install": "i1", "bbbox-box": "box_1" }, deadline, purpose: "bb-box box quiet-heron", uniqueTag: "bbbox-i1-box_1", sshPublicKeys: ["ssh-ed25519 AAAA bb-box"] };
+  const request = { shape: MAC, labels: { "bbbox-install": "i1", "bbbox-box": "box_1" }, deadline, purpose: "BB Box box quiet-heron", uniqueTag: "bbbox-i1-box_1", sshPublicKeys: ["ssh-ed25519 AAAA bb-box"] };
   const made = await api.create(request);
   const again = await api.create(request);
   assert.equal(again.id, made.id);
@@ -23,7 +23,7 @@ test("an instance is made with its shape, labels, deadline, unique tag and SSH k
     method: "CreateInstance",
     body: {
       shape: { os: "macos", machineArch: "arm64", virtualCpu: 6, memoryMegabytes: 14336, selectors: [{ name: "macos.version", value: "26.x" }] },
-      documentedPurpose: "bb-box box quiet-heron",
+      documentedPurpose: "BB Box box quiet-heron",
       labels: [{ name: "bbbox-install", value: "i1" }, { name: "bbbox-box", value: "box_1" }],
       deadline: "2030-01-01T01:00:00.000Z",
       experimental: { uniqueTag: "bbbox-i1-box_1", authorizedSshKeys: ["ssh-ed25519 AAAA bb-box"] },

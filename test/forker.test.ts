@@ -1,4 +1,4 @@
-// The helper that starts bb-box's short-lived child processes in place of BB's server (forker.ts).
+// The helper that starts BB Box's short-lived child processes in place of BB's server (forker.ts).
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

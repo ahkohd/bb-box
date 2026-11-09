@@ -72,7 +72,7 @@ function rewrite(from: string, to: string, root: string, bin: string): void {
 /**
  * A fresh fake Mac: Apple silicon, FileVault off, Remote Login on with Full
  * Disk Access, nobody at the console, a person's account `person` (UID 501), and the groups every
- * Mac has. `template` installs bb-box's home template, as setup would.
+ * Mac has. `template` installs BB Box's home template, as setup would.
  */
 export function fakeMacos(options: { template?: boolean } = {}): FakeMacos {
   const dir = realpathSync(tempDir("macos"));

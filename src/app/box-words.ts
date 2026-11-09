@@ -4,6 +4,7 @@ import type { Busy } from "../monitor/busy.ts";
 import type { Tone } from "./common.tsx";
 import { PRODUCT } from "./product.ts";
 import { whenInSentence } from "./snapshot-words.ts";
+import { threadInSentence } from "./thread-title.ts";
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -59,15 +60,18 @@ export function stepTime(ms: number): string {
   return `${(ms / SECOND).toFixed(1)} s`;
 }
 
-export type ThreadTitles = Readonly<Record<string, string>>;
+export type ThreadTitles = Readonly<Record<string, string | null>>;
 
 export function actorWords(actor: Actor | null | undefined, titles: ThreadTitles): string | null {
   if (!actor) return null;
   switch (actor.is) {
     case "person":
       return "by you";
-    case "agent":
-      return `by the agent in ${titles[actor.threadId] ?? "its thread"}`;
+    case "agent": {
+      const title = titles[actor.threadId];
+      if (title === undefined) return "by the agent in its thread";
+      return `by the agent in ${threadInSentence(title)}`;
+    }
     case "command":
       return "by a bb box command";
     case "bb-box":

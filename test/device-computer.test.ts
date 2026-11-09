@@ -613,7 +613,7 @@ describe("the computer tools on a device (063, 7.1)", () => {
     };
     await assert.rejects(
       computer.type(BOX, { ref, text: "example.com", keys: "Return" }),
-      (error: unknown) => error instanceof ComputerError && /reads "exam": the device has not taken all of the keys, so bb-box did not press Return\./.test(error.message),
+      (error: unknown) => error instanceof ComputerError && /reads "exam": the device has not taken all of the keys, so BB Box did not press Return\./.test(error.message),
     );
     assert.equal(device.inputs.at(-1)?.type, "text", "no Return after text that did not land");
   });

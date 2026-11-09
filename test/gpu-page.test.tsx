@@ -457,7 +457,7 @@ test("071 unit 13: Resize shows the GPU change, names a program that has it open
 });
 
 test("071 unit 14: a box with no GPU keeps its facts when Docker reports every card", async () => {
-  const reach = "On devpc, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.";
+  const reach = "On devpc, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what BB Box places, not what a box can reach.";
   const slot = open(page(boxView({ gpu: false, gpuPart: "none", claim: null, form: "Docker", backendLabel: "Docker on devpc", facts: [{ label: "Cards", value: reach }] })));
   const facts = await slot.findByRole("region", { name: "Facts" });
   expect(facts.textContent).not.toContain("Cards");
@@ -467,7 +467,7 @@ test("071 unit 14: a box with no GPU keeps its facts when Docker reports every c
 });
 
 test("071 unit 14: a GPU box puts the every-card sentence on the card, and an unmatched reading is unavailable", async () => {
-  const reach = "On devpc, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what bb-box places, not what a box can reach.";
+  const reach = "On devpc, every box with Docker in it can open every card, with a GPU or without. None and Whole card are what BB Box places, not what a box can reach.";
   const slot = open(page(boxView({ form: "Docker", backendLabel: "Docker on devpc", facts: [{ label: "GPU", value: "card 1, shared, NVIDIA RTX 4090, 24 GiB" }, { label: "Cards", value: reach }] })));
   const facts = await slot.findByRole("region", { name: "Facts" });
   expect(facts.textContent).not.toContain("every box");

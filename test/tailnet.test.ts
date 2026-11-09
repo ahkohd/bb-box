@@ -44,8 +44,8 @@ const credentials = { clientId: "kCLIENTid", clientSecret: CLIENT_SECRET };
 test("a key for each machine is single-use, ephemeral, pre-approved and tagged, expires in 10 minutes, and the OAuth token is asked for once", async () => {
   const fake = fakeTailscale();
   const tailnet = new Tailnet({ credentials, fetch: fake.fetch });
-  const first = await tailnet.mintKey({ description: "bb-box mac quiet-heron (box_123)" });
-  const second = await tailnet.mintKey({ description: "bb-box host h1" });
+  const first = await tailnet.mintKey({ description: "BB Box mac quiet-heron (box_123)" });
+  const second = await tailnet.mintKey({ description: "BB Box host h1" });
   assert.equal(first.key, MINTED);
   assert.equal(first.id, "k123");
   assert.equal(first.expiresAt, Date.parse("2026-10-22T16:10:00Z"));
@@ -56,7 +56,7 @@ test("a key for each machine is single-use, ephemeral, pre-approved and tagged, 
   assert.deepEqual(JSON.parse(fake.calls[1]!.body!), {
     capabilities: { devices: { create: { reusable: false, ephemeral: true, preauthorized: true, tags: DEFAULT_TAILNET_TAGS } } },
     expirySeconds: 600,
-    description: "bb-box mac quiet-heron box 123",
+    description: "BB Box mac quiet-heron box 123",
   });
 });
 
@@ -103,7 +103,7 @@ test("the doctor's check signs the OAuth client in and makes nothing", async () 
   assert.doesNotMatch(failed.ok ? "" : failed.reason, /SECRET/);
 });
 
-test("devices lists only the tailnet's devices with bb-box's tags, and removing one that is already gone is no error", async () => {
+test("devices lists only the tailnet's devices with BB Box's tags, and removing one that is already gone is no error", async () => {
   const fake = fakeTailscale({
     devices: [
       { id: "1", nodeId: "nA", hostname: "bb-box-mac-quiet-heron", tags: ["tag:bb-box"], lastSeen: "2026-10-22T15:00:00Z", addresses: ["192.0.2.7", "fd7a:115c:a1e0::7"] },

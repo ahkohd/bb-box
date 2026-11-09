@@ -40,6 +40,8 @@ import { NamespaceLinux, isLinuxKind, linuxShapeFor } from "./linux.ts";
 import type { DockerBackendOptions } from "../docker/backend.ts";
 import type { DockerCli } from "../docker/cli.ts";
 import { storedKeyPair } from "../ssh-key.ts";
+import { PRODUCT } from "../../brand.ts";
+
 
 export const LABELS = {
   install: "bbbox-install",
@@ -312,7 +314,7 @@ export class NamespaceBackend implements Backend {
     this.#probes = new MacProbeCache({
       run: async (instance, script, signal) => {
         const result = await new SshTransport((await this.#keys()).ssh, this.#access(instance), "macos").run(script, { timeoutMs: PROBE_TIMEOUT_MS, signal, maxOutputBytes: 64 * 1024 });
-        if (result.exitCode !== 0 && !result.stdout.trim()) throw new Error(`Namespace's Mac ${instance} did not answer bb-box's probe: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+        if (result.exitCode !== 0 && !result.stdout.trim()) throw new Error(`Namespace's Mac ${instance} did not answer ${PRODUCT}'s probe: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
         return result.stdout;
       },
       saved: (report) => this.#rememberChip(report, report.mac),
@@ -354,7 +356,7 @@ export class NamespaceBackend implements Backend {
             shape: { os: "macos", arch: "arm64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, selectors: { "macos.version": this.#config.macosVersion } },
             labels: { [LABELS.install]: this.#context.installId, [LABELS.role]: NAMESPACE_HOST_ROLE, [LABELS.created]: String(this.#now()) },
             deadline: this.#now() + KEEP_AHEAD_MS,
-            purpose: "bb-box shared iOS host",
+            purpose: `${PRODUCT} shared iOS host`,
             uniqueTag: tag,
             sshPublicKeys: [publicKey],
           },
@@ -391,7 +393,7 @@ export class NamespaceBackend implements Backend {
     const fullFor = concurrency ? workspaceFullFor(shape, concurrency) : null;
     if (fullFor) return { shape, words: fullFor };
     const held = await this.#held(signal);
-    if (held.length + this.#placing.size >= this.#config.machines) return { shape, words: `Namespace has ${held.length} of the ${this.#config.machines} machines bb-box may have at once.` };
+    if (held.length + this.#placing.size >= this.#config.machines) return { shape, words: `Namespace has ${held.length} of the ${this.#config.machines} machines ${PRODUCT} may have at once.` };
     return { shape, words: null };
   }
 
@@ -432,7 +434,7 @@ export class NamespaceBackend implements Backend {
         shape: { os: "macos", arch: "arm64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, selectors: { "macos.version": this.#config.macosVersion } },
         labels: { [LABELS.install]: this.#context.installId, [LABELS.role]: MEASURE_ROLE, [LABELS.created]: String(this.#now()) },
         deadline: until,
-        purpose: "bb-box measures what Namespace's Macs offer iOS devices",
+        purpose: `${PRODUCT} measures what Namespace's Macs offer iOS devices`,
         uniqueTag: `bbbox-${this.#context.installId}-measure-${this.#now()}`.replace(/[^A-Za-z0-9-]+/g, "-"),
         sshPublicKeys: [publicKey],
       },
@@ -533,7 +535,7 @@ export class NamespaceBackend implements Backend {
     const hostWords = this.slots.known()?.instance
       ? " A shared iOS host for ios boxes holds Namespace's Mac now, until its last box goes."
       : measuring !== null
-        ? ` bb-box is measuring what Namespace's Macs offer on one now, until ${clock(measuring)} at the latest.`
+        ? ` ${PRODUCT} is measuring what Namespace's Macs offer on one now, until ${clock(measuring)} at the latest.`
         : "";
     const fullFor = concurrency ? workspaceFullFor(shape, concurrency) : null;
     if (fullFor) return { ok: false, message: `${fullFor}${hostWords}`, warm: null, hosts: [{ host, ok: false, limits: [{ resource: "cpu", used: concurrency!.usedCores, total: concurrency!.maxCores, reserve: 0, unit: "count" }] }] };
@@ -549,7 +551,7 @@ export class NamespaceBackend implements Backend {
     const ok = used < this.#config.machines;
     return {
       ok,
-      message: ok ? null : `Namespace has ${held.length} of the ${this.#config.machines} machines bb-box may have at once, counting every bb-box install's in the workspace. Release a box, or raise the most machines in BB Box's settings.`,
+      message: ok ? null : `Namespace has ${held.length} of the ${this.#config.machines} machines ${PRODUCT} may have at once, counting every ${PRODUCT} install's in the workspace. Release a box, or raise the most machines in BB Box's settings.`,
       warm: null,
       hosts: [{ host, ok, limits: [{ resource: "machines", used, total: this.#config.machines, reserve: 0, unit: "count" }] }],
     };
@@ -766,7 +768,7 @@ export class NamespaceBackend implements Backend {
       name: "Machines",
       status: unclaimed.length ? "warn" : "ok",
       detail: held.length ? `${held.length} of at most ${this.#config.machines}: ${described.join("; ")}.` : `None now; at most ${this.#config.machines} at once.`,
-      fix: unclaimed.length ? "bb-box's sweep destroys machines labelled for this install that no box claims." : null,
+      fix: unclaimed.length ? `${PRODUCT}'s sweep destroys machines labelled for this install that no box claims.` : null,
     });
     checks.push(await this.#limitsCheck(signal));
     checks.push(await this.#linuxImagesCheck(signal));
@@ -774,10 +776,10 @@ export class NamespaceBackend implements Backend {
     for (const instance of macs) await this.#probes.measure(instance.id, signal).catch((error) => this.#context.logError(`measure what Namespace's Mac ${instance.id} offers`, error));
     checks.push(await this.slots.doctor(signal));
     const reports = this.macCapabilities();
-    if (!reports.length) checks.push({ id: "devices.namespace", name: "iOS devices on Namespace's Macs", status: "skipped", detail: "Not measured yet: bb-box measures each Namespace Mac it starts.", fix: null });
+    if (!reports.length) checks.push({ id: "devices.namespace", name: "iOS devices on Namespace's Macs", status: "skipped", detail: `Not measured yet: ${PRODUCT} measures each Namespace Mac it starts.`, fix: null });
     for (const report of reports) checks.push(capabilityCheck(`namespace.${report.mac}`, `Namespace's ${report.mac} Macs`, report, now));
     if (reports.length && macsVary(reports)) checks.push({ id: "devices.namespace", name: "iOS devices on Namespace's Macs", status: "ok", detail: `Namespace's Macs vary by machine: ${eachKindOfMacWords(reports)}. A shared iOS host measures its own Mac and streams by its hardware encoder where it has one, in software otherwise.`, fix: null });
-    notes.push(`Each machine lives at most ${this.#config.longestLifeHours} hours, the plan's longest life, and its deadline is kept no more than an hour ahead, so a machine bb-box loses track of ends within the hour.`);
+    notes.push(`Each machine lives at most ${this.#config.longestLifeHours} hours, the plan's longest life, and its deadline is kept no more than an hour ahead, so a machine ${PRODUCT} loses track of ends within the hour.`);
     const failing = checks.some((check) => check.status === "fail");
     return { ok: !failing, summary: failing ? "Namespace does not answer to the token." : `Namespace answers; ${held.length} machine${held.length === 1 ? "" : "s"}.`, checks, notes };
   }
@@ -873,7 +875,7 @@ export class NamespaceBackend implements Backend {
     const command = new SshTransport(ssh, this.#access(instance), linux ? "linux" : "macos");
     const prepared = await command.run(linux ? (this.#options.linuxTailscaleScript ?? LINUX_TAILSCALE) : MAC_TAILSCALE, { timeoutMs: 180_000, signal });
     if (prepared.exitCode !== 0) throw new Error(`Tailscale did not start on Namespace's machine ${instance}: ${prepared.stderr.trim().slice(-300) || `exit ${prepared.exitCode}`}`);
-    const key = await tailnet.mintKey({ description: `bb-box Namespace ${name}` }, signal);
+    const key = await tailnet.mintKey({ description: `${PRODUCT} Namespace ${name}` }, signal);
     const joined = await command.run(joinScript(this.#tailnetHostname(name)), { stdin: key.key, timeoutMs: 90_000, signal });
     if (joined.exitCode !== 0) throw new Error(`Namespace's machine ${instance} did not join the tailnet: ${joined.stderr.trim().slice(-300) || `exit ${joined.exitCode}`}`);
   }
@@ -957,7 +959,7 @@ export class NamespaceBackend implements Backend {
   async #limitsCheck(signal?: AbortSignal): Promise<DoctorCheck> {
     const { concurrency, unread } = await this.#workspaceLimits(signal);
     const largest = await this.#largestMachine(concurrency);
-    const largestWords = largest ? `the largest Mac bb-box asks for is ${largest.cores}x${largest.memoryGB}` : "bb-box knows no largest Mac yet";
+    const largestWords = largest ? `the largest Mac ${PRODUCT} asks for is ${largest.cores}x${largest.memoryGB}` : `${PRODUCT} knows no largest Mac yet`;
     if (concurrency) {
       return {
         id: "namespace.limits",
@@ -972,7 +974,7 @@ export class NamespaceBackend implements Backend {
       id: "namespace.limits",
       name: "Workspace limits",
       status: "warn",
-      detail: `${refused ? "The token may not read the workspace's limits" : `bb-box could not read the workspace's limits: ${unread?.message ?? "Namespace gave none for macOS"}`}. So ${largestWords}, from Largest machine in BB Box's settings or Namespace's last refusal, and a full workspace shows only when Namespace refuses a Mac.`,
+      detail: `${refused ? "The token may not read the workspace's limits" : `${PRODUCT} could not read the workspace's limits: ${unread?.message ?? "Namespace gave none for macOS"}`}. So ${largestWords}, from Largest machine in BB Box's settings or Namespace's last refusal, and a full workspace shows only when Namespace refuses a Mac.`,
       fix: refused ? `Make a new token with the grant ${USAGE_GRANT} as well, as the guide shows, and set it in BB Box's settings.` : null,
     };
   }
