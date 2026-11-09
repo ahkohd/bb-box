@@ -2,7 +2,7 @@
 
 An agent can record a desktop box, or the phone or tablet of a device box, while it works and show you the clip in the thread, rather than describe what it did. When it tests something, it captions each step and its result, so you can see what it checked and whether it passed.
 
-![A Linux desktop recording. It zooms onto a painted window named Ready, with a pointing hand and a click ring on the button. Mousepad shows the line "A long line for the clip, kept in the note.", an I-beam in the text area and a Typing pill. The line is selected with a Ctrl+A pill, a Save As dialog opens with a Ctrl+S pill, and cancelling it shows a warning. The window is widened with a resize cursor and dragged by the title with an open hand. The last check fails because the file is not on disk](../media/recording.webp)
+![A Linux desktop recording. It zooms onto a painted window named Ready, with a pointing hand and a click ring on the button. The camera eases out as Mousepad opens, and back in on the line "A long line for the clip, kept in the note." as it is typed. The line is selected with a Ctrl+A pill, a Save As dialog opens with a Ctrl+S pill and the captions below its name field, and cancelling it shows a warning. The window is widened with a resize cursor and dragged by the title with an open hand. The last check fails because the file is not on disk, and the clip fades out](../media/recording.webp)
 
 ## What a clip shows
 
@@ -25,7 +25,7 @@ A pill sits below the region it would cover, or above it when below does not fit
 
 On macOS and Windows, the computer-use driver draws its own pointer on the screen for each of the agent's actions. While the agent records, BB Box hides it, so the clip has the same pointer as on Linux, and shows it again at the stop, or after 5 minutes if the recording is never stopped. A driver too old to hide it keeps it, and BB Box then draws your pointer only once you move it. On a Wayland desktop, BB Box does not sample the pointer yet, so it draws no pointer of its own there. The rings, pills and zooms are drawn everywhere.
 
-![Mousepad showing the line "A long line for the clip, kept in the note.", with an I-beam in the middle of the text area, a Typing pill, the step "Type a line into the note" and the passed result "The line is in the note"](../media/recording-zoom.png)
+![Mousepad zoomed in on the line "A long line for the clip, kept in the note.", with an I-beam in the text area, the step "Type a line into the note" and the passed result "The line is in the note" below it](../media/recording-zoom.png)
 
 ### Zooms
 
@@ -50,7 +50,7 @@ A key pill starts with a keyboard mark, and a warning uses an amber one. The mar
 
 The step caption and its result stay until the next step starts. Each caption and pill fades in and out over a fifth of a second, so one step crossfades into the next. One moment has one caption: a warning and a result for the same moment show as one, and a cancel the step asked for is not shown as a failure. Each caption stays up long enough to read, even where idle stretches are cut or the clip plays faster. A step reads while it stays up, through its result. To give a result or a warning time to read, the clip holds it still for at most a second.
 
-![The step "Cancel the save" and a warning, "The save was cancelled", over Mousepad. The typed line stays selected](../media/recording-step.png)
+![The step "Cancel the save" and a warning, "The save was cancelled", under Mousepad. The typed line stays selected](../media/recording-step.png)
 
 The agent can put the captions at the bottom of the video instead, above the Dock or taskbar, with the step above its result. It does this when what it tests is near the top of the screen, such as a menu bar or a window's title. The marks then go to a top corner.
 
