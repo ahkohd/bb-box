@@ -1,3 +1,4 @@
+import { PRODUCT } from "../brand.ts";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import {
@@ -584,12 +585,12 @@ export class DeviceServer {
       const later = connection.started > holder.started || (connection.started === holder.started && connection.instance === holder.instance);
       if (!later) {
         this.#log(`lease: a control connection of an instance started earlier (${connection.instance || "unnamed"}) was refused; ${holder.instance || "unnamed"} holds it`);
-        connection.ws.close(SUPERSEDED_CLOSE, "superseded: a bb-box instance started later holds this box's device");
+        connection.ws.close(SUPERSEDED_CLOSE, `superseded: a ${PRODUCT} instance started later holds this box's device`);
         return false;
       }
       this.#log(`lease: ${connection.instance || "unnamed"} takes it from ${holder.instance || "unnamed"}, which is superseded`);
       this.#lease = connection;
-      holder.ws.close(SUPERSEDED_CLOSE, "superseded: a bb-box instance started later holds this box's device");
+      holder.ws.close(SUPERSEDED_CLOSE, `superseded: a ${PRODUCT} instance started later holds this box's device`);
       return true;
     }
     this.#lease = connection;
@@ -758,7 +759,7 @@ export class DeviceServer {
   }
 
   #leaseOnly(connection: Connection, what: string): void {
-    if (connection.role !== "control" || this.#lease !== connection) throw new Refused("superseded", `Only the bb-box instance that holds this box's device may ${what}.`);
+    if (connection.role !== "control" || this.#lease !== connection) throw new Refused("superseded", `Only the ${PRODUCT} instance that holds this box's device may ${what}.`);
   }
 
   async #run(connection: Connection, request: DeviceRequest): Promise<AnswerResult> {
@@ -808,7 +809,7 @@ export class DeviceServer {
       case "clipboard": {
         this.#booted();
         const text = await this.#options.driver.clipboard();
-        if (text.length > DEVICE_CLIPBOARD_MOST) throw new Refused("unsupported", `The ${this.#state.model}'s clipboard holds ${text.length} characters, more than the ${DEVICE_CLIPBOARD_MOST} bb-box copies from a device.`);
+        if (text.length > DEVICE_CLIPBOARD_MOST) throw new Refused("unsupported", `The ${this.#state.model}'s clipboard holds ${text.length} characters, more than the ${DEVICE_CLIPBOARD_MOST} ${PRODUCT} copies from a device.`);
         return { type: "clipboard", text };
       }
       case "at": {
@@ -1182,7 +1183,7 @@ export class DeviceServer {
     if (outcome === "late") {
       work.catch(() => undefined);
       await this.#refresh();
-      throw new Refused("outcome-unknown", `The ${control.action} did not finish within ${Math.round(deadline / 100) / 10} s, so bb-box cannot tell whether it took effect. The device is now ${stateWords(this.#state)}. Read its state before trying again.`);
+      throw new Refused("outcome-unknown", `The ${control.action} did not finish within ${Math.round(deadline / 100) / 10} s, so ${PRODUCT} cannot tell whether it took effect. The device is now ${stateWords(this.#state)}. Read its state before trying again.`);
     }
     return { type: "done" };
   }

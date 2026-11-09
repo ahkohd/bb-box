@@ -1,3 +1,4 @@
+import { PRODUCT } from "../brand.ts";
 import { isSideways, type Orientation, type TableModel, type TouchContact, type VideoSize } from "../core/device.ts";
 import { DriverError } from "./driver.ts";
 import { usKey } from "./keys.ts";
@@ -32,7 +33,7 @@ const NAMED_KEYS: ReadonlySet<string> = new Set([
 export function emulatorKey(key: string): string {
   if (NAMED_KEYS.has(key)) return key;
   if (usKey(key) && key.length === 1) return key;
-  throw new DriverError("bad-value", `A US keyboard has no key ${JSON.stringify(key)}. Send it as text, which bb-box pastes.`);
+  throw new DriverError("bad-value", `A US keyboard has no key ${JSON.stringify(key)}. Send it as text, which ${PRODUCT} pastes.`);
 }
 
 export interface PanelPoint {

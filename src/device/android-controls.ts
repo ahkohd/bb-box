@@ -1,3 +1,4 @@
+import { PRODUCT } from "../brand.ts";
 import { readFile, rename, writeFile } from "node:fs/promises";
 import { ANDROID_DEFAULT_FONT_SCALE, CLEAN_STATUS_BAR_BATTERY, EMULATOR_OWN_BATTERY, EMULATOR_OWN_LOCATION, SLOW_NETWORK, nextFontScale, notANetworkPreset } from "../core/device-settings.ts";
 import {
@@ -275,7 +276,7 @@ export class AndroidSettingsKeeper {
     this.#fontScale =
       scale !== null
         ? { known: true, value: scale, at, by: scale === own.fontScale ? "bb-box" : "outside" }
-        : { known: false, why: `Android's font scale is ${read.fontScale ?? "unread"}, which is not one of bb-box's steps: ${ANDROID_FONT_SCALES.join(", ")}.` };
+        : { known: false, why: `Android's font scale is ${read.fontScale ?? "unread"}, which is not one of ${PRODUCT}'s steps: ${ANDROID_FONT_SCALES.join(", ")}.` };
     this.#location = gps ? { known: true, value: gps, at, by: own.location && !sameSpot(own.location, gps) ? "outside" : "bb-box" } : { known: false, why: "The emulator did not say where it is." };
     this.#battery = battery ? { known: true, value: battery, at, by: own.battery && !sameBattery(own.battery, battery) ? "outside" : "bb-box" } : { known: false, why: "The emulator did not say how its battery is." };
     this.#networkWords = read.networkWords;
@@ -372,7 +373,7 @@ export class AndroidSettingsKeeper {
     const reached = () => this.#network.known && this.#network.value === wanted;
     const reads = () => (this.#network.known ? this.#network.value : this.#networkWords);
     const bootMs = this.#options.settleMs?.boot ?? BOOT_NETWORK_MS;
-    const boot = () => `bb-box set the network ${wanted}, but ${bootMs / 1000} s after the boot the device reads ${reads()}.`;
+    const boot = () => `${PRODUCT} set the network ${wanted}, but ${bootMs / 1000} s after the boot the device reads ${reads()}.`;
     const settled = await this.#until(reached, boot, signal, bootMs).then(
       () => true,
       (error: unknown) => {
@@ -386,7 +387,7 @@ export class AndroidSettingsKeeper {
     const againMs = this.#options.settleMs?.wifiRestarted ?? WIFI_RESTARTED_NETWORK_MS;
     await this.#until(
       reached,
-      () => `bb-box set the network ${wanted}, and restarted Wi-Fi as the device had no validated network ${bootMs / 1000} s after the boot, but ${againMs / 1000} s later it reads ${reads()}.`,
+      () => `${PRODUCT} set the network ${wanted}, and restarted Wi-Fi as the device had no validated network ${bootMs / 1000} s after the boot, but ${againMs / 1000} s later it reads ${reads()}.`,
       signal,
       againMs,
     );

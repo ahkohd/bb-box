@@ -1,3 +1,4 @@
+import { PRODUCT } from "../brand.ts";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -79,7 +80,7 @@ class ServerConnection {
     channel.onLine((line) => this.#waiting.shift()?.resolve(line));
     channel.onExit((words) => {
       this.#ended = words;
-      for (const waiting of this.#waiting.splice(0)) waiting.reject(new DriverError("failed", `bb-box's tree server stopped: ${words}`));
+      for (const waiting of this.#waiting.splice(0)) waiting.reject(new DriverError("failed", `${PRODUCT}'s tree server stopped: ${words}`));
     });
   }
 
@@ -88,7 +89,7 @@ class ServerConnection {
   }
 
   #next(timeoutMs: number, what: string): Promise<string> {
-    if (this.#ended) return Promise.reject(new DriverError("failed", `bb-box's tree server stopped: ${this.#ended}`));
+    if (this.#ended) return Promise.reject(new DriverError("failed", `${PRODUCT}'s tree server stopped: ${this.#ended}`));
     return new Promise((resolve, reject) => {
       const waiting = {
         resolve: (line: string) => {
@@ -103,7 +104,7 @@ class ServerConnection {
       const timer = setTimeout(() => {
         const at = this.#waiting.indexOf(waiting);
         if (at >= 0) this.#waiting.splice(at, 1);
-        reject(new DriverError("failed", `bb-box's tree server did not answer ${what} within ${timeoutMs / 1000} s.`));
+        reject(new DriverError("failed", `${PRODUCT}'s tree server did not answer ${what} within ${timeoutMs / 1000} s.`));
       }, timeoutMs);
       this.#waiting.push(waiting);
     });
@@ -139,7 +140,7 @@ function launcherActivities(printed: string): readonly LauncherApp[] {
 
 function serverApps(line: string): readonly LauncherApp[] {
   const answer = JSON.parse(line) as { ok?: unknown; apps?: unknown; words?: unknown };
-  if (answer.ok !== true || !Array.isArray(answer.apps)) throw new DriverError("failed", `bb-box's tree server could not list the apps: ${typeof answer.words === "string" ? answer.words : line.slice(0, 120)}`);
+  if (answer.ok !== true || !Array.isArray(answer.apps)) throw new DriverError("failed", `${PRODUCT}'s tree server could not list the apps: ${typeof answer.words === "string" ? answer.words : line.slice(0, 120)}`);
   const apps: LauncherApp[] = [];
   for (const raw of answer.apps as Record<string, unknown>[]) {
     if (typeof raw.pkg !== "string" || typeof raw.activity !== "string" || apps.some((each) => each.pkg === raw.pkg)) continue;
@@ -156,11 +157,11 @@ class GivingWay extends DriverError {
 }
 
 export function instrumentationWords(): string {
-  return "An instrumentation test is running on the device. Android lets one client at a time read the screen's elements, and a read as the test starts can crash it, so bb-box leaves them to the test until it ends. computer_screenshot works meanwhile.";
+  return `An instrumentation test is running on the device. Android lets one client at a time read the screen's elements, and a read as the test starts can crash it, so ${PRODUCT} leaves them to the test until it ends. computer_screenshot works meanwhile.`;
 }
 
 export function heldElsewhereWords(): string {
-  return "Something else on the device holds Android's UiAutomation, which reads the screen's elements: an instrumentation test, or a tool such as uiautomator. bb-box reads the elements again once it ends; computer_screenshot works meanwhile.";
+  return `Something else on the device holds Android's UiAutomation, which reads the screen's elements: an instrumentation test, or a tool such as uiautomator. ${PRODUCT} reads the elements again once it ends; computer_screenshot works meanwhile.`;
 }
 
 export class AndroidTreeSource {
@@ -269,7 +270,7 @@ export class AndroidTreeSource {
         });
         if (!/"hello"/.test(hello)) {
           connection.close();
-          throw new DriverError("failed", `bb-box's tree server started with something other than its hello: ${hello.slice(0, 120)}`);
+          throw new DriverError("failed", `${PRODUCT}'s tree server started with something other than its hello: ${hello.slice(0, 120)}`);
         }
         this.#options.log(`tree: bb-box's tree server started in ${Math.round(this.#now() - began)} ms`);
         this.#connection = connection;
