@@ -57,14 +57,6 @@ export function openPageOnClick(page: PageLink): (event: MouseEvent<HTMLElement>
   };
 }
 
-export function RowChevron({ page }: { page: PageLink }) {
-  return (
-    <a href={page.href} tabIndex={-1} aria-hidden onClick={followPageLink(page)} className="ml-0.5 flex size-7 shrink-0 items-center justify-center rounded-md text-subtle-foreground transition-colors duration-150 hover:bg-state-hover hover:text-foreground group-hover:text-muted-foreground">
-      <Icon name="ChevronRight" className="size-4" aria-hidden />
-    </a>
-  );
-}
-
 export function RowNameLink({ box, page, describedBy, focus, children }: { box: Pick<BoxView, "id" | "name">; page: PageLink; describedBy?: string; focus?: Pick<ReturnType<typeof useNameFocus>, "onFocus" | "onBlur">; children: ReactNode }) {
   return (
     <a href={page.href} aria-label={box.name} aria-describedby={describedBy} onFocus={focus?.onFocus} onBlur={focus?.onBlur} {...{ [ROW_NAME]: box.id }} onClick={followPageLink(page)} className="block min-w-0 rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
@@ -152,7 +144,6 @@ export function BoxRow({
   const quickActions = [
     ...openableNow(openActions(box, { screen: openScreen, terminal: openTerminal, files: openFiles })).map((action) => <IconButton key={action.key} label={action.words} icon={action.glyph()} onClick={action.open} />),
     ...(stops && box.state === "stopped" ? [<IconButton key="start" label="Start" icon="Play" onClick={() => void run("start")} loading={busy === "start"} disabled={busy !== null} />] : []),
-    ...(stops && ready ? [<IconButton key="stop" label="Stop" icon="Square" onClick={() => void run("stop")} loading={busy === "stop"} disabled={busy !== null} />] : []),
   ];
 
   return (
@@ -254,7 +245,6 @@ export function BoxRow({
         {compact ? quickActions.slice(0, 1) : quickActions}
         {extra}
         <BoxMenu box={box} of={{ owner: "thread", threadId, held: held !== null, offersThread, act: (method, options) => void run(method, options) }} opens={{ screen: openScreen, terminal: openTerminal, files: openFiles }} resizing={resizing} onResizing={setResizing} onBoxesPage={onBoxesPage} />
-        {page ? <RowChevron page={page} /> : null}
       </span>
     </div>
   );
