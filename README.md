@@ -24,7 +24,11 @@ Documentation: [bbbox.dev](https://bbbox.dev).
 
 ## Quick start
 
-You need a Linux machine that runs BB and Docker, with about 10 GB of disk free and at least 8 GiB of memory for the server image. A desktop image needs about 18 GB of disk free, and the host needs at least 12 GiB of memory for a desktop box. Docker Desktop on a Mac or Windows works too. On a Mac with Apple silicon the images are x86_64, so boxes run under emulation, slowly.
+Boxes run on the machine that runs BB to start with:
+
+- **Linux**: Docker, with about 10 GB of disk free and at least 8 GiB of memory for the server image. A desktop image needs about 18 GB of disk free, and at least 12 GiB of memory for a desktop box.
+- **A Mac with Apple silicon**: [microsandbox](setup/microsandbox/README.md#on-a-mac), which needs nothing installed and runs arm64 Linux boxes as microVMs. It needs about 80 GiB free while it builds its first image. [Tart](setup/tart/README.md) adds macOS, iOS and Windows boxes. Avoid Docker Desktop on a Mac: its images are x86_64, so boxes run emulated and slowly.
+- **Windows**: Docker in WSL 2. See [Docker on a Windows PC](setup/docker-wsl/README.md).
 
 <details open>
 <summary><strong>With an agent</strong></summary>
@@ -37,8 +41,8 @@ Set up BB Box for me: the BB plugin that gives threads computers of their own, c
 1. Install it: bb plugin install git:https://github.com/ahkohd/bb-box.git@main --yes
 2. Follow its bb-box-setup skill. If your skills do not list it yet, find it with bb skill list and read it with bb skill show <id>.
 3. Ask me first whether Docker boxes may be privileged containers, which can take over the machine they run on, and before anything that needs root or changes BB's settings.
-4. Set up Docker on the machine that runs BB: run bb box doctor, then bb box setup docker. It needs Linux with Docker, about 10 GB of free disk and 8 GiB of memory, and its Linux image takes 5 to 12 minutes to build.
-5. Prove it: bb box acquire linux, then bb box run <box> "uname -a", then bb box release <box>.
+4. Set up boxes on the machine that runs BB: run bb box doctor, then on Linux bb box setup docker, which needs Docker, about 10 GB of free disk and 8 GiB of memory, and takes 5 to 12 minutes to build its Linux image. On a Mac with Apple silicon, use the microsandbox backend instead, not Docker.
+5. Prove it: bb box acquire linux, or linux-arm64 on a Mac, then bb box run <box> "uname -a", then bb box release <box>.
 6. Tell me what you set up, what bb box doctor says, and what is left for me to do.
 ```
 
@@ -63,7 +67,7 @@ Set up BB Box for me: the BB plugin that gives threads computers of their own, c
 
    The store installs the latest release and updates within 0.x. `@main` follows new work as it lands. A release tag, such as `@v0.1.0`, stays on that release.
 
-2. Open a thread's **Box** panel, or BB Box in BB's settings, and select **Use Docker on this machine**. The Linux image usually builds in 5 to 12 minutes, depending on the machine. `bb box doctor` checks the setup.
+2. On Linux, open a thread's **Box** panel, or BB Box in BB's settings, and select **Use Docker on this machine**. The Linux image usually builds in 5 to 12 minutes, depending on the machine. On a Mac with Apple silicon, run `bb box backend add microsandbox --on` instead; its arm64 image builds in about 3 minutes. `bb box doctor` checks the setup.
 3. Select the plus, then **Create box**.
 4. For a desktop, select the plus, choose **Desktop**, and under Display X11 or Wayland, then **Build and create**. BB Box builds that desktop's image before the first one, usually in 4 to 10 minutes.
 5. Open the box's desktop. Select **Open desktop** on the box's row.
