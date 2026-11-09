@@ -3,6 +3,7 @@ import { SNAPSHOT_LIMITS } from "../core/document.ts";
 import { keptUntilAfter, utcDay } from "../core/snapshot.ts";
 import type { BoxSnapshotsView, RestorePreview, SnapshotRowView } from "../plugin/contract.ts";
 import { PRODUCT } from "./product.ts";
+import { THIS_BOX_THREAD } from "./thread-title.ts";
 
 const DAY_MS = 24 * 60 * 60_000;
 const SHARES_BLOCKS: ReadonlySet<string> = new Set(["lvmthin", "zfspool", "rbd", "btrfs"]);
@@ -61,11 +62,11 @@ export function whenInSentence(at: number, now: number): string {
 }
 
 export function screenAround(name: string, at: number, now: number): string {
-  const when = whenInSentence(at, now);
-  if (when.startsWith("on ")) return `${name}'s screen ${when}`;
-  if (when.startsWith("today at ")) return `${name}'s screen around ${when.slice("today at ".length)}`;
-  if (when.startsWith("yesterday at ")) return `${name}'s screen yesterday around ${when.slice("yesterday at ".length)}`;
-  return `${name}'s screen around ${when}`;
+  const clock = clock24(at);
+  if (sameDay(at, now)) return `${name}'s screen around ${clock}`;
+  if (sameDay(at, now - DAY_MS)) return `${name}'s screen yesterday around ${clock}`;
+  if (now - at < 6 * DAY_MS) return `${name}'s screen on ${new Intl.DateTimeFormat("en-GB", { weekday: "long" }).format(at)} at ${clock}`;
+  return `${name}'s screen on ${snapshotDay(at)} at ${clock}`;
 }
 
 export function aboutWords(ms: number): string {
@@ -177,7 +178,7 @@ export interface Loss {
 }
 
 export function threadLosses(preview: RestorePreview, boxName: string): Loss[] {
-  return preview.threads.map((thread) => ({ key: `thread:${thread.id}`, words: `${thread.title ? `"${thread.title}"` : "this box's thread"} is ${thread.running ? "working" : "idle"} on ${boxName}: its worktree, uncommitted files and session there would go.` }));
+  return preview.threads.map((thread) => ({ key: `thread:${thread.id}`, words: `${thread.title ? `"${thread.title}"` : THIS_BOX_THREAD} is ${thread.running ? "working" : "idle"} on ${boxName}: its worktree, uncommitted files and session there would go.` }));
 }
 
 export function otherLosses(preview: RestorePreview): Loss[] {

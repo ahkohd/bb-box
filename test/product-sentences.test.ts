@@ -200,6 +200,18 @@ test("a reason after a colon lower-cases a leading common word and leaves a prov
   assert.equal(kindPage.includes("/^[A-Z][a-z]/"), false);
 });
 
+test("a picture's label is built from the day, and a thread loss uses the shared phrase", () => {
+  const words = readFileSync(join(ROOT, "app/snapshot-words.ts"), "utf8");
+  const screen = words.slice(words.indexOf("export function screenAround"), words.indexOf("export function aboutWords"));
+  assert.equal(screen.includes("whenInSentence"), false);
+  assert.match(screen, /yesterday around/);
+  assert.match(words, /THIS_BOX_THREAD/);
+  assert.equal(words.includes("\"this box's thread\""), false);
+  const configuration = readFileSync(join(ROOT, "app/settings-configuration.tsx"), "utf8");
+  assert.match(configuration, /afterTheRefreshCommits/);
+  assert.equal(configuration.includes("await Promise.resolve()"), false);
+});
+
 test("a picture's label reads naturally for today, yesterday and an older day", () => {
   const afternoon = new Date();
   afternoon.setHours(15, 0, 0, 0);

@@ -455,6 +455,10 @@ function ExportRow() {
   );
 }
 
+function afterTheRefreshCommits(): Promise<void> {
+  return Promise.resolve();
+}
+
 function MovedCopyRow() {
   const { state, refresh } = useSettings();
   const rpc = useRpc<Contract>();
@@ -481,7 +485,7 @@ function MovedCopyRow() {
       }
     }
     await refresh().catch(() => {});
-    await Promise.resolve();
+    await afterTheRefreshCommits();
     copyRemoval.set({ removing: false, note: note.tone === "bad" ? null : note });
     if (note.tone === "bad") return note.text;
     focusAfterRender(COPY_NOTE, COPY_BUTTON);
