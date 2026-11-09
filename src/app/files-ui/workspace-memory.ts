@@ -73,16 +73,21 @@ export function takeWorkspace(thread: string, box: string): WorkspaceMemory {
   return memory;
 }
 
+export function holdsUnsavedEdits(memory: WorkspaceMemory): boolean {
+  return memory.state.tabs?.some((tab) => tab.draft !== null) ?? false;
+}
+
 export function keepWorkspace(memory: WorkspaceMemory): void {
   live.delete(memory);
   if (!memory.valid) return;
   const key = keyOf(memory.thread, memory.box);
   kept.delete(key);
   const bytes = new TextEncoder().encode(JSON.stringify(memory, (_key, value: unknown) => value instanceof Map || value instanceof Set ? [...value] : value)).byteLength;
-  if (bytes > WORKSPACE_BYTES) return;
+  if (bytes > WORKSPACE_BYTES && !holdsUnsavedEdits(memory)) return;
   kept.set(key, { memory, bytes });
+  const evictable = () => [...kept].filter(([, entry]) => !holdsUnsavedEdits(entry.memory));
   let total = [...kept.values()].reduce((sum, entry) => sum + entry.bytes, 0);
-  for (const [oldest, entry] of kept) {
+  for (const [oldest, entry] of evictable()) {
     if (kept.size <= WORKSPACE_LIMIT && total <= WORKSPACE_BYTES) break;
     kept.delete(oldest);
     total -= entry.bytes;

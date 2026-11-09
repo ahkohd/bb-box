@@ -250,3 +250,12 @@ test('a released BoxFiles removes the snapshot and a back control keeps the name
   await screen.findByText('build-1 has been released.');
   expect(workspaceBoxes()).toEqual([]);
 });
+
+test('a workspace with an unsaved edit is never evicted, past the count or the byte limit', () => {
+  const dirty = takeWorkspace('thr_dirty', 'bx_dirty');
+  dirty.state.tabs = [{ path: 'notes.md', file: null, error: null, draft: 'x'.repeat(WORKSPACE_BYTES + 1), sha256: hash, mode: 'edit', save: { kind: 'idle' } } as never];
+  keepWorkspace(dirty);
+  for (let index = 0; index < WORKSPACE_LIMIT + 2; index += 1) keepWorkspace(takeWorkspace(`thr_${index}`, `bx_${index}`));
+  expect(restoreWorkspace('thr_dirty', 'bx_dirty').state.tabs?.[0]?.draft?.length).toBe(WORKSPACE_BYTES + 1);
+  expect(workspaceBoxes()).toContain('bx_dirty');
+});
