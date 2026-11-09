@@ -383,7 +383,6 @@ import appIcon from "../assets/app-icon.png";
     padding: 0.75rem 1rem;
     border-radius: 0;
     background: color-mix(in oklab, var(--background) 62%, transparent);
-    backdrop-filter: blur(3px);
     box-shadow: inset 0 0 0 1px var(--border);
     font-family: var(--sl-font-mono);
     font-size: 0.8125rem;
@@ -483,11 +482,21 @@ import appIcon from "../assets/app-icon.png";
   :global(.button.primary) {
     background: var(--accent-fill);
     color: var(--accent-ink);
+    transition: background-color 120ms ease-out;
+  }
+
+  :global(.button.primary:hover) {
+    background: color-mix(in oklab, var(--accent-fill) 84%, var(--foreground));
   }
 
   .button.secondary {
     background: var(--muted-strong);
     color: var(--foreground);
+    transition: background-color 120ms ease-out;
+  }
+
+  .button.secondary:hover {
+    background: color-mix(in oklab, var(--muted-strong) 84%, var(--foreground));
   }
 
   :global(.frame-button) {
