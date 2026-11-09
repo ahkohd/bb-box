@@ -33,7 +33,7 @@ const tags: HeadTag[] = [
 <link rel="preload" href={monoLatin} as="font" type="font/woff2" crossorigin />
 <meta name="description" content={description} />
 {canonical && <link rel="canonical" href={canonical} />}
-<link rel="sitemap" href={`${base.replace(/\/?$/, "/")}sitemap-index.xml`} />
+{site && <link rel="sitemap" href={`${base.replace(/\/?$/, "/")}sitemap-index.xml`} />}
 <link rel="shortcut icon" href={`${base.replace(/\/?$/, "/")}favicon.png`} type="image/png" />
 {tags.map((tag) => (tag.tag === "meta" ? <meta {...tag.attrs} /> : <link {...tag.attrs} />))}
 <script is:inline define:vars={{ motionPausedKey }}>
