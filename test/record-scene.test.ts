@@ -1450,6 +1450,9 @@ test("a grab or a hand is white with a dark edge over a light or mid-grey surfac
   const grabArt = cursorArt("grab", "dark", CURSOR);
   const palm = viewPixel(grabArt.png, grabArt.width, 16, 18);
   assert.ok(palm[0]! > 200 && palm[3]! > 200, `that art's fill is white: ${palm.join(",")}`);
+  const edgeOfBar = [0, 1, 2, 3].map((at) => grid(at, (column) => (column < GRID_COLUMNS / 2 ? 30 : 100)));
+  const atBarEdge = pointerVariants(frames, edgeOfBar, SCREEN, POINTER_HEIGHT, 40, grabbing);
+  assert.equal(atBarEdge.at(-1)!.variant, "dark", "also where its reading takes in the dark desktop beside a title bar");
   const pointing = pointerVariants(frames, titleBar, SCREEN, POINTER_HEIGHT, 40, [{ from: 0, to: 4, shape: "arrow" }]);
   assert.deepEqual(pointing.map((span) => span.variant), ["light"], "an arrow over the same grey keeps its white fill");
   const short: ShapeSpan[] = [{ from: 0, to: 3.6, shape: "arrow" }, { from: 3.6, to: 4, shape: "grab" }];

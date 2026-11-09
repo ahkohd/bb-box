@@ -165,7 +165,9 @@ arrow: their light variant is a black hand. Over a mid-grey surface, such as
 a title bar averaged with the dark desktop around it, the pointer kept the
 variant it came in with, so a grab that came off the desktop was black. A
 hand or grab is now white with a dark outline unless the surface is dark,
-105 of 255 or less, with no band where it keeps the last one, and a run of
+60 of 255 or less, as a plain dark desktop is, with no band where it keeps
+the last one, so a reading that averages a title bar with the desktop
+beside it still gives a white hand, and a run of
 it shorter than half a second keeps its own variant. Its surface is read
 where it sits, near its fingertip or at its centre, not where an arrow's
 body would be. The arrow is as before, white over that grey after a dark

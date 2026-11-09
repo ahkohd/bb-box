@@ -198,6 +198,7 @@ function variantFor(under: number | null): PointerVariant | null {
 }
 
 const WHITE_HANDS: readonly PointerShape[] = ["hand", "grab"];
+export const HAND_DARK_UNDER = 60;
 
 function sampledFrom(shape: PointerShape): readonly [number, number] {
   if (shape === "hand") return [0.1, 0.3];
@@ -207,7 +208,7 @@ function sampledFrom(shape: PointerShape): readonly [number, number] {
 
 function variantForShape(shape: PointerShape, under: number | null): PointerVariant | null {
   if (!WHITE_HANDS.includes(shape) || under === null) return variantFor(under);
-  return under <= DIM_UNDER ? "light" : "dark";
+  return under <= HAND_DARK_UNDER ? "light" : "dark";
 }
 
 export function pointerVariants(frames: readonly PointerFrame[], grids: readonly BrightnessGrid[], size: { readonly width: number; readonly height: number }, pointerHeight: number, luma: number | null, shapes: readonly ShapeSpan[] = []): VariantSpan[] {
