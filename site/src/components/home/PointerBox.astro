@@ -127,7 +127,7 @@ const { class: className } = Astro.props;
       if (seconds > 0) steer(seconds);
       else pose = { turn: restingTurn, tilt: restingTilt };
       const { width, height } = canvas.getBoundingClientRect();
-      const scale = 4.2 / Math.min(width, height);
+      const scale = 3.2 / Math.min(width, height);
       pen.clearRect(0, 0, width, height);
       for (let row = 0; row < rows; row++) {
         let faces = "";

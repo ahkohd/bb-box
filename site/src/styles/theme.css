@@ -35,6 +35,9 @@
   --dither-paper: var(--background);
   --dither-strength: 0.55;
   --dither-floor: 0.2;
+  --field-left: 0.3;
+  --wordmark-ink: #3d3d3d;
+  --wordmark-dense: color-mix(in srgb, var(--accent) 38%, transparent);
 
   --sl-color-white: var(--foreground);
   --sl-color-gray-1: #e5e5e5;
@@ -81,8 +84,11 @@
   --dither-ink: #f5a524;
   --field-hot: #d97706;
   --box-ink: rgb(0 0 0 / 0.42);
-  --dither-strength: 0.62;
-  --dither-floor: 0.32;
+  --dither-strength: 0.74;
+  --dither-floor: 0.24;
+  --field-left: 0.1;
+  --wordmark-ink: #a59d90;
+  --wordmark-dense: color-mix(in srgb, var(--accent) 48%, transparent);
 
   --sl-color-gray-1: #171717;
   --sl-color-gray-4: #a1a1a1;

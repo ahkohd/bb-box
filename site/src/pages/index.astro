@@ -15,6 +15,7 @@ import HomeHead from "../components/home/HomeHead.astro";
 import MotionToggle from "../components/home/MotionToggle.astro";
 import ThemedShot from "../components/home/ThemedShot.astro";
 import ThemeToggle from "../components/ThemeToggle.astro";
+import { demoSeconds } from "../demo.ts";
 import { homePageHead } from "../head.ts";
 import { headline, homeData, platformLines, platformNames, subline, tagline } from "../home.ts";
 import { pageUrl } from "../repo.ts";
@@ -73,7 +74,7 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
       </section>
 
       <section class="demo" aria-label="The demo">
-        <BoxFrame title="demo.mp4  68 s">
+        <BoxFrame title={`demo.mp4  ${demoSeconds} s`}>
           <div class="video-well"><DemoVideo /></div>
         </BoxFrame>
         <p class="caption">A thread's agent gets a Linux desktop, then a server box, a snapshot and an undo.</p>
@@ -82,33 +83,33 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
       <GlyphRule seed={1} />
 
       <section class="section" aria-labelledby="platforms">
-<div class="section-head" data-cipher-hover>
-          <a class="heading-mark" href="#platforms"><CipherText text="# platforms" /></a>
+        <div class="section-head">
+          <a class="heading-mark" data-cipher-hover href="#platforms"><CipherText text="# platforms" /></a>
           <h2 id="platforms"><CipherText text="A computer of its own for every thread" glyphs="letters" /></h2>
         </div>
         <p class="section-lead">Boxes have the thread's Git access, its variables and BB itself. You and the agent share them: the agent works in the box, and you can open its desktop or terminal at any time.</p>
         <div class="platforms-grid">
-        <ul class="tree">
-          <li class="tree-root">boxes/</li>
-          {platformNames.map((name, index) => (
-            <li>
-              <span class:list={["branch", { last: index === platformNames.length - 1 }]}></span>
-              <span class="tree-name">{name}</span>
-              <span class="tree-words">{platformLines[name]}</span>
-            </li>
-          ))}
-        </ul>
-        <BoxFrame title="box.txt" class="box-figure">
-          <div class="box-stage"><PointerBox /></div>
-        </BoxFrame>
+          <ul class="tree">
+            <li class="tree-root">boxes/</li>
+            {platformNames.map((name, index) => (
+              <li>
+                <span class:list={["branch", { last: index === platformNames.length - 1 }]}></span>
+                <span class="tree-name">{name}</span>
+                <span class="tree-words">{platformLines[name]}</span>
+              </li>
+            ))}
+          </ul>
+          <BoxFrame title="box.txt" class="box-figure">
+            <div class="box-stage"><PointerBox /></div>
+          </BoxFrame>
         </div>
       </section>
 
       <GlyphRule seed={2.4} />
 
       <section class="section" aria-labelledby="features">
-<div class="section-head" data-cipher-hover>
-          <a class="heading-mark" href="#features"><CipherText text="# features" /></a>
+        <div class="section-head">
+          <a class="heading-mark" data-cipher-hover href="#features"><CipherText text="# features" /></a>
           <h2 id="features"><CipherText text="Made for the way agents work" glyphs="letters" /></h2>
         </div>
         <ul class="shots">
@@ -141,12 +142,14 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
       <GlyphRule seed={3.9} />
 
       <section class="section backends" aria-labelledby="backends">
-<div class="rain"><GlyphRain /></div>
-        <div class="section-head" data-cipher-hover>
-          <a class="heading-mark" href="#backends"><CipherText text="# backends" /></a>
-          <h2 id="backends"><CipherText text="Any provider, one interface" glyphs="letters" /></h2>
+        <div class="backends-intro">
+          <div class="rain"><GlyphRain /></div>
+          <div class="section-head">
+            <a class="heading-mark" data-cipher-hover href="#backends"><CipherText text="# backends" /></a>
+            <h2 id="backends"><CipherText text="Any provider, one interface" glyphs="letters" /></h2>
+          </div>
+          <p class="section-lead">Docker on the machine that runs BB to start with. Add Proxmox, microsandbox, Macs with Tart, machines over SSH, or rent from Hetzner Cloud, Namespace and boat.dev.</p>
         </div>
-        <p class="section-lead">Docker on the machine that runs BB to start with. Add Proxmox, microsandbox, Macs with Tart, machines over SSH, or rent from Hetzner Cloud, Namespace and boat.dev.</p>
         <div class="table-scroll" role="region" aria-labelledby="backends" tabindex="0">
           <table class="listing">
             <thead>
@@ -182,8 +185,8 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
       <GlyphRule seed={5.3} />
 
       <section class="section" aria-labelledby="install">
-<div class="section-head" data-cipher-hover>
-          <a class="heading-mark" href="#install"><CipherText text="# install" /></a>
+        <div class="section-head">
+          <a class="heading-mark" data-cipher-hover href="#install"><CipherText text="# install" /></a>
           <h2 id="install"><CipherText text="Set it up with an agent" glyphs="letters" /></h2>
         </div>
         <p class="section-lead">Paste this into a BB thread. Its agent installs BB Box, sets up a backend and proves it with a box.</p>
@@ -561,10 +564,6 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
     text-underline-offset: 3px;
   }
 
-  h2 {
-    scroll-margin-top: 6rem;
-  }
-
   .platforms-grid {
     display: grid;
     grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
@@ -580,17 +579,26 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
     height: 17rem;
   }
 
+  .backends-intro {
+    position: relative;
+  }
+
+  .backends-intro > :not(.rain) {
+    position: relative;
+    z-index: 1;
+  }
+
   .rain {
     position: absolute;
-    inset: 0 0 auto auto;
-    width: 68%;
-    height: 26rem;
-    mask-image: radial-gradient(ellipse 72% 85% at 72% 32%, var(--foreground) 18%, transparent 78%);
+    inset: -3.5rem 0 0 auto;
+    width: 62%;
+    mask-image: radial-gradient(ellipse 80% 90% at 78% 38%, var(--foreground) 20%, transparent 74%);
   }
 
   h2 {
     max-width: 44rem;
     margin: 0;
+    scroll-margin-top: 6rem;
     font-size: clamp(1.75rem, 3vw + 0.75rem, 2.75rem);
     line-height: 1.08;
     letter-spacing: -0.025em;
@@ -938,9 +946,15 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
       padding: 0 0.75rem 0 1rem;
     }
 
+    .backends-intro {
+      padding-top: 7rem;
+    }
+
     .rain {
-      width: 100%;
-      opacity: 0.6;
+      inset: -2rem 0 auto 0;
+      width: auto;
+      height: 8.5rem;
+      mask-image: linear-gradient(to bottom, transparent, var(--foreground) 30%, var(--foreground) 55%, transparent);
     }
 
     nav a:nth-child(2) {

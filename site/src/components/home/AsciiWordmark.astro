@@ -1,57 +1,77 @@
 ---
 import CipherText from "./CipherText.astro";
 
-const wordmarkRows = 12;
+const columnsAcross = 120;
+const wordAspect = 3.4;
 ---
 
-<div class="wordmark" aria-hidden="true" style={`--rows: ${wordmarkRows}`} data-rows={wordmarkRows}>
-  <CipherText text="" duration={1400} decorative />
+<div class="wordmark-holder" aria-hidden="true" style={`--columns: ${columnsAcross}; --word-aspect: ${wordAspect}`}>
+  <div class="wordmark">
+    <CipherText text="" duration={1400} decorative />
+  </div>
 </div>
 
 <script>
   import { watchCiphers } from "../../effects/cipher.ts";
 
   const ramp = " .:-=+*#%@";
+  const denseRuns = new RegExp(`[${ramp.slice(ramp.indexOf("#"))}]+`, "g");
   const word = "BB Box";
-  const cellAspect = 2;
+  const subrows = 2;
+
+  const escaped = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  function fittedFontPx(pen: CanvasRenderingContext2D, width: number, height: number): number {
+    const tryAt = height * 0.9;
+    pen.font = `${tryAt}px "Inter Variable", system-ui, sans-serif`;
+    const metrics = pen.measureText(word);
+    const inkHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+    return tryAt * Math.min((width * 0.98) / metrics.width, (height * 0.94) / Math.max(1, inkHeight));
+  }
 
   function drawWordmark(holder: HTMLElement): void {
+    const mark = holder.querySelector<HTMLElement>(".wordmark")!;
     const real = holder.querySelector<HTMLElement>(".cipher-real");
     if (!real) return;
-    const rows = Number(holder.dataset.rows);
+    const style = getComputedStyle(mark);
     const probe = document.createElement("canvas").getContext("2d")!;
-    probe.font = getComputedStyle(holder).font;
-    const columns = Math.floor(holder.clientWidth / probe.measureText("0").width);
+    probe.font = `${style.fontSize} ${style.fontFamily}`;
+    const cellWidth = probe.measureText("0").width;
+    const lineHeight = parseFloat(style.lineHeight);
+    const columns = Math.floor(mark.clientWidth / cellWidth);
+    const rows = Math.floor(mark.clientHeight / lineHeight);
     const sheet = document.createElement("canvas");
     sheet.width = columns;
-    sheet.height = rows * cellAspect;
+    sheet.height = rows * subrows;
     const pen = sheet.getContext("2d", { willReadFrequently: true })!;
-    const fontPx = Math.min(sheet.height * 0.92, (sheet.height * 0.92 * columns) / Math.max(1, measureAt(pen, sheet.height * 0.92)));
+    const cellAspect = lineHeight / cellWidth / subrows;
+    pen.setTransform(1, 0, 0, 1 / cellAspect, 0, 0);
+    const fontPx = fittedFontPx(pen, sheet.width, sheet.height * cellAspect);
     pen.font = `${fontPx}px "Inter Variable", system-ui, sans-serif`;
     pen.fillStyle = "#ffffff";
-    pen.textBaseline = "middle";
-    pen.fillText(word, 0, sheet.height / 2);
+    pen.textBaseline = "alphabetic";
+    const metrics = pen.measureText(word);
+    const inkHeight = metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent;
+    pen.fillText(word, (sheet.width - metrics.width) / 2 - metrics.actualBoundingBoxLeft, (sheet.height * cellAspect + inkHeight) / 2 - metrics.actualBoundingBoxDescent);
     const pixels = pen.getImageData(0, 0, sheet.width, sheet.height).data;
     const lines: string[] = [];
     for (let row = 0; row < rows; row++) {
       let line = "";
       for (let column = 0; column < columns; column++) {
         let coverage = 0;
-        for (let part = 0; part < cellAspect; part++) coverage += pixels[((row * cellAspect + part) * sheet.width + column) * 4 + 3]! / 255;
-        line += ramp[Math.min(ramp.length - 1, Math.floor((coverage / cellAspect) * ramp.length))];
+        for (let part = 0; part < subrows; part++) coverage += pixels[((row * subrows + part) * sheet.width + column) * 4 + 3]! / 255;
+        line += ramp[Math.min(ramp.length - 1, Math.floor((coverage / subrows) * ramp.length))];
       }
       lines.push(line.trimEnd());
     }
-    real.dataset.text = lines.join("\n");
-  }
-
-  function measureAt(pen: CanvasRenderingContext2D, fontPx: number): number {
-    pen.font = `${fontPx}px "Inter Variable", system-ui, sans-serif`;
-    return pen.measureText(word).width;
+    real.removeAttribute("data-text");
+    real.innerHTML = lines
+      .map((line) => escaped(line).replace(denseRuns, (run) => `<span class="dense">${run}</span>`))
+      .join("\n");
   }
 
   document.fonts.ready.then(() => {
-    for (const holder of document.querySelectorAll<HTMLElement>(".wordmark")) {
+    for (const holder of document.querySelectorAll<HTMLElement>(".wordmark-holder")) {
       drawWordmark(holder);
       watchCiphers(holder);
     }
@@ -59,17 +79,29 @@ const wordmarkRows = 12;
 </script>
 
 <style>
+  .wordmark-holder {
+    container-type: inline-size;
+  }
+
   .wordmark {
-    height: calc(var(--rows) * 0.625rem);
+    aspect-ratio: var(--word-aspect);
     overflow: hidden;
     white-space: pre;
     font-family: var(--sl-font-mono);
-    font-size: 0.5rem;
-    line-height: 0.625rem;
-    color: var(--frame-ink);
+    font-size: calc(100cqw / var(--columns) / 0.6);
+    line-height: 1.2;
+    color: var(--wordmark-ink);
   }
 
   .wordmark :global(.cipher) {
     display: block;
+  }
+
+  .wordmark :global(.cipher-real) {
+    display: block;
+  }
+
+  .wordmark :global(.dense) {
+    color: var(--wordmark-dense);
   }
 </style>
