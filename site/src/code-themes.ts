@@ -1,41 +1,44 @@
 import { ExpressiveCodeTheme } from "@astrojs/starlight/expressive-code";
 
-interface Greys {
+interface Inks {
   background: string;
   text: string;
-  emphasis: string;
+  command: string;
+  flag: string;
   literal: string;
   comment: string;
 }
 
-const emphasisScopes = ["keyword", "storage", "entity.name.function", "support.function", "entity.name.tag", "entity.name.type", "support.type"];
-const literalScopes = ["string", "constant", "markup.inline.raw", "entity.other.attribute-name"];
-const commentScopes = ["comment", "punctuation.definition.comment"];
+const commandScopes = ["entity.name.command", "entity.name.function", "support.function", "keyword", "storage", "entity.name.tag", "entity.name.type", "support.type"];
+const flagScopes = ["constant.other.option", "variable.parameter", "variable.other", "punctuation.definition.variable"];
+const literalScopes = ["string", "constant.numeric", "constant.language", "markup.inline.raw", "entity.other.attribute-name"];
+const commentScopes = ["comment", "punctuation.definition.comment", "punctuation.separator.prompt"];
 
-function monochromeTheme(name: string, type: "dark" | "light", greys: Greys): ExpressiveCodeTheme {
+function phosphorTheme(name: string, type: "dark" | "light", inks: Inks): ExpressiveCodeTheme {
   return new ExpressiveCodeTheme({
     name,
     type,
-    colors: { "editor.background": greys.background, "editor.foreground": greys.text },
+    colors: { "editor.background": inks.background, "editor.foreground": inks.text },
     settings: [
-      { settings: { foreground: greys.text } },
-      { scope: emphasisScopes, settings: { foreground: greys.emphasis } },
-      { scope: literalScopes, settings: { foreground: greys.literal } },
-      { scope: commentScopes, settings: { foreground: greys.comment } },
+      { settings: { foreground: inks.text } },
+      { scope: commandScopes, settings: { foreground: inks.command } },
+      { scope: flagScopes, settings: { foreground: inks.flag } },
+      { scope: literalScopes, settings: { foreground: inks.literal } },
+      { scope: commentScopes, settings: { foreground: inks.comment } },
     ],
   });
 }
 
 export const codeThemes = [
-  monochromeTheme("bb-box-dark", "dark", { background: "#171717", text: "#e5e5e5", emphasis: "#fafafa", literal: "#a1a1a1", comment: "#a1a1a1" }),
-  monochromeTheme("bb-box-light", "light", { background: "#fafafa", text: "#171717", emphasis: "#0a0a0a", literal: "#737373", comment: "#737373" }),
+  phosphorTheme("bb-box-dark", "dark", { background: "#1c1c1c", text: "#e5e5e5", command: "#ffb224", flag: "#9db0c4", literal: "#e5e5e5", comment: "#a1a1a1" }),
+  phosphorTheme("bb-box-light", "light", { background: "#f4f3f0", text: "#171717", command: "#a85000", flag: "#4c6176", literal: "#171717", comment: "#6b6b6b" }),
 ];
 
 const fill = "var(--muted)";
 
 export const codeStyle = {
   borderWidth: "0px",
-  borderRadius: "8px",
+  borderRadius: "0px",
   codeBackground: fill,
   codeFontSize: "0.8125rem",
   codeLineHeight: "1.5385",

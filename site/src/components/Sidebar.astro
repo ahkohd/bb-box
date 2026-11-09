@@ -1,0 +1,113 @@
+---
+import StarlightSidebar from "@astrojs/starlight/components/Sidebar.astro";
+
+const pageTop = "_top";
+const contents = (Astro.locals.starlightRoute.toc?.items ?? []).filter((item) => item.depth === 2 && item.slug !== pageTop);
+---
+
+<StarlightSidebar {...Astro.props} />
+{
+  contents.length > 0 && (
+    <template id="page-contents">
+      <ul class="page-contents" aria-label="On this page">
+        {contents.map((item) => (
+          <li>
+            <a href={`#${item.slug}`}>{item.text}</a>
+          </li>
+        ))}
+      </ul>
+    </template>
+  )
+}
+<script is:inline>
+  (() => {
+    const template = document.getElementById("page-contents");
+    const current = document.querySelector('.sidebar-content a[aria-current="page"]');
+    if (!template || !current) return;
+    current.after(template.content.cloneNode(true));
+  })();
+</script>
+<script>
+  const links = [...document.querySelectorAll<HTMLAnchorElement>(".sidebar-content .page-contents a")];
+  const headings = links.map((link) => document.getElementById(decodeURIComponent(link.hash.slice(1)))).filter((heading): heading is HTMLElement => heading !== null);
+  const showCurrent = () => {
+    const line = 96;
+    let at = -1;
+    headings.forEach((heading, index) => {
+      if (heading.getBoundingClientRect().top <= line) at = index;
+    });
+    links.forEach((link, index) => (index === at ? link.setAttribute("aria-current", "true") : link.removeAttribute("aria-current")));
+  };
+  if (headings.length) {
+    let pending = false;
+    window.addEventListener(
+      "scroll",
+      () => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(() => {
+          pending = false;
+          showCurrent();
+        });
+      },
+      { passive: true },
+    );
+    showCurrent();
+  }
+</script>
+
+<style>
+  :global(.sidebar-content .page-contents) {
+    position: relative;
+    margin: 0.25rem 0 0.375rem 0.25rem;
+    padding: 0 0 0 0.875rem;
+    list-style: none;
+  }
+
+  :global(.sidebar-content .page-contents li) {
+    position: relative;
+    margin: 0;
+    border: 0;
+  }
+
+  :global(.sidebar-content .page-contents li)::before {
+    content: "";
+    position: absolute;
+    left: -0.875rem;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--frame-ink);
+  }
+
+  :global(.sidebar-content .page-contents li:last-child)::before {
+    bottom: calc(100% - 0.8125rem);
+  }
+
+  :global(.sidebar-content .page-contents li)::after {
+    content: "";
+    position: absolute;
+    left: -0.875rem;
+    top: 0.8125rem;
+    width: 0.5rem;
+    height: 1px;
+    background: var(--frame-ink);
+  }
+
+  :global(.sidebar-content .page-contents a) {
+    display: block;
+    padding-block: 2px;
+    font-size: 0.8125rem;
+    line-height: 1.35;
+    color: var(--muted-foreground);
+    text-decoration: none;
+  }
+
+  :global(.sidebar-content .page-contents a:hover) {
+    color: var(--foreground);
+  }
+
+  :global(.sidebar-content .page-contents a[aria-current="true"]) {
+    color: var(--accent);
+  }
+</style>

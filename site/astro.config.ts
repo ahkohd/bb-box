@@ -21,7 +21,7 @@ export default defineConfig({
       customCss: ["@fontsource-variable/inter", "@fontsource-variable/jetbrains-mono", "./src/styles/theme.css"],
       expressiveCode: { themes: codeThemes, styleOverrides: codeStyle },
       social: [{ icon: "github", label: "GitHub", href: repository }],
-      components: { Head: "./src/components/Head.astro", PageTitle: "./src/components/PageTitle.astro", ThemeSelect: "./src/components/ThemeToggle.astro", Footer: "./src/components/Footer.astro" },
+      components: { Head: "./src/components/Head.astro", Sidebar: "./src/components/Sidebar.astro", PageTitle: "./src/components/PageTitle.astro", ThemeSelect: "./src/components/ThemeToggle.astro", Footer: "./src/components/Footer.astro" },
       sidebar: sidebar(readPages()),
     }),
   ],
