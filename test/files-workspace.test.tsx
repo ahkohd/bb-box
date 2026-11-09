@@ -2,12 +2,13 @@ import { z } from "zod";
 import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import { renderSlot } from '@get-bb/plugin-sdk/testing/app';
+import { clearWorkspaces } from '../src/app/files-ui/workspace-memory.ts';
 import { Workspace } from '../src/app/files-ui/Workspace.tsx';
 import type { FilesTree } from '../src/core/files-tree.ts';
 
 vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
 Element.prototype.scrollIntoView = () => {};
-afterEach(() => { cleanup(); localStorage.clear(); });
+afterEach(() => { cleanup(); clearWorkspaces(); localStorage.clear(); });
 const request = z.object({ path: z.string().nullable().optional(), recursive: z.boolean().optional(), refresh: z.boolean().optional() });
 const tree = (path = '/home/box', paths: string[] = [], directories = ['src']): FilesTree => ({ error: null, path, paths, directories, truncated: false, partial: false, cached: false });
 function deferred() {
@@ -19,7 +20,7 @@ test('one RPC draws a shallow tree before background index and expansion survive
   const refresh = deferred();
   const index = deferred();
   const calls: string[] = [];
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async (value: unknown) => {
       const input = request.parse(value);
       calls.push(input.recursive ? 'index' : input.path?.endsWith('/src') ? 'expand' : input.refresh ? 'refresh' : 'open');
@@ -41,7 +42,7 @@ test('one RPC draws a shallow tree before background index and expansion survive
   await waitFor(() => expect(screen.queryByText('File names are still filling.')).toBeNull());
 });
 test('wide layout puts the tree on the right and the mirrored toggle at breadcrumb end', async () => {
-  const result = renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: { 'files.tree': async () => tree() } });
+  const result = renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: { 'files.tree': async () => tree() } });
   await screen.findByRole('treeitem', { name: 'src' });
   const resize = screen.getByRole('separator', { name: 'Resize the file explorer' });
   expect(resize.nextElementSibling?.querySelector('[role=tree]')).toBeTruthy();
@@ -54,7 +55,7 @@ test('wide layout puts the tree on the right and the mirrored toggle at breadcru
 
 test('navigation clears old quick-open names and pending folder skeletons', async () => {
   const folder = deferred();
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async (value: unknown) => {
       const input = request.parse(value);
       if (input.path?.endsWith('/src')) return folder.promise;
@@ -79,7 +80,7 @@ test('navigation clears old quick-open names and pending folder skeletons', asyn
 
 test('unreadable and invalid child paths keep the rest of the tree', async () => {
   const paths: (string | null | undefined)[] = [];
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async (value: unknown) => {
       const input = request.parse(value);
       paths.push(input.path);
@@ -98,7 +99,7 @@ test('unreadable and invalid child paths keep the rest of the tree', async () =>
 
 test('refresh rereads expanded branches and replaces their direct children', async () => {
   let version = 1;
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async (value: unknown) => {
       const input = request.parse(value);
       return input.path?.endsWith('/src') ? tree('/home/box/src', [`file-${version}.ts`], []) : tree();
@@ -114,7 +115,7 @@ test('refresh rereads expanded branches and replaces their direct children', asy
 
 test('dotfile changes reload expanded folders and folder caps are shown', async () => {
   let reads = 0;
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async (value: unknown) => {
       const input = request.parse(value);
       if (input.path?.endsWith('/src')) { reads++; return { ...tree('/home/box/src', ['one.ts'], []), truncated: true }; }
@@ -132,7 +133,7 @@ test('dotfile changes reload expanded folders and folder caps are shown', async 
 test('creation completing after navigation does not return to the old folder', async () => {
   let complete: (value: { error: null }) => void = () => {};
   const creation = new Promise<{ error: null }>((resolve) => { complete = resolve; });
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async (value: unknown) => { const input = request.parse(value); return tree(input.path ?? '/home/box'); },
     'files.create': async () => creation,
   } });
@@ -151,7 +152,7 @@ test('creation completing after navigation does not return to the old folder', a
 });
 
 test('search options appear only with focus or text and leave a full input', async () => {
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: { 'files.tree': async () => tree() } });
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: { 'files.tree': async () => tree() } });
   await screen.findByRole('treeitem', { name: 'src' });
   const input = screen.getByRole('searchbox', { name: 'Search in files' });
   const options = () => screen.queryAllByRole('button', { name: /Match case|Match whole word|Use regular expression/ });
@@ -169,13 +170,13 @@ test('search options appear only with focus or text and leave a full input', asy
 });
 
 for (const count of [1, 2]) test(`footer counts ${count} files`, async () => {
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: { 'files.tree': async () => tree('/home/box', Array.from({ length: count }, (_, index) => `${index}.txt`), []) } });
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: { 'files.tree': async () => tree('/home/box', Array.from({ length: count }, (_, index) => `${index}.txt`), []) } });
   expect(await screen.findByText(`${count} ${count === 1 ? 'file' : 'files'}`)).toBeTruthy();
 });
 
 test('Markdown preview passes the original source to the host renderer', async () => {
   const content = '# Example project\n\nA box with files ready to edit.\n';
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async () => tree('/home/box', ['README.md'], []),
     'files.read': async () => ({ error: null, kind: 'text', content, sha256: 'a'.repeat(64), sizeBytes: content.length }),
   } });
@@ -186,7 +187,7 @@ test('Markdown preview passes the original source to the host renderer', async (
 
 test('expanded folder toggle retries a missing listing', async () => {
   let reads = 0;
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async (value: unknown) => {
       const input = request.parse(value);
       if (input.path?.endsWith('/src')) { reads++; return { error: 'Try again.' }; }
@@ -201,7 +202,7 @@ test('expanded folder toggle retries a missing listing', async () => {
 });
 
 test('root navigation resets shared expanded paths', async () => {
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async (value: unknown) => { const input = request.parse(value); return input.path?.endsWith('/src') ? tree(input.path, ['one.ts'], []) : tree(input.path ?? '/home/box'); },
   } });
   fireEvent.click(await screen.findByRole('treeitem', { name: 'src' }));
@@ -217,7 +218,7 @@ test('root navigation resets shared expanded paths', async () => {
 test('context creation loads parent and refreshes after initial failure', async () => {
   let made = false;
   let reads = 0;
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async (value: unknown) => {
       const input = request.parse(value);
       if (input.path === '/home/box/src') { reads++; return made ? tree(input.path, ['one.ts'], ['made']) : { error: 'Try again.' }; }
@@ -238,7 +239,7 @@ test('context creation loads parent and refreshes after initial failure', async 
 
 test('failed index offers current tree files in quick open', async () => {
   const read = vi.fn(async () => ({ error: null, kind: 'text', content: 'known', sha256: 'a'.repeat(64), sizeBytes: 5 }));
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async (value: unknown) => request.parse(value).recursive ? { error: 'Index failed.' } : tree('/home/box', ['known.txt'], []),
     'files.read': read,
   } });
@@ -252,7 +253,7 @@ test('failed index offers current tree files in quick open', async () => {
 test('creation refresh wins over an outstanding parent listing', async () => {
   const pending = deferred();
   let made = false;
-  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+  renderSlot({ component: Workspace }, { threadId: 'thr_ui', boxId: 'bx_ui', os: 'linux' }, { rpc: {
     'files.tree': async (value: unknown) => {
       const input = request.parse(value);
       if (input.path === '/home/box/src') return made ? tree(input.path, ['one.ts'], ['made']) : pending.promise;

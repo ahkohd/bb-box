@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Markdown,
   experimental_SourceCode as SourceCode,
@@ -10,6 +10,11 @@ import { findMatches, matchIndexAt, stepMatch } from "./find.ts";
 import { FindBar } from "./FindBar.tsx";
 import { sourcePath } from "./locate.ts";
 import type { FileTab } from "./use-file-tabs.ts";
+
+import { useWorkspaceMemory } from "./workspace-context.tsx";
+import { fileViewMemory, type ViewMemory } from "./workspace-memory.ts";
+
+import { readTextSelection, restoreTextSelection } from "./text-selection.ts";
 
 export interface FileViewProps {
   tab: FileTab;
@@ -44,6 +49,8 @@ export function FileView({
   onCloseFind,
   revealLine,
 }: FileViewProps) {
+  const memory = useWorkspaceMemory();
+  const [view] = useState(() => fileViewMemory(memory, tab.path));
   const file = tab.file;
 
   if (file === null) {
@@ -69,7 +76,7 @@ export function FileView({
 
   if (file.kind === "image") {
     return (
-      <div className="flex min-h-0 flex-1 flex-col overflow-auto p-6">
+      <div ref={(node) => { if (node) { node.scrollTop = view.top; node.scrollLeft = view.left; } }} onScroll={(event) => { view.top = event.currentTarget.scrollTop; view.left = event.currentTarget.scrollLeft; }} className="flex min-h-0 flex-1 flex-col overflow-auto p-6">
         <img
           src={file.dataUrl}
           alt={tab.path}
@@ -141,21 +148,22 @@ function TextFileView({
   onCloseFind: () => void;
   revealLine: { line: number; nonce: number } | null;
 }) {
-  const [query, setQuery] = useState("");
-  const [caseSensitive, setCaseSensitive] = useState(false);
-  const [index, setIndex] = useState(-1);
+  const memory = useWorkspaceMemory();
+  const [view] = useState(() => fileViewMemory(memory, tab.path));
+  const [query, setQuery] = useState(view.query);
+  const [caseSensitive, setCaseSensitive] = useState(view.caseSensitive);
+  const [index, setIndex] = useState(view.index);
   const [selection, setSelection] = useState<EditorSelection | null>(null);
-  const caretRef = useRef(0);
+  const caretRef = useRef(view.start);
   const nonceRef = useRef(0);
 
   const isFindOpen = findRequest > 0;
 
-  useEffect(() => {
-    setQuery("");
-    setIndex(-1);
-    setSelection(null);
-    caretRef.current = 0;
-  }, [tab.path]);
+  useLayoutEffect(() => {
+    view.query = query;
+    view.caseSensitive = caseSensitive;
+    view.index = index;
+  }, [view, query, caseSensitive, index]);
 
   const result = useMemo(
     () => (isFindOpen ? findMatches(content, query, caseSensitive) : null),
@@ -189,6 +197,19 @@ function TextFileView({
   const active = matches[index];
 
   const viewRef = useRef<HTMLDivElement | null>(null);
+  const previewRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (tab.mode === "edit") return;
+    const root = tab.mode === "preview" ? previewRef.current : viewRef.current;
+    if (!root) return;
+    if (view.textSelection) restoreTextSelection(root, view.textSelection);
+    const remember = () => {
+      const selection = readTextSelection(root);
+      if (selection) view.textSelection = selection;
+    };
+    document.addEventListener("selectionchange", remember);
+    return () => document.removeEventListener("selectionchange", remember);
+  }, [tab.mode, view]);
   const seenPathRef = useRef<string | null>(null);
   const seenModeRef = useRef<FileTab["mode"] | null>(null);
   const targetLine = revealLine?.line ?? null;
@@ -231,7 +252,8 @@ function TextFileView({
 
       const place = () => {
         if (placeLine === null) {
-          port.scrollTop = 0;
+          port.scrollTop = view.top;
+          port.scrollLeft = view.left;
           return;
         }
 
@@ -240,6 +262,7 @@ function TextFileView({
         port.scrollTop = Math.max(0, (placeLine - 1) * lineHeight - port.clientHeight / 3);
       };
       place();
+      if (view.textSelection) restoreTextSelection(root, view.textSelection);
 
       const release = () => {
         observer?.disconnect();
@@ -302,7 +325,7 @@ function TextFileView({
         : null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div onScrollCapture={(event) => { if (event.target instanceof HTMLElement) { view.top = event.target.scrollTop; view.left = event.target.scrollLeft; } }} className="flex min-h-0 flex-1 flex-col">
       {isFindOpen ? (
         <FindBar
           query={query}
@@ -320,6 +343,7 @@ function TextFileView({
       <SaveNotice tab={tab} onReload={onReload} onOverwrite={onOverwrite} />
       {tab.mode === "edit" ? (
         <CodeEditor
+          view={view}
           path={tab.path}
           value={content}
           onChange={(next) => onChangeDraft(tab.path, next)}
@@ -333,6 +357,7 @@ function TextFileView({
 
         <div
           key={tab.path}
+          ref={(node) => { previewRef.current = node; if (node) { node.scrollTop = view.top; node.scrollLeft = view.left; } }}
           tabIndex={0}
           role="region"
           aria-label={`Preview of ${tab.path}`}
@@ -359,6 +384,7 @@ function TextFileView({
 }
 
 function CodeEditor({
+  view,
   path,
   value,
   onChange,
@@ -366,6 +392,7 @@ function CodeEditor({
   selection,
   onCaretChange,
 }: {
+  view: ViewMemory;
   path: string;
   value: string;
   onChange: (next: string) => void;
@@ -383,9 +410,23 @@ function CodeEditor({
     [lineCount],
   );
 
-  useEffect(() => {
-    textareaRef.current?.focus();
-  }, [path]);
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const { start, end, direction, top, left } = view;
+    textarea.setSelectionRange(start, end, direction);
+    textarea.focus({ preventScroll: true });
+    textarea.scrollTop = top;
+    textarea.scrollLeft = left;
+    if (gutterRef.current) gutterRef.current.scrollTop = top;
+    return () => {
+      view.start = textarea.selectionStart;
+      view.end = textarea.selectionEnd;
+      view.direction = textarea.selectionDirection;
+      view.top = textarea.scrollTop;
+      view.left = textarea.scrollLeft;
+    };
+  }, [path, view]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -428,7 +469,13 @@ function CodeEditor({
           onCaretChange(event.target.selectionStart);
           onChange(event.target.value);
         }}
-        onSelect={(event) => onCaretChange(event.currentTarget.selectionStart)}
+        onSelect={(event) => {
+          const textarea = event.currentTarget;
+          view.start = textarea.selectionStart;
+          view.end = textarea.selectionEnd;
+          view.direction = textarea.selectionDirection;
+          onCaretChange(textarea.selectionStart);
+        }}
         onKeyDown={(event) => {
           if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
             event.preventDefault();

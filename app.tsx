@@ -11,6 +11,7 @@ import { NewBoxInputs } from "./src/app/new-box-inputs.tsx";
 import { SettingsSection } from "./src/app/settings.tsx";
 import { TERMINAL_ACTION, TerminalPanel } from "./src/app/terminal.tsx";
 import { FILES_ACTION } from "./src/app/files-open.ts";
+import { WorkspaceLifetime } from "./src/app/files-ui/WorkspaceLifetime.tsx";
 import { FilesPanel } from "./src/app/files.tsx";
 import { registerMonitor } from "./src/app/monitor/status.tsx";
 import { RestoreForm } from "./src/app/restore-form.tsx";
@@ -70,5 +71,6 @@ export default definePluginApp((app) => {
     component: NewBoxInputs,
   });
   app.slots.pendingInteraction({ id: RESTORE_FORM, component: RestoreForm });
+  app.slots.experimental_appOverlay({ id: "files-lifetime", component: WorkspaceLifetime });
   registerMonitor(app);
 });

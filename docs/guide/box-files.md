@@ -13,6 +13,10 @@ You can open a box's files from:
 
 The view opens at the box user's home. The path bar at the top of the tree goes anywhere that user can read. Type a path and press Enter. The up arrow opens the folder above. The reload button reads the folder again.
 
+Switching away and back restores your folder, open tabs, unsaved text, selection, scroll position, find and search. Directory names refresh quietly. Quick open closes. This stays in app memory for at most eight hidden workspaces and 32 MiB in total. Save before reloading the app or opening many other workspaces: the oldest snapshots are dropped when that limit is reached. Releasing a box drops its snapshots. File contents are never kept in browser storage.
+
+The view has a box-name header only beside a back button or the Desktop and Terminal switcher. The thread tab already names the box.
+
 A device box, an iOS Simulator or an Android emulator, has no Files button. Open the computer the simulator runs on to see that computer's files. A box that is not ready, or that has no shell, has no files view until it can run a command.
 
 ## Reading and editing

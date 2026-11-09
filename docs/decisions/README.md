@@ -83,3 +83,4 @@ which records still stand as written. The current design as a whole is in
 | [075](075-the-files-view-is-the-editor-plugins-ui.md) | The files view is the editor plugin's own UI, reading the box | Accepted; creating, renaming and a narrow window are in 076; initial loading and placement are superseded by 077 |
 | [076](076-the-files-view-can-create-rename-and-delete.md) | The files view can create, rename and delete, and a narrow window shows one surface | Accepted |
 | [077](077-files-draw-one-level-before-walking-names.md) | Files draw one level before walking names; cached reopen and a right-hand tree | Accepted |
+| [078](078-files-keep-the-workspace-in-memory.md) | Files keep the workspace in memory across panel switches | Accepted |

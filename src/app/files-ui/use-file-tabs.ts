@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { FilesRead } from "../../core/box-fs.ts";
 import type { Contract } from "../../plugin/contract.ts";
@@ -6,6 +6,7 @@ import type { GuestOs } from "../../transports/types.ts";
 import { allowedMode, isMarkdownPath, type FileViewMode } from "./markdown.ts";
 import { movedPath } from "./entry-name.ts";
 import { absoluteFrom } from "./locate.ts";
+import { useWorkspaceMemory, useWorkspaceState } from "./workspace-context.tsx";
 import type { FilesScope } from "./files-scope.ts";
 
 export type FileContent =
@@ -102,8 +103,9 @@ const SLICE_BYTES = 262144;
 
 export function useFileTabs(scope: FilesScope | null, os: GuestOs): FileTabsApi {
   const rpc = useRpc<Contract>();
-  const [tabs, setTabs] = useState<FileTab[]>([]);
-  const [activePath, setActivePath] = useState<string | null>(null);
+  const memory = useWorkspaceMemory();
+  const [tabs, setTabs] = useWorkspaceState("tabs", []);
+  const [activePath, setActivePath] = useWorkspaceState("activePath", null);
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   const activePathRef = useRef(activePath);
@@ -116,12 +118,18 @@ export function useFileTabs(scope: FilesScope | null, os: GuestOs): FileTabsApi 
   placeRef.current = scope === null ? null : { ...scope, os };
 
   const scopeKey = scope === null ? "" : `${scope.box}\0${scope.root}`;
+  const previousScope = useRef(scopeKey);
   useEffect(() => {
+    if (previousScope.current === scopeKey) return;
+    previousScope.current = scopeKey;
+    memory?.views.clear();
     inFlightRead.current.clear();
     inFlightWrite.current.clear();
     setTabs([]);
     setActivePath(null);
   }, [scopeKey]);
+
+  useEffect(() => () => { inFlightRead.current.clear(); inFlightWrite.current.clear(); }, []);
 
   const patch = useCallback((path: string, update: (tab: FileTab) => FileTab) => {
     setTabs((current) => current.map((tab) => (tab.path === path ? update(tab) : tab)));
@@ -315,6 +323,17 @@ export function useFileTabs(scope: FilesScope | null, os: GuestOs): FileTabsApi 
         patch(path, (tab) => ({ ...tab, error: messageOf(error, "Could not read this file.") }));
       });
   }, [patch, rpc]);
+
+  useEffect(() => {
+    for (const tab of tabsRef.current) {
+      if (tab.save.kind === "saving") patch(tab.path, (item) => ({ ...item, save: { kind: "clean" } }));
+      if (tab.file === null && tab.error === null) load(tab.path);
+    }
+  }, []);
+
+  useEffect(() => {
+    for (const path of memory?.views.keys() ?? []) if (!tabs.some((tab) => tab.path === path)) memory?.views.delete(path);
+  }, [memory, tabs]);
 
   const activeTab = tabs.find((tab) => tab.path === activePath) ?? null;
 

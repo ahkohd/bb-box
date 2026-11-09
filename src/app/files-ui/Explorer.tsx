@@ -17,6 +17,8 @@ import { FileGlyph } from "./FileGlyph.tsx";
 import { FilePlusGlyph } from "./file-plus.tsx";
 import { SearchResults } from "./SearchResults.tsx";
 
+import { useWorkspaceMemory, useWorkspaceState } from "./workspace-context.tsx";
+
 export interface ExplorerProps {
   entries: readonly FlatEntry[];
   onLoadFolder?: (path: string) => void;
@@ -73,11 +75,12 @@ export function Explorer({
   header,
 }: ExplorerProps) {
 
-  const [query, setQuery] = useState("");
+  const memory = useWorkspaceMemory();
+  const [query, setQuery] = useWorkspaceState("query", "");
   const [searchFocused, setSearchFocused] = useState(false);
-  const [matchCase, setMatchCase] = useState(false);
-  const [wholeWord, setWholeWord] = useState(false);
-  const [regex, setRegex] = useState(false);
+  const [matchCase, setMatchCase] = useWorkspaceState("matchCase", false);
+  const [wholeWord, setWholeWord] = useWorkspaceState("wholeWord", false);
+  const [regex, setRegex] = useWorkspaceState("regex", false);
   const [submitNonce, setSubmitNonce] = useState(0);
   const createMenu = useRef<HTMLDetailsElement | null>(null);
   useEffect(() => {
@@ -88,8 +91,15 @@ export function Explorer({
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
   }, []);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  useLayoutEffect(() => { setExpanded(new Set()); }, [scope?.root, scope?.box]);
+  const [expanded, setExpanded] = useWorkspaceState("expanded", new Set());
+  const previousScope = useRef(scope);
+  useLayoutEffect(() => {
+    if (previousScope.current?.root !== scope?.root || previousScope.current?.box !== scope?.box) {
+      setExpanded(new Set());
+      if (memory) memory.treeTop = 0;
+    }
+    previousScope.current = scope;
+  }, [scope?.root, scope?.box]);
   const [menu, setMenu] = useState<{ path: string; kind: EntryKind; x: number; y: number } | null>(null);
   const [draft, setDraft] = useState<{ mode: "create"; parent: string; kind: EntryKind } | { mode: "rename"; path: string } | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -112,8 +122,10 @@ export function Explorer({
 
   const tree = useMemo(() => buildTree(entries), [entries]);
 
+  const openedPath = useRef(memory?.state.expanded ? activePath : null);
   useEffect(() => {
-    if (activePath === null) return;
+    if (activePath === null || openedPath.current === activePath) return;
+    openedPath.current = activePath;
     for (const ancestor of ancestorsOf(activePath)) onLoadFolder?.(ancestor);
     setExpanded((current) => {
       const ancestors = ancestorsOf(activePath);
@@ -124,9 +136,11 @@ export function Explorer({
     });
   }, [activePath, onLoadFolder]);
 
+  const lastActive = useRef(activePath);
   useEffect(() => {
-    activeRowRef.current?.scrollIntoView({ block: "nearest" });
-  }, [activePath, entries.length]);
+    if (lastActive.current !== activePath) activeRowRef.current?.scrollIntoView({ block: "nearest" });
+    lastActive.current = activePath;
+  }, [activePath]);
 
   const allRows = useMemo(() => visibleRows(tree, expanded), [tree, expanded]);
 
@@ -316,7 +330,7 @@ export function Explorer({
           onOpenMatch={onOpenMatch}
         />
       ) : (
-        <div className="min-h-0 flex-1 overflow-auto pb-2">
+        <div ref={(node) => { if (node && memory) node.scrollTop = memory.treeTop; }} onScroll={(event) => { if (memory) memory.treeTop = event.currentTarget.scrollTop; }} className="min-h-0 flex-1 overflow-auto pb-2">
           {error !== null || actionError !== null ? (
             <p className="px-3 py-2 text-xs text-destructive-text">{error ?? actionError}</p>
           ) : isLoading && entries.length === 0 ? <FolderSkeleton /> : rows.length === 0 && !(draft?.mode === "create" && draft.parent === "") ? (
