@@ -466,6 +466,13 @@ function idleRecording(parts: Partial<SceneFacts> = {}, events: Prepared["events
   };
 }
 
+test("a zoom out a result's hold would cut short still takes 0.4 s (081)", () => {
+  const planned = scene({ clicks: [{ at: 2, x: 600, y: 400, button: "left", count: 1, area: { x: 560, y: 380, width: 80, height: 40 } }], changes: [{ at: 3, x: 0, y: 0, width: 1900, height: 1000 }], length: 10 });
+  const keys = planCamera(planned, planPointer(planned), [], [3.3]);
+  assert.ok(cameraAt(keys, 3.35).zoom > 1, `still easing out: ${JSON.stringify(keys)}`);
+  assert.equal(cameraAt(keys, 3.45).zoom, 1);
+});
+
 test("a dressed recording cuts its idle stretches by default, though a caret blinks, keeps a moving pointer, and keeps them all with stills keep (081)", () => {
   const plan = planClip(idleRecording(), 1);
   const cut = (from: number, to: number) => plan.cuts.reduce((sum, [a, b]) => sum + Math.max(0, Math.min(b, to) - Math.max(a, from)), 0);

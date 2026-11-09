@@ -868,13 +868,16 @@ function activeBetween(idle: readonly Span[], from: number, to: number): number 
 }
 
 export const MOVE_LEAST_S = 0.3;
+export const ZOOM_OUT_LEAST_S = 0.4;
 
 function settledByHolds(keys: readonly CameraKey[], held: readonly number[]): CameraKey[] {
   return keys.map((key, index) => {
     const before = keys[index - 1];
     if (!before || sameView(before.view, key.view)) return key;
-    const interrupted = held.filter((at) => at - before.at >= MOVE_LEAST_S && at < key.at - 0.001);
-    return interrupted.length ? { ...key, at: round3(Math.min(...interrupted)) } : key;
+    const interrupted = held.filter((at) => at - before.at >= MOVE_LEAST_S - 0.001 && at < key.at - 0.001);
+    if (!interrupted.length) return key;
+    const least = key.view.zoom < before.view.zoom ? ZOOM_OUT_LEAST_S : MOVE_LEAST_S;
+    return { ...key, at: round3(Math.min(key.at, Math.max(Math.min(...interrupted), before.at + least))) };
   });
 }
 

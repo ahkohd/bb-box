@@ -99,7 +99,8 @@ once is zoomed without waiting for a later reading.
 A result's hold freezes the picture, camera and all. A camera move that a
 result would interrupt, 0.3 seconds or more after the move starts, now ends
 at that result, so the held frame is a settled framing rather than half a
-zoom. The move is then shorter than 0.9 seconds, at least 0.3.
+zoom. The move is then shorter than 0.9 seconds, at least 0.3, and a zoom
+out at least 0.4, so it reads as a move rather than a cut.
 
 ### A window resized as it opens is still opening
 
