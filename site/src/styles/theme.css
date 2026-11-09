@@ -30,9 +30,11 @@
   --accent-soft: rgb(255 178 36 / 0.14);
   --frame-ink: #4d4d4d;
   --dither-ink: #ffb224;
+  --field-hot: #ffd98a;
+  --box-ink: rgb(255 255 255 / 0.45);
   --dither-paper: var(--background);
-  --dither-strength: 0.38;
-  --dither-floor: 0.3;
+  --dither-strength: 0.55;
+  --dither-floor: 0.2;
 
   --sl-color-white: var(--foreground);
   --sl-color-gray-1: #e5e5e5;
@@ -77,8 +79,10 @@
   --accent-soft: rgb(245 165 36 / 0.16);
   --frame-ink: #c9c5bd;
   --dither-ink: #f5a524;
-  --dither-strength: 0.5;
-  --dither-floor: 0.46;
+  --field-hot: #d97706;
+  --box-ink: rgb(0 0 0 / 0.42);
+  --dither-strength: 0.62;
+  --dither-floor: 0.32;
 
   --sl-color-gray-1: #171717;
   --sl-color-gray-4: #a1a1a1;
