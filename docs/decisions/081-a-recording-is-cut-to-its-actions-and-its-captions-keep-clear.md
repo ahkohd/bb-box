@@ -1,10 +1,10 @@
-# 076: A recording is cut to its actions, and its captions keep clear
+# 081: A recording is cut to its actions, and its captions keep clear
 
 Status: accepted, 9 November 2026.
 Extends [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md), and supersedes its
 cutting only still stretches where bb-box draws the pointer, captions that
 keep their places, and the 1.5 seconds out before typing into a field just
-clicked. Supersedes parts of [075](075-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md):
+clicked. Supersedes parts of [080](080-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md):
 a result that fades after 2.5 seconds, and a zoom left out when its window
 is one flat tone after a click in its field.
 
@@ -105,7 +105,7 @@ zoom. The move is then shorter than 0.9 seconds, at least 0.3.
 A window-sized change that overlaps a window's opening and comes within
 1 second of it is part of that opening, as when an app restores its size or
 an agent resizes the window it launched. The previous framing holds until
-the last such change has been quiet for 0.4 seconds, as 075 holds it for
+the last such change has been quiet for 0.4 seconds, as 080 holds it for
 paint.
 
 ### A result stays, and captions crossfade

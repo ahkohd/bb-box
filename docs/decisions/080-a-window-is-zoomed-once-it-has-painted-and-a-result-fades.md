@@ -1,6 +1,6 @@
-# 075: A window is zoomed once it has painted, and a result fades
+# 080: A window is zoomed once it has painted, and a result fades
 
-Status: accepted, 9 November 2026. [076](076-a-recording-is-cut-to-its-actions-and-its-captions-keep-clear.md)
+Status: accepted, 9 November 2026. [081](081-a-recording-is-cut-to-its-actions-and-its-captions-keep-clear.md)
 supersedes a result that fades after 2.5 seconds, and a zoom left out when
 a window is one flat tone after a click in its field.
 Supersedes parts of [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md):

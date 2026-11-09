@@ -100,7 +100,7 @@ test("box_record's captions are drawn with FFmpeg 8 too, as on Ubuntu 26.04's Wa
 
 const PREPARED: Prepared = { ended: "stopped", recorded: 30, width: 1920, height: 1080, start: 1000, cuts: [[5.5, 15]], events: [] };
 
-test("a capture that never writes a picture stops itself (075)", { skip }, () => {
+test("a capture that never writes a picture stops itself (080)", { skip }, () => {
   const home = tempDir("record-hung");
   const started = run(recordStartScript(), home, { DISPLAY: ":99" });
   assert.equal(started.status, RECORD_START_EXITS.started, started.stderr);
@@ -109,7 +109,7 @@ test("a capture that never writes a picture stops itself (075)", { skip }, () =>
   assert.equal(gone.status, 0, "the recorder is stopped when the capture stays empty");
 });
 
-test("the stop reads what changed on the screen at every frame of the capture, so a change is placed to the frame, and its brightness four times a second (076)", () => {
+test("the stop reads what changed on the screen at every frame of the capture, so a change is placed to the frame, and its brightness four times a second (081)", () => {
   const graph = analysisGraph("cut");
   assert.match(graph, /\[a\]scale=480:-2:flags=area,format=gray,split=3\[c\]\[l\]\[g\];\[c\]tblend=all_mode=difference,bbox=min_val=6,nullsink;/, "no frame rate filter before the changes");
   assert.match(graph, /\[l\]fps=4,signalstats/);
@@ -127,7 +127,7 @@ test("box_record starts in zsh with no pills to clear and no glob error, and on 
   assert.doesNotMatch(mac, /exec @ARGV' nohup/);
 });
 
-test("a clip's plan maps each step through the cut stills and the speed, and holds a caption only as long as its reading time needs, a result for at most a second (076)", () => {
+test("a clip's plan maps each step through the cut stills and the speed, and holds a caption only as long as its reading time needs, a result for at most a second (081)", () => {
   const events: Prepared["events"] = [
     { at: 1002, kind: "step", text: "Open the meetings page" },
     { at: 1010, kind: "pass", text: "It lists three meetings" },
@@ -181,7 +181,7 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
   ] }, 1);
   const failed = stayed.captions.find((caption) => caption.kind === "fail")!;
   const step = stayed.captions.find((caption) => caption.kind === "step")!;
-  assert.equal(failed.to, step.to, "a result stays as long as its step, until the next step or the end (076)");
+  assert.equal(failed.to, step.to, "a result stays as long as its step, until the next step or the end (081)");
   const replaced = planClip({ ...PREPARED, cuts: [], events: [
     { at: 1001, kind: "step", text: "Type a line into the note" },
     { at: 1012, kind: "step", text: "Drag the window" },
@@ -204,7 +204,7 @@ test("a clip's plan maps each step through the cut stills and the speed, and hol
   assert.equal(realFailure.overlays.some((overlay) => overlay.look === "note"), false, "the note for that same moment is not a second caption");
 });
 
-test("a step's reading time runs while it stays up, through its result, so a quick result does not freeze the step before it (076)", () => {
+test("a step's reading time runs while it stays up, through its result, so a quick result does not freeze the step before it (081)", () => {
   const plan = planClip({ ...PREPARED, cuts: [], events: [
     { at: 1001, kind: "step", text: "Type a line into the note" },
     { at: 1001.3, kind: "pass", text: "The line is in" },
@@ -230,7 +230,7 @@ test("a step's reading time runs while it stays up, through its result, so a qui
   assert.equal(warning.to, next.from, "and stays until the next step, as a result does");
 });
 
-test("a result stays until the next step, and captions fade in and out over 0.2 s, so one step crossfades into the next (076)", () => {
+test("a result stays until the next step, and captions fade in and out over 0.2 s, so one step crossfades into the next (081)", () => {
   const plan = planClip({ ...PREPARED, cuts: [], events: [
     { at: 1001, kind: "step", text: "Open the file" },
     { at: 1003, kind: "pass", text: "It opened" },

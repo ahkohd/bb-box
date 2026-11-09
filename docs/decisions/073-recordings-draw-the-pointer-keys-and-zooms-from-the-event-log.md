@@ -7,13 +7,13 @@ Amended again the same day: a secret call does not lengthen a public
 Typing pill, an I-beam holds through that pill and until the pointer
 moves on, a drag frames its window at the end, a click that removes
 its window zooms out, and the words and marks are Inter and the
-owner's icons. [074](074-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)
+owner's icons. [079](079-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)
 supersedes the soft disc under a button that is held still, and the
 rule that a typing zoom uses the whole field when that field would
-not zoom. [075](075-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md)
+not zoom. [080](080-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md)
 supersedes zooming in on a window before it has painted, a result
 caption that stays until the next step, and two captions for one moment.
-[076](076-a-recording-is-cut-to-its-actions-and-its-captions-keep-clear.md)
+[081](081-a-recording-is-cut-to-its-actions-and-its-captions-keep-clear.md)
 supersedes cutting only still stretches where bb-box draws the pointer,
 captions that keep their places, and the 1.5 seconds out before typing into
 a field just clicked.
@@ -125,7 +125,7 @@ while recording loses it, and the clip is made from the sampler alone.
   screen, so their rings are light there. A right click is blue. Two rings
   0.12 s apart mark a double click. While the pointer moves with the
   button held, a soft disc stays under it, so a drag shows as one.
-  [074](074-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)
+  [079](079-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)
   supersedes a disc under a button that is held still: that is a click,
   and its ring is gone within the 0.4 s.
 - **Keys.** A chord or a named key (Enter, Tab, Escape, arrows, F-keys,
@@ -216,7 +216,7 @@ On by default; `zoom: false` at the stop turns it off.
   call went on, or else the element's frame, or else the pointer. A field
   whose frame would not reach 1.3x is framed on a line at the caret
   instead, so the camera still eases in
-  ([074](074-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)).
+  ([079](079-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md)).
   A change that is the whole field repainting is not the line. A call
   that never closes is framed at the moment it started, so later typing
   does not widen it. The view contains that region. If it does not fit
@@ -233,7 +233,7 @@ On by default; `zoom: false` at the stop turns it off.
   before the group's first event; out, 1.5 s after its last. When the next
   group starts soon after, the view pans to it instead of zooming out.
   A window that has only just opened is not the destination until it has
-  painted ([075](075-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md)).
+  painted ([080](080-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md)).
 - **Out early** when a change covers more than 40% of the screen, or
   more than a tenth of it falls outside the view, so a dialog that opens
   elsewhere is seen. The zoom ends as the change happens: the group is

@@ -1,4 +1,4 @@
-# 074: A click ring fades, and a large field zooms on its line
+# 079: A click ring fades, and a large field zooms on its line
 
 Status: accepted, 8 November 2026.
 Supersedes parts of [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md):

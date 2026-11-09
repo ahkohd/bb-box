@@ -10,7 +10,7 @@ A clip shows the box's whole screen, up to 1280 pixels wide and 30 frames a seco
 
 ### The pointer, clicks and keys
 
-bb-box draws its own pointer over the clip, larger than the screen's. The arrow is the usual shape. A link or a button shows a pointing hand, a text field an I-beam, and a drag an open hand for the whole drag. A drag that starts on a window's edge or corner shows a resize cursor instead. The I-beam stays from the click in the field until the pointer glides on to the next place, and it stays through the Typing pill. The pointer is black with a white outline and a soft shadow over light parts of the screen, and white with a black outline over dark ones. The shadow follows the shape. There is no box behind the pointer. It changes only when what is under it stays lighter or darker for half a second, and a hand or a resize cursor holds for at least a third of a second. It glides to each place the agent clicks, arriving as the click lands, and follows your pointer smoothly when you have control.
+BB Box draws its own pointer over the clip, larger than the screen's. The arrow is the usual shape. A link or a button shows a pointing hand, a text field an I-beam, and a drag an open hand for the whole drag. A drag that starts on a window's edge or corner shows a resize cursor instead. The I-beam stays from the click in the field until the pointer glides on to the next place, and it stays through the Typing pill. The pointer is black with a white outline and a soft shadow over light parts of the screen, and white with a black outline over dark ones. The shadow follows the shape. There is no box behind the pointer. It changes only when what is under it stays lighter or darker for half a second, and a hand or a resize cursor holds for at least a third of a second. It glides to each place the agent clicks, arriving as the click lands, and follows your pointer smoothly when you have control.
 
 - Each click shows a ring where it lands, drawn in the pointer's fill: blue for a right click, and two quick rings for a double click. The ring grows and fades within 0.4 seconds. It is a band, and it does not stay as a disc under the pointer. A click that closes its window, such as Cancel in a dialog, rings while the window is still there: the pointer arrives up to half a second sooner, and the ring ends when the window goes.
 - While the pointer moves with the button held, a soft disc stays under it, so a drag shows as one movement. A button held still is a click, and the disc does not stay.
@@ -19,11 +19,11 @@ bb-box draws its own pointer over the clip, larger than the screen's. The arrow 
 - Keys that build a character count as typing too: Ctrl+Shift+U and a code point on Linux, the Compose key, a dead key, or an input method.
 - When the agent types into a field it named, one "Typing" pill shows, from when the text is in the field. One call is one pill, even when the typing is slow. A later secret call does not lengthen that pill or hide it. The pill never shows what was typed. When the whole line lands at once and a result follows within half a second, no pill shows: the result says it.
 - Typing shows no pill at all into a password field, or when the text looks like a password, key or token.
-- Your own typing, and the agent's typing into a window or as single keys, show no pill either. bb-box cannot tell which field the keys go to, so it treats them as secret.
+- Your own typing, and the agent's typing into a window or as single keys, show no pill either. BB Box cannot tell which field the keys go to, so it treats them as secret.
 
 A pill sits below the region it would cover, or above it when below does not fit, so it does not hide the line that was typed. With nothing to avoid, it sits at the bottom, and moves to the top when the pointer is near the bottom of the screen.
 
-On macOS and Windows, the computer-use driver draws its own pointer on the screen for each of the agent's actions. While the agent records, bb-box hides it, so the clip has the same pointer as on Linux, and shows it again at the stop, or after 5 minutes if the recording is never stopped. A driver too old to hide it keeps it, and bb-box then draws your pointer only once you move it. On a Wayland desktop, bb-box does not sample the pointer yet, so it draws no pointer of its own there. The rings, pills and zooms are drawn everywhere.
+On macOS and Windows, the computer-use driver draws its own pointer on the screen for each of the agent's actions. While the agent records, BB Box hides it, so the clip has the same pointer as on Linux, and shows it again at the stop, or after 5 minutes if the recording is never stopped. A driver too old to hide it keeps it, and BB Box then draws your pointer only once you move it. On a Wayland desktop, BB Box does not sample the pointer yet, so it draws no pointer of its own there. The rings, pills and zooms are drawn everywhere.
 
 ![Mousepad showing the line "A long line for the clip, kept in the note.", with an I-beam in the middle of the text area, a Typing pill, the step "Type a line into the note" and the passed result "The line is in the note"](../media/recording-zoom.png)
 
@@ -33,13 +33,13 @@ The clip zooms in gently, up to 2x, where the agent or you click, drag or scroll
 
 When something opens elsewhere on the screen, such as a dialog, the clip zooms out as it opens, even if more clicks follow, and stays out for at least 1.5 seconds so the change is seen. A click that closes its own window zooms out too. The clicks after it get a zoom of their own. What an action changes in its own window, such as the text typed or a window being dragged, keeps the zoom.
 
-It never zooms in on typing it treats as secret: a password field, your own typing, or typing whose field bb-box cannot tell.
+It never zooms in on typing it treats as secret: a password field, your own typing, or typing whose field BB Box cannot tell.
 
 The zooms follow what was actually done, not guesses: the agent's clicks and keys, your input when you have control, and what changed on the screen.
 
 ### Still stretches and captions
 
-The clip starts on the first caption or action, and ends a second after the last result or action, fading out to the background. Idle stretches are cut to half a second, so a long session makes a short clip. A stretch is idle when nothing happens for more than a second: no caption, click, key or typing, the pointer still, and nothing on the screen changing but something as small as a blinking caret or a clock. Where bb-box does not draw the pointer, as on Wayland, it cuts only stretches where nothing on the screen moves. Where a cut skips 3 seconds or more, a small mark in a bottom corner shows the real time skipped, such as "14 s later", for about a second. A clip the agent speeds up to 2x or 4x shows its speed in that corner the whole time. Every word is set in Inter. A glyph Inter does not have uses the box's own font for that glyph only.
+The clip starts on the first caption or action, and ends a second after the last result or action, fading out to the background. Idle stretches are cut to half a second, so a long session makes a short clip. A stretch is idle when nothing happens for more than a second: no caption, click, key or typing, the pointer still, and nothing on the screen changing but something as small as a blinking caret or a clock. Where BB Box does not draw the pointer, as on Wayland, it cuts only stretches where nothing on the screen moves. Where a cut skips 3 seconds or more, a small mark in a bottom corner shows the real time skipped, such as "14 s later", for about a second. A clip the agent speeds up to 2x or 4x shows its speed in that corner the whole time. Every word is set in Inter. A glyph Inter does not have uses the box's own font for that glyph only.
 
 When an agent tests something, it captions each check:
 
@@ -66,7 +66,7 @@ On an iOS or Android box, a recording shows the device's own screen, not the hos
 - Each touch, by the agent or by you, shows as a circle where it landed.
 - The captions sit in a band above the device, or below it, so they never cover the app.
 - The clip is at most 1280 pixels wide and 1600 pixels tall. When the device turns during a recording, the clip is sized for both shapes, so the device keeps one size throughout.
-- If the device restarts, or bb-box's device server in the box restarts, the clip holds the last picture across the gap and says what happened there, such as "The device restarted here". If the box stops, the recording ends there.
+- If the device restarts, or BB Box's device server in the box restarts, the clip holds the last picture across the gap and says what happened there, such as "The device restarted here". If the box stops, the recording ends there.
 
 ## Asking an agent for a recording
 

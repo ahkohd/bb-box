@@ -157,7 +157,7 @@ test("the view stays on the screen, and two groups close together pan from one t
   for (let t = 4.5; t < 6.5; t += 0.1) assert.ok(cameraAt(keys, t).zoom > 1.5, `no zoom out between the two, at ${t.toFixed(1)} s`);
 });
 
-test("a camera move that a result's hold would freeze halfway ends by that result, so the held frame is a settled framing (076)", () => {
+test("a camera move that a result's hold would freeze halfway ends by that result, so the held frame is a settled framing (081)", () => {
   const prepared: Prepared = {
     ended: "stopped",
     recorded: 12,
@@ -179,7 +179,7 @@ test("a camera move that a result's hold would freeze halfway ends by that resul
   assert.ok(cameraAt(without.scene!.camera, 4.3).zoom < top, "with no result to hold, the camera takes its usual 0.9 s");
 });
 
-test("the camera pans instead of easing out and back in when the next view overlaps this one within the group gap, counting only time that is not cut (076)", () => {
+test("the camera pans instead of easing out and back in when the next view overlaps this one within the group gap, counting only time that is not cut (081)", () => {
   const window = { x: 600, y: 300, width: 500, height: 300 };
   const at = (t: number, x: number) => ({ at: t, x, y: 450, button: "left" as const, count: 1 as const, area: { x: x - 40, y: 430, width: 80, height: 40 }, role: "push button", window });
   const near = camera({ clicks: [at(2, 700), at(7.4, 1000)], length: 14 });
@@ -447,7 +447,7 @@ function idleRecording(parts: Partial<SceneFacts> = {}, events: Prepared["events
   };
 }
 
-test("a dressed recording cuts its idle stretches by default, though a caret blinks, keeps a moving pointer, and keeps them all with stills keep (076)", () => {
+test("a dressed recording cuts its idle stretches by default, though a caret blinks, keeps a moving pointer, and keeps them all with stills keep (081)", () => {
   const plan = planClip(idleRecording(), 1);
   const cut = (from: number, to: number) => plan.cuts.reduce((sum, [a, b]) => sum + Math.max(0, Math.min(b, to) - Math.max(a, from)), 0);
   assert.ok(cut(6, 20) > 12, `the 14 s with only a blinking caret is cut: ${JSON.stringify(plan.cuts)}`);
@@ -461,7 +461,7 @@ test("a dressed recording cuts its idle stretches by default, though a caret bli
   assert.equal(hoverCut, 0, "a pointer moving over a still screen is not idle");
 });
 
-test("a dressed recording starts on its first action and ends a second after its last result, then fades out to the frame (076)", () => {
+test("a dressed recording starts on its first action and ends a second after its last result, then fades out to the frame (081)", () => {
   const events: Prepared["events"] = [
     { at: 1004, kind: "step", text: "Press the button" },
     { at: 1005.5, kind: "pass", text: "It was pressed" },
@@ -486,7 +486,7 @@ test("a dressed recording starts on its first action and ends a second after its
   assert.ok(clipGraph(kept, true).endsWith(`[end]fade=t=out:st=${round(kept.length - 0.5)}:d=0.5:color=0x161618[out]`), "and still fades out");
 });
 
-test("a caption is placed on the capture's own timeline, the box's first-frame lag after the start, so a result's held frame comes before the agent's next action (076)", () => {
+test("a caption is placed on the capture's own timeline, the box's first-frame lag after the start, so a result's held frame comes before the agent's next action (081)", () => {
   const prepared = idleRecording({ lag: 0.2, changes: [], inputs: [] }, [
     { at: 1004, kind: "step", text: "Look at the note" },
     { at: 1005, kind: "pass", text: "The note is open" },
@@ -498,7 +498,7 @@ test("a caption is placed on the capture's own timeline, the box's first-frame l
   assert.equal(plan.captions[0]!.real, 4, "the page still lists the step at its real time");
 });
 
-test("a result is held at most about a second, though its words would take longer to read (076)", () => {
+test("a result is held at most about a second, though its words would take longer to read (081)", () => {
   const plan = planClip(idleRecording({}, [
     { at: 1005.2, kind: "pass", text: "The note was saved and the window closed without a prompt" },
     { at: 1005.4, kind: "step", text: "Find the file" },
@@ -528,7 +528,7 @@ test("the pointer's commands move it each frame it moves, show it from when it i
   assert.ok(plan.frame && plan.art.some((art) => art.name === "corner.png"));
 });
 
-test("a click whose window goes on the click rings on the frames before it goes, or its ring ends there (076)", () => {
+test("a click whose window goes on the click rings on the frames before it goes, or its ring ends there (081)", () => {
   const dialog = { x: 600, y: 300, width: 500, height: 400 };
   const cancel: InputEvent = { at: 1005, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 1000, y: 660, area: { x: 950, y: 640, width: 100, height: 40 }, role: "push button", window: dialog };
   const planned = (keyAt: number, goneAt = 4.95, resizedAt: number | null = null) =>
@@ -590,7 +590,7 @@ test("a framed clip insets the screen on a background that matches its brightnes
   assert.equal(planClip({ ...prepared, scene: { ...prepared.scene!, luma: 30 } }, 1).scene!.frame!.background, "161618");
 });
 
-test("each step's captions go to the top or the bottom, whichever covers less of what changes during it, and the key pills keep clear of them (076)", () => {
+test("each step's captions go to the top or the bottom, whichever covers less of what changes during it, and the key pills keep clear of them (081)", () => {
   const name = { x: 700, y: 40, width: 500, height: 36 };
   const button = { x: 860, y: 980, width: 80, height: 40 };
   const prepared: Prepared = {
@@ -629,7 +629,7 @@ test("each step's captions go to the top or the bottom, whichever covers less of
   assert.ok(kept.overlays.filter((overlay) => overlay.look === "step").every((overlay) => overlay.y < kept.height / 2), "with nothing to avoid, the captions stay where the agent put them");
 });
 
-test("a line that lands in one frame, with a result within half a second, shows no Typing pill: the result says it (076)", () => {
+test("a line that lands in one frame, with a result within half a second, shows no Typing pill: the result says it (081)", () => {
   const field = { x: 600, y: 400, width: 600, height: 40 };
   const typed = (at: number, characters: number): InputEvent => ({ at, by: "agent", type: "typing", characters, space: "screen", area: field, secret: false, role: "text", call: 1 });
   const recording = (inputs: InputEvent[], events: Prepared["events"]): Prepared => ({
@@ -799,7 +799,7 @@ test("a button, typing into a large field, and a dialog each zoom in, and the ca
   assert.ok(cameraAt(keys, 14.2).zoom >= ZOOM_LEAST, "in on the dialog's button");
 });
 
-test("a zoom waits until a new window has painted, and holds the previous framing while that window is blank (075)", () => {
+test("a zoom waits until a new window has painted, and holds the previous framing while that window is blank (080)", () => {
   const window = { x: 200, y: 120, width: 640, height: 420 };
   const click = { at: 2, x: 400, y: 300, button: "left" as const, count: 1 as const, area: window, role: "push button", window };
   const flat = new Array(144).fill(250);
@@ -859,7 +859,7 @@ test("a zoom waits until a new window has painted, and holds the previous framin
   assert.ok(cameraAt(drawing, 4.5).zoom > 1, "the camera eases in once that window has settled");
 });
 
-test("typing that follows a click in its field within 2 s zooms on that field, though the window was resized as it opened and is a flat white page (076)", () => {
+test("typing that follows a click in its field within 2 s zooms on that field, though the window was resized as it opened and is a flat white page (081)", () => {
   const window = { x: 400, y: 120, width: 820, height: 600 };
   const field = { x: 600, y: 600, width: 500, height: 40 };
   const white = Array.from({ length: 144 }, (_, index) => {
@@ -885,7 +885,7 @@ test("typing that follows a click in its field within 2 s zooms on that field, t
   assert.equal(cameraAt(keys, 4.8).zoom, 1, "the previous framing holds while the window settles from its resize");
 });
 
-test("a zoom that could land only after its window has closed is left out, and does not push the next zoom late (076)", () => {
+test("a zoom that could land only after its window has closed is left out, and does not push the next zoom late (081)", () => {
   const small = { width: 1280, height: 720 };
   const desktop = new Array(144).fill(40);
   const withButton = desktop.map((cell, index) => (index % 16 >= 6 && index % 16 <= 9 && Math.floor(index / 16) >= 3 && Math.floor(index / 16) <= 5 ? 220 : cell));
@@ -917,7 +917,7 @@ test("a zoom that could land only after its window has closed is left out, and d
   assert.ok(cameraAt(keys, 4).y < button.y, "on the typed line");
 });
 
-test("a window is judged painted by its own frame, so a button in a small window on a dark desktop is zoomed, and the typing after it eases in as the camera comes out (076)", () => {
+test("a window is judged painted by its own frame, so a button in a small window on a dark desktop is zoomed, and the typing after it eases in as the camera comes out (081)", () => {
   const ready = { x: 524, y: 278, width: 240, height: 130 };
   const field = { x: 335, y: 216, width: 598, height: 299 };
   const note = { x: 334, y: 188, width: 600, height: 330 };
@@ -948,7 +948,7 @@ test("a window is judged painted by its own frame, so a button in a small window
   assert.ok(cameraAt(keys, 4.2).y < 300, "on the line");
 });
 
-test("a zoom on a window that painted at once lands without waiting for a later reading of the screen (076)", () => {
+test("a zoom on a window that painted at once lands without waiting for a later reading of the screen (081)", () => {
   const window = { x: 200, y: 120, width: 640, height: 420 };
   const painted = new Array(144).fill(40);
   for (let y = 1; y <= 4; y++) for (let x = 2; x <= 6; x++) painted[y * 16 + x] = (x + y) % 2 === 0 ? 30 : 200;
@@ -963,7 +963,7 @@ test("a zoom on a window that painted at once lands without waiting for a later 
   assert.equal(cameraAt(keys, 2.4).zoom, top, `in by 2.4 s: ${JSON.stringify(keys)}`);
 });
 
-test("a window resized within a second of appearing is still opening: the previous framing holds until it settles (076)", () => {
+test("a window resized within a second of appearing is still opening: the previous framing holds until it settles (081)", () => {
   const window = { x: 300, y: 200, width: 700, height: 450 };
   const keys = camera({
     clicks: [{ at: 1.3, x: 500, y: 400, button: "left", count: 1, area: { x: 460, y: 380, width: 80, height: 40 }, role: "push button", window }],
