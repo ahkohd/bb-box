@@ -31,7 +31,7 @@ The create menu beside the path contains New file and New folder. They create in
 
 ## Search
 
-Search in files is the field across the tree. It looks under the folder in the path bar. Match case, whole word and a regular expression sit inside the right edge of the field. It uses ripgrep when the box has it, and grep otherwise. Ripgrep is asked not to skip ignored files, so the two agree. On Windows, when ripgrep is absent, it reads each file in PowerShell. It skips `.git`, `node_modules` and `vendor`. It stops at 2,000 hits or 500 files.
+Search is the field across the tree. It looks under the folder in the path bar. Match case, whole word and a regular expression sit below the field while it has focus or contains text. It uses ripgrep when the box has it, and grep otherwise. Ripgrep is asked not to skip ignored files, so the two agree. On Windows, when ripgrep is absent, it reads each file in PowerShell. It skips `.git`, `node_modules` and `vendor`. It stops at 2,000 hits or 500 files.
 
 Go to a file by name with Ctrl or Command with P. Its name index starts after the tree appears and skips hidden folders unless dotfiles are shown. Quick open says when names are still filling or the 20,000-name limit was reached. Find in the open file with Ctrl or Command with F. The find bar sits above the file. Focus the search with Ctrl or Command with Shift and F. Escape closes go to file, then find in the file.
 

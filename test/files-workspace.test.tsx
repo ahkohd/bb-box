@@ -149,3 +149,37 @@ test('creation completing after navigation does not return to the old folder', a
   await act(async () => complete({ error: null }));
   expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Path' }).value).toBe('/next');
 });
+
+test('search options appear only with focus or text and leave a full input', async () => {
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: { 'files.tree': async () => tree() } });
+  await screen.findByRole('treeitem', { name: 'src' });
+  const input = screen.getByRole('searchbox', { name: 'Search in files' });
+  const options = () => screen.queryAllByRole('button', { name: /Match case|Match whole word|Use regular expression/ });
+  expect(input.getAttribute('placeholder')).toBe('Search');
+  expect(input.className).toContain('min-w-[9rem]');
+  expect(options()).toHaveLength(0);
+  fireEvent.focus(input);
+  expect(options()).toHaveLength(3);
+  expect(input.parentElement?.contains(options()[0])).toBe(false);
+  fireEvent.blur(input);
+  expect(options()).toHaveLength(0);
+  fireEvent.change(input, { target: { value: 'example' } });
+  fireEvent.blur(input);
+  expect(options()).toHaveLength(3);
+});
+
+for (const count of [1, 2]) test(`footer counts ${count} files`, async () => {
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: { 'files.tree': async () => tree('/home/box', Array.from({ length: count }, (_, index) => `${index}.txt`), []) } });
+  expect(await screen.findByText(`${count} ${count === 1 ? 'file' : 'files'}`)).toBeTruthy();
+});
+
+test('Markdown preview passes the original source to the host renderer', async () => {
+  const content = '# Example project\n\nA box with files ready to edit.\n';
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async () => tree('/home/box', ['README.md'], []),
+    'files.read': async () => ({ error: null, kind: 'text', content, sha256: 'a'.repeat(64), sizeBytes: content.length }),
+  } });
+  const file = await screen.findByRole('treeitem', { name: 'README.md' });
+  await act(async () => fireEvent.click(file));
+  expect(screen.getByTestId('bb-markdown').textContent).toBe(content);
+});

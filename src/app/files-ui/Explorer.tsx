@@ -74,6 +74,7 @@ export function Explorer({
 }: ExplorerProps) {
 
   const [query, setQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
   const [matchCase, setMatchCase] = useState(false);
   const [wholeWord, setWholeWord] = useState(false);
   const [regex, setRegex] = useState(false);
@@ -223,6 +224,8 @@ export function Explorer({
             ref={inputRef}
             type="search"
             value={query}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape" && query !== "") {
@@ -245,40 +248,19 @@ export function Explorer({
                 event.preventDefault();
               }
             }}
-            placeholder="Search in files"
+            placeholder="Search"
             aria-label="Search in files"
             title="Search in files"
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
             className={cn(
-              "h-7 w-full min-w-0 rounded-md border border-border bg-background pr-[4.5rem] pl-7 text-sm",
+              "h-7 w-full min-w-[9rem] rounded-md border border-border bg-background pr-2 pl-7 text-sm",
               "text-foreground placeholder:text-muted-foreground",
               "focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
               "[&::-webkit-search-cancel-button]:hidden",
             )}
           />
-          <div className="absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-px">
-            <SearchToggle
-              label="Match case. Off, a capital letter makes the search case-sensitive"
-              glyph="Aa"
-              isOn={matchCase}
-              onToggle={() => setMatchCase((value) => !value)}
-            />
-            <SearchToggle
-              label="Match whole word (Alt W)"
-              glyph="ab"
-              underline
-              isOn={wholeWord}
-              onToggle={() => setWholeWord((value) => !value)}
-            />
-            <SearchToggle
-              label="Use regular expression (Alt R)"
-              glyph=".*"
-              isOn={regex}
-              onToggle={() => setRegex((value) => !value)}
-            />
-          </div>
         </div>
         <ExplorerAction
           icon="Search"
@@ -294,6 +276,30 @@ export function Explorer({
           />
         ) : null}
       </div>
+
+      {searchFocused || query !== "" ? (
+        <div className="flex shrink-0 items-center gap-px px-2 pb-2" onMouseDown={(event) => event.preventDefault()}>
+          <SearchToggle
+            label="Match case. Off, a capital letter makes the search case-sensitive"
+            glyph="Aa"
+            isOn={matchCase}
+            onToggle={() => setMatchCase((value) => !value)}
+          />
+          <SearchToggle
+            label="Match whole word (Alt W)"
+            glyph="ab"
+            underline
+            isOn={wholeWord}
+            onToggle={() => setWholeWord((value) => !value)}
+          />
+          <SearchToggle
+            label="Use regular expression (Alt R)"
+            glyph=".*"
+            isOn={regex}
+            onToggle={() => setRegex((value) => !value)}
+          />
+        </div>
+      ) : null}
 
       {isSearching && scope !== null ? (
         <SearchResults
@@ -355,7 +361,7 @@ export function Explorer({
       )}
 
       <div className="shrink-0 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
-        {isLoading && entries.length === 0 ? "\u00a0" : `${fileCount.toLocaleString()} files`}
+        {isLoading && entries.length === 0 ? "\u00a0" : `${fileCount.toLocaleString()} ${fileCount === 1 ? "file" : "files"}`}
         {!isSearching && allRows.length > rows.length
           ? ` - showing first ${ROW_LIMIT.toLocaleString()}`
           : ""}
