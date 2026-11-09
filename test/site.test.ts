@@ -217,11 +217,11 @@ test("every page shares the site's card as an absolute image with its size and a
   assert.deepEqual(
     linked.map((tag) => [tag.attrs.rel, tag.attrs.href, tag.attrs.sizes]),
     [
-      ["icon", `/${icons.png.path}`, "32x32"],
-      ["apple-touch-icon", `/${icons.appleTouch.path}`, "180x180"],
+      ["icon", `/${icons.png.path}`, "64x64"],
+      ["apple-touch-icon", `/${icons.appleTouch.path}`, "192x192"],
     ],
   );
-  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.png.path)), { width: 32, height: 32 });
+  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.png.path)), { width: 64, height: 64 });
   assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.appleTouch.path)), { width: 180, height: 180 });
   assert.deepEqual(pngSize(join(repoRoot, "site", "og", "github-social.png")), { width: 1280, height: 640 });
 });

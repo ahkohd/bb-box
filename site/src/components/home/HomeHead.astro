@@ -34,7 +34,7 @@ const tags: HeadTag[] = [
 <meta name="description" content={description} />
 {canonical && <link rel="canonical" href={canonical} />}
 <link rel="sitemap" href={`${base.replace(/\/?$/, "/")}sitemap-index.xml`} />
-<link rel="shortcut icon" href={`${base.replace(/\/?$/, "/")}favicon.svg`} type="image/svg+xml" />
+<link rel="shortcut icon" href={`${base.replace(/\/?$/, "/")}favicon.png`} type="image/png" />
 {tags.map((tag) => (tag.tag === "meta" ? <meta {...tag.attrs} /> : <link {...tag.attrs} />))}
 <script is:inline define:vars={{ motionPausedKey }}>
   (() => {

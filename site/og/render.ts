@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import sharp from "sharp";
-import { icons, shareImage } from "../src/head.ts";
+import { shareImage } from "../src/head.ts";
 
 interface Card {
   file: string;
@@ -20,11 +20,6 @@ const roomForBrowserChrome = 200;
 const cards: Card[] = [
   { file: join(site, "public", shareImage.path), width: shareImage.width, height: shareImage.height },
   { file: join(here, "github-social.png"), width: 1280, height: 640 },
-];
-
-const iconImages = [
-  { file: join(site, "public", icons.appleTouch.path), size: icons.appleTouch.size, padding: 36, radius: 0, strokeWidth: 1.5 },
-  { file: join(site, "public", icons.png.path), size: icons.png.size, padding: 4, radius: 7, strokeWidth: 1.75 },
 ];
 
 function cardAddress({ width, height }: Card): string {
@@ -60,16 +55,7 @@ function screenshot(card: Card, profile: string): string {
   return shot;
 }
 
-function iconSvg({ size, padding, radius, strokeWidth }: (typeof iconImages)[number]): string {
-  const mark = size - padding * 2;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-<rect width="${size}" height="${size}" rx="${radius}" fill="#0a0a0a"/>
-<svg x="${padding}" y="${padding}" width="${mark}" height="${mark}" viewBox="0 0 24 24" fill="none" stroke="#fafafa" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"/><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"/></svg>
-</svg>`;
-}
-
 async function renderIcons(): Promise<void> {
-  for (const icon of iconImages) await sharp(Buffer.from(iconSvg(icon))).png().toFile(icon.file);
 }
 
 async function main(): Promise<void> {
@@ -84,7 +70,6 @@ async function main(): Promise<void> {
     rmSync(profile, { recursive: true, force: true });
   }
   await renderIcons();
-  for (const icon of iconImages) console.log(`${icon.file}: ${icon.size} by ${icon.size}`);
 }
 
 await main();

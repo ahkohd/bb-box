@@ -16,7 +16,7 @@ export default defineConfig({
       title: "BB Box",
       description: "Computers for BB threads.",
       logo: { light: "./src/assets/logo-light.svg", dark: "./src/assets/logo-dark.svg" },
-      favicon: "/favicon.svg",
+      favicon: "/favicon.png",
       head: siteHead({ site, base }),
       customCss: ["@fontsource-variable/inter", "@fontsource-variable/jetbrains-mono", "./src/styles/theme.css"],
       expressiveCode: { themes: codeThemes, styleOverrides: codeStyle },
