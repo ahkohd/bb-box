@@ -31,6 +31,7 @@ export const BIG_CHANGE_SHARE = 0.4;
 export const OUTSIDE_CHANGE_SHARE = 0.1;
 export const OUTSIDE_SEEN_S = 1.5;
 export const OWN_RESULT_S = 0.5;
+export const ZOOM_SEEN_LEAST_S = 0.6;
 const CARET_LINE_PX = 36;
 const CARET_BAND_PX = 640;
 
@@ -312,7 +313,10 @@ interface Focus {
   readonly at: number;
   readonly area: InputArea;
   readonly contain: boolean;
+  readonly fieldClickAt?: number;
 }
+
+export const FIELD_TYPING_S = 2;
 
 const pointArea = (x: number, y: number): InputArea => ({ x, y, width: 0, height: 0 });
 
@@ -362,10 +366,27 @@ export function typingFocus(scene: Scene, typing: PlacedTyping, pointer: Pointer
     return !typing.area && !typing.window;
   };
   const near = scene.changes.filter((change) => change.at >= span.from - 0.3 && change.at <= span.to + 0.5 && within(change) && areaOf(change) > 0 && !fieldRepaint(change, typing.area));
-  if (near.length) return unionOf(near);
+  const inField = near.map((change) => (typing.area && areaOf(typing.area) > 0 ? intersectionOf(change, typing.area) : change)).filter((area): area is InputArea => !!area && areaOf(area) > 0);
+  if (inField.length) return unionOf(inField);
   const field = typing.area && areaOf(typing.area) > 0 ? typing.area : null;
   if (field && viewContaining(scene, field).zoom >= ZOOM_LEAST) return field;
   return caretLine(scene, field, pointer, span.to);
+}
+
+function intersectionOf(a: InputArea, b: InputArea): InputArea | null {
+  const left = Math.max(a.x, b.x);
+  const top = Math.max(a.y, b.y);
+  const right = Math.min(a.x + a.width, b.x + b.width);
+  const bottom = Math.min(a.y + a.height, b.y + b.height);
+  return right > left && bottom > top ? { x: left, y: top, width: right - left, height: bottom - top } : null;
+}
+
+function clickInFieldBefore(scene: Scene, typing: PlacedTyping): PlacedClick | null {
+  const field = typing.area;
+  if (!field || areaOf(field) <= 0) return null;
+  const inField = (click: PlacedClick) => (click.area && areaOf(click.area) > 0 ? overlap(click.area, field) > 0 : coversPoint(field, click.x, click.y, 0));
+  const clicks = scene.clicks.filter((click) => click.at <= typing.at && typing.at - click.at <= FIELD_TYPING_S && inField(click));
+  return clicks.at(-1) ?? null;
 }
 
 function fieldRepaint(change: InputArea, field: InputArea | null | undefined): boolean {
@@ -424,10 +445,12 @@ export function focusesOf(scene: Scene, pointer: PointerPlan): Focus[] {
     }),
     ...scene.scrolls.map((scroll) => ({ at: scroll.at, area: pointArea(scroll.x, scroll.y), contain: false })),
     ...drags,
-    ...scene.typing.flatMap((typing) => {
+    ...scene.typing.flatMap((typing): Focus[] => {
       if (!typing.characters) return [];
       const area = typingFocus(scene, typing, pointer);
-      return area ? [{ at: typing.at, area, contain: areaOf(area) > 0 }] : [];
+      if (!area) return [];
+      const click = clickInFieldBefore(scene, typing);
+      return [{ at: typing.at, area, contain: areaOf(area) > 0, ...(click ? { fieldClickAt: click.at } : {}) }];
     }),
   ];
   return focuses.sort((a, b) => a.at - b.at);
@@ -493,6 +516,7 @@ interface Group {
   readonly view: View;
   readonly area: InputArea;
   readonly outsideAt: number | null;
+  readonly fieldClickAt: number | null;
 }
 
 const BRIGHT_COLUMNS = 16;
@@ -555,8 +579,9 @@ function paintReady(scene: Scene, focus: InputArea, at: number, natural: number)
   if (!grids.length) return ready;
   let candidate: number | null = null;
   let candidateCells: readonly number[] | null = null;
+  const openedAt = Math.max(...opened.map((change) => change.at));
   for (const grid of grids) {
-    if (grid.at < ready - 0.05 || grid.at > at + 2) continue;
+    if (grid.at < openedAt - 0.05 || grid.at > at + 2) continue;
     if (blankRegion(scene, region, grid.at)) continue;
     const cells = cellsUnder(scene, region, grid.at);
     if (!cells) continue;
@@ -570,9 +595,14 @@ function paintReady(scene: Scene, focus: InputArea, at: number, natural: number)
       candidateCells = cells;
       continue;
     }
-    return candidate;
+    return Math.max(ready, candidate);
   }
-  return candidate;
+  return candidate === null ? null : Math.max(ready, candidate);
+}
+
+function settledBefore(scene: Scene, focus: InputArea, clickAt: number, natural: number): number {
+  const opened = openingOf(scene, focus, clickAt).filter((change) => change.at <= clickAt);
+  return opened.length ? Math.max(natural, Math.max(...opened.map((change) => change.at)) + PAINT_QUIET_S) : natural;
 }
 
 function closeGroups(scene: Scene, focuses: readonly Focus[]): Focus[][] {
@@ -678,7 +708,8 @@ function splitAtOutsideChanges(scene: Scene, groups: readonly Focus[][], actions
       queue.unshift({ members: members.filter((each) => each.at <= outsideAt!), endsAt: outsideAt }, { members: later, endsAt });
       continue;
     }
-    planned.push({ first: members[0]!.at, last: members.at(-1)!.at, view: viewOfMembers(scene, members), area: unionOf(members.map((each) => each.area)), outsideAt });
+    const typedAfterClick = members.map((each) => each.fieldClickAt).filter((at): at is number => at !== undefined);
+    planned.push({ first: members[0]!.at, last: members.at(-1)!.at, view: viewOfMembers(scene, members), area: unionOf(members.map((each) => each.area)), outsideAt, fieldClickAt: typedAfterClick.length ? Math.min(...typedAfterClick) : null });
   }
   return planned;
 }
@@ -704,13 +735,16 @@ export function planCamera(scene: Scene, pointer: PointerPlan): CameraKey[] {
   groups.forEach((group, index) => {
     const nextGroup = groups[index + 1];
     const natural = Math.max(group.first - SETTLE_S, outsideShownUntil + MOVE_S);
-    if (group.view.zoom > 1 && natural > group.last) return;
-    const ready = group.view.zoom > 1 ? paintReady(scene, group.area, group.first, natural) : natural;
+    const typedField = group.fieldClickAt !== null;
+    if (group.view.zoom > 1 && natural > group.last && !typedField) return;
+    const ready = group.view.zoom === 1 ? natural : typedField ? settledBefore(scene, group.area, group.fieldClickAt!, natural) : paintReady(scene, group.area, group.first, natural);
     if (ready === null) return;
     const arrive = ready > natural + 0.02 ? ready + MOVE_S : natural;
+    const seen = Math.max(group.last, arrive);
+    const hold = Math.min(scene.length, seen + LINGER_S, group.outsideAt ?? Infinity);
+    if (group.view.zoom > 1 && hold - arrive < ZOOM_SEEN_LEAST_S) return;
     moveTo(arrive, group.view);
     if (group.view.zoom === 1) return;
-    const hold = Math.min(scene.length, group.last + LINGER_S, group.outsideAt ?? Infinity);
     if (hold > last().at) keys.push({ at: round3(hold), view: group.view });
     const leave = Math.max(hold, last().at);
     const zoomsOut = leave + MOVE_S <= scene.length;

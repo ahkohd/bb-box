@@ -31,7 +31,28 @@ the still stretches are cut as before. `stills: "keep"` keeps both.
 
 A result is held for reading at most 1 second.
 
+### Typing into a clicked field is zoomed
+
+Typing that follows a click in the same field within 2 seconds is framed on
+that field, as soon as the window had settled before the click. What
+changes on the screen after the click, such as the typed line, the window's
+title and a panel's list of windows in one changed region, is not taken
+for the window painting, and a flat white editor is not taken for a blank
+window. Only the part of a changed region inside the field is the typed
+text.
+
+A zoom is held for 1.5 seconds after it lands, even when waiting for paint
+made it land after its group's last event. A zoom that would be seen for
+less than 0.6 seconds before something opens elsewhere is left out, so it
+neither pumps nor keeps the camera out for the next one. The paint check
+reads the screen from the window's opening, so a window that painted at
+once is zoomed without waiting for a later reading.
+
 ## Consequences
+
+The Linux showcase's typing, Ctrl+A and Ctrl+S steps are readable at 1280
+pixels wide; before, a late zoom on a closed window kept the camera out
+until 4 seconds after the typing.
 
 An agent does not pause between steps for the viewer, and a clip of a
 focused editor is as tight as one of a still screen. A pointer moving over

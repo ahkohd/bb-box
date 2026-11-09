@@ -673,6 +673,79 @@ test("a zoom waits until a new window has painted, and holds the previous framin
   assert.ok(cameraAt(drawing, 4.5).zoom > 1, "the camera eases in once that window has settled");
 });
 
+test("typing that follows a click in its field within 2 s zooms on that field, though the window was resized as it opened and is a flat white page (076)", () => {
+  const window = { x: 400, y: 120, width: 820, height: 600 };
+  const field = { x: 600, y: 600, width: 500, height: 40 };
+  const white = Array.from({ length: 144 }, (_, index) => {
+    const column = index % 16;
+    const row = Math.floor(index / 16);
+    return column >= 3 && column <= 10 && row >= 1 && row <= 6 ? 245 : 40;
+  });
+  const keys = camera({
+    clicks: [{ at: 5, x: 850, y: 620, button: "left", count: 1, area: field, role: "text", window }],
+    typing: [{ at: 5.2, characters: 40, area: field, secret: false, role: "text", window, by: "agent", call: 1 }, { at: 5.25, characters: 0, area: field, secret: false, role: "text", window, by: "agent", call: 1 }],
+    changes: [
+      { at: 4, x: 400, y: 120, width: 800, height: 580 },
+      { at: 4.6, ...window },
+      { at: 5.3, x: 0, y: 0, width: 1300, height: 615 },
+    ],
+    brightness: [0, 1, 2, 3, 4, 5, 6, 7, 8].map((at) => ({ at, cells: white })),
+    length: 14,
+  });
+  const zoomed = keys.filter((key) => key.view.zoom > 1);
+  assert.ok(zoomed.length > 0, `the typed field is zoomed: ${JSON.stringify(keys)}`);
+  assert.ok(zoomed.every((key) => key.view.zoom >= 1.8 && viewCovers(SCREEN, key.view, field)), `on the field, not on the panel and title that changed with the line: ${JSON.stringify(zoomed)}`);
+  assert.ok(cameraAt(keys, 6.2).zoom >= 1.8, "it is in by the time the line has been typed");
+  assert.equal(cameraAt(keys, 4.8).zoom, 1, "the previous framing holds while the window settles from its resize");
+});
+
+test("a zoom that could land only after its window has closed is left out, and does not push the next zoom late (076)", () => {
+  const small = { width: 1280, height: 720 };
+  const desktop = new Array(144).fill(40);
+  const withButton = desktop.map((cell, index) => (index % 16 >= 6 && index % 16 <= 9 && Math.floor(index / 16) >= 3 && Math.floor(index / 16) <= 5 ? 220 : cell));
+  const withNote = desktop.map((cell, index) => (index % 16 >= 4 && index % 16 <= 11 && Math.floor(index / 16) >= 2 && Math.floor(index / 16) <= 6 ? 245 : cell));
+  const field = { x: 335, y: 216, width: 598, height: 299 };
+  const note = { x: 334, y: 188, width: 600, height: 330 };
+  const planned = scene({
+    ...small,
+    length: 8,
+    clicks: [
+      { at: 1.27, x: 644, y: 343, button: "left", count: 1, area: { x: 548, y: 302, width: 192, height: 82 }, role: "push button", window: { x: 524, y: 278, width: 240, height: 130 } },
+      { at: 2.46, x: 634, y: 366, button: "left", count: 1, area: field, role: "text", window: note },
+    ],
+    typing: [{ at: 3.59, characters: 43, area: field, secret: false, role: "text", window: note, by: "agent", call: 1 }, { at: 3.6, characters: 0, area: null, secret: false, window: note, by: "agent", call: 1 }],
+    changes: [
+      { at: 0.75, x: 120, y: 0, width: 880, height: 413 },
+      { at: 2.25, x: 120, y: 0, width: 880, height: 413 },
+      { at: 2.5, x: 120, y: 0, width: 888, height: 522 },
+      { at: 3.5, x: 146, y: 5, width: 578, height: 229 },
+      { at: 3.75, x: 336, y: 216, width: 386, height: 18 },
+    ],
+    brightness: [desktop, withButton, withButton, withNote, withNote, withNote, withNote, withNote].map((cells, at) => ({ at, cells })),
+  });
+  const keys = planCamera(planned, planPointer(planned));
+  for (let t = 0; t <= 2.6; t += 0.1) assert.equal(cameraAt(keys, t).zoom, 1, `no zoom in on a window that is closing at ${t.toFixed(1)} s: ${JSON.stringify(keys)}`);
+  const button = { x: 548, y: 302, width: 192, height: 82 };
+  assert.ok(keys.every((key) => key.view.zoom === 1 || key.view.y + 1 < button.y), `no camera key frames the closed window's button: ${JSON.stringify(keys)}`);
+  assert.ok(cameraAt(keys, 3.6).zoom >= ZOOM_LEAST, "the typing after it is zoomed as it happens");
+  assert.ok(cameraAt(keys, 4).y < button.y, "on the typed line");
+});
+
+test("a zoom on a window that painted at once lands without waiting for a later reading of the screen (076)", () => {
+  const window = { x: 200, y: 120, width: 640, height: 420 };
+  const painted = new Array(144).fill(40);
+  for (let y = 1; y <= 4; y++) for (let x = 2; x <= 6; x++) painted[y * 16 + x] = (x + y) % 2 === 0 ? 30 : 200;
+  const keys = camera({
+    clicks: [{ at: 1.5, x: 400, y: 300, button: "left", count: 1, area: { x: 360, y: 280, width: 80, height: 30 }, role: "push button", window }],
+    changes: [{ at: 1, ...window }],
+    brightness: [{ at: 0, cells: new Array(144).fill(40) }, { at: 1, cells: painted }, { at: 2, cells: painted }, { at: 3, cells: painted }],
+    length: 10,
+  });
+  const top = Math.max(...keys.map((key) => key.view.zoom));
+  assert.ok(top > 1);
+  assert.equal(cameraAt(keys, 2.4).zoom, top, `in by 2.4 s: ${JSON.stringify(keys)}`);
+});
+
 test("a typing zoom keeps the whole changed region inside the frame, and zooms less instead of cropping it (073)", () => {
   const line = { at: 3.4, x: 40, y: 360, width: 1500, height: 28 };
   const field = { x: 30, y: 280, width: 1700, height: 520 };
