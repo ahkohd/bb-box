@@ -176,7 +176,7 @@ test("a picture's label reads naturally for today, yesterday and an older day", 
   afternoon.setHours(15, 0, 0, 0);
   const now = afternoon.getTime();
   assert.match(screenAround("calm-otter", now - 2 * 60 * 60_000, now), /^calm-otter's screen around \d{2}:\d{2}$/);
-  assert.match(screenAround("calm-otter", now - 26 * 60 * 60_000, now), /^calm-otter's screen around yesterday at \d{2}:\d{2}$/);
+  assert.match(screenAround("calm-otter", now - 26 * 60 * 60_000, now), /^calm-otter's screen yesterday around \d{2}:\d{2}$/);
   const older = screenAround("calm-otter", now - 3 * 24 * 60 * 60_000, now);
   assert.match(older, /^calm-otter's screen on .+ at \d{2}:\d{2}$/);
   assert.doesNotMatch(older, /around on /);

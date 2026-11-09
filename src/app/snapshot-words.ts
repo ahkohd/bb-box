@@ -65,6 +65,7 @@ export function screenAround(name: string, at: number, now: number): string {
   const when = whenInSentence(at, now);
   if (when.startsWith("on ")) return `${name}'s screen ${when}`;
   if (when.startsWith("today at ")) return `${name}'s screen around ${when.slice("today at ".length)}`;
+  if (when.startsWith("yesterday at ")) return `${name}'s screen yesterday around ${when.slice("yesterday at ".length)}`;
   return `${name}'s screen around ${when}`;
 }
 
