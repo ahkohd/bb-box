@@ -8,6 +8,7 @@ const wordAspect = 3.4;
 <div class="wordmark-holder" aria-hidden="true" style={`--columns: ${columnsAcross}; --word-aspect: ${wordAspect}`}>
   <div class="wordmark">
     <CipherText text="" duration={1400} decorative />
+    <span class="wordmark-dense"></span>
   </div>
 </div>
 
@@ -15,11 +16,9 @@ const wordAspect = 3.4;
   import { watchCiphers } from "../../effects/cipher.ts";
 
   const ramp = " .:-=+*#%@";
-  const denseRuns = new RegExp(`[${ramp.slice(ramp.indexOf("#"))}]+`, "g");
+  const sparseCells = new RegExp(`[^${ramp.slice(ramp.indexOf("#"))}]`, "g");
   const word = "BB Box";
   const subrows = 2;
-
-  const escaped = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   function fittedFontPx(pen: CanvasRenderingContext2D, width: number, height: number): number {
     const tryAt = height * 0.9;
@@ -64,10 +63,8 @@ const wordAspect = 3.4;
       }
       lines.push(line.trimEnd());
     }
-    real.removeAttribute("data-text");
-    real.innerHTML = lines
-      .map((line) => escaped(line).replace(denseRuns, (run) => `<span class="dense">${run}</span>`))
-      .join("\n");
+    real.dataset.text = lines.join("\n");
+    mark.querySelector<HTMLElement>(".wordmark-dense")!.dataset.text = lines.map((line) => line.replace(sparseCells, " ")).join("\n");
   }
 
   document.fonts.ready.then(() => {
@@ -84,6 +81,7 @@ const wordAspect = 3.4;
   }
 
   .wordmark {
+    position: relative;
     aspect-ratio: var(--word-aspect);
     overflow: hidden;
     white-space: pre;
@@ -101,7 +99,18 @@ const wordAspect = 3.4;
     display: block;
   }
 
-  .wordmark :global(.dense) {
+  .wordmark-dense {
+    position: absolute;
+    inset: 0;
     color: var(--wordmark-dense);
+    pointer-events: none;
+  }
+
+  .wordmark-dense::before {
+    content: attr(data-text) / "";
+  }
+
+  .wordmark:has(:global([data-running])) .wordmark-dense {
+    visibility: hidden;
   }
 </style>
