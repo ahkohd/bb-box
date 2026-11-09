@@ -1118,14 +1118,14 @@ test("the panel lists the thread's boxes as rows, opens a row's details, and ope
     "Open in browser",
     "Open terminal",
     "Open files",
-    "Open on the Boxes page",
+    "Details",
     "Copy address",
-    "New thread on this box…",
+    "New thread…",
     "Stop",
     "Check now",
     "Release…",
   ]);
-  fireEvent.click(within(menu).getByRole("menuitem", { name: "Open on the Boxes page" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "Details" }));
   expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "box/box_2" } });
   menu = await openMenu(slot.getByRole("button", { name: "bold-heron actions" }));
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Open in browser" }));
@@ -2231,7 +2231,7 @@ test("the panel stops and starts a box that can, and not one that cannot", async
   await fixed.findByText("real-box");
   expect(fixed.queryByRole("button", { name: "Stop" })).toBeNull();
   const menu = await openMenu(fixed.getByRole("button", { name: "real-box actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open terminal", "Open files", "Open on the Boxes page", "Copy address", "New thread on this box…", "Check now", "Release…"]);
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open terminal", "Open files", "Details", "Copy address", "New thread…", "Check now", "Release…"]);
 });
 
 test("a row starts a child thread on its box, and opens it", async () => {
@@ -2240,7 +2240,7 @@ test("a row starts a child thread on its box, and opens it", async () => {
   await slot.findByText("calm-otter");
 
   const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
-  fireEvent.click(within(menu).getByRole("menuitem", { name: "New thread on this box…" }));
+  fireEvent.click(within(menu).getByRole("menuitem", { name: "New thread…" }));
   const dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText("New thread on calm-otter")).toBeTruthy();
   const start = within(dialog).getByRole("button", { name: "Start thread" }) as HTMLButtonElement;
@@ -2256,7 +2256,7 @@ test("a box that is not a BB machine offers no thread", async () => {
   const slot = panel(server([box({ enrol: { state: "off", hostId: null, error: null } })]).handlers);
   await slot.findByText("calm-otter");
   const menu = await openMenu(slot.getByRole("button", { name: "calm-otter actions" }));
-  expect(within(menu).queryByRole("menuitem", { name: "New thread on this box…" })).toBeNull();
+  expect(within(menu).queryByRole("menuitem", { name: "New thread…" })).toBeNull();
 });
 
 test("a Windows box, whose kind cannot enrol, says its BB machine is not for this kind", async () => {
@@ -7160,7 +7160,7 @@ test("the Boxes page manages a thread's boxes with the Box panel's menu: Stop, S
   const { handlers, changes } = server([box(), box({ id: "box_6", name: "swift-fox", state: "stopped" })]);
   const list = boxesPage(handlers);
   expect(await list.findByText("calm-otter")).toBeTruthy();
-  // The panel's menu, without "New thread on this box…", whose "this thread" names none here; the Open thread arrow heads the thread's card, once.
+  // The panel's menu, without "New thread…", whose "this thread" names none here; the Open thread arrow heads the thread's card, once.
   let menu = await openMenu(list.getByRole("button", { name: "calm-otter actions" }));
   expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open terminal", "Open files", "Copy address", "Stop", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
@@ -7689,7 +7689,7 @@ test("the panel lists the box this thread runs on first in the one list with a B
   expect(rows).toEqual(["build-1: details", "calm-otter: details"]);
   expect(slot.getAllByRole("button", { name: "Stop" })).toHaveLength(1);
   const menu = await openMenu(slot.getByRole("button", { name: "build-1 actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open desktop", "Open in browser", "Open terminal", "Open files", "Open on the Boxes page", "Copy address", "Check now"]);
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Open desktop", "Open in browser", "Open terminal", "Open files", "Details", "Copy address", "Check now"]);
 
   cleanup();
   // Only the machine it runs on, no boxes of its own: the list, not the empty state.
@@ -9610,7 +9610,7 @@ test("a box's page, at box/<boxId>: the trail, its name with focus, its state, I
   expect(slot.getByRole("img", { name: /^The time each step took: Took a warm box 0\.3 s, Clone 1\.1 s/ })).toBeTruthy();
   expect(slot.getByText(/^And 3 quicker steps\. It joined BB 2\.4 s later\. Made (today|yesterday) at /)).toBeTruthy();
   const menu = await openMenu(slot.getByRole("button", { name: "bold-heron actions" }));
-  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy address", "New thread on this box…", "Check now", "Release…"]);
+  expect(within(menu).getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Copy address", "New thread…", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
   fireEvent.click(within(slot.getByRole("navigation", { name: "Where you are" })).getByRole("button", { name: "Back to boxes" }));
   expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "", replace: true } });
@@ -10139,7 +10139,7 @@ test("a backend not in settings or not answering turns off Stop, Start, Resize a
   const reasons = maple.getByText("Terminal, Files and Stop are off: its backend is not in settings.");
   expect(maple.getByRole("button", { name: "Stop" }).getAttribute("aria-describedby")).toBe(reasons.id);
   let menu = await openMenu(maple.getByRole("button", { name: "maple-row actions" }));
-  expect(items(menu)).toEqual(["Copy address", "New thread on this box…Its backend is not in settings (disabled)", "Resize…Its backend is not in settings (disabled)", "Check now", "Forget…"]);
+  expect(items(menu)).toEqual(["Copy address", "New thread…Its backend is not in settings (disabled)", "Resize…Its backend is not in settings (disabled)", "Check now", "Forget…"]);
   fireEvent.click(within(menu).getByRole("menuitem", { name: "Forget…" }));
   const dialog = await screen.findByRole("alertdialog");
   expect(within(dialog).getByText("Forget maple-row?")).toBeTruthy();
@@ -10158,7 +10158,7 @@ test("a backend not in settings or not answering turns off Stop, Start, Resize a
   expect((reed.getByRole("button", { name: "Stop" }) as HTMLButtonElement).disabled).toBe(true);
   expect(reed.getByText("Terminal, Files and Stop are off: Fake host does not answer.")).toBeTruthy();
   menu = await openMenu(reed.getByRole("button", { name: "reed-marsh actions" }));
-  expect(items(menu)).toEqual(["Copy address", "New thread on this box…Fake host does not answer (disabled)", "Resize…Fake host does not answer (disabled)", "Check now", "Release…"]);
+  expect(items(menu)).toEqual(["Copy address", "New thread…Fake host does not answer (disabled)", "Resize…Fake host does not answer (disabled)", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
   cleanup();
 
@@ -10172,7 +10172,7 @@ test("a backend not in settings or not answering turns off Stop, Start, Resize a
   fireEvent.click(within(reach).getByRole("button", { name: "Check now" }));
   await waitFor(() => expect(changes).toContain("refresh box_8"));
   menu = await openMenu(fern.getByRole("button", { name: "fern-hollow actions" }));
-  expect(items(menu)).toEqual(["Copy address", "New thread on this box…fern-hollow does not answer (disabled)", "Check now", "Release…"]);
+  expect(items(menu)).toEqual(["Copy address", "New thread…fern-hollow does not answer (disabled)", "Check now", "Release…"]);
   fireEvent.keyDown(menu, { key: "Escape" });
   fireEvent.click(fern.getByRole("button", { name: "Stop" }));
   await waitFor(() => expect(changes).toContain("stop box_8"));

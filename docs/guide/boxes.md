@@ -55,9 +55,9 @@ In the Box panel, select a row to see its details. They give the box's address, 
 The buttons on a row open the box's desktop or terminal, and stop or start the box where its backend can. The menu at the end of the row has these and more:
 
 - Open in browser: shows the desktop on a page of its own
-- Open on the Boxes page: opens [the box's page](#a-boxs-page), in the Box panel only
+- Details: opens [the box's page](#a-boxs-page), in the Box panel only
 - Copy address: copies the box's network address
-- New thread on this box…: starts a child thread that works on this box in its own copy of the project, and is archived with this thread
+- New thread…: starts a child thread that works on this box in its own copy of the project, and is archived with this thread
 - Check now: asks the backend for the box's state again
 - Resize…: changes its cores, memory or disk: see [resizing a box](resizing.md)
 - Release…: deletes the box
@@ -122,7 +122,7 @@ Under the tabs, a search field finds boxes by name, kind, provider, device, such
 
 On Threads, each thread's card comes where its first box falls in that order.
 
-A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. 'New thread on this box…' is only in the Box panel.
+A thread's box has the same row and menu as in the Box panel. It asks the same questions before it releases or stops a box. New thread… is only in the Box panel.
 
 Select a row, its name or the arrow at its end to open [the box's page](#a-boxs-page). Hold Command or Ctrl as you select its name or arrow to open the page in a new tab. With the keyboard, Tab reaches each row's name, then its buttons; Enter on a name opens the page.
 
@@ -161,7 +161,7 @@ The line may take 2 lines on a narrow screen. What needs your attention stays; h
 Every box, and every machine of yours, has a page of its own on the Boxes page, at `/plugins/bb-box/desktop/box/` and the box's ID. Its address works in a new browser tab, after a reload and as a link you send. To open it:
 
 - on the Boxes page, select a box's row, its name or the arrow at its end
-- in the Box panel, select **Open on the Boxes page** in a box's menu
+- in the Box panel, select **Details** in a box's menu
 - in the Monitor's machine status, select **Open** beside a box's name, then **Open details**
 - in a desktop, device or terminal on the Boxes page, select the box's name in its bar
 
@@ -174,7 +174,7 @@ The page shows, from the top:
 - [Activity](#activity): its CPU, memory, disk and network now and over the last few minutes, then its top processes
 - where its backend takes snapshots, its [Snapshots card](snapshots.md#on-a-boxs-page): take, restore, fork and keep them. **Take snapshot…** is also in the menu beside **Resize…**
 - its kind, size, where it runs, address, system, whether it is a BB machine, when it was made, and who has control of its desktop or device
-- the other threads on its BB machine, with **New thread on this box…**
+- the other threads on its BB machine, with **New thread…**
 - how it started: how long each step took, and when it last started, and who started it
 
 Who stopped or started a box comes from its log, so the page leaves it out where the log does not say.
@@ -209,7 +209,7 @@ These ranges come from box history: BB Box reads every running box once a minute
 
 With box history off, Live still reads while the page is open, and 1 h, 24 h and 7 d keep what was read before, under 'Box history is off'. With the Monitor off, what was read before stays on show too. See [box history](monitor.md#box-history).
 
-When a box's backend is no longer in BB Box's settings, or does not answer, its Stop, Start, Resize and New thread on this box are greyed out, and a line beside them says why. A box that does not answer itself can still be stopped, started, resized and released, as those go through its backend: only its views and New thread on this box are greyed out. It says when BB Box checks it again; select **Check now** to check at once. Once it is stopped, or answers, it no longer says it does not answer. For a box whose backend was removed, **Forget…** removes BB Box's record of it and deletes nothing: if it still runs on that backend, it keeps running.
+When a box's backend is no longer in BB Box's settings, or does not answer, its Stop, Start, Resize and New thread are greyed out, and a line beside them says why. A box that does not answer itself can still be stopped, started, resized and released, as those go through its backend: only its views and New thread are greyed out. It says when BB Box checks it again; select **Check now** to check at once. Once it is stopped, or answers, it no longer says it does not answer. For a box whose backend was removed, **Forget…** removes BB Box's record of it and deletes nothing: if it still runs on that backend, it keeps running.
 
 A release that did not finish says so, with the backend's words, and **Release again…**. For 24 hours after a box is released or forgotten, its page says which, when and by whom. After that, or for a link that is wrong, the page says 'This box is not here'.
 
