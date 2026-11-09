@@ -22,8 +22,12 @@ function changedArea(change: { readonly width: number; readonly height: number }
   return Math.max(0, change.width) * Math.max(0, change.height);
 }
 
-export function activityMoments(scene: Scene, keys: readonly PlacedKeys[], captions: readonly number[]): number[] {
+function notableChangeMoments(scene: Scene): number[] {
   const quietMost = scene.width * scene.height * QUIET_CHANGE_SHARE;
+  return scene.changes.filter((change) => changedArea(change) > quietMost).map((change) => change.at);
+}
+
+export function activityMoments(scene: Scene, keys: readonly PlacedKeys[], captions: readonly number[]): number[] {
   const pointerMoves = scene.samples.slice(1).map((sample) => sample.at);
   return [
     ...captions,
@@ -32,7 +36,7 @@ export function activityMoments(scene: Scene, keys: readonly PlacedKeys[], capti
     ...scene.scrolls.map((scroll) => scroll.at),
     ...scene.typing.map((typing) => typing.at),
     ...keys.map((each) => each.at),
-    ...scene.changes.filter((change) => changedArea(change) > quietMost).map((change) => change.at),
+    ...notableChangeMoments(scene),
   ]
     .filter((at) => Number.isFinite(at) && at >= 0 && at <= scene.length)
     .sort((a, b) => a - b);
@@ -68,7 +72,8 @@ export function clipEnds(scene: Scene, keys: readonly PlacedKeys[], pointer: Poi
   const start = moments.length ? Math.max(0, moments[0]! - HEAD_LEAD_S) : 0;
   const pointerMoves = scene.samples.slice(1).map((sample) => sample.at);
   const acted = [...scene.clicks.map((click) => click.at), ...scene.scrolls.map((scroll) => scroll.at), ...scene.typing.map((typing) => typing.at), ...keys.map((each) => each.at), ...pointer.drags.map((drag) => drag.to), ...pointerMoves];
-  const last = [...results, ...acted].filter((at) => Number.isFinite(at) && at <= scene.length);
+  const answered = notableChangeMoments(scene);
+  const last = [...results, ...acted, ...answered].filter((at) => Number.isFinite(at) && at <= scene.length);
   return { start: round3(start), end: last.length ? round3(Math.max(...last) + END_HOLD_S + FADE_OUT_S) : null };
 }
 

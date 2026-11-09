@@ -45,8 +45,9 @@ a lost stretch is still held for its full reading time.
 
 Where idle stretches are cut, the clip starts 0.2 seconds before its first
 caption, input, pointer movement or notable change, keeping the glide to a
-first click. It ends 1.5 seconds after the last result, input or pointer
-movement: the moment is held for 1 second, then the whole picture, captions
+first click. It ends 1.5 seconds after the last result, input, pointer
+movement or change on the screen larger than 0.3% of it, so an answer that
+comes seconds after a click with no result caption is kept: the moment is held for 1 second, then the whole picture, captions
 too, fades over 0.5 seconds to the frame's background, or black without a
 frame. That last result is not held further. A recording stopped sooner is
 padded with its last frame. Trimming the ends shows no skip mark. With

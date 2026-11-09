@@ -461,6 +461,13 @@ test("a dressed recording cuts its idle stretches by default, though a caret bli
   assert.equal(hoverCut, 0, "a pointer moving over a still screen is not idle");
 });
 
+test("a dressed recording ends a second after the screen's last answer, though no result caption says it (081)", () => {
+  const plan = planClip(idleRecording({ changes: [{ at: 8, x: 600, y: 300, width: 500, height: 300 }], inputs: [click(5, 600, 400)] }), 1);
+  const tail = plan.cuts.at(-1)!;
+  assert.ok(tail[0] >= 9.4 && tail[1] === 30, `the clip runs on to the answer at 8 s and a second and a half after it: ${JSON.stringify(plan.cuts)}`);
+  assert.ok(plan.cuts.every(([from, to]) => to <= 8 || from > 8), "the answer itself is never cut");
+});
+
 test("a dressed recording starts on its first action and ends a second after its last result, then fades out to the frame (081)", () => {
   const events: Prepared["events"] = [
     { at: 1004, kind: "step", text: "Press the button" },
