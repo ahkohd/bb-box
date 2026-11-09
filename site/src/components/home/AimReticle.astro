@@ -9,19 +9,43 @@
 </div>
 
 <script>
-  import { cssValue, rgbOf } from "../../effects/gl.ts";
   import { aimFor, type AimShape } from "../../effects/aim.ts";
 
   const reticle = document.querySelector<HTMLElement>(".aim");
   const targets = "a[href], button:not([hidden]), label:has(> input[type=radio])";
   let aimed: { target: Element; y: number } | null = null;
 
+  const amberHues = { from: 25, to: 50 };
+
+  function hueAndSaturation(red: number, green: number, blue: number): { hue: number; saturation: number } {
+    const [r, g, b] = [red, green, blue].map((channel) => channel / 255) as [number, number, number];
+    const most = Math.max(r, g, b);
+    const least = Math.min(r, g, b);
+    const spread = most - least;
+    if (spread === 0) return { hue: 0, saturation: 0 };
+    const lightness = (most + least) / 2;
+    const saturation = spread / (1 - Math.abs(2 * lightness - 1));
+    const sector = most === r ? ((g - b) / spread) % 6 : most === g ? (b - r) / spread + 2 : (r - g) / spread + 4;
+    return { hue: (sector * 60 + 360) % 360, saturation };
+  }
+
+  let swatch: CanvasRenderingContext2D | null | undefined;
+
+  function rgbaOf(colour: string): [number, number, number, number] {
+    swatch ??= Object.assign(document.createElement("canvas"), { width: 1, height: 1 }).getContext("2d", { willReadFrequently: true });
+    if (!swatch) return [0, 0, 0, 0];
+    swatch.clearRect(0, 0, 1, 1);
+    swatch.fillStyle = colour;
+    swatch.fillRect(0, 0, 1, 1);
+    const [red, green, blue, alpha] = swatch.getImageData(0, 0, 1, 1).data;
+    return [red!, green!, blue!, alpha! / 255];
+  }
+
   const isAccentFilled = (target: Element) => {
-    const fill = getComputedStyle(target).backgroundColor;
-    const parts = fill.match(/[\d.]+/g)?.map(Number) ?? [];
-    if (parts.length < 3 || (parts.length === 4 && parts[3]! < 0.5)) return false;
-    const accent = rgbOf(cssValue(document.documentElement, "--accent-fill")).map((channel) => channel * 255);
-    return Math.hypot(parts[0]! - accent[0]!, parts[1]! - accent[1]!, parts[2]! - accent[2]!) < 60;
+    const [red, green, blue, alpha] = rgbaOf(getComputedStyle(target).backgroundColor);
+    if (alpha < 0.5) return false;
+    const { hue, saturation } = hueAndSaturation(red, green, blue);
+    return saturation > 0.55 && hue >= amberHues.from && hue <= amberHues.to;
   };
 
   const shapeOf = (target: Element): AimShape => (target.matches("a") && getComputedStyle(target).display === "inline" ? "underline" : "frame");
