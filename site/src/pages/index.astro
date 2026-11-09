@@ -312,8 +312,9 @@ import appIcon from "../assets/app-icon.png";
 
   .bar[data-scrolled] {
     border-bottom-color: var(--border);
-    background-color: color-mix(in srgb, var(--background) 82%, transparent);
-    backdrop-filter: blur(10px);
+    background-color: color-mix(in srgb, var(--background) 72%, transparent);
+    background-image: repeating-conic-gradient(var(--background) 0 25%, transparent 0 50%);
+    background-size: 2px 2px;
   }
 
   .bar-inner {
