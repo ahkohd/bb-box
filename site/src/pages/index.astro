@@ -7,6 +7,7 @@ import CopyButton from "../components/home/CopyButton.astro";
 import DemoVideo from "../components/home/DemoVideo.astro";
 import DitherField from "../components/home/DitherField.astro";
 import HomeHead from "../components/home/HomeHead.astro";
+import MotionToggle from "../components/home/MotionToggle.astro";
 import ThemedShot from "../components/home/ThemedShot.astro";
 import ThemeToggle from "../components/ThemeToggle.astro";
 import { homePageHead } from "../head.ts";
@@ -59,6 +60,7 @@ const acquire = "bb box acquire linux-desktop-cpu";
             <CopyButton source="setup-prompt" class="button primary" label="Copy setup prompt" />
             <a class="button secondary" href={data.quickStart}>Quick start</a>
           </div>
+          <MotionToggle class="hero-motion" />
         </div>
       </section>
 
@@ -372,6 +374,17 @@ const acquire = "bb box acquire linux-desktop-cpu";
     .reply {
       animation: none;
     }
+  }
+
+  :global([data-motion="paused"]) .typed,
+  :global([data-motion="paused"]) .reply {
+    animation: none;
+  }
+
+  .hero-copy :global(.hero-motion) {
+    position: absolute;
+    right: 0;
+    bottom: -2.5rem;
   }
 
   h1 {
