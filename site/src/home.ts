@@ -14,7 +14,7 @@ import { absoluteAddress, markdownPath } from "./llms.ts";
 import { firstListIn, listUnder, plainText, tableUnder, type ListItem } from "./rendered.ts";
 import { pageUrl, readPages, repository, repositoryRef } from "./repo.ts";
 import { installCommand, quickStartOnGitHub, setupPrompt } from "./setup-prompt.ts";
-import { startingPoints, trustNote } from "./starting-points.ts";
+import { startingPoints } from "./starting-points.ts";
 
 export const tagline = "Computers for BB threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.";
 export const headline = "Computers for BB threads";
@@ -100,7 +100,6 @@ export interface HomeData {
   requirements: ListItem[];
   prompt: string;
   command: string;
-  trustNote: string;
   links: { title: string; words: string; href: string }[];
   quickStart: string;
   repository: string;
@@ -122,7 +121,6 @@ export async function homeData(base: string, site: URL | undefined): Promise<Hom
     requirements: firstListIn(quickStartEntry?.rendered?.html ?? ""),
     prompt: setupPrompt(pages, quickStartMarkdown),
     command,
-    trustNote,
     links: startingPoints.map((way) => ({ title: way.title, words: way.words, href: pageUrl(base, way.id) })),
     quickStart: pageUrl(base, "start/quick-start"),
     repository,

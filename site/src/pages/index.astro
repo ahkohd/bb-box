@@ -32,6 +32,8 @@ const page = {
 const docs = pageUrl(base, "start");
 const acquire = "bb box acquire linux-desktop-cpu";
 const markDelay = (row: number, column: number) => row * 70 + column * 35;
+import { Image } from "astro:assets";
+import appIcon from "../assets/app-icon.png";
 ---
 
 <html lang="en" dir="ltr">
@@ -43,14 +45,13 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
     <header class="bar">
       <div class="bar-inner">
       <a class="brand" href={base}>
-        <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.5 20.5 7v10L12 21.5 3.5 17V7z"></path><path d="M3.8 7.2 12 11.8l8.2-4.6M12 11.8v9.5"></path></svg>
+        <Image class="mark" src={appIcon} alt="" width={24} height={24} />
         BB Box
       </a>
       <nav aria-label="Site">
         <a href={docs}>Docs</a>
         <a href={pageUrl(base, "reference")}>Reference</a>
         <a href={data.repository}>GitHub</a>
-        <MotionToggle />
         <ThemeToggle />
       </nav>
       </div>
@@ -123,19 +124,15 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
           ))}
         </ul>
         <ul class="more-features">
-          {listed.map((feature) => (
+          {listed.map((feature, index) => (
             <li>
-              <span class="branch"></span>
+              <span class:list={["branch", { last: index === listed.length - 1 }]}></span>
               <span>
                 <span class="feature-title">{feature.title}.</span>{" "}
                 <span class="feature-words" set:html={feature.html} />
               </span>
             </li>
           ))}
-          <li class="trust">
-            <span class="branch last"></span>
-            <span>{data.trustNote}</span>
-          </li>
         </ul>
       </section>
 
@@ -233,6 +230,7 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
           <a href={`${base.replace(/\/?$/, "/")}llms.txt`}>llms.txt</a>
           <a href={data.licence}>MIT licence</a>
           <a href={data.thirdParty}>Third-party software</a>
+          <MotionToggle />
         </p>
       </div>
     </footer>
@@ -338,8 +336,9 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
   }
 
   .mark {
-    width: 1.25rem;
-    height: 1.25rem;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 22%;
   }
 
   nav {
@@ -474,7 +473,7 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
     height: 2.75rem;
     padding: 0 1.25rem;
     border: 0;
-    border-radius: 6px;
+    border-radius: 0;
     font-size: 0.9375rem;
     text-decoration: none;
     cursor: pointer;
@@ -621,7 +620,12 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
     font-size: 0.9375rem;
   }
 
+  .tree {
+    --branch-y: calc(0.375rem + 0.75em);
+  }
+
   .tree li {
+    position: relative;
     display: grid;
     grid-template-columns: 3.25em 7rem minmax(0, 1fr);
     align-items: baseline;
@@ -635,15 +639,35 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
     color: var(--muted-foreground);
   }
 
+  .branch::before,
+  .branch::after {
+    content: "";
+    position: absolute;
+    left: 0.375em;
+    border-color: var(--frame-ink);
+    border-style: solid;
+    border-width: 0;
+  }
+
   .branch::before {
-    content: "├──" / "";
-    font-family: var(--sl-font-mono);
-    font-size: 0.8125rem;
-    color: var(--frame-ink);
+    top: 0;
+    bottom: 0;
+    border-left-width: 1px;
+  }
+
+  .branch::after {
+    top: var(--branch-y);
+    width: 1.75em;
+    border-top-width: 1px;
   }
 
   .branch.last::before {
-    content: "└──" / "";
+    bottom: auto;
+    height: var(--branch-y);
+  }
+
+  .more-features li:first-child .branch::before {
+    top: var(--branch-y);
   }
 
   .tree-words {
@@ -684,9 +708,9 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
   }
 
   .more-features {
+    --branch-y: calc(0.3125rem + 0.775em);
     display: flex;
     flex-direction: column;
-    gap: 0.625rem;
     margin: 3.5rem 0 0;
     padding: 0;
     list-style: none;
@@ -695,9 +719,11 @@ const markDelay = (row: number, column: number) => row * 70 + column * 35;
   }
 
   .more-features li {
+    position: relative;
     display: grid;
     grid-template-columns: 3.25em minmax(0, 1fr);
     max-width: 48rem;
+    padding: 0.3125rem 0;
   }
 
   .feature-words {

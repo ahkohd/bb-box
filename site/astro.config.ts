@@ -15,7 +15,7 @@ export default defineConfig({
     starlight({
       title: "BB Box",
       description: "Computers for BB threads.",
-      logo: { light: "./src/assets/logo-light.svg", dark: "./src/assets/logo-dark.svg" },
+      logo: { src: "./src/assets/app-icon.png" },
       favicon: "/favicon.png",
       head: siteHead({ site, base }),
       customCss: ["@fontsource-variable/inter", "@fontsource-variable/jetbrains-mono", "./src/styles/theme.css"],
