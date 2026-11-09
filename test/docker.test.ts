@@ -721,7 +721,7 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
   await make("other").acquire(identity(), null, hooks().hooks, signal());
   const again = await backend.doctor(signal());
   assert.match(again.notes[1]!, /leaves alone the containers of other installs on fake-docker: 1 of install other\. They still count against its room\./);
-  assert.match(again.checks.find((check) => check.id === "docker.network")!.detail, /Made by bb-box/);
+  assert.match(again.checks.find((check) => check.id === "docker.network")!.detail, /Made by BB Box/);
 
   writeFileSync(join(fake.root, "images.json"), JSON.stringify({ "bbbox/linux:1": { "bbbox.image-version": "0" } }));
   fake.set({ rootless: true, arch: "aarch64" });

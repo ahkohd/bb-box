@@ -2007,7 +2007,7 @@ export class DockerBackend implements Backend {
       if (network.exitCode !== 0) {
         push("docker.network", `Network ${this.#config.network}`, "ok", `${PRODUCT} makes it with the first box.`);
       } else if (network.stdout.includes(`"${LABELS.backend}":"docker"`)) {
-        push("docker.network", `Network ${this.#config.network}`, "ok", "Made by bb-box. Its boxes cannot reach each other on it.");
+        push("docker.network", `Network ${this.#config.network}`, "ok", `Made by ${PRODUCT}. Its boxes cannot reach each other on it.`);
       } else {
         push(
           "docker.network",

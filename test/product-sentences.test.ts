@@ -3,14 +3,18 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { missingBackendWords } from "../src/backends/index.ts";
+import { BY_OUTSIDE, byBbBox } from "../src/core/box-log.ts";
+import { byWords } from "../src/core/snapshot.ts";
 import { reasonAfterColon } from "../src/app/settings-drafts.ts";
 import { screenAround } from "../src/app/snapshot-words.ts";
 
 const ROOT = join(import.meta.dirname, "../src");
 const MESSAGE_ROOTS = ["core", "plugin", "backends"];
-const PROSE = new RegExp(`${["bb", "box"].join("-")}(?:'s)?(?=\\s+[A-Za-z])`);
-const CODESIGN_IDENTITY = `${["bb", "box"].join("-")} local code signing`;
+const NAME = ["bb", "box"].join("-");
+const PROSE = new RegExp(`${NAME}(?:'s)?(?:(?=\\s+[A-Za-z])|\\s+\\$\\{|[.,;:!?](?=\\s|["'\`]|$))`);
+const CODESIGN_IDENTITY = `${NAME} local code signing`;
 const PLACEHOLDER = "${" + "PRODUCT}";
+const ALLOWED = "logLine, guestScript, commandHelp, recordPrefix, programName, providerResource, guestComment, agentInstruction and profileOwner";
 
 function filesUnder(dir: string): string[] {
   const found: string[] = [];
@@ -51,10 +55,27 @@ function recordPrefix(body: string): boolean {
   return /^(?:bb-box install\b|bb-box warm\b|bb-box image box:)/.test(body);
 }
 
-function skipped(before: string): "guestScript" | "commandHelp" | "logLine" | null {
+function programName(body: string): boolean {
+  if (body.startsWith("bb-box:")) return true;
+  return /(?:echo ["']bb-box: |printf 'bb-box: |WriteLine\('bb-box: |die "bb-box: )/.test(body);
+}
+
+function providerResource(body: string): boolean {
+  if (body.includes("tag:bb-box")) return true;
+  if (/^bb-box \$\{[^}]*\}(?:$| template\b| image of | image build\b| box )/.test(body)) return true;
+  return body.includes("Host image snapshot ") && /: bb-box \$\{[^}]*\}\.$/.test(body);
+}
+
+function allowance(body: string, before: string): string | null {
   if (/String\.raw\s*$/.test(before.slice(-40))) return "guestScript";
   if (insideUnclosed(before, /\.describe\s*\(/)) return "commandHelp";
   if (insideUnclosed(before, /(?:^|[^.\w])log\s*\?\.\(|\.log\s*\?\.\(|\.log\s*\(|\.logError\s*\(|console\.(?:log|info|warn|error|debug)\s*\(/)) return "logLine";
+  if (recordPrefix(body)) return "recordPrefix";
+  if (body.startsWith("bb-box: use box_acquire")) return "agentInstruction";
+  if (/# (?:Written|Added) by bb-box\b/.test(body)) return "guestComment";
+  if (programName(body)) return "programName";
+  if (body.includes("other plugins") || body.includes("which runs bb-box")) return "profileOwner";
+  if (providerResource(body)) return "providerResource";
   return null;
 }
 
@@ -135,7 +156,7 @@ test("a message says BB Box, and a quoted sentence never leaves ${PRODUCT} for t
           const body = (quote === "`" ? raw : unescapeQuoted(raw)).replaceAll(CODESIGN_IDENTITY, "");
           const line = text.slice(0, start).split("\n").length;
           if (quote !== "`" && body.includes(PLACEHOLDER)) quoted.push(`${file}:${line}`);
-          if (PROSE.test(body) && !skipped(before) && !recordPrefix(body)) prose.push(`${file}:${line} ${body.replace(/\s+/g, " ").slice(0, 120)}`);
+          if (PROSE.test(body) && !allowance(body, before)) prose.push(`${file}:${line} ${body.replace(/\s+/g, " ").slice(0, 120)}`);
           continue;
         }
         if (text[i] === "{") depth++;
@@ -146,7 +167,12 @@ test("a message says BB Box, and a quoted sentence never leaves ${PRODUCT} for t
     walk(false);
   }
   assert.deepEqual(quoted, [], "a double or single quoted sentence still contains ${PRODUCT}");
-  assert.deepEqual(prose, [], "a message still says bb-box before a word, outside logLine, guestScript, commandHelp and codesignIdentity");
+  assert.deepEqual(prose, [], `a message still says bb-box where a person reads it, outside ${ALLOWED}`);
+});
+
+test("a snapshot names BB Box when BB Box or someone outside it took it", () => {
+  assert.equal(byWords(byBbBox("the sweep")), "by BB Box: the sweep");
+  assert.equal(byWords(BY_OUTSIDE), "outside BB Box");
 });
 
 test("a missing backend says what to do next, and its note stays on boxForm", () => {

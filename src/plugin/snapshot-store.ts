@@ -717,7 +717,7 @@ export class SnapshotStore implements SnapshotLedger {
       : file.schema !== "main"
         ? file.spec.file
         : `${PRODUCT}'s database, as its handle refused to attach ${file.spec.file}${file.refusal ? `: ${file.refusal}` : ""}`;
-    const fix = `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart bb-box. Until then ${PRODUCT} takes and deletes no snapshots.`;
+    const fix = `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart ${PRODUCT}. Until then ${PRODUCT} takes and deletes no snapshots.`;
     if (file.problem) return [{ id: "snapshots", name: "Snapshots' records", status: "fail", detail: `${PRODUCT} could not set up its snapshots' records in ${where}: ${sentence(file.problem)}`, fix }];
     if (this.#failure) {
       return [

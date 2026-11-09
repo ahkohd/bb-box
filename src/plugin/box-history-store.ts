@@ -659,7 +659,7 @@ export class BoxHistoryStore {
 
   checks(state: string): DoctorCheck[] {
     const file = this.#file;
-    if (file.problem) return [{ id: "box-history", name: "Box history", status: "fail", detail: `${PRODUCT} could not set up ${file.spec.file}: ${sentence(file.problem)}`, fix: `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart bb-box.` }];
+    if (file.problem) return [{ id: "box-history", name: "Box history", status: "fail", detail: `${PRODUCT} could not set up ${file.spec.file}: ${sentence(file.problem)}`, fix: `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart ${PRODUCT}.` }];
     const used = this.usedBytes();
     let cap: number | null = null;
     try {

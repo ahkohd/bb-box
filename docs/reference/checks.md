@@ -147,7 +147,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `docker.cpuset` | Cores a box sees | Docker can pin each box to as many CPUs as it has cores, so nproc in a box says its cores. |
 | `docker.apparmor` | Programs in boxes under the host's AppArmor | A setgid program in a box, as sudo runs, works under the Docker host's AppArmor profiles, which on a host that is itself a container cannot name a box's files. |
 | `docker.lxcfs` | Memory and CPUs a box sees | The host runs LXCFS, so free, /proc/meminfo and /proc/cpuinfo in a box say its own memory and CPUs, and no running box's LXCFS files have broken. |
-| `docker.network` | Network &lt;network> | BB Box's network for its boxes, made by bb-box. |
+| `docker.network` | Network &lt;network> | BB Box's network for its boxes, made by BB Box. |
 | `docker.privileged` | Docker in boxes | Whether boxes are privileged, so they can run Docker inside. |
 | `docker.one-backend` | One backend for this daemon | No other backend of this install that is on reaches the same Docker daemon, known by its engine ID, its name and its Docker root together. Where two do, BB Box places GPU boxes there through the one whose ID sorts first, as each would count only its own boxes on the cards; boxes with no GPU are made through either (071). |
 | `docker.gpus` | GPUs | The NVIDIA cards Docker lists as CDI devices, for GPU boxes, as nvidia-smi in a container given them reads them; whether every box can open every card there; another install's GPU boxes on the host; and a box with a whole card that BB Box cannot match to a card it reads, which stops GPU boxes there (071). |

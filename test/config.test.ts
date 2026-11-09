@@ -967,7 +967,7 @@ test("bb box config check and apply read a file from where bb runs, and migrated
   assert.equal(app().configuration.general().perThreadLimit, 5);
 
   const migrated = await harness.behavior.runCli(["config", "migrated"]);
-  assert.match(migrated.stdout ?? "", /^bb-box 0\.2\.0 moved these BB settings into its configuration on /);
+  assert.match(migrated.stdout ?? "", /^BB Box 0\.2\.0 moved these BB settings into its configuration on /);
   assert.match(migrated.stdout ?? "", /\nfake-enabled: true\n/);
   assert.match((await harness.behavior.runCli(["config", "migrated", "--remove"])).stdout ?? "", /Removed the copy/);
   assert.match((await harness.behavior.runCli(["config", "migrated"])).stdout ?? "", /There is no copy/);

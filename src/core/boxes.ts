@@ -152,7 +152,7 @@ export type BoxState =
   | "stopped"
   /** The acquire failed. The backend released what it had claimed. */
   | "failed"
-  /** The guest was deleted outside bb-box. */
+  /** The guest was deleted outside BB Box. */
   | "gone"
   | "releasing";
 
@@ -819,7 +819,7 @@ function observed(current: BoxRecord, power: PowerState | null, moving = false):
   const settled = current.state === "ready" || current.state === "stopped" || current.state === "gone";
   const started = (current.state === "stopping" || current.state === "starting") && current.readyAt !== null;
   if (!settled && !(moving && started)) return {};
-  if (power === null) return { state: "gone", error: "The guest was deleted outside bb-box." };
+  if (power === null) return { state: "gone", error: `The guest was deleted outside ${PRODUCT}.` };
   // The provider cannot tell, for example a machine that does not answer: keep what we know.
   if (power === "unknown") return {};
   const state = power === "running" ? "ready" : "stopped";
@@ -1931,7 +1931,7 @@ export class Boxes {
           name: `Identity reset of ${box.name}`,
           status: "warn",
           detail: `BB no longer has machine ${check.machine} of box ${box.name}, since ${utc(check.at)}, and ${PRODUCT} could not read whether the box's identity reset (${check.why}), so it keeps the box.`,
-          fix: `${PRODUCT} reads the box's /var/lib/bb-box/identity-resets again at each sweep, once the box answers. If you removed the machine in BB on purpose, release the box in bb-box.`,
+          fix: `${PRODUCT} reads the box's /var/lib/bb-box/identity-resets again at each sweep, once the box answers. If you removed the machine in BB on purpose, release the box in ${PRODUCT}.`,
         });
       }
       return checks;

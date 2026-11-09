@@ -476,9 +476,9 @@ export function byWords(by: Actor): string {
     case "command":
       return "by a bb box command";
     case "bb-box":
-      return `by bb-box: ${by.why}`;
+      return `by ${PRODUCT}: ${by.why}`;
     case "outside":
-      return "outside bb-box";
+      return `outside ${PRODUCT}`;
     case "unknown":
       return `by someone ${PRODUCT} has no record of`;
   }

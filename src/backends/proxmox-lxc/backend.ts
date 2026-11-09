@@ -5445,7 +5445,7 @@ export class ProxmoxLxcBackend implements Backend {
     const wanted = withCard ? (!marker || marker.part === "none" ? "place" : "as-is") : gpuDeviceLines(config).length ? "strip" : "as-is";
     if (wanted === "as-is") return wanted;
     if ((await api.status(vmid, signal))?.status === "running") {
-      const words = `The guest ${PRODUCT} had made for box ${name} was running before bb-box ${withCard ? "gave it its card" : "took out the card's device lines it carries"}, so ${PRODUCT} released it.`;
+      const words = `The guest ${PRODUCT} had made for box ${name} was running before ${PRODUCT} ${withCard ? "gave it its card" : "took out the card's device lines it carries"}, so ${PRODUCT} released it.`;
       throw new BackendError("no_capacity", `${words} Try again.`, `${words} Try again, or ask the user.`);
     }
     return wanted;

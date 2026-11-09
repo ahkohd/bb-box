@@ -1036,7 +1036,7 @@ export function configText(state: ConfigState): string {
 /** The copy of BB's settings the move kept, for bb box config migrated. */
 export function movedText(copy: MovedCopy): string {
   const lines = [
-    `bb-box ${copy.version} moved these BB settings into its configuration on ${new Date(copy.at).toISOString()}. Secrets show only whether they were set.`,
+    `${PRODUCT} ${copy.version} moved these BB settings into its configuration on ${new Date(copy.at).toISOString()}. Secrets show only whether they were set.`,
     "",
     ...Object.entries(copy.values).map(([key, value]) => `${key}: ${fieldValue(value)}`),
   ];

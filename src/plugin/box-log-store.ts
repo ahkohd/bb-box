@@ -383,12 +383,12 @@ export class BoxLogStore implements BoxLog {
           name: "Box log",
           status: "fail",
           detail: `${PRODUCT} could not write ${failures.count} ${failures.count === 1 ? "event" : "events"} to its box log in ${where}, from ${new Date(failures.firstAt).toISOString()} to ${new Date(failures.lastAt).toISOString()}: ${sentence(failures.lastError)} Boxes, stops, starts and releases still work, and pages say nothing the log would have said about those boxes.`,
-          fix: `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart bb-box.`,
+          fix: `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart ${PRODUCT}.`,
         },
       ];
     }
     if (file.problem) {
-      return [{ id: "box-log", name: "Box log", status: "fail", detail: `${PRODUCT} could not set up its box log in ${where}: ${sentence(file.problem)}`, fix: `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart bb-box.` }];
+      return [{ id: "box-log", name: "Box log", status: "fail", detail: `${PRODUCT} could not set up its box log in ${where}: ${sentence(file.problem)}`, fix: `Check that BB's data folder has room and that ${PRODUCT}'s files in it are writable, then restart ${PRODUCT}.` }];
     }
     let rows: number | null = null;
     try {

@@ -148,7 +148,7 @@ export function namespaceDeviceOffer(report: MacReport | null, setup = setupDir(
   const simulator = report.capabilities.simulator;
   if (simulator.is !== "yes") return { ok: false, why: `Namespace's last Mac measured, an ${report.chip ?? "unknown chip"}, cannot run the iOS Simulator: ${simulator.is === "no" ? simulator.why : "not known"}` };
   const newest = simulator.what.newest;
-  if (!newest) return { ok: false, why: `Namespace's last Mac was measured by an older bb-box, which did not ask its newest iOS runtime; ${PRODUCT} starts a Namespace Mac for a few minutes to measure it again` };
+  if (!newest) return { ok: false, why: `Namespace's last Mac was measured by an older ${PRODUCT}, which did not ask its newest iOS runtime; ${PRODUCT} starts a Namespace Mac for a few minutes to measure it again` };
   const slim = slimList(newest.os, newest.build, setup);
   if (!slim) return { ok: false, why: `${PRODUCT} has no slimming list for iOS ${newest.os} (${newest.build}), the newest runtime of Namespace's Macs: make one as docs/research/ios-simulator-slimming.md says, as setup/tart/ios/slim/ios-${newest.os}-${newest.build}.txt` };
   const types = new Set(simulator.what.deviceTypes ?? []);

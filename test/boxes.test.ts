@@ -1483,7 +1483,7 @@ test("a guest deleted outside BB Box marks the box gone, and release still works
   await world.backend.release(box.guest!, QUIET);
   const refreshed = await world.boxes.refresh(THREAD, box.name);
   assert.equal(refreshed.state, "gone");
-  assert.match(refreshed.error!, /deleted outside bb-box/);
+  assert.match(refreshed.error!, /deleted outside BB Box/);
   await assert.rejects(world.boxes.run(THREAD, box.name, "true"), /no longer exists/);
   assert.equal(await world.boxes.release(THREAD, box.name, "the test asked"), null);
   assert.deepEqual(await world.boxes.list(THREAD), []);

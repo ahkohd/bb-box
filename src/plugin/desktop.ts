@@ -938,7 +938,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
                   .find(boxId)
                   .then((box) =>
                     bb.log.warn(
-                      `Box ${box?.name ?? boxId}'s desktop VNC server ${why}, so bb-box ${error ? `could not restart it: ${error.message}` : "restarted it, and the viewer connects again"}.`,
+                      `Box ${box?.name ?? boxId}'s desktop VNC server ${why}, so ${PRODUCT} ${error ? `could not restart it: ${error.message}` : "restarted it, and the viewer connects again"}.`,
                     ),
                   )
                   .catch((caught) => deps.logError("log a desktop server's restart", caught));

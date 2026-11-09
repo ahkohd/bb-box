@@ -504,7 +504,7 @@ test("071 unit 7 round 2, Astra 1: an acquire resumed after its clone and before
   const running = box("linux", "shared");
   bridge.plain(7005, running, INSTALL, { running: true });
   bridge.pass();
-  await assert.rejects(backend.acquire(running, stoppedGuestOf(7005, running, 9000), hooks(), signal()), /was running before bb-box gave it its card, so BB Box released it/);
+  await assert.rejects(backend.acquire(running, stoppedGuestOf(7005, running, 9000), hooks(), signal()), /was running before BB Box gave it its card, so BB Box released it/);
   assert.equal(bridge.proxmox.guests.has(7005), false);
 });
 
