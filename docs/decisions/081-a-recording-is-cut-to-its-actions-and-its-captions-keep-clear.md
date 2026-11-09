@@ -139,6 +139,13 @@ window last opened or changed size. The pointer's glide, the ring and
 the hand move with it. The ring's stages from the change on are not drawn,
 and a ring with none left is not drawn at all.
 
+### A zoomed window that goes takes the zoom with it
+
+A change covering most of a zoomed group's window, when the agent's next
+action is in another window, is that window going, whatever its size. The
+camera eases out as it goes, so the next window opens in full view rather
+than inside a zoom on bare desktop.
+
 ### The camera pans rather than pumps
 
 After a zoomed group, the camera stays in and pans to the next group when

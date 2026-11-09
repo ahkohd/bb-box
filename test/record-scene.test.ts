@@ -179,6 +179,25 @@ test("a camera move that a result's hold would freeze halfway ends by that resul
   assert.ok(cameraAt(without.scene!.camera, 4.3).zoom < top, "with no result to hold, the camera takes its usual 0.9 s");
 });
 
+test("a zoom on a small window eases out as that window goes and the agent moves on, and holds when the agent stays in it (081)", () => {
+  const ready = { x: 860, y: 480, width: 200, height: 120 };
+  const note = { x: 300, y: 150, width: 700, height: 400 };
+  const button = { at: 2, x: 960, y: 540, button: "left" as const, count: 1 as const, area: { x: 920, y: 520, width: 80, height: 40 }, role: "push button", window: ready };
+  const closing = camera({
+    clicks: [button, { at: 6.2, x: 500, y: 300, button: "left", count: 1, area: { x: 310, y: 180, width: 680, height: 360 }, role: "text", window: note }],
+    changes: [{ at: 3, ...ready }],
+    length: 12,
+  });
+  assert.ok(cameraAt(closing, 2.9).zoom > 1.5, `zoomed on the button: ${JSON.stringify(closing)}`);
+  assert.equal(cameraAt(closing, 3.95).zoom, 1, "out as the window goes");
+  const staying = camera({
+    clicks: [button, { ...button, at: 6.2 }],
+    changes: [{ at: 3, ...ready }],
+    length: 12,
+  });
+  assert.ok(cameraAt(staying, 3.95).zoom > 1, "a window that repaints, and is clicked in again, keeps the zoom its usual time");
+});
+
 test("the camera pans instead of easing out and back in when the next view overlaps this one within the group gap, counting only time that is not cut (081)", () => {
   const window = { x: 600, y: 300, width: 500, height: 300 };
   const at = (t: number, x: number) => ({ at: t, x, y: 450, button: "left" as const, count: 1 as const, area: { x: x - 40, y: 430, width: 80, height: 40 }, role: "push button", window });

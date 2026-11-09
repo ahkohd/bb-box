@@ -125,10 +125,8 @@ function sameWindow(a: InputArea, b: InputArea): boolean {
 }
 
 function movesOnFrom(scene: Scene, click: PlacedClick, window: InputArea): boolean {
-  const later = [...scene.clicks, ...scene.scrolls, ...scene.typing]
-    .filter((action) => action.at > click.at + 0.001 && !!action.window && areaOf(action.window) > 0)
-    .sort((a, b) => a.at - b.at)[0];
-  return !later || !sameWindow(later.window!, window);
+  const next = nextWindowAfter(scene, click.at);
+  return !next || !sameWindow(next, window);
 }
 
 function windowSettledBefore(scene: Scene, window: InputArea, goneAt: number): number {
@@ -749,12 +747,26 @@ function showsOutside(scene: Scene, view: View, change: ChangedRegion): boolean 
   return areaOf(change) > screen * BIG_CHANGE_SHARE || areaOf(change) - overlap(change, viewArea(scene, view)) > screen * OUTSIDE_CHANGE_SHARE;
 }
 
+function nextWindowAfter(scene: Scene, at: number): InputArea | null {
+  const later = [...scene.clicks, ...scene.scrolls, ...scene.typing]
+    .filter((action) => action.at > at + 0.001 && !!action.window && areaOf(action.window) > 0)
+    .sort((a, b) => a.at - b.at)[0];
+  return later?.window ?? null;
+}
+
+function takesItsWindow(scene: Scene, window: InputArea | null, change: ChangedRegion): boolean {
+  if (!window || !removesMost(change, window)) return false;
+  const next = nextWindowAfter(scene, change.at);
+  return !!next && !sameWindow(next, window);
+}
+
 function outsideChangeAt(scene: Scene, members: readonly Focus[], actions: readonly Action[]): number | null {
   const view = viewOfMembers(scene, members);
   if (view.zoom === 1) return null;
   const first = members[0]!.at;
   const until = Math.min(scene.length, members.at(-1)!.at + LINGER_S);
-  const outside = scene.changes.filter((change) => change.at > first && change.at < until && showsOutside(scene, view, change) && !actionsOwn(actions, change)).map((change) => change.at);
+  const window = members.find((member) => member.window)?.window ?? null;
+  const outside = scene.changes.filter((change) => change.at > first && change.at < until && (showsOutside(scene, view, change) || takesItsWindow(scene, window, change)) && !actionsOwn(actions, change)).map((change) => change.at);
   return outside.length ? Math.min(...outside) : null;
 }
 
