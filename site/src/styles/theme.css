@@ -414,6 +414,11 @@ body,
 
 .sl-markdown-content table:not(:where(.not-content *)) {
   font-size: 0.875rem;
+  background:
+    linear-gradient(to right, var(--background) 1rem, transparent) left / 2.5rem 100% no-repeat local,
+    linear-gradient(to left, var(--background) 1rem, transparent) right / 2.5rem 100% no-repeat local,
+    linear-gradient(to right, var(--frame-ink), transparent) left / 0.5rem 100% no-repeat scroll,
+    linear-gradient(to left, var(--frame-ink), transparent) right / 0.5rem 100% no-repeat scroll;
 }
 
 .sl-markdown-content :is(th, td):not(:where(.not-content *)) {
@@ -580,11 +585,11 @@ dialog[aria-label="Search"] .dialog-frame {
   }
 
   .sl-markdown-content :is(th, td):not(:where(.not-content *)) {
-    min-width: 9rem;
+    min-width: 12rem;
   }
 
   .sl-markdown-content :is(th, td):not(:where(.not-content *)):first-child {
-    min-width: 7rem;
+    min-width: 8rem;
   }
 
   button[data-open-modal] {
