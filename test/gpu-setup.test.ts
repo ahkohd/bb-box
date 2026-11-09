@@ -1014,7 +1014,7 @@ hosted("071 unit 5, go review 5 F2: --remove is refused while a helper of 0.4.0 
   host.forgetCalls();
   const refused = host.setup(["--remove"]);
   assert.equal(refused.status, 1, refused.stdout + refused.stderr);
-  assert.match(refused.stderr, /^setup-gpu\.sh: bb-box-gpu 0\.4\.3 is installed, which starts, stops and deletes BB Box's guests on this host, and each BB that has read its report keeps that: with it removed, such a BB would start, stop and release none of its boxes here\. To stop its writes, run setup-gpu\.sh --writes off\. To go back to Proxmox's API, run setup-gpu\.sh --downgrade from the BB Box release with bb-box-gpu 0\.2\.0: each BB reads that version in the report at its next doctor run or box action here, and uses the API again\. --force removes it all the same\. Nothing was changed\.$/m);
+  assert.match(refused.stderr, /^setup-gpu\.sh: bb-box-gpu 0\.4\.3 is installed, which starts, stops and deletes bb-box's guests on this host, and each BB that has read its report keeps that: with it removed, such a BB would start, stop and release none of its boxes here\. To stop its writes, run setup-gpu\.sh --writes off\. To go back to Proxmox's API, run setup-gpu\.sh --downgrade from the BB Box release with bb-box-gpu 0\.2\.0: each BB reads that version in the report at its next doctor run or box action here, and uses the API again\. --force removes it all the same\. Nothing was changed\.$/m);
   assert.deepEqual(host.calls(), [], "no unit is touched");
   assert.equal(host.installedVersion(), "0.4.3");
   assert.ok(host.active("bb-box-gpu.service"));
