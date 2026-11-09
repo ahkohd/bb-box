@@ -7,6 +7,8 @@ export const IDLE_LEAD_S = 0.25;
 export const QUIET_CHANGE_SHARE = 0.003;
 export const NOTABLE_MOST_SHARE = 0.5;
 export const CLICK_MARK_PX = 48;
+export const CLICKED_ELEMENT_MOST_SHARE = 0.02;
+export const DRAG_CHANGE_MARGIN_S = 0.2;
 export const HEAD_LEAD_S = 0.2;
 export const END_HOLD_S = 1;
 export const FADE_OUT_S = 0.5;
@@ -20,6 +22,10 @@ const round3 = (value: number) => Math.round(value * 1000) / 1000;
 
 function changedArea(change: { readonly width: number; readonly height: number }): number {
   return Math.max(0, change.width) * Math.max(0, change.height);
+}
+
+function overlapsArea(a: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }, b: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }): boolean {
+  return Math.min(a.x + a.width, b.x + b.width) > Math.max(a.x, b.x) && Math.min(a.y + a.height, b.y + b.height) > Math.max(a.y, b.y);
 }
 
 function notableChangeMoments(scene: Scene): number[] {
@@ -59,14 +65,22 @@ export function idleStretches(moments: readonly number[], length: number): Span[
 export function notableRegions(scene: Scene, pointer: PointerPlan): ChangedRegion[] {
   const screen = scene.width * scene.height;
   const notable = (area: { readonly width: number; readonly height: number }) => changedArea(area) > 0 && changedArea(area) <= screen * NOTABLE_MOST_SHARE;
-  const changed = scene.changes.filter((change) => changedArea(change) > screen * QUIET_CHANGE_SHARE && notable(change));
-  const clicked = scene.clicks.map((click): ChangedRegion => (click.area && notable(click.area) ? { at: click.at, ...click.area } : { at: click.at, x: click.x - CLICK_MARK_PX / 2, y: click.y - CLICK_MARK_PX / 2, width: CLICK_MARK_PX, height: CLICK_MARK_PX }));
+  const drags = draggedWindows(scene, pointer);
+  const movedByDrag = (change: ChangedRegion) =>
+    drags.some((drag) => {
+      if (!drag.window || change.at < drag.from - DRAG_CHANGE_MARGIN_S || change.at > drag.to + DRAG_CHANGE_MARGIN_S) return false;
+      const moved = { ...drag.window, x: drag.window.x + drag.end.x - drag.start.x, y: drag.window.y + drag.end.y - drag.start.y };
+      return overlapsArea(change, drag.window) || overlapsArea(change, moved);
+    });
+  const changed = scene.changes.filter((change) => changedArea(change) > screen * QUIET_CHANGE_SHARE && notable(change) && !movedByDrag(change));
+  const smallElement = (area: { readonly width: number; readonly height: number }) => changedArea(area) > 0 && changedArea(area) <= screen * CLICKED_ELEMENT_MOST_SHARE;
+  const clicked = scene.clicks.map((click): ChangedRegion => (click.area && smallElement(click.area) ? { at: click.at, ...click.area } : { at: click.at, x: click.x - CLICK_MARK_PX / 2, y: click.y - CLICK_MARK_PX / 2, width: CLICK_MARK_PX, height: CLICK_MARK_PX }));
   const typed = scene.typing.flatMap((typing): ChangedRegion[] => {
     const focus = typing.secret || !typing.characters ? null : typingFocus(scene, typing, pointer);
     return focus && notable(focus) ? [{ at: typing.at, ...focus }] : [];
   });
   const mark = (at: number, point: { readonly x: number; readonly y: number }): ChangedRegion => ({ at, x: point.x - CLICK_MARK_PX / 2, y: point.y - CLICK_MARK_PX / 2, width: CLICK_MARK_PX, height: CLICK_MARK_PX });
-  const dragged = draggedWindows(scene, pointer).flatMap((drag): ChangedRegion[] => {
+  const dragged = drags.flatMap((drag): ChangedRegion[] => {
     const points = [mark(drag.from, drag.start), mark(drag.to, drag.end)];
     if (!drag.window) return points;
     const band = titleBandOf(drag.window);

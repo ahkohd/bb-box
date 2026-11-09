@@ -173,7 +173,10 @@ The captions of a step, from its step caption to the next one, go where
 they cover less of what changes during it, as the camera shows it: the
 changed regions larger than 0.3% and at most half of the screen, the
 elements clicked, the typed text, a drag's start and end points, and the
-title bar of a window dragged by it, where it starts and where it ends. The side the agent asked for at the
+title bar of a window dragged by it, where it starts and where it ends. While
+a window is dragged, the changes it makes count only through that title bar
+and the pointer's path, and a clicked element larger than 2% of the screen,
+such as a whole text area, counts as the point clicked. The side the agent asked for at the
 start is kept unless it covers something and covers more than 1.25 times
 what the other side would. Key pills, warnings and the skip marks move with
 the captions. The overlap is measured against a guess of the caption's
