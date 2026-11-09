@@ -594,6 +594,32 @@ test("after pressing a button the pointer rests on it, then glides to a far plac
   assert.equal(onButton[0]!.until, 5.5, "and it ends as the dialog goes");
 });
 
+test("a Cancel clicked just after its caption: no ring stage outlives the dialog, the pointer waits for the next caption before it moves, and the hand ends with the dialog (081)", () => {
+  const dialog = { x: 204, y: 118, width: 880, height: 560 };
+  const note = { x: 334, y: 188, width: 600, height: 330 };
+  const plan = planScene(
+    facts({
+      samples: [{ at: 1000, x: 640, y: 360, buttons: 0 }],
+      changes: [{ at: 4.733, x: 85, y: 0, width: 1106, height: 720 }, { at: 5.267, x: 120, y: 0, width: 968, height: 682 }],
+      inputs: [
+        { at: 1004.67, by: "agent", type: "keys", chord: normalChord("s", ["ctrl"]) },
+        { at: 1005.218, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 946, y: 658, area: { x: 904, y: 644, width: 85, height: 28 }, role: "push button", window: dialog },
+        { at: 1005.432, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 634, y: 366, area: { x: 335, y: 216, width: 598, height: 299 }, role: "text", window: note },
+      ],
+    }),
+    { width: 1280, height: 720 },
+    1000,
+    8,
+    { zoom: true, frame: true, captions: [5.129, 5.325, 5.372] },
+  );
+  for (const ring of plan.pointer.rings.filter((each) => each.x > 900)) {
+    for (let stage = 0; stage < 6; stage++) if (ringStageShown(ring, stage)) assert.ok(ring.at + (stage + 1) / 15 <= 5.267 + 0.001, `no ring stage is drawn once the dialog has gone: ${JSON.stringify(ring)}`);
+  }
+  const frame = plan.pointer.frames[Math.round(5.34 * CLIP_FPS)]!;
+  assert.deepEqual([frame.x, frame.y], [946, 658], "while the result reads, the pointer has not set off for the next click");
+  assert.equal(shapeAt(plan.shapes, 5.3), "arrow", "and it is an arrow again once the button has gone");
+});
+
 test("a click whose window goes on the click rings on the frames before it goes, or its ring ends there (081)", () => {
   const dialog = { x: 600, y: 300, width: 500, height: 400 };
   const cancel: InputEvent = { at: 1005, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 1000, y: 660, area: { x: 950, y: 640, width: 100, height: 40 }, role: "push button", window: dialog };
@@ -632,8 +658,8 @@ test("a click whose window goes on the click rings on the frames before it goes,
     1000,
     10,
     { zoom: true, frame: true, captions: [4.8] },
-  ).pointer.rings[0]!;
-  assert.ok(captioned.at >= 4.9 - 0.001, `never before the step caption that introduces it: ${captioned.at}`);
+  ).pointer.rings;
+  for (const ring of captioned) assert.ok(ring.at >= 4.9 - 0.001, `never before the step caption that introduces it: ${ring.at}`);
   const resized = planned(3, 4.95, 4.7).pointer.rings[0]!;
   assert.ok(Math.abs(resized.at - (4.7 + 1 / 15)) < 0.002, `no earlier than a frame after its window last settled: ${resized.at}`);
   const note = { x: 300, y: 200, width: 600, height: 330 };

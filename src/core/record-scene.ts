@@ -231,10 +231,11 @@ function knowsIdle(facts: SceneFacts, options: SceneOptions): boolean {
 export function planScene(facts: SceneFacts, size: { readonly width: number; readonly height: number }, start: number, length: number, options: SceneOptions): ScenePlan {
   const placed = sceneOf(facts, size, start, length);
   const { keys, keyTyping } = placed;
-  const scene = clicksBeforeTheirWindowGoes(placed.scene, keys, (options.captions ?? []).map((at) => at - facts.lag));
-  const moments = knowsIdle(facts, options) ? activityMoments(scene, keys, (options.captions ?? []).map((at) => at - facts.lag)) : null;
+  const captionMoments = (options.captions ?? []).map((at) => at - facts.lag);
+  const scene = clicksBeforeTheirWindowGoes(placed.scene, keys, captionMoments);
+  const moments = knowsIdle(facts, options) ? activityMoments(scene, keys, captionMoments) : null;
   const idle = moments ? idleStretches(moments, length) : null;
-  const pointer = planPointer(scene);
+  const pointer = planPointer(scene, captionMoments);
   const results = (options.results ?? []).map((at) => at - facts.lag);
   const camera = options.zoom ? planCamera(scene, pointer, idle ?? [], results) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
   const zooms = camera.some((key) => key.view.zoom > 1);
@@ -254,7 +255,7 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
   const canvas = cursorCanvas(size.width, content.width);
   const pointerHeight = Math.max(16, Math.round((canvas * CURSOR_BODY) / CURSOR_VIEW));
   const variants = pointerVariants(pointer.frames, facts.brightness ?? [], size, pointerHeight, facts.luma);
-  const shapes = pointerShapes(scene);
+  const shapes = pointerShapes(scene, captionMoments);
   const inks = inkSpans(shapes, variants, pointer.frames.length);
   const seen: PointerShape[] = [];
   for (const ink of inks) if (!seen.includes(ink.shape)) seen.push(ink.shape);

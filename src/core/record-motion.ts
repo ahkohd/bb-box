@@ -115,7 +115,7 @@ export const CLICK_EARLIER_MOST_S = 0.5;
 export const AFTER_PREVIOUS_ACTION_S = 0.1;
 
 export function ringStageShown(ring: Ring, stage: number): boolean {
-  return ring.until === undefined || ring.at + (stage * RING_FRAMES_PER_STAGE) / CLIP_FPS < ring.until - 0.001;
+  return ring.until === undefined || ring.at + ((stage + 1) * RING_FRAMES_PER_STAGE) / CLIP_FPS <= ring.until + 0.001;
 }
 
 export const SAME_WINDOW_SHARE = 0.5;
@@ -176,6 +176,7 @@ interface Keyframe {
   readonly y: number;
   readonly jump: boolean;
   readonly restUntil?: number;
+  readonly captionedAt?: number;
 }
 
 export const PRESS_FOLLOWED_S = 0.1;
@@ -252,14 +253,21 @@ function restedAfterPresses(points: readonly PointerPoint[]): Keyframe[] {
   return keyframes;
 }
 
-function pointerKeyframes(scene: Scene): Keyframe[] {
+function captionedBefore(captions: readonly number[], keyframe: Keyframe, before: Keyframe | undefined): Keyframe {
+  if (!before || !keyframe.jump) return keyframe;
+  const told = captions.filter((at) => at > before.at && at < keyframe.at);
+  return told.length ? { ...keyframe, captionedAt: Math.max(...told) } : keyframe;
+}
+
+function pointerKeyframes(scene: Scene, captions: readonly number[] = []): Keyframe[] {
   const acts = scene.agentCursor ? [] : [...scene.clicks.map((click) => ({ at: click.at, x: click.x, y: click.y })), ...scene.scrolls.map((scroll) => ({ at: scroll.at, x: scroll.x, y: scroll.y }))];
   const sameMove = (sample: PointerSample) => acts.some((act) => Math.abs(act.at - sample.at) <= SAME_MOVE_S && distance(act, sample) <= SAME_MOVE_PX);
   const real = withSampledPresses(scene.samples)
     .filter((sample, index) => index === 0 || !sameMove(sample))
     .map((sample): PointerPoint => ({ at: sample.at, x: sample.x, y: sample.y, act: false, press: sample.press }));
   const all = [...real, ...acts.map((act): PointerPoint => ({ ...act, act: true, press: false }))].sort((a, b) => a.at - b.at);
-  return restedAfterPresses(all);
+  const keyframes = restedAfterPresses(all);
+  return keyframes.map((keyframe, index) => captionedBefore(captions, keyframe, keyframes[index - 1]));
 }
 
 function glideStart(keyframes: readonly Keyframe[], index: number): number {
@@ -267,15 +275,16 @@ function glideStart(keyframes: readonly Keyframe[], index: number): number {
   const before = keyframes[index - 1];
   if (!before) return keyframe.at;
   const rested = keyframe.restUntil === undefined ? before.at : Math.min(keyframe.restUntil, keyframe.at - GLIDE_LEAST_S);
-  return Math.max(before.at, rested, keyframe.at - GLIDE_S);
+  const told = keyframe.captionedAt === undefined ? before.at : Math.min(keyframe.captionedAt, keyframe.at - 1 / CLIP_FPS);
+  return Math.max(before.at, rested, told, keyframe.at - GLIDE_S);
 }
 
 function frameCount(length: number): number {
   return Math.max(1, Math.round(length * CLIP_FPS) + 1);
 }
 
-export function planPointer(scene: Scene): PointerPlan {
-  const keyframes = pointerKeyframes(scene);
+export function planPointer(scene: Scene, captions: readonly number[] = []): PointerPlan {
+  const keyframes = pointerKeyframes(scene, captions);
   const count = frameCount(scene.length);
   if (!keyframes.length) return { frames: [], visibleFrom: null, rings: ringsOf(scene, []), drags: [], glides: [] };
   const glides: Span[] = keyframes.flatMap((keyframe, index) => (keyframe.jump ? [{ from: round3(glideStart(keyframes, index)), to: round3(keyframe.at) }] : []));
@@ -1038,7 +1047,7 @@ interface ShapeRequest {
   readonly rank: number;
 }
 
-function heldShapes(pieces: readonly ShapeSpan[]): ShapeSpan[] {
+function heldShapes(pieces: readonly ShapeSpan[], firmEnds: readonly number[] = []): ShapeSpan[] {
   const out: ShapeSpan[] = [];
   for (const piece of pieces) {
     const last = out.at(-1);
@@ -1050,7 +1059,8 @@ function heldShapes(pieces: readonly ShapeSpan[]): ShapeSpan[] {
       out[out.length - 1] = { ...last, to: piece.to };
       continue;
     }
-    if (!(last.from === 0 && last.shape === "arrow") && last.to - last.from < SHAPE_HOLD_S) {
+    const endsFirmly = firmEnds.some((at) => Math.abs(at - last.to) < 0.002);
+    if (!(last.from === 0 && last.shape === "arrow") && !endsFirmly && last.to - last.from < SHAPE_HOLD_S) {
       const until = Math.min(piece.to, last.from + SHAPE_HOLD_S);
       out[out.length - 1] = { ...last, to: until };
       if (until < piece.to) out.push({ ...piece, from: until });
@@ -1065,10 +1075,11 @@ export function shapeAt(spans: readonly ShapeSpan[], t: number): PointerShape {
   return (spans.find((span) => t >= span.from && t < span.to) ?? spans.at(-1))?.shape ?? "arrow";
 }
 
-export function pointerShapes(scene: Scene): ShapeSpan[] {
-  const pointer = planPointer(scene);
+export function pointerShapes(scene: Scene, captions: readonly number[] = []): ShapeSpan[] {
+  const pointer = planPointer(scene, captions);
   const drags = pressesOf(scene.samples).filter((press) => press.drag);
   const requests: ShapeRequest[] = [];
+  const firmEnds: number[] = [];
   const glideAway = (at: number) => pointer.glides.find((glide) => glide.from > at + 1e-3)?.from ?? scene.length;
   for (const drag of drags) requests.push({ from: drag.from, to: Math.max(drag.to, drag.from + SHAPE_HOLD_S), shape: dragCursor(scene, drag), rank: 3 });
   for (const click of scene.clicks) {
@@ -1076,7 +1087,9 @@ export function pointerShapes(scene: Scene): ShapeSpan[] {
     const shape = clickShape(click.role);
     if (shape === "arrow") continue;
     const held = shape === "ibeam" ? Math.max(click.at + SHAPE_HOLD_S, glideAway(click.at)) : click.at + SHAPE_HOLD_S;
-    requests.push({ from: click.at, to: held, shape, rank: 2 });
+    const gone = click.windowGoneAt;
+    requests.push({ from: click.at, to: gone !== undefined && gone > click.at ? Math.min(held, gone) : held, shape, rank: 2 });
+    if (gone !== undefined && gone > click.at && gone < held) firmEnds.push(gone);
   }
   for (const typing of scene.typing) {
     if (typing.secret || typing.characters === 0 || !textField(typing.role)) continue;
@@ -1098,7 +1111,7 @@ export function pointerShapes(scene: Scene): ShapeSpan[] {
     else pieces.push({ from, to, shape });
   }
   if (!pieces.length) return [{ from: 0, to: round3(scene.length), shape: "arrow" }];
-  return heldShapes(pieces);
+  return heldShapes(pieces, firmEnds);
 }
 
 export function keptMotion(cuts: readonly (readonly [number, number])[], kept: readonly Span[], least = 0.4): [number, number][] {

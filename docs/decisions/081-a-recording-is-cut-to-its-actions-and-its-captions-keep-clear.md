@@ -139,8 +139,11 @@ is then placed so its ring ends one frame of the capture before that
 change: at most 0.5 seconds earlier, and at least
 0.1 seconds after the action or caption before it, and a frame after the
 window last opened or changed size. The pointer's glide, the ring and
-the hand move with it. The ring's stages from the change on are not drawn,
-and a ring with none left is not drawn at all. A press the sampler sees
+the hand move with it. Only the ring's stages that end before the change are
+drawn, and a ring with none left is not drawn at all. The hand ends as the
+window goes, and the pointer sets off for the agent's next click no sooner
+than the caption the agent gave before it, so a held caption never shows
+it halfway across the page. A press the sampler sees
 within 1 second of such a click, at its place, is that click, not a second
 ring.
 
