@@ -34,7 +34,8 @@ comes next. Glides, rings, drags, pills' first second and camera moves are
 never cut, as before. This replaces the still stretches there; elsewhere,
 the still stretches are cut as before. `stills: "keep"` keeps both.
 
-A result, or a warning in its place, is held for reading at most 1 second.
+A result, or a warning in its place, is held for reading at most 1 second,
+and a warning stays until the next step as a result does.
 A step's caption stays up until the next step, so its reading time runs
 until then, through its result and that result's hold: a step is held only
 when that whole span is shorter than its reading time. A device's note of
@@ -127,12 +128,13 @@ third row with nothing to accompany.
 ### A click that closes its window rings before it goes
 
 A click's window goes on the click when a change covering most of it comes
-from 0.3 seconds before the click to 0.5 seconds after, and the agent's next
+from 0.1 seconds before the click to 0.5 seconds after, and the agent's next
 action in a window is in another one, or there is none. A window that
 appears or is uncovered then, and is acted in next, is not going. The click
 is then placed so its ring ends one frame of the capture before that
 change: at most 0.5 seconds earlier, and at least
-0.1 seconds after the action before it. The pointer's glide, the ring and
+0.1 seconds after the action before it and a frame after the window last
+opened or changed size. The pointer's glide, the ring and
 the hand move with it. The ring's stages from the change on are not drawn,
 and a ring with none left is not drawn at all.
 

@@ -108,7 +108,7 @@ export interface Ring {
   readonly until?: number;
 }
 
-export const CLOSE_SEEN_BEFORE_S = 0.3;
+export const CLOSE_SEEN_BEFORE_S = 0.1;
 export const CLOSE_SEEN_AFTER_S = 0.5;
 export const CHANGE_FRAME_S = 1 / 15;
 export const CLICK_EARLIER_MOST_S = 0.5;
@@ -131,6 +131,11 @@ function movesOnFrom(scene: Scene, click: PlacedClick, window: InputArea): boole
   return !later || !sameWindow(later.window!, window);
 }
 
+function windowSettledBefore(scene: Scene, window: InputArea, goneAt: number): number {
+  const shaping = scene.changes.filter((change) => change.at < goneAt - 0.001 && windowSized(change) && overlap(change, window) > areaOf(window) / 2);
+  return shaping.length ? Math.max(...shaping.map((change) => change.at)) : -Infinity;
+}
+
 function windowGoneAfter(scene: Scene, click: PlacedClick): number | null {
   const window = click.window;
   if (!window || areaOf(window) <= 0) return null;
@@ -146,7 +151,9 @@ export function clicksBeforeTheirWindowGoes(scene: Scene, keys: readonly { reado
     if (goneAt === null) return click;
     const previous = Math.max(0, ...actions.filter((at) => at < click.at - 0.001));
     const wanted = goneAt - CHANGE_FRAME_S - RING_S;
-    const at = Math.min(click.at, Math.max(wanted, click.at - CLICK_EARLIER_MOST_S, previous + AFTER_PREVIOUS_ACTION_S));
+    const settled = windowSettledBefore(scene, click.window!, goneAt);
+    const earliest = Math.max(click.at - CLICK_EARLIER_MOST_S, previous + AFTER_PREVIOUS_ACTION_S, settled + CHANGE_FRAME_S);
+    const at = Math.min(click.at, Math.max(wanted, earliest));
     return { ...click, at: round3(at), windowGoneAt: goneAt, loggedAt: click.at };
   });
   return { ...scene, clicks };

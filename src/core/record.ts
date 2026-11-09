@@ -579,9 +579,12 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
       const shown = round3(finalAt(onClip(from)));
       return { look: "mark", text: skipWords(to - from), size: markSize, x: "right", y: skipAt(shown), from: shown, to: round3(Math.min(length, shown + MARK_SHOWN_S)), fade: CAPTION_FADE_S };
     });
-  const notes = shownChanges.flatMap((change, index): Overlay[] =>
-    change.kind === "note" ? [{ look: "note", text: change.text, size: fontSize, x: "centre", y: noteAt(shownAt[index]!), from: round3(shownAt[index]!), to: round3(Math.min(length, shownAt[index]! + Math.min(RESULT_S, readingSeconds(change.text)))), fade: CAPTION_FADE_S }] : [],
-  );
+  const notes = shownChanges.flatMap((change, index): Overlay[] => {
+    if (change.kind !== "note") return [];
+    const from = shownAt[index]!;
+    const to = "lostStretch" in change ? Math.min(length, from + Math.min(RESULT_S, readingSeconds(change.text))) : nextStep(index);
+    return [{ look: "note", text: change.text, size: fontSize, x: "centre", y: noteAt(from), from: round3(from), to: round3(to), fade: CAPTION_FADE_S }];
+  });
   const keyPills = (planned?.pills ?? []).flatMap((each): Overlay[] => {
     const from = round3(finalAt(onClip(each.from)));
     const to = round3(Math.min(length, from + onClip(each.to) - onClip(each.from)));

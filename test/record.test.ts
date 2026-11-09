@@ -225,6 +225,9 @@ test("a step's reading time runs while it stays up, through its result, so a qui
   ] }, 1);
   assert.ok(warned.overlays.some((overlay) => overlay.look === "note"), "a cancel the step asked for is a warning");
   assert.ok(warned.holds.every((hold) => hold.seconds <= 1 + 0.001), `a warning is held at most a second, as a result is: ${JSON.stringify(warned.holds)}`);
+  const warning = warned.overlays.find((overlay) => overlay.look === "note")!;
+  const next = warned.overlays.find((overlay) => overlay.text === "Widen the window")!;
+  assert.equal(warning.to, next.from, "and stays until the next step, as a result does");
 });
 
 test("a result stays until the next step, and captions fade in and out over 0.2 s, so one step crossfades into the next (076)", () => {

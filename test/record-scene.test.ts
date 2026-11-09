@@ -531,11 +531,11 @@ test("the pointer's commands move it each frame it moves, show it from when it i
 test("a click whose window goes on the click rings on the frames before it goes, or its ring ends there (076)", () => {
   const dialog = { x: 600, y: 300, width: 500, height: 400 };
   const cancel: InputEvent = { at: 1005, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 1000, y: 660, area: { x: 950, y: 640, width: 100, height: 40 }, role: "push button", window: dialog };
-  const planned = (keyAt: number, goneAt = 4.95) =>
+  const planned = (keyAt: number, goneAt = 4.95, resizedAt: number | null = null) =>
     planScene(
       facts({
         samples: [{ at: 1000, x: 200, y: 200, buttons: 0 }],
-        changes: [{ at: 3.2, ...dialog }, { at: goneAt, x: 590, y: 290, width: 520, height: 420 }],
+        changes: [{ at: 3.2, ...dialog }, ...(resizedAt === null ? [] : [{ at: resizedAt, ...dialog }]), { at: goneAt, x: 590, y: 290, width: 520, height: 420 }],
         inputs: [{ at: 1000 + keyAt, by: "agent", type: "keys", chord: normalChord("s", ["ctrl"]) }, cancel],
       }),
       SCREEN,
@@ -560,6 +560,8 @@ test("a click whose window goes on the click rings on the frames before it goes,
   for (const stage of shown) assert.ok(short.at + stage / 15 < 4.95);
   assert.doesNotMatch(sceneHead(planned(4.6), 1).graph, /between\(t,4\.967/, "the stage after the dialog has gone is never switched on");
   assert.equal(planned(4.9).pointer.rings.length, 0, "with no time before it goes, there is no ring over nothing");
+  const resized = planned(3, 4.95, 4.7).pointer.rings[0]!;
+  assert.ok(Math.abs(resized.at - (4.7 + 1 / 15)) < 0.002, `no earlier than a frame after its window last settled: ${resized.at}`);
   const note = { x: 300, y: 200, width: 600, height: 330 };
   const field: InputEvent = { at: 1005, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 600, y: 360, area: { x: 310, y: 230, width: 580, height: 290 }, role: "text", window: note };
   const typedThere: InputEvent = { at: 1006, by: "agent", type: "typing", characters: 10, space: "screen", area: { x: 310, y: 230, width: 580, height: 290 }, secret: false, role: "text", window: note };
