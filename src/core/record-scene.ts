@@ -15,6 +15,7 @@ import {
   planPointer,
   pointerShapes,
   shapeAt,
+  typingSpan,
   type CameraKey,
   type ChangedRegion,
   type PlacedClick,
@@ -70,6 +71,22 @@ export interface SceneOptions {
   readonly frame: boolean;
   readonly stills?: "cut" | "keep";
   readonly captions?: readonly number[];
+  readonly results?: readonly number[];
+}
+
+export const LANDED_AT_ONCE_S = 0.1;
+export const RESULT_TAKES_OVER_S = 0.5;
+
+function typedAtOnceBeforeResult(scene: Scene, pill: KeyPill, results: readonly number[]): boolean {
+  if (!pill.typing) return false;
+  const spans = scene.typing
+    .filter((each) => each.characters > 0 && !each.secret)
+    .map((each) => typingSpan(each, scene.typing))
+    .filter((span) => span.from <= pill.from + 0.001 && span.to >= pill.from - 0.001);
+  if (!spans.length) return false;
+  const from = Math.min(...spans.map((span) => span.from));
+  const to = Math.max(...spans.map((span) => span.to));
+  return to - from <= LANDED_AT_ONCE_S && results.some((at) => at >= from - LANDED_AT_ONCE_S && at - to <= RESULT_TAKES_OVER_S);
 }
 
 export interface FrameLayout {
@@ -214,7 +231,10 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
   const pointer = planPointer(scene);
   const camera = options.zoom ? planCamera(scene, pointer, idle ?? []) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
   const zooms = camera.some((key) => key.view.zoom > 1);
-  const pills = planKeyPills(keys, keyTyping, facts.keys, length).map((pill) => ({ ...pill, avoid: pillRegion(scene, pointer, pill.from, pill.to) }));
+  const results = (options.results ?? []).map((at) => at - facts.lag);
+  const pills = planKeyPills(keys, keyTyping, facts.keys, length)
+    .filter((pill) => !typedAtOnceBeforeResult(scene, pill, results))
+    .map((pill) => ({ ...pill, avoid: pillRegion(scene, pointer, pill.from, pill.to) }));
   const drawsPointer = facts.pointer === "drawn" && pointer.frames.length > 0 && pointer.visibleFrom !== null;
   const kept: Span[] = [
     ...(drawsPointer ? pointer.glides : []),

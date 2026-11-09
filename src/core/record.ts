@@ -472,7 +472,8 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
   const layout = prepared.layout;
   const size = { width: prepared.width, height: prepared.height };
   const captionMoments = prepared.events.map((event) => event.at - (prepared.start ?? 0));
-  const planned = prepared.scene && !layout && prepared.width > 0 && prepared.height > 0 ? planScene(prepared.scene, size, prepared.start ?? 0, prepared.recorded, { ...options, captions: captionMoments }) : null;
+  const resultMoments = prepared.events.filter((event) => event.kind === "pass" || event.kind === "fail").map((event) => event.at - (prepared.start ?? 0));
+  const planned = prepared.scene && !layout && prepared.width > 0 && prepared.height > 0 ? planScene(prepared.scene, size, prepared.start ?? 0, prepared.recorded, { ...options, captions: captionMoments, results: resultMoments }) : null;
   const scene = planned && (planned.art.length > 0 || planned.zooms) ? planned : null;
   const stills = planned?.idle ? planned.idle.map((span): [number, number] => [span.from, span.to]) : [...prepared.cuts].sort((a, b) => a[0] - b[0]);
   const cuts = planned ? keptMotion(stills, planned.kept) : stills;

@@ -526,6 +526,28 @@ test("each step's captions go to the top or the bottom, whichever covers less of
   assert.ok(kept.overlays.filter((overlay) => overlay.look === "step").every((overlay) => overlay.y < kept.height / 2), "with nothing to avoid, the captions stay where the agent put them");
 });
 
+test("a line that lands in one frame, with a result within half a second, shows no Typing pill: the result says it (076)", () => {
+  const field = { x: 600, y: 400, width: 600, height: 40 };
+  const typed = (at: number, characters: number): InputEvent => ({ at, by: "agent", type: "typing", characters, space: "screen", area: field, secret: false, role: "text", call: 1 });
+  const recording = (inputs: InputEvent[], events: Prepared["events"]): Prepared => ({
+    ended: "stopped",
+    recorded: 10,
+    width: 1920,
+    height: 1080,
+    start: 1000,
+    cuts: [],
+    events,
+    scene: facts({ samples: [{ at: 1000, x: 900, y: 600, buttons: 0 }], inputs }),
+  });
+  const typingPills = (prepared: Prepared) => planClip(prepared, 1, { zoom: true, frame: true, stills: "keep" }).overlays.filter((overlay) => overlay.text === TYPING_WORDS);
+  const step = { at: 1002, kind: "step" as const, text: "Type the line" };
+  const passed = { at: 1003.2, kind: "pass" as const, text: "The line is in" };
+  assert.equal(typingPills(recording([typed(1003, 40), typed(1003.01, 0)], [step, passed])).length, 0, "pasted at once, then the result");
+  assert.equal(typingPills(recording([typed(1003, 40), typed(1003.01, 0)], [step])).length, 1, "with no result to say it, the pill shows");
+  assert.equal(typingPills(recording([typed(1003, 40), typed(1003.01, 0)], [step, { ...passed, at: 1004 }])).length, 1, "a result a second later leaves the pill");
+  assert.equal(typingPills(recording([typed(1002.2, 1), typed(1002.6, 1), typed(1003, 1), typed(1003.01, 0)], [step, passed])).length, 1, "typing that takes time keeps its pill");
+});
+
 test("a key pill sits below the region it would cover, or above it when below does not fit (073)", () => {
   const line = { at: 3.2, x: 180, y: 16, width: 520, height: 28 };
   const typing: InputEvent = { at: 1003, by: "agent", type: "typing", characters: 40, space: "screen", area: { x: 160, y: 8, width: 600, height: 48 }, secret: false };

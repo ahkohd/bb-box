@@ -69,6 +69,13 @@ so one step crossfades into the next. The speed mark, shown all along, does
 not fade. Each fading pill is its still image looped from its own start, so
 the box decodes it only while it shows.
 
+### No Typing pill for a line a result takes over
+
+When a typing call's text lands within 0.1 seconds, as a paste or an
+accessibility insert does, and a result follows within 0.5 seconds, its
+Typing pill is left out. It would arrive with the result and linger as a
+third row with nothing to accompany.
+
 ### The camera pans rather than pumps
 
 After a zoomed group, the camera stays in and pans to the next group when

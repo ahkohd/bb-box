@@ -17,7 +17,7 @@ bb-box draws its own pointer over the clip, larger than the screen's. The arrow 
 - Each shortcut or special key shows in a small pill, such as "Ctrl+S", "⌘K", "Enter" or "Tab", for about a second. A key pressed again counts up, such as "↓ ×3".
 - A key that types a character is never shown as a shortcut, even with AltGr, Option on a Mac, or Ctrl and Alt together on Windows, where they are AltGr. On Linux, Ctrl+Alt+T is a shortcut. A shortcut's key is a letter, digit or ASCII symbol.
 - Keys that build a character count as typing too: Ctrl+Shift+U and a code point on Linux, the Compose key, a dead key, or an input method.
-- When the agent types into a field it named, one "Typing" pill shows, from when the text is in the field. One call is one pill, even when the typing is slow. A later secret call does not lengthen that pill or hide it. The pill never shows what was typed.
+- When the agent types into a field it named, one "Typing" pill shows, from when the text is in the field. One call is one pill, even when the typing is slow. A later secret call does not lengthen that pill or hide it. The pill never shows what was typed. When the whole line lands at once and a result follows within half a second, no pill shows: the result says it.
 - Typing shows no pill at all into a password field, or when the text looks like a password, key or token.
 - Your own typing, and the agent's typing into a window or as single keys, show no pill either. bb-box cannot tell which field the keys go to, so it treats them as secret.
 
