@@ -34,7 +34,7 @@ Ask a BB thread's agent:
 Install BB Box with bb plugin install git:https://github.com/ahkohd/bb-box.git@main --yes, then follow its bb-box-setup skill to set up Docker on this machine, and get me a Linux desktop box.
 ```
 
-The agent sets up Docker with `bb box setup docker` and makes the box with `bb box acquire`. It asks you first before anything that needs root or changes BB's settings. The first time, the server and desktop images build first, usually 10 to 20 minutes in all. Then select **Open desktop** on the box's row in the thread's **Box** panel.
+The agent sets up Docker with `bb box setup docker` and makes the box with `bb box acquire`. The first time, the server and desktop images build first, usually 10 to 20 minutes in all. Then select **Open desktop** on the box's row in the thread's **Box** panel.
 
 ### By hand
 
