@@ -460,6 +460,18 @@ test("a dressed recording starts on its first action and ends a second after its
   assert.ok(clipGraph(kept, true).endsWith(`[end]fade=t=out:st=${round(kept.length - 0.5)}:d=0.5:color=0x161618[out]`), "and still fades out");
 });
 
+test("a caption is placed on the capture's own timeline, the box's first-frame lag after the start, so a result's held frame comes before the agent's next action (076)", () => {
+  const prepared = idleRecording({ lag: 0.2, changes: [], inputs: [] }, [
+    { at: 1004, kind: "step", text: "Look at the note" },
+    { at: 1005, kind: "pass", text: "The note is open" },
+    { at: 1005.1, kind: "step", text: "Close the note" },
+  ]);
+  const plan = planClip(prepared, 1, { zoom: true, frame: true, stills: "keep" });
+  assert.equal(plan.captions[0]!.from, 3.8, "the step, 4 s after the start, is 3.8 s into a capture whose first frame came 0.2 s after it");
+  assert.equal(plan.holds.find((hold) => hold.at > 4)?.at, 4.8, "the result is held on the frame captured as it was given");
+  assert.equal(plan.captions[0]!.real, 4, "the page still lists the step at its real time");
+});
+
 test("a result is held at most about a second, though its words would take longer to read (076)", () => {
   const plan = planClip(idleRecording({}, [
     { at: 1005.2, kind: "pass", text: "The note was saved and the window closed without a prompt" },
@@ -493,11 +505,11 @@ test("the pointer's commands move it each frame it moves, show it from when it i
 test("a click whose window goes on the click rings on the frames before it goes, or its ring ends there (076)", () => {
   const dialog = { x: 600, y: 300, width: 500, height: 400 };
   const cancel: InputEvent = { at: 1005, by: "agent", type: "click", space: "screen", button: "left", count: 1, x: 1000, y: 660, area: { x: 950, y: 640, width: 100, height: 40 }, role: "push button", window: dialog };
-  const planned = (keyAt: number) =>
+  const planned = (keyAt: number, goneAt = 4.95) =>
     planScene(
       facts({
         samples: [{ at: 1000, x: 200, y: 200, buttons: 0 }],
-        changes: [{ at: 3.2, ...dialog }, { at: 4.95, x: 590, y: 290, width: 520, height: 420 }],
+        changes: [{ at: 3.2, ...dialog }, { at: goneAt, x: 590, y: 290, width: 520, height: 420 }],
         inputs: [{ at: 1000 + keyAt, by: "agent", type: "keys", chord: normalChord("s", ["ctrl"]) }, cancel],
       }),
       SCREEN,
@@ -509,6 +521,8 @@ test("a click whose window goes on the click rings on the frames before it goes,
   const ring = early.pointer.rings[0]!;
   assert.ok(ring.at < 5 && ring.at + RING_S <= 4.95 + 0.001, `the ring plays before the dialog goes: ${JSON.stringify(early.pointer.rings)}`);
   assert.equal(ring.at, 4.5, "moved at most half a second");
+  const nearer = planned(3, 5.3).pointer.rings[0]!;
+  assert.ok(Math.abs(nearer.at + RING_S - (5.3 - 1 / 15)) < 0.002, `the ring ends a frame of the capture before the window goes: ${nearer.at}`);
   assert.ok(Array.from({ length: 6 }, (_, stage) => stage).every((stage) => ringStageShown(ring, stage)), "the whole ring");
   const frame = early.pointer.frames[Math.round(ring.at * CLIP_FPS)]!;
   assert.deepEqual([frame.x, frame.y], [1000, 660], "the pointer has glided to the button as the ring starts");

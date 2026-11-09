@@ -49,6 +49,22 @@ frame. That last result is not held further. A recording stopped sooner is
 padded with its last frame. Trimming the ends shows no skip mark. With
 `stills: "keep"` the ends stay, and the clip still fades out.
 
+### Captions and changes are placed to the frame
+
+A caption is placed on the capture's own timeline, the platform's
+first-frame lag after the box's start time, as inputs already were. The
+pass that finds what changed reads every frame of the capture rather than
+four a second, and the brightness is still read four times a second. Before,
+a change could be placed up to 0.125 seconds after the frame it came from,
+and a caption 0.09 seconds late, so a result held as the agent gave it could
+show the effect of its next action. Measured on the Linux showcase in a
+Docker box of 8 cores, 11.3 seconds recorded at 1280 by 720: the pass took
+0.18 seconds before and 0.24 seconds now, over 3 runs each, and found 40
+changes instead of 24. Ctrl+A was logged at 3.862 seconds and selected the
+line at 3.867, and Cancel at 5.396 seconds closed its dialog at 5.400: input
+and picture agree to the frame. On X11, ffmpeg's own first-frame time came
+0.088 to 0.090 seconds after the start time, over 3 runs, as 073 measured.
+
 ### Typing into a clicked field is zoomed
 
 Typing that follows a click in the same field within 2 seconds is framed on
@@ -97,8 +113,8 @@ A click's window goes on the click when a change covering most of it comes
 from 0.3 seconds before the click to 0.5 seconds after, and the agent's next
 action in a window is in another one, or there is none. A window that
 appears or is uncovered then, and is acted in next, is not going. The click
-is then placed so its ring ends a quarter of a second, one reading of the
-screen, before that change: at most 0.5 seconds earlier, and at least
+is then placed so its ring ends one frame of the capture before that
+change: at most 0.5 seconds earlier, and at least
 0.1 seconds after the action before it. The pointer's glide, the ring and
 the hand move with it. The ring's stages from the change on are not drawn,
 and a ring with none left is not drawn at all.

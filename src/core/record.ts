@@ -26,7 +26,7 @@ export const RECORD_FPS = 15;
 
 export const SAMPLER_HZ = 30;
 export const CHANGES_WIDTH = 480;
-export const CHANGES_MOST = 3000;
+export const CHANGES_MOST = RECORD_FPS * RECORD_LIMIT_S;
 export const SAMPLES_MOST = 12_000;
 export const GRID_FILE = "grid.raw";
 const GRID_CELLS = GRID_COLUMNS * GRID_ROWS;
@@ -225,7 +225,7 @@ awk -v f="$(echo "$size" | awk -Fx '{ printf "%.4f", $1 / ${CHANGES_WIDTH} }')" 
 
 export function analysisGraph(stills: "cut" | "keep"): string {
   const head = stills === "cut" ? `[0:v]${FREEZE},split=2[o][a]` : "[0:v]split=2[o][a]";
-  return `${head};[a]fps=4,scale=${CHANGES_WIDTH}:-2:flags=area,format=gray,split=3[c][l][g];[c]tblend=all_mode=difference,bbox=min_val=6,nullsink;[l]signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG,nullsink;[g]fps=1,scale=${GRID_COLUMNS}:${GRID_ROWS}:flags=area[grid]`;
+  return `${head};[a]scale=${CHANGES_WIDTH}:-2:flags=area,format=gray,split=3[c][l][g];[c]tblend=all_mode=difference,bbox=min_val=6,nullsink;[l]fps=4,signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG,nullsink;[g]fps=1,scale=${GRID_COLUMNS}:${GRID_ROWS}:flags=area[grid]`;
 }
 
 export interface RecordEvent {
@@ -490,10 +490,11 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
   const base = ends?.end != null ? Math.max(onClip(prepared.recorded), onClip(ends.end)) : onClip(prepared.recorded);
   const start = prepared.start ?? 0;
   const placed = (real: number) => Math.min(base, Math.max(0, onClip(real)));
+  const firstFrameLag = prepared.scene?.lag ?? 0;
   const changes = [
     ...prepared.events.map((event) => {
       const real = Math.min(prepared.recorded, Math.max(0, event.at - start));
-      return { kind: event.kind as StepKind | "note", text: captionText(event.text), real, at: placed(real) };
+      return { kind: event.kind as StepKind | "note", text: captionText(event.text), real, at: placed(real - firstFrameLag) };
     }),
     ...(prepared.notes ?? []).map((note) => {
       const real = Math.min(prepared.recorded, Math.max(0, note.at));
@@ -513,7 +514,7 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
       const reading = Math.max(0, readingSeconds(change.text) - (atOf(index + 1) - change.at));
       return "lostStretch" in change ? reading : Math.min(RESULT_HOLD_MOST_S, reading);
     }
-    const endsTheClip = ends?.end != null && change.real - (prepared.scene?.lag ?? 0) >= ends.end - END_HOLD_S - FADE_OUT_S - 0.05;
+    const endsTheClip = ends?.end != null && change.real - firstFrameLag >= ends.end - END_HOLD_S - FADE_OUT_S - 0.05;
     return endsTheClip ? 0 : Math.min(RESULT_HOLD_MOST_S, Math.max(0, readingSeconds(change.text) - (atOf(nextStepIndex(index)) - change.at)));
   });
   shownChanges.forEach((change, index) => {
@@ -558,7 +559,7 @@ export function planClip(prepared: Prepared, speed: RecordSpeed, options: SceneO
   const position = prepared.position ?? "top";
   const captionAt = (side: CaptionPosition, row: 0 | 1) =>
     layout ? layout.band.y + edge + row * (pill(fontSize) + gap) : side === "top" ? inset + edge + row * (pill(fontSize) + gap) : inset + inner - dock - (2 - row) * pill(fontSize) - (1 - row) * gap;
-  const sides = layout || !planned ? [] : captionSides(planned, captions, position, prepared.scene?.lag ?? 0, prepared.recorded, (side) => ({ top: captionAt(side, 0) - inset, bottom: captionAt(side, 1) + pill(fontSize) - inset }), fontSize);
+  const sides = layout || !planned ? [] : captionSides(planned, captions, position, firstFrameLag, prepared.recorded, (side) => ({ top: captionAt(side, 0) - inset, bottom: captionAt(side, 1) + pill(fontSize) - inset }), fontSize);
   const sideAt = (t: number): CaptionPosition => sides.find((span) => t >= span.from - 0.0005 && t < span.to - 0.0005)?.side ?? position;
   const captionY = (row: 0 | 1, t: number) => captionAt(sideAt(t), row);
   const markSize = Math.max(11, Math.round(fontSize * 0.7));

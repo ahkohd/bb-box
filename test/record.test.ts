@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { pngPixels } from "../src/core/png.ts";
 import { textRuns } from "../src/core/record-font.ts";
 import { markArt, markRgb } from "../src/core/record-icons.ts";
-import { RECORD_DIR, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, captionText, chaptersOf, clipGraph, parsePrepared, parseRecordResult, planClip, previewHeight, readingSeconds, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, type Prepared } from "../src/core/record.ts";
+import { CHANGES_MOST, RECORD_DIR, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, analysisGraph, captionText, chaptersOf, clipGraph, parsePrepared, parseRecordResult, planClip, previewHeight, readingSeconds, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, type Prepared } from "../src/core/record.ts";
 import { fakeFfmpeg, tempDir } from "./helpers.ts";
 
 const skip = process.platform === "linux" ? false : "needs GNU stat and setsid";
@@ -107,6 +107,13 @@ test("a capture that never writes a picture stops itself (075)", { skip }, () =>
   const pid = Number(readFileSync(join(home, RECORD_DIR, "pid"), "utf8"));
   const gone = spawnSync("bash", ["-c", `for i in $(seq 1 24); do kill -0 ${pid} 2>/dev/null || exit 0; sleep 0.5; done; exit 1`]);
   assert.equal(gone.status, 0, "the recorder is stopped when the capture stays empty");
+});
+
+test("the stop reads what changed on the screen at every frame of the capture, so a change is placed to the frame, and its brightness four times a second (076)", () => {
+  const graph = analysisGraph("cut");
+  assert.match(graph, /\[a\]scale=480:-2:flags=area,format=gray,split=3\[c\]\[l\]\[g\];\[c\]tblend=all_mode=difference,bbox=min_val=6,nullsink;/, "no frame rate filter before the changes");
+  assert.match(graph, /\[l\]fps=4,signalstats/);
+  assert.equal(CHANGES_MOST, 15 * 300, "a change on every frame of a 5-minute recording fits");
 });
 
 test("box_record starts in zsh with no pills to clear and no glob error, and on a Mac starts ffmpeg in a session of its own with no nohup, which refuses where there is no console to leave, as under Namespace's agent (#1032)", () => {

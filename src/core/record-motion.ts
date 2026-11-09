@@ -110,7 +110,7 @@ export interface Ring {
 
 export const CLOSE_SEEN_BEFORE_S = 0.3;
 export const CLOSE_SEEN_AFTER_S = 0.5;
-export const ANALYSIS_STEP_S = 0.25;
+export const CHANGE_FRAME_S = 1 / 15;
 export const CLICK_EARLIER_MOST_S = 0.5;
 export const AFTER_PREVIOUS_ACTION_S = 0.1;
 
@@ -145,7 +145,7 @@ export function clicksBeforeTheirWindowGoes(scene: Scene, keys: readonly { reado
     const goneAt = windowGoneAfter(scene, click);
     if (goneAt === null) return click;
     const previous = Math.max(0, ...actions.filter((at) => at < click.at - 0.001));
-    const wanted = goneAt - ANALYSIS_STEP_S - RING_S;
+    const wanted = goneAt - CHANGE_FRAME_S - RING_S;
     const at = Math.min(click.at, Math.max(wanted, click.at - CLICK_EARLIER_MOST_S, previous + AFTER_PREVIOUS_ACTION_S));
     return { ...click, at: round3(at), windowGoneAt: goneAt, loggedAt: click.at };
   });
