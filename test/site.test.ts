@@ -7,6 +7,8 @@ import { homePageHead, icons, shareImage, siteHead, type HeadTag } from "../site
 import { descriptions, entryData, fullTextPath, headingAnchors as anchorsInMarkdown, llmsFullTxt, llmsTxt, markdownCopies, markdownPath } from "../site/src/llms.ts";
 import { blankedCode, lightTwinOf, pagesByFile, readPages, repoRoot, repository, siteHref, withoutFrontmatter, type Page } from "../site/src/repo.ts";
 import { cipherFrame, letterGlyphsFor, revealTimes } from "../site/src/effects/cipher-text.ts";
+import { glyphRule } from "../site/src/effects/glyph-rule.ts";
+import { plainVideoKey, plainVideoRemembered, rememberPlainVideo, type VisitStorage } from "../site/src/motion-memory.ts";
 import { installCommand, setupPrompt } from "../site/src/setup-prompt.ts";
 import { sidebar } from "../site/src/sidebar.ts";
 import { repositoryFiles } from "./repository-files.ts";
@@ -62,6 +64,41 @@ test("a cipher heading keeps its words' length and spaces while it scrambles, an
   const resolved = cipherFrame(text, 1000, revealAt, letterGlyphsFor, Math.random);
   assert.equal(resolved.map((piece) => piece.glyph).join(""), text);
   assert.ok(resolved.every((piece) => piece.settled));
+});
+
+test("a section rule is a line of the ramp's characters, the same for a seed every time, with quiet and dense stretches, and different for each seed", () => {
+  const rule = glyphRule(2.4, 220);
+  assert.equal(rule.length, 220);
+  assert.match(rule, /^[ .·:\-=+*]+$/);
+  assert.equal(glyphRule(2.4, 220), rule);
+  assert.notEqual(glyphRule(3.9, 220), rule);
+  assert.match(rule, /[ .·:]{6}/, "a quiet stretch");
+  assert.match(rule, /[+*=]{4}/, "a dense stretch");
+});
+
+test("the plain video choice is remembered for the visit, forgotten when undone, and read as not chosen where storage fails", () => {
+  const kept = new Map<string, string>();
+  const storage: VisitStorage = { getItem: (key) => kept.get(key) ?? null, setItem: (key, value) => void kept.set(key, value), removeItem: (key) => void kept.delete(key) };
+  assert.equal(plainVideoRemembered(storage), false);
+  rememberPlainVideo(storage, true);
+  assert.equal(kept.get(plainVideoKey), "yes");
+  assert.equal(plainVideoRemembered(storage), true);
+  rememberPlainVideo(storage, false);
+  assert.equal(plainVideoRemembered(storage), false);
+  const failing: VisitStorage = {
+    getItem: () => {
+      throw new Error("storage is off");
+    },
+    setItem: () => {
+      throw new Error("storage is off");
+    },
+    removeItem: () => {
+      throw new Error("storage is off");
+    },
+  };
+  assert.doesNotThrow(() => rememberPlainVideo(failing, true));
+  assert.equal(plainVideoRemembered(failing), false);
+  assert.equal(plainVideoRemembered(undefined), false);
 });
 
 test("every page of the site is in its sidebar once a section lists it", () => {
