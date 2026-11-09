@@ -259,3 +259,25 @@ test('a workspace with an unsaved edit is never evicted, past the count or the b
   expect(restoreWorkspace('thr_dirty', 'bx_dirty').state.tabs?.[0]?.draft?.length).toBe(WORKSPACE_BYTES + 1);
   expect(workspaceBoxes()).toContain('bx_dirty');
 });
+
+test('switching back keeps an open folder listed while it refreshes, without loading rows', async () => {
+  const first = mount();
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'src' }));
+  await screen.findByRole('treeitem', { name: 'one.ts' });
+  first.unmount();
+  let finishFolder: (value: ReturnType<typeof tree>) => void = () => {};
+  const folder = new Promise<ReturnType<typeof tree>>((resolve) => { finishFolder = resolve; });
+  const folderRequested = vi.fn();
+  mount({ ...handlers, 'files.tree': async (value: unknown) => {
+    const request = input.parse(value);
+    if (!request.path?.endsWith('/src')) return tree(request.path ?? '/home/box');
+    folderRequested();
+    return folder;
+  } });
+  await waitFor(() => expect(folderRequested).toHaveBeenCalled());
+  expect(screen.getByRole('treeitem', { name: 'one.ts' })).toBeTruthy();
+  expect(screen.queryByRole('status', { name: 'Loading folder' })).toBeNull();
+  await act(async () => { finishFolder(tree('/home/box/src', ['one.ts', 'two.ts'], [])); });
+  await screen.findByRole('treeitem', { name: 'two.ts' });
+  expect(screen.queryByRole('status', { name: 'Loading folder' })).toBeNull();
+});

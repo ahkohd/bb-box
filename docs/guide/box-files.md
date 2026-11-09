@@ -13,7 +13,7 @@ You can open a box's files from:
 
 The view opens at the box user's home. The path bar at the top of the tree goes anywhere that user can read. Type a path and press Enter. The up arrow opens the folder above. The reload button reads the folder again.
 
-Switching away and back restores your folder, open tabs, unsaved text, selection, scroll position, find and search. Directory names refresh quietly. Quick open closes. This stays in app memory for at most eight hidden workspaces and 32 MiB in total. Save before reloading the app or opening many other workspaces: the oldest snapshots are dropped when that limit is reached. Releasing a box drops its snapshots. File contents are never kept in browser storage.
+Switching away and back restores your folder, open tabs, unsaved text, selection, scroll position, find and search. Open folders keep their rows while their names refresh. Quick open closes. This stays in app memory for at most eight hidden workspaces and 32 MiB in total. Save before reloading the app. When the limit is reached, the oldest snapshots without unsaved edits are dropped. Releasing a box drops its snapshots. File contents are never kept in browser storage.
 
 The view has a box-name header only beside a back button or the Desktop and Terminal switcher. The thread tab already names the box.
 
@@ -27,7 +27,7 @@ A Markdown file has **Preview**, **Read** and **Edit**. Other text has **Read** 
 
 If the file changed after you opened it, the save does not change it. The view says so, and offers **Reload** or **Overwrite**. The text you tried to save is put in a new file next to it. The name adds .conflict, or .conflict-2 when that name is taken. A link of that name is left as it is.
 
-The tree opens one level at a time, at most 5,000 entries per folder. Cached folders show at once, then refresh quietly. Loading folders show row-height bars; the refresh icon stays still. It skips `.git`, `node_modules` and `vendor`. A name that contains a newline is left out. Files whose names start with a dot stay hidden until you select the eye.
+The tree opens one level at a time, at most 5,000 entries per folder. Cached folders show at once, then refresh quietly. A folder opened for the first time shows row-height bars; one already listed keeps its rows while it refreshes; the refresh icon stays still. It skips `.git`, `node_modules` and `vendor`. A name that contains a newline is left out. Files whose names start with a dot stay hidden until you select the eye.
 
 On a wide window the tree stays to the right of the file. Drag its edge to resize it. The width is remembered, and it starts at the same width as the editor plugin's tree. On a narrow window, such as a phone, the tree and the open file take turns. The tree is shown first. Opening a file replaces it, and the back arrow returns to the tree.
 
