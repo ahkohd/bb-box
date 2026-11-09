@@ -1,5 +1,6 @@
 # Typecheck and the tests, docs included (#503), on every pull request and push to main.
-# They run on the organisation's self-hosted runners, in a fresh Node container per job.
+# They run on GitHub-hosted ubuntu-latest runners, in a fresh Node container per job.
+# A hosted runner has 2 to 4 cores, so the container sets no CPU or memory limit.
 name: test
 
 on:
@@ -12,12 +13,12 @@ permissions:
 
 jobs:
   test:
-    runs-on: [self-hosted, linux, X64]
+    runs-on: ubuntu-latest
     container:
       image: node:26-bookworm
       # --init reaps what the tests' commands leave behind, which the runner's own first process does not.
-      options: --init --memory=8g --cpus=8
-    timeout-minutes: 20
+      options: --init
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       # The job runs as root on the runner user's checkout, which git refuses without this.
@@ -30,10 +31,10 @@ jobs:
       - run: npm test
 
   site:
-    runs-on: [self-hosted, linux, X64]
+    runs-on: ubuntu-latest
     container:
       image: node:26-bookworm
-      options: --init --memory=4g --cpus=4
+      options: --init
     timeout-minutes: 10
     defaults:
       run:
