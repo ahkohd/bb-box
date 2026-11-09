@@ -15,8 +15,8 @@ supersedes zooming in on a window before it has painted, a result
 caption that stays until the next step, and two captions for one moment.
 [081](081-a-recording-is-cut-to-its-actions-and-its-captions-keep-clear.md)
 supersedes cutting only still stretches where bb-box draws the pointer,
-captions that keep their places, and the 1.5 seconds out before typing into
-a field just clicked.
+captions that keep their places, the 1.5 seconds out before typing into
+a field just clicked, and a zoom that holds until a change elsewhere happens.
 Extends [059](059-agents-record-their-desktop-box-with-box-record.md).
 
 ## Context
