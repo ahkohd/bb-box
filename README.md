@@ -66,13 +66,9 @@ You need a Linux machine that runs BB and Docker, with about 10 GB of disk free 
 | [Namespace](docs/guide/namespace.md) | macOS, with or without a desktop; Linux, with KVM; Linux desktop on the CPU; Wayland desktop on the CPU; iOS Simulator devices, in slots on a shared Mac | a Namespace machine for each box, a Mac or a Linux machine, rented by the minute in your Namespace workspace, within its plan's limits | none yet |
 | [boat.dev](docs/guide/boat.md) | Linux, with KVM; Linux desktop on the CPU; Android emulator devices | a boat.dev sandbox for each box, a Linux VM forked from BB Box's template in seconds and billed by the second | on a paid plan, the disk, as a saved snapshot on your account: free up to your plan's included ones, then $0.056 a day each; restore with an undo; fork and Keep for Linux boxes. None on the free trial |
 
-A fork, and Keep past a box's release, need the box's identity reset turned on for its backend, so that a copy never comes up as its source. Linux desktops need an image built with reset version 9 or later; older images refuse forks and Keep, saying why. What each backend's snapshots hold, and what is not built yet, is in [snapshots](docs/guide/snapshots.md#what-each-backend-offers).
+Some things wait on BB itself, such as starting a thread on a new Windows box from BB's new-thread screen. See [what BB Box asks of BB](docs/bb-requests.md), and [snapshots](docs/guide/snapshots.md#what-each-backend-offers) for what each backend's snapshots hold.
 
 Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.md). Phones and tablets are in [device boxes](docs/guide/devices.md).
-
-## What still waits on BB
-
-Some things wait on features BB does not have yet, listed in [what BB Box asks of BB](docs/bb-requests.md). You will notice them in five places. A thread cannot start on a new Windows box from BB's new-thread screen, though Windows boxes join BB as machines. A box's terminal is BB Box's own tab, not BB's terminal with its tabs and history. When BB's server is busy for a moment, every desktop's picture and input wait for it, so a drag can lag. A file over 16 MiB copies to or from a box only while the machine that holds it is connected to BB. An agent's command that runs longer than about 4.5 minutes goes on as a job, which the agent checks later, as BB ends a tool call after about five minutes.
 
 ## Documentation
 
