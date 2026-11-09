@@ -464,8 +464,13 @@ import appIcon from "../assets/app-icon.png";
       animation: none;
     }
 
-    .bar {
+    .bar,
+    .bar.dither-screen::before {
       transition: none;
+    }
+
+    .dither-screen::before {
+      animation: none;
     }
   }
 
