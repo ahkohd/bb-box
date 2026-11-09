@@ -220,6 +220,7 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
       const result = await rpc.call("files.create", { box: boxId, path: abs, kind });
       if (mutationGeneration !== requestRef.current) return null;
       if (result.error !== null) return result.error;
+      if (parent !== "") loadedFolders.current.add(parent);
       loadTree(root, true);
       if (kind === "file" && relative !== null) openFile(relative);
       return null;
@@ -535,7 +536,7 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
         </>
       ) : null}
 
-      {isQuickOpen ? <QuickOpen error={indexError} partial={indexPartial} truncated={indexTruncated} filling={indexFilling} entries={indexFilling ? [...entries, ...indexEntries] : indexEntries} onOpenFile={openFile} onClose={() => setIsQuickOpen(false)} /> : null}
+      {isQuickOpen ? <QuickOpen error={indexError} partial={indexPartial} truncated={indexTruncated} filling={indexFilling} entries={indexFilling || indexError !== null ? [...entries, ...indexEntries] : indexEntries} onOpenFile={openFile} onClose={() => setIsQuickOpen(false)} /> : null}
     </div>
   );
 }

@@ -91,14 +91,14 @@ export function filesHandlers(boxes: Boxes) {
       try {
         const found = await listedBox(boxes, box);
         const key = JSON.stringify([box, path, hidden, recursive]);
-        const cached = trees.get(key);
+        const cached = recursive ? undefined : trees.get(key);
         if (cached && !refresh && found.state === "ready" && found.capabilities.command !== null) {
           trees.delete(key);
           trees.set(key, cached);
           return cached.value.error === null ? { ...cached.value, cached: true } : cached.value;
         }
         const value = await readTree(asFs(found), path, recursive, hidden, runOf(boxes, found));
-        remember(key, value);
+        if (!recursive) remember(key, value);
         return value;
       } catch (error) { return failed(error); }
     },

@@ -95,3 +95,23 @@ test('tree cache separates boxes and paths and evicts least recently used bytes'
   await tree('bx_two', '/a');
   assert.equal(calls, 6);
 });
+
+test('recursive results preserve shallow cache entries and stay fresh', async () => {
+  let calls = 0;
+  const listing = Array.from({ length: 1900 }, (_, index) => `f\0${index}-${'x'.repeat(1024)}\0`).join('');
+  const boxes = {
+    async find(id: string) { return record(id, OPERATOR); },
+    async runOwn() {
+      calls++;
+      return { exitCode: 0, stdout: `ROOT\0/tmp\0${listing}DONE\0`, stderr: '', timedOut: false, truncated: false };
+    },
+  } as unknown as Boxes;
+  const handlers = filesHandlers(boxes);
+  const context = { experimental_caller: { kind: 'client' } };
+  await handlers['files.tree']({ box: 'bx_one', path: '/shallow' }, context);
+  for (let index = 0; index < 6; index++) await handlers['files.tree']({ box: 'bx_one', path: `/index-${index}`, recursive: true }, context);
+  await handlers['files.tree']({ box: 'bx_one', path: '/shallow' }, context);
+  assert.equal(calls, 7);
+  await handlers['files.tree']({ box: 'bx_one', path: '/index-5', recursive: true }, context);
+  assert.equal(calls, 8);
+});

@@ -10,7 +10,7 @@ A recursive listing delays the first tree. Starting one process per name makes a
 
 The panel asks `files.tree` for the home path and its first level in one command. Opening a folder lists one level. Pointer dwell of 120 ms and keyboard focus prefetch that level. After the first draw, a separate names-only walk fills quick open. Hidden folders are pruned unless dotfiles are shown. No corpus or file contents are read to open the tree.
 
-The plugin keeps an 8 MB byte-capped LRU of tree replies, separated by box, path, depth and hidden setting. A reopen returns cached entries before the panel requests a quiet refresh. Refresh is explicit and its icon stays still. Empty loading folders show bars at the height of rows, with animation only when reduced motion is off.
+The plugin keeps an 8 MB byte-capped LRU of shallow tree replies, separated by box, path and hidden setting. Recursive names bypass this cache. A reopen returns cached entries before the panel requests a quiet refresh. Refresh is explicit and its icon stays still. Empty loading folders show bars at the height of rows, with animation only when reduced motion is off.
 
 GNU find emits names and types in one pass. Other POSIX systems batch stat and encode records through one awk process. Windows enumerates each directory once and prunes before descending. A shallow listing keeps at most 5,000 entries; quick open keeps at most 20,000 names and states when capped. A completion marker and command status distinguish complete results from interrupted walks.
 

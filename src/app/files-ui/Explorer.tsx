@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Icon } from "@/components/ui/icon";
@@ -89,6 +89,7 @@ export function Explorer({
   }, []);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  useLayoutEffect(() => { setExpanded(new Set()); }, [scope?.root, scope?.box]);
   const [menu, setMenu] = useState<{ path: string; kind: EntryKind; x: number; y: number } | null>(null);
   const [draft, setDraft] = useState<{ mode: "create"; parent: string; kind: EntryKind } | { mode: "rename"; path: string } | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -139,7 +140,7 @@ export function Explorer({
   }, [activePath, allRows]);
 
   const toggle = (path: string) => {
-    if (!expanded.has(path)) onLoadFolder?.(path);
+    onLoadFolder?.(path);
     setExpanded((current) => {
       const next = new Set(current);
       if (next.has(path)) next.delete(path);
@@ -151,6 +152,7 @@ export function Explorer({
   const beginCreate = (parent: string, kind: EntryKind) => {
     setQuery("");
     if (parent !== "") {
+      onLoadFolder?.(parent);
       setExpanded((current) => {
         const next = new Set(current);
         next.add(parent);

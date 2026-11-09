@@ -141,7 +141,7 @@ test('creation completing after navigation does not return to the old folder', a
   fireEvent.click(screen.getByRole('button', { name: 'New file' }));
   const name = screen.getByRole('textbox', { name: 'New file name' });
   fireEvent.change(name, { target: { value: 'created.txt' } });
-  fireEvent.keyDown(name, { key: 'Enter' });
+  fireEvent.submit(name.closest('form')!);
   const path = screen.getByRole('textbox', { name: 'Path' });
   fireEvent.change(path, { target: { value: '/next' } });
   fireEvent.submit(path.closest('form')!);
@@ -182,4 +182,93 @@ test('Markdown preview passes the original source to the host renderer', async (
   const file = await screen.findByRole('treeitem', { name: 'README.md' });
   await act(async () => fireEvent.click(file));
   expect(screen.getByTestId('bb-markdown').textContent).toBe(content);
+});
+
+test('expanded folder toggle retries a missing listing', async () => {
+  let reads = 0;
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async (value: unknown) => {
+      const input = request.parse(value);
+      if (input.path?.endsWith('/src')) { reads++; return { error: 'Try again.' }; }
+      return tree();
+    },
+  } });
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'src' }));
+  await screen.findByText('Try again.');
+  const before = reads;
+  fireEvent.click(screen.getByRole('treeitem', { name: 'src' }));
+  await waitFor(() => expect(reads).toBeGreaterThan(before));
+});
+
+test('root navigation resets shared expanded paths', async () => {
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async (value: unknown) => { const input = request.parse(value); return input.path?.endsWith('/src') ? tree(input.path, ['one.ts'], []) : tree(input.path ?? '/home/box'); },
+  } });
+  fireEvent.click(await screen.findByRole('treeitem', { name: 'src' }));
+  await screen.findByRole('treeitem', { name: 'one.ts' });
+  const path = screen.getByRole('textbox', { name: 'Path' });
+  fireEvent.change(path, { target: { value: '/next' } });
+  fireEvent.submit(path.closest('form')!);
+  await waitFor(() => expect(screen.getByRole('treeitem', { name: 'src' }).getAttribute('aria-expanded')).toBe('false'));
+  fireEvent.click(screen.getByRole('treeitem', { name: 'src' }));
+  await screen.findByRole('treeitem', { name: 'one.ts' });
+});
+
+test('context creation loads parent and refreshes after initial failure', async () => {
+  let made = false;
+  let reads = 0;
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async (value: unknown) => {
+      const input = request.parse(value);
+      if (input.path === '/home/box/src') { reads++; return made ? tree(input.path, ['one.ts'], ['made']) : { error: 'Try again.' }; }
+      return tree();
+    },
+    'files.create': async () => { made = true; return { error: null }; },
+  } });
+  fireEvent.contextMenu(await screen.findByRole('treeitem', { name: 'src' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'New folder' }));
+  await waitFor(() => expect(reads).toBe(1));
+  await screen.findByText('Try again.');
+  const name = screen.getByRole('textbox', { name: 'New folder name' });
+  fireEvent.change(name, { target: { value: 'made' } });
+  fireEvent.submit(name.closest('form')!);
+  await screen.findByRole('treeitem', { name: 'made' });
+  expect(screen.getByRole('treeitem', { name: 'one.ts' })).toBeTruthy();
+});
+
+test('failed index offers current tree files in quick open', async () => {
+  const read = vi.fn(async () => ({ error: null, kind: 'text', content: 'known', sha256: 'a'.repeat(64), sizeBytes: 5 }));
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async (value: unknown) => request.parse(value).recursive ? { error: 'Index failed.' } : tree('/home/box', ['known.txt'], []),
+    'files.read': read,
+  } });
+  await screen.findByRole('treeitem', { name: 'known.txt' });
+  fireEvent.click(screen.getByRole('button', { name: 'Go to file by name' }));
+  await screen.findByText('Index failed.');
+  fireEvent.keyDown(screen.getByRole('textbox', { name: 'Go to file' }), { key: 'Enter' });
+  await waitFor(() => expect(read).toHaveBeenCalledWith(expect.objectContaining({ path: '/home/box/known.txt' })));
+});
+
+test('creation refresh wins over an outstanding parent listing', async () => {
+  const pending = deferred();
+  let made = false;
+  renderSlot({ component: Workspace }, { boxId: 'bx_ui', os: 'linux' }, { rpc: {
+    'files.tree': async (value: unknown) => {
+      const input = request.parse(value);
+      if (input.path === '/home/box/src') return made ? tree(input.path, ['one.ts'], ['made']) : pending.promise;
+      return tree();
+    },
+    'files.create': async () => { made = true; return { error: null }; },
+  } });
+  fireEvent.contextMenu(await screen.findByRole('treeitem', { name: 'src' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'New folder' }));
+  await screen.findByRole('status', { name: 'Loading folder' });
+  const name = screen.getByRole('textbox', { name: 'New folder name' });
+  fireEvent.change(name, { target: { value: 'made' } });
+  fireEvent.submit(name.closest('form')!);
+  await screen.findByRole('treeitem', { name: 'made' });
+  await act(async () => pending.resolve(tree('/home/box/src', ['stale.ts'], [])));
+  expect(screen.getByRole('treeitem', { name: 'one.ts' })).toBeTruthy();
+  expect(screen.getByRole('treeitem', { name: 'made' })).toBeTruthy();
+  expect(screen.queryByRole('treeitem', { name: 'stale.ts' })).toBeNull();
 });
