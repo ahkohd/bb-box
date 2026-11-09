@@ -661,7 +661,7 @@ function ThreadsCard({ page, box, onNewThread }: { page: BoxPageState; box: BoxV
       {others.length ? <ThreadChips threads={others} className="mt-2" /> : <p className="mt-1 text-xs text-muted-foreground">{none}</p>}
       {onNewThread && box.enrol.state === "enrolled" && box.state === "ready" ? (
         <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1">
-          <SmallButton words="New thread on this box…" why={unreachable} onClick={onNewThread} />
+          <SmallButton words="New thread…" why={unreachable} onClick={onNewThread} />
         </div>
       ) : null}
     </section>

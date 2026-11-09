@@ -209,7 +209,7 @@ export function BoxMenu({
           {onBoxesPage ? (
             <DropdownMenuItem onSelect={onBoxesPage}>
               <Icon name="ArrowUpRight" aria-hidden />
-              Open on the Boxes page
+              Details
             </DropdownMenuItem>
           ) : null}
           {box.address ? (
@@ -219,7 +219,7 @@ export function BoxMenu({
             </DropdownMenuItem>
           ) : null}
           {offersNewThread ? (
-            <GatedItem why={silent} icon={<Icon name="MessageSquarePlus" fallback="Plus" aria-hidden />} words="New thread on this box…" onSelect={() => setNewThread(NO_DRAFT)} />
+            <GatedItem why={silent} icon={<Icon name="MessageSquarePlus" fallback="Plus" aria-hidden />} words="New thread…" onSelect={() => setNewThread(NO_DRAFT)} />
           ) : null}
           {opensSomething ? <DropdownMenuSeparator /> : null}
           {managed && stops && ready ? <GatedItem why={unreachable} icon={<Icon name="Square" aria-hidden />} words="Stop" onSelect={stop} /> : null}

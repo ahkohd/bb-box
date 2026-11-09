@@ -117,7 +117,7 @@ export function BoxRow({
   busy?: Busy | null;
   /** A quick action before the menu, such as the Boxes page's Open thread. */
   extra?: ReactNode;
-  /** "New thread on this box…": a child of `threadId`'s thread. Off on the Boxes page, where "this thread" names none. */
+  /** "New thread…": a child of `threadId`'s thread. Off on the Boxes page, where "this thread" names none. */
   threading?: boolean;
   onBoxesPage?: () => void;
 }) {
