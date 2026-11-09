@@ -791,7 +791,18 @@ function activeBetween(idle: readonly Span[], from: number, to: number): number 
   return to - from - cut;
 }
 
-export function planCamera(scene: Scene, pointer: PointerPlan, idle: readonly Span[] = []): CameraKey[] {
+export const MOVE_LEAST_S = 0.3;
+
+function settledByHolds(keys: readonly CameraKey[], held: readonly number[]): CameraKey[] {
+  return keys.map((key, index) => {
+    const before = keys[index - 1];
+    if (!before || sameView(before.view, key.view)) return key;
+    const interrupted = held.filter((at) => at - before.at >= MOVE_LEAST_S && at < key.at - 0.001);
+    return interrupted.length ? { ...key, at: round3(Math.min(...interrupted)) } : key;
+  });
+}
+
+export function planCamera(scene: Scene, pointer: PointerPlan, idle: readonly Span[] = [], held: readonly number[] = []): CameraKey[] {
   const full = FULL(scene);
   const keys: CameraKey[] = [{ at: 0, view: full }];
   const groups = splitAtOutsideChanges(scene, closeGroups(scene, focusesOf(scene, pointer)), actionsOf(scene, pointer));
@@ -841,7 +852,7 @@ export function planCamera(scene: Scene, pointer: PointerPlan, idle: readonly Sp
     else if (zoomsOut) keys.push({ at: round3(leave + MOVE_S), view: full });
   });
   zoomOutStayed();
-  return keys;
+  return settledByHolds(keys, held);
 }
 
 export function cameraAt(keys: readonly CameraKey[], t: number): View {

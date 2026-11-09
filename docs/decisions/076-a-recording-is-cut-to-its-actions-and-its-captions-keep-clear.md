@@ -90,6 +90,13 @@ neither pumps nor keeps the camera out for the next one. The paint check
 reads the screen from the window's opening, so a window that painted at
 once is zoomed without waiting for a later reading.
 
+### A move ends by the result it would freeze
+
+A result's hold freezes the picture, camera and all. A camera move that a
+result would interrupt, 0.3 seconds or more after the move starts, now ends
+at that result, so the held frame is a settled framing rather than half a
+zoom. The move is then shorter than 0.9 seconds, at least 0.3.
+
 ### A window resized as it opens is still opening
 
 A window-sized change that overlaps a window's opening and comes within

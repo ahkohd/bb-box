@@ -235,9 +235,9 @@ export function planScene(facts: SceneFacts, size: { readonly width: number; rea
   const moments = knowsIdle(facts, options) ? activityMoments(scene, keys, (options.captions ?? []).map((at) => at - facts.lag)) : null;
   const idle = moments ? idleStretches(moments, length) : null;
   const pointer = planPointer(scene);
-  const camera = options.zoom ? planCamera(scene, pointer, idle ?? []) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
-  const zooms = camera.some((key) => key.view.zoom > 1);
   const results = (options.results ?? []).map((at) => at - facts.lag);
+  const camera = options.zoom ? planCamera(scene, pointer, idle ?? [], results) : [{ at: 0, view: { zoom: 1, x: size.width / 2, y: size.height / 2 } }];
+  const zooms = camera.some((key) => key.view.zoom > 1);
   const ends = moments ? clipEnds(scene, keys, pointer, moments, results) : null;
   const pills = planKeyPills(keys, keyTyping, facts.keys, length)
     .filter((pill) => !typedAtOnceBeforeResult(scene, pill, results))

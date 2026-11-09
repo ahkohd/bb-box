@@ -157,6 +157,28 @@ test("the view stays on the screen, and two groups close together pan from one t
   for (let t = 4.5; t < 6.5; t += 0.1) assert.ok(cameraAt(keys, t).zoom > 1.5, `no zoom out between the two, at ${t.toFixed(1)} s`);
 });
 
+test("a camera move that a result's hold would freeze halfway ends by that result, so the held frame is a settled framing (076)", () => {
+  const prepared: Prepared = {
+    ended: "stopped",
+    recorded: 12,
+    width: 1920,
+    height: 1080,
+    start: 1000,
+    cuts: [],
+    events: [
+      { at: 1004.3, kind: "pass", text: "The button is down" },
+      { at: 1004.4, kind: "step", text: "Look at the next one" },
+    ],
+    scene: facts({ samples: [{ at: 1000, x: 200, y: 200, buttons: 0 }], inputs: [click(5, 600, 400)] }),
+  };
+  const plan = planClip(prepared, 1, { zoom: true, frame: true, stills: "keep" });
+  const top = Math.max(...plan.scene!.camera.map((key) => key.view.zoom));
+  assert.ok(top > 1.5);
+  assert.equal(cameraAt(plan.scene!.camera, 4.3).zoom, top, `in by the result at 4.3 s, not still easing in as it is held: ${JSON.stringify(plan.scene!.camera)}`);
+  const without = planClip({ ...prepared, events: [] }, 1, { zoom: true, frame: true, stills: "keep" });
+  assert.ok(cameraAt(without.scene!.camera, 4.3).zoom < top, "with no result to hold, the camera takes its usual 0.9 s");
+});
+
 test("the camera pans instead of easing out and back in when the next view overlaps this one within the group gap, counting only time that is not cut (076)", () => {
   const window = { x: 600, y: 300, width: 500, height: 300 };
   const at = (t: number, x: number) => ({ at: t, x, y: 450, button: "left" as const, count: 1 as const, area: { x: x - 40, y: 430, width: 80, height: 40 }, role: "push button", window });
