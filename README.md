@@ -12,6 +12,7 @@ Documentation: [bbbox.dev](https://bbbox.dev).
 - **Any provider.** Docker, Proxmox, microsandbox, Macs with Tart, machines over SSH, or Hetzner Cloud, Namespace and boat.dev.
 - **Ready in seconds.** A box is usually ready in seconds, and a warm box at once.
 - **Shared desktops.** You and the agent use the same screen. The agent waits while you have control.
+- **A box's files in a tab.** Browse them in a tree, open several at once, search them, and edit and save, with a check that the file has not changed underneath you. See [a box's files](docs/guide/box-files.md).
 - **Phones and tablets to test apps on.** An iPhone or iPad in the iOS Simulator, or an Android device in its emulator. See [device boxes](docs/guide/devices.md).
 - **GPUs.** A box can share an NVIDIA card or have one to itself, with `nvidia-smi`, CUDA and PyTorch ready, on supported backends. See [GPU boxes](docs/guide/gpu-boxes.md).
 - **Snapshot, undo and fork.** Save a box before a risky change, restore it with an undo, or fork it into a fresh box with its own identity. See [snapshots](docs/guide/snapshots.md).
