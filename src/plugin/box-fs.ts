@@ -1,3 +1,4 @@
+import { readTree, type FilesTree } from "../core/files-tree.ts";
 import { deviceDisplayOf } from "../backends/types.ts";
 import { BoxError, OPERATOR, describeError, ownedByThread, type BoxRecord, type Boxes } from "../core/boxes.ts";
 import {
@@ -65,7 +66,42 @@ function warmLater(boxes: Boxes, box: BoxRecord, root: string): void {
 }
 
 export function filesHandlers(boxes: Boxes) {
+  const trees = new Map<string, { value: FilesTree; bytes: number }>();
+  let treeBytes = 0;
+  const remember = (key: string, value: FilesTree) => {
+    if (value.error !== null) return;
+    const old = trees.get(key);
+    treeBytes -= old?.bytes ?? 0;
+    trees.delete(key);
+    const bytes = Buffer.byteLength(key) + Buffer.byteLength(JSON.stringify(value));
+    if (bytes > 8 * 1024 * 1024) return;
+    trees.set(key, { value, bytes });
+    treeBytes += bytes;
+    while (treeBytes > 8 * 1024 * 1024) {
+      const first = trees.entries().next().value;
+      if (!first) break;
+      trees.delete(first[0]);
+      treeBytes -= first[1].bytes;
+    }
+  };
   return {
+    async "files.tree"({ box, path = null, hidden = false, recursive = false, refresh = false }: { box: string; path?: string | null; hidden?: boolean; recursive?: boolean; refresh?: boolean }, context?: FilesCall) {
+      const blocked = panelOnly(context);
+      if (blocked) return blocked;
+      try {
+        const found = await listedBox(boxes, box);
+        const key = JSON.stringify([box, path, hidden, recursive]);
+        const cached = recursive ? undefined : trees.get(key);
+        if (cached && !refresh && found.state === "ready" && found.capabilities.command !== null) {
+          trees.delete(key);
+          trees.set(key, cached);
+          return cached.value.error === null ? { ...cached.value, cached: true } : cached.value;
+        }
+        const value = await readTree(asFs(found), path, recursive, hidden, runOf(boxes, found));
+        if (!recursive) remember(key, value);
+        return value;
+      } catch (error) { return failed(error); }
+    },
     async "files.home"({ box }: { box: string }, context?: FilesCall) {
       const blocked = panelOnly(context);
       if (blocked) return blocked;
@@ -112,7 +148,7 @@ export function filesHandlers(boxes: Boxes) {
       try {
         const found = await listedBox(boxes, box);
         const wrote = await writeFileAt(asFs(found), path, content, expectedSha256, runOf(boxes, found));
-        if (wrote.error === null && wrote.outcome === "written") corpora.drop(found.id);
+        if (wrote.error === null && wrote.outcome === "written") { corpora.drop(found.id); trees.clear(); treeBytes = 0; }
         return wrote;
       } catch (error) {
         return failed(error);
@@ -124,7 +160,7 @@ export function filesHandlers(boxes: Boxes) {
       try {
         const found = await listedBox(boxes, box);
         const made = await createPath(asFs(found), path, kind, runOf(boxes, found));
-        if (made.error === null) corpora.drop(found.id);
+        if (made.error === null) { corpora.drop(found.id); trees.clear(); treeBytes = 0; }
         return made;
       } catch (error) {
         return failed(error);
@@ -136,7 +172,7 @@ export function filesHandlers(boxes: Boxes) {
       try {
         const found = await listedBox(boxes, box);
         const moved = await renamePath(asFs(found), from, to, runOf(boxes, found));
-        if (moved.error === null) corpora.drop(found.id);
+        if (moved.error === null) { corpora.drop(found.id); trees.clear(); treeBytes = 0; }
         return moved;
       } catch (error) {
         return failed(error);
@@ -148,7 +184,7 @@ export function filesHandlers(boxes: Boxes) {
       try {
         const found = await listedBox(boxes, box);
         const removed = await deletePath(asFs(found), path, home, runOf(boxes, found));
-        if (removed.error === null) corpora.drop(found.id);
+        if (removed.error === null) { corpora.drop(found.id); trees.clear(); treeBytes = 0; }
         return removed;
       } catch (error) {
         return failed(error);

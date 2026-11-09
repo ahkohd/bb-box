@@ -7,6 +7,7 @@ import type { Contract } from "../../plugin/contract.ts";
 import type { FilesScope } from "./files-scope.ts";
 import { groupHits, type SearchResult } from "./group-hits.ts";
 import { FileGlyph } from "./FileGlyph.tsx";
+import { useWorkspaceMemory, useWorkspaceState } from "./workspace-context.tsx";
 
 const DEBOUNCE_MS = 180;
 
@@ -35,9 +36,13 @@ export function SearchResults({
   onOpenMatch,
 }: SearchResultsProps) {
   const rpc = useRpc<Contract>();
-  const [result, setResult] = useState<SearchResult | null>(null);
+  const memory = useWorkspaceMemory();
+  const searchKey = JSON.stringify([scope, query, matchCase, wholeWord, regex, includeHidden]);
+  const [savedKey, setSavedKey] = useWorkspaceState("searchKey", searchKey);
+  const [savedResult, setResult] = useWorkspaceState("searchResult", null);
+  const result = savedKey === searchKey ? savedResult : null;
   const [isSearching, setIsSearching] = useState(false);
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [collapsed, setCollapsed] = useWorkspaceState("collapsed", new Set());
   const generation = useRef(0);
   const lastSubmit = useRef(submitNonce);
 
@@ -48,7 +53,8 @@ export function SearchResults({
     const request = (generation.current += 1);
     const immediate = submitNonce !== lastSubmit.current;
     lastSubmit.current = submitNonce;
-    setIsSearching(true);
+    const restoring = savedKey === searchKey && result !== null;
+    if (!restoring) setIsSearching(true);
 
     const timer = window.setTimeout(
       () => {
@@ -64,6 +70,7 @@ export function SearchResults({
           })
           .then((next) => {
             if (request !== generation.current) return;
+            setSavedKey(searchKey);
             if (next.error !== null) {
               setResult({ status: "error", message: next.error });
               setIsSearching(false);
@@ -71,10 +78,11 @@ export function SearchResults({
             }
             setResult(groupHits(next.hits, next.truncated, query, { matchCase, wholeWord, regex }));
             setIsSearching(false);
-            setCollapsed(new Set());
+            if (!restoring) setCollapsed(new Set());
           })
           .catch((error: unknown) => {
             if (request !== generation.current) return;
+            setSavedKey(searchKey);
             setResult({
               status: "error",
               message: error instanceof Error ? error.message : "Search failed.",
@@ -84,7 +92,7 @@ export function SearchResults({
       },
       immediate ? 0 : DEBOUNCE_MS,
     );
-    return () => window.clearTimeout(timer);
+    return () => { window.clearTimeout(timer); generation.current++; };
   }, [box, includeHidden, matchCase, query, regex, root, rpc, submitNonce, wholeWord]);
 
   const files = result?.status === "ok" ? result.files : [];
@@ -121,6 +129,8 @@ export function SearchResults({
       </div>
 
       <div
+        ref={(node) => { if (node && memory) node.scrollTop = memory.searchTop; }}
+        onScroll={(event) => { if (memory) memory.searchTop = event.currentTarget.scrollTop; }}
         className={cn(
           "min-h-0 flex-1 overflow-auto pb-2 transition-opacity",
 

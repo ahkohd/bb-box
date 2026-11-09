@@ -279,7 +279,7 @@ can put the box back to it.
 
 ## A box's files
 
-A person opens a box's own files from the box's row, its page, or the Files tab beside the thread. That view is the box user's files, not the thread workspace: a tree, tabs, search, go to file, find in the file, and a Markdown preview. New file and New folder are icons on the tree. A row's menu creates, renames and deletes, and delete asks for confirmation. On a narrow window the tree and the open file take turns. A device box has no Files view. Agents still read and change files with `box_run`, or from the terminal.
+A person opens a box's own files from the box's row, its page, or the Files tab beside the thread. That view is the box user's files, not the thread workspace: a tree, tabs, search, go to file, find in the file, and a Markdown preview. New file and New folder are icons on the tree. A row's menu creates, renames and deletes, and delete asks for confirmation. On a narrow window the tree and the open file take turns. A device box has no Files view. Switching panels keeps drafts and view state in app memory, within eight hidden workspaces and 32 MiB in total. Save before reloading the app; a released box loses that state. Agents still read and change files with `box_run`, or from the terminal.
 
 ## Desktops and computer use
 
@@ -525,3 +525,5 @@ agent mostly needs:
   the user to run.
 - `bb plugin logs bb-box`, which says why each box was released, and how long
   each step of joining BB took.
+
+The Files view opens one folder level first, then fills quick open in the background. Cached folders refresh quietly. Its tree is on the right on wide windows; the create menu sits beside the path. These panel calls remain unavailable to agents.

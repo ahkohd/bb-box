@@ -844,6 +844,7 @@ function server(initial: BoxView[], options: { cards?: Record<string, SettingsCa
       throw new Error("The Monitor is off.");
     },
     "monitor.alerts": () => ({ enabled: false, notifications: true, cursor: 0, active: [], recent: [] }),
+    "files.tree": () => ({ error: "This box has no shell, so its files cannot be read." }),
     "files.home": () => ({ error: "This box has no shell, so its files cannot be read." }),
     "files.list": () => ({ error: "This box has no shell, so its files cannot be read." }),
     "files.read": () => ({ error: "This box has no shell, so its files cannot be read." }),

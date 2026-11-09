@@ -6,6 +6,7 @@ The panel's calls for a box's own files. Each one runs as the box user, through 
 
 | Call | What it does |
 | --- | --- |
+| `files.tree` | The home or a folder and its first level in one command. A name index runs after the tree is drawn. Cached folders reopen before refresh. |
 | `files.home` | The box user's home directory, as an absolute path. |
 | `files.list` | The names in one directory, in one command. At most 5,000. A name with a newline is left out. |
 | `files.read` | A file and its SHA-256. Text up to 4 MB, an image up to 2 MB. Past that, the size and the hash, and no bytes. |

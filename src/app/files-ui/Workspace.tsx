@@ -18,100 +18,159 @@ import { FileView, fileMetaLabel } from "./FileView.tsx";
 import { QuickOpen } from "./QuickOpen.tsx";
 import { canPreview, isDirty, useFileTabs, type FileTab, type FileViewMode } from "./use-file-tabs.ts";
 import type { FilesScope } from "./files-scope.ts";
+import { WorkspaceSession, useWorkspaceMemory, useWorkspaceState } from "./workspace-context.tsx";
 
-const MIN_EXPLORER_PX = 180;
+const MIN_EXPLORER_PX = 220;
 const MAX_EXPLORER_PX = 560;
 const WIDTH_STORAGE_KEY = "bb-box:files-explorer-width";
 const HIDDEN_STORAGE_KEY = "bb-box:files-include-hidden";
 
-export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
+export function Workspace({ threadId, boxId, os }: { threadId: string; boxId: string; os: GuestOs }) {
+  return <WorkspaceSession key={JSON.stringify([threadId, boxId])} threadId={threadId} boxId={boxId}><WorkspaceBody boxId={boxId} os={os} /></WorkspaceSession>;
+}
+
+function WorkspaceBody({ boxId, os }: { boxId: string; os: GuestOs }) {
+  const memory = useWorkspaceMemory();
   const rpc = useRpc<Contract>();
-  const [home, setHome] = useState<string | null>(null);
-  const [root, setRoot] = useState<string | null>(null);
-  const [names, setNames] = useState<string[]>([]);
-  const [directories, setDirectories] = useState<string[]>([]);
-  const [truncated, setTruncated] = useState(false);
-  const [treeStatus, setTreeStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [home, setHome] = useWorkspaceState("home", null);
+  const [root, setRoot] = useWorkspaceState("root", null);
+  const [names, setNames] = useWorkspaceState("names", []);
+  const [directories, setDirectories] = useWorkspaceState("directories", []);
+  const [truncated, setTruncated] = useWorkspaceState("truncated", false);
+  const [treeStatus, setTreeStatus] = useWorkspaceState("treeStatus", "idle");
   const [treeError, setTreeError] = useState<string | null>(null);
-  const [includeHidden, setIncludeHidden] = useState(readStoredHidden);
-  const [explorerWidth, setExplorerWidth] = useState(readStoredWidth);
-  const [isExplorerOpen, setIsExplorerOpen] = useState(true);
+  const [includeHidden, setIncludeHidden] = useWorkspaceState("includeHidden", readStoredHidden);
+  const [explorerWidth, setExplorerWidth] = useWorkspaceState("explorerWidth", readStoredWidth);
+  const [isExplorerOpen, setIsExplorerOpen] = useWorkspaceState("isExplorerOpen", true);
   const [frameWidth, setFrameWidth] = useState(readFrame);
-  const [treeForward, setTreeForward] = useState(true);
+  const [treeForward, setTreeForward] = useWorkspaceState("treeForward", true);
   const [isQuickOpen, setIsQuickOpen] = useState(false);
-  const [findRequest, setFindRequest] = useState(0);
+  const [findRequest, setFindRequest] = useWorkspaceState("findRequest", 0);
   const [searchFocusRequest, setSearchFocusRequest] = useState(0);
   const [reveal, setReveal] = useState<{ path: string; line: number; nonce: number } | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const requestRef = useRef(0);
+  const requestedRoot = useRef<string | null>(root);
+  const previousBox = useRef(boxId);
+  const previousHidden = useRef(includeHidden);
   const revealNonce = useRef(0);
 
   const scope = useMemo<FilesScope | null>(() => (root === null ? null : { box: boxId, root }), [boxId, root]);
   const tabs = useFileTabs(scope, os);
 
   useEffect(() => {
-    rootRef.current?.focus({ preventScroll: true });
+    if (memory?.state.root == null) rootRef.current?.focus({ preventScroll: true });
   }, []);
 
-  useEffect(() => {
-    let gone = false;
-    setHome(null);
-    setRoot(null);
-    setNames([]);
-    setDirectories([]);
-    setTreeStatus("loading");
+  const [indexEntries, setIndexEntries] = useWorkspaceState("indexEntries", []);
+  const [indexFilling, setIndexFilling] = useState(true);
+  const [indexTruncated, setIndexTruncated] = useState(false);
+  const [loadingFolders, setLoadingFolders] = useState<ReadonlySet<string>>(new Set());
+  const [folderErrors, setFolderErrors] = useState<ReadonlyMap<string, string>>(new Map());
+  const [indexError, setIndexError] = useState<string | null>(null);
+  const [indexPartial, setIndexPartial] = useState(false);
+  const folderLoader = useRef<(path: string) => void>(() => {});
+  const loadedFolders = useRef(new Set(memory?.loadedFolders));
+  useEffect(() => () => { if (memory?.valid) memory.loadedFolders = loadedFolders.current; }, [memory]);
+  const applyTree = useCallback((result: { paths: string[]; directories: string[]; truncated: boolean }) => {
+    setNames(result.paths);
+    setDirectories(result.directories);
+    setTruncated(result.truncated);
+    setTreeStatus("ready");
+  }, []);
+  const loadTree = useCallback((target: string | null, refresh = false) => {
+    const reloadFolders = refresh ? [...loadedFolders.current] : [];
+    const generation = ++requestRef.current;
+    loadedFolders.current.clear();
+    setLoadingFolders(new Set());
+    setFolderErrors(new Map());
+    if (!refresh) setIndexEntries([]);
+    setIndexTruncated(false);
+    setIndexError(null);
     setTreeError(null);
-    void rpc.call("files.home", { box: boxId }).then((result) => {
-      if (gone) return;
-      if (result.error !== null) {
-        setTreeStatus("error");
-        setTreeError(result.error);
-        return;
+    if (!refresh) setTreeStatus("loading");
+    setIndexFilling(true);
+    void rpc.call("files.tree", { box: boxId, path: target, hidden: includeHidden, refresh }).then((result) => {
+      if (generation !== requestRef.current) return;
+      if (result.error !== null) { setTreeError(result.error); setTreeStatus("error"); return; }
+      if (target === null) setHome(result.path);
+      if (memory && requestedRoot.current !== null && requestedRoot.current !== result.path) {
+        memory.state.expanded = new Set();
+        memory.treeTop = 0;
       }
-      setHome(result.path);
       setRoot(result.path);
+      requestedRoot.current = result.path;
+      if (refresh) {
+        const descendants = (paths: string[]) => paths.filter((path) => path.includes("/") && result.directories.includes(path.split("/")[0]!));
+        setNames((current) => [...result.paths, ...descendants(current)]);
+        setDirectories((current) => [...result.directories, ...descendants(current)]);
+        setTreeStatus("ready");
+        setTruncated(result.truncated);
+        for (const folder of reloadFolders) folderLoader.current(folder);
+      } else applyTree(result);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (generation !== requestRef.current) return;
+        if (result.cached) void rpc.call("files.tree", { box: boxId, path: target, hidden: includeHidden, refresh: true }).then((fresh) => {
+          if (generation === requestRef.current && fresh.error === null) {
+            const descendants = (paths: string[]) => paths.filter((path) => path.includes("/") && fresh.directories.includes(path.split("/")[0]!));
+            setNames((current) => [...fresh.paths, ...descendants(current)]);
+            setDirectories((current) => [...fresh.directories, ...descendants(current)]);
+            setTruncated(fresh.truncated);
+          }
+        });
+        void rpc.call("files.tree", { box: boxId, path: result.path, hidden: includeHidden, recursive: true, refresh: true }).then((index) => {
+          if (generation !== requestRef.current) return;
+          setIndexFilling(false);
+          setIndexTruncated(index.error === null && index.truncated);
+          setIndexPartial(index.error === null && index.partial);
+          setIndexError(index.error);
+          if (index.error === null) setIndexEntries([...index.paths.map((path) => ({ path, kind: "file" as const }))]);
+        });
+      }));
     });
-    return () => {
-      gone = true;
-    };
-  }, [boxId, rpc]);
-
-  const loadTree = useCallback(
-    (target: string | null) => {
-      if (target === null) {
-        setNames([]);
-        setDirectories([]);
-        setTruncated(false);
-        setTreeStatus("idle");
-        setTreeError(null);
+  }, [applyTree, boxId, includeHidden, rpc]);
+  useEffect(() => {
+    const visibilityChanged = previousHidden.current !== includeHidden;
+    previousHidden.current = includeHidden;
+    const restoring = requestedRoot.current !== null;
+    if (!visibilityChanged && !restoring) { setNames([]); setDirectories([]); setIndexEntries([]); }
+    if (previousBox.current !== boxId) { requestedRoot.current = null; previousBox.current = boxId; }
+    loadTree(visibilityChanged ? root : requestedRoot.current, visibilityChanged || restoring);
+    return () => { requestRef.current++; };
+  }, [loadTree]);
+  const loadFolder = useCallback((relative: string) => {
+    if (root === null || loadedFolders.current.has(relative)) return;
+    const path = absoluteFrom(os, root, relative);
+    if (path === null) {
+      setFolderErrors((current) => new Map([...current, [relative, "That folder path cannot be opened."]]));
+      return;
+    }
+    loadedFolders.current.add(relative);
+    const generation = requestRef.current;
+    setLoadingFolders((current) => new Set([...current, relative]));
+    const read = async (refresh: boolean): Promise<void> => {
+      const result = await rpc.call("files.tree", { box: boxId, path, hidden: includeHidden, refresh });
+      if (generation !== requestRef.current) return;
+      setLoadingFolders((current) => new Set([...current].filter((path) => path !== relative)));
+      if (result.error !== null) {
+        loadedFolders.current.delete(relative);
+        setFolderErrors((current) => new Map([...current, [relative, result.error]]));
         return;
       }
-      const generation = (requestRef.current += 1);
-      setTreeStatus("loading");
-      setTreeError(null);
-      void rpc.call("files.names", { box: boxId, path: target }).then((result) => {
-        if (requestRef.current !== generation) return;
-        if (result.error !== null) {
-          setNames([]);
-          setDirectories([]);
-          setTruncated(false);
-          setTreeStatus("error");
-          setTreeError(result.error);
-          return;
-        }
-        setNames([...result.paths]);
-        setDirectories([...(result.directories ?? [])]);
-        setTruncated(result.truncated);
-        setTreeStatus("ready");
-        setTreeError(null);
+      setFolderErrors((current) => new Map([...current].filter(([path]) => path !== relative)));
+      if (result.truncated || result.partial) setFolderErrors((current) => new Map([...current, [relative, result.truncated ? "Showing the first 5,000 entries. Open a smaller folder to see more." : "Some entries could not be read."]]));
+      const keep = (paths: string[]) => paths.filter((path) => {
+        if (!path.startsWith(`${relative}/`)) return true;
+        const child = path.slice(relative.length + 1);
+        return child.includes("/") && result.directories.includes(child.split("/")[0]!);
       });
-    },
-    [boxId, rpc],
-  );
-
-  useEffect(() => {
-    loadTree(root);
-  }, [loadTree, root]);
+      setNames((current) => [...keep(current), ...result.paths.map((path) => `${relative}/${path}`)]);
+      setDirectories((current) => [...keep(current), ...result.directories.map((path) => `${relative}/${path}`)]);
+      if (result.cached) void read(true);
+    };
+    void read(false);
+  }, [boxId, includeHidden, os, root, rpc]);
+  folderLoader.current = loadFolder;
 
   const entries = useMemo<FlatEntry[]>(
     () => [
@@ -168,9 +227,12 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
       const relative = createdPath(parent, name);
       const abs = relative === null ? null : placeOf(relative);
       if (scope === null || abs === null) return "Use a name without slashes.";
+      const mutationGeneration = requestRef.current;
       const result = await rpc.call("files.create", { box: boxId, path: abs, kind });
+      if (mutationGeneration !== requestRef.current) return null;
       if (result.error !== null) return result.error;
-      loadTree(root);
+      if (parent !== "") loadedFolders.current.add(parent);
+      loadTree(root, true);
       if (kind === "file" && relative !== null) openFile(relative);
       return null;
     },
@@ -185,10 +247,12 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
       const from = placeOf(path);
       const to = placeOf(relative);
       if (from === null || to === null) return "That name cannot be used.";
+      const mutationGeneration = requestRef.current;
       const result = await rpc.call("files.rename", { box: boxId, from, to });
+      if (mutationGeneration !== requestRef.current) return null;
       if (result.error !== null) return result.error;
       tabs.retarget(path, relative);
-      loadTree(root);
+      loadTree(root, true);
       return null;
     },
     [boxId, loadTree, placeOf, root, rpc, tabs],
@@ -198,10 +262,12 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
     async (path: string) => {
       const abs = placeOf(path);
       if (abs === null || home === null) return "That path cannot be changed.";
+      const mutationGeneration = requestRef.current;
       const result = await rpc.call("files.delete", { box: boxId, path: abs, home });
+      if (mutationGeneration !== requestRef.current) return null;
       if (result.error !== null) return result.error;
       tabs.closeUnder(path);
-      loadTree(root);
+      loadTree(root, true);
       return null;
     },
     [boxId, home, loadTree, placeOf, root, rpc, tabs],
@@ -313,7 +379,7 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
     const move = (moveEvent: PointerEvent) => {
-      setExplorerWidth(clampWidth(startWidth + moveEvent.clientX - startX));
+      setExplorerWidth(clampWidth(startWidth - moveEvent.clientX + startX));
     };
     const stop = () => {
       target.releasePointerCapture(event.pointerId);
@@ -329,12 +395,14 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
   };
 
   const go = (next: string) => {
-    setRoot(next);
+    setNames([]);
+    setDirectories([]);
+    loadTree(next);
     setIsQuickOpen(false);
   };
 
   const header = (
-    <div className="flex shrink-0 items-center gap-1 px-2 pt-2 pb-1.5">
+    <div className="flex min-w-0 flex-1 items-center">
       <PathBar
         os={os}
         home={home}
@@ -360,49 +428,6 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
       tabIndex={-1}
       className="relative flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-background focus:outline-none"
     >
-      {showTree ? (
-        <>
-          <div style={showFile ? { width: explorerWidth } : undefined} className={showFile ? "flex min-h-0 shrink-0 flex-col overflow-hidden" : "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"}>
-            <Explorer
-              entries={entries}
-              activePath={tabs.activePath}
-              isLoading={treeStatus === "loading"}
-              error={treeError}
-              truncated={truncated}
-              hiddenSupported
-              includeHidden={includeHidden}
-              onToggleHidden={(next) => {
-                setIncludeHidden(next);
-                storeHidden(next);
-              }}
-              onOpenFile={openFile}
-              onOpenMatch={openMatch}
-              onRefresh={() => loadTree(root)}
-              onQuickOpen={() => setIsQuickOpen(true)}
-              onCreate={createEntry}
-              onRename={renameEntry}
-              onDelete={deleteEntry}
-              scope={scope}
-              searchFocusRequest={searchFocusRequest}
-              header={header}
-            />
-          </div>
-          {showFile ? (
-            <div
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize the file explorer"
-              onPointerDown={startResize}
-              onDoubleClick={() => {
-                setExplorerWidth(DEFAULT_EXPLORER_PX);
-                storeWidth(DEFAULT_EXPLORER_PX);
-              }}
-              className="w-px shrink-0 cursor-col-resize bg-border transition-colors hover:bg-ring"
-            />
-          ) : null}
-        </>
-      ) : null}
-
       {showFile ? <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <EditorTabs
           tabs={tabs.tabs}
@@ -413,19 +438,6 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
           onCloseAll={closeAllTabs}
         />
         <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
-          <button
-            type="button"
-            onClick={() => (narrow ? setTreeForward(true) : setIsExplorerOpen((open) => !open))}
-            aria-label={narrow ? "Back to the files" : isExplorerOpen ? "Hide the file explorer" : "Show the file explorer"}
-            className={cn(
-              "flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md",
-              "text-muted-foreground hover:bg-state-hover hover:text-foreground",
-              "focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
-              !narrow && isExplorerOpen && "text-foreground",
-            )}
-          >
-            <Icon name={narrow ? "ArrowLeft" : "PanelLeft"} aria-hidden className="size-3.5" />
-          </button>
           <Breadcrumb root={root} path={activeTab?.path ?? null} />
           <div className="ml-auto flex shrink-0 items-center gap-1">
             {activeTab?.file?.kind === "text" ? (
@@ -454,11 +466,25 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
               </>
             ) : null}
           </div>
+          <button
+            type="button"
+            onClick={() => (narrow ? setTreeForward(true) : setIsExplorerOpen((open) => !open))}
+            aria-label={narrow ? "Back to the files" : isExplorerOpen ? "Hide the file explorer" : "Show the file explorer"}
+            className={cn(
+              "flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md",
+              "text-muted-foreground hover:bg-state-hover hover:text-foreground",
+              "focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
+              !narrow && isExplorerOpen && "text-foreground",
+            )}
+          >
+            <Icon name={narrow ? "ArrowLeft" : "PanelLeft"} aria-hidden className={cn("size-3.5", !narrow && "rotate-180")} />
+          </button>
         </div>
         {activeTab === null ? (
           <EmptyEditor hasRoot={root !== null} error={treeError} truncated={truncated} onQuickOpen={() => setIsQuickOpen(true)} />
         ) : (
           <FileView
+            key={activeTab.path}
             tab={activeTab}
             onChangeDraft={tabs.setDraft}
             onSave={tabs.save}
@@ -475,7 +501,54 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
           />
         )}
       </div> : null}
-      {isQuickOpen ? <QuickOpen entries={entries} onOpenFile={openFile} onClose={() => setIsQuickOpen(false)} /> : null}
+      {showTree ? (
+        <>
+          {showFile ? (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the file explorer"
+              onPointerDown={startResize}
+              onDoubleClick={() => {
+                setExplorerWidth(DEFAULT_EXPLORER_PX);
+                storeWidth(DEFAULT_EXPLORER_PX);
+              }}
+              className="w-px shrink-0 cursor-col-resize bg-border transition-colors hover:bg-ring"
+            />
+          ) : null}
+          <div style={showFile ? { width: explorerWidth } : undefined} className={showFile ? "flex min-h-0 shrink-0 flex-col overflow-hidden" : "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"}>
+            <Explorer
+              onLoadFolder={loadFolder}
+              loadingFolders={loadingFolders}
+              folderErrors={folderErrors}
+              entries={entries}
+              activePath={tabs.activePath}
+              isLoading={treeStatus === "loading"}
+              error={treeError}
+              truncated={truncated}
+              hiddenSupported
+              includeHidden={includeHidden}
+              onToggleHidden={(next) => {
+                setIncludeHidden(next);
+                storeHidden(next);
+              }}
+              onOpenFile={openFile}
+              onOpenMatch={openMatch}
+              onRefresh={() => loadTree(root, true)}
+              onQuickOpen={() => setIsQuickOpen(true)}
+              onCreate={createEntry}
+              onRename={renameEntry}
+              onDelete={deleteEntry}
+              scope={scope}
+              searchFocusRequest={searchFocusRequest}
+              header={header}
+            />
+          </div>
+
+        </>
+      ) : null}
+
+      {isQuickOpen ? <QuickOpen error={indexError} partial={indexPartial} truncated={indexTruncated} filling={indexFilling} entries={indexFilling || indexError !== null ? [...entries, ...indexEntries] : indexEntries} onOpenFile={openFile} onClose={() => setIsQuickOpen(false)} /> : null}
     </div>
   );
 }
@@ -502,17 +575,6 @@ function PathBar({
         onGo(resolvePath(os, path, draft));
       }}
     >
-      <button
-        type="button"
-        aria-label="Home"
-        disabled={home === null}
-        onClick={() => {
-          if (home !== null) onGo(home);
-        }}
-        className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground disabled:cursor-default disabled:opacity-40"
-      >
-        <Icon name="Folder" aria-hidden className="size-3.5" />
-      </button>
       <input
         aria-label="Path"
         value={draft}

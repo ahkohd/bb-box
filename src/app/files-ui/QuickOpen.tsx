@@ -8,10 +8,18 @@ const RESULT_LIMIT = 60;
 
 export function QuickOpen({
   entries,
+  filling = false,
+  truncated = false,
+  partial = false,
+  error = null,
   onOpenFile,
   onClose,
 }: {
   entries: readonly FlatEntry[];
+  filling?: boolean;
+  truncated?: boolean;
+  partial?: boolean;
+  error?: string | null;
   onOpenFile: (path: string) => void;
   onClose: () => void;
 }) {
@@ -85,6 +93,10 @@ export function QuickOpen({
         }}
         className="flex max-h-[70%] w-[min(36rem,90%)] flex-col overflow-hidden rounded-lg border border-border bg-popover"
       >
+        {error !== null && !filling ? <p role="status" className="px-3 py-1 text-xs text-destructive-text">{error}</p> : null}
+        {partial && !filling ? <p role="status" className="px-3 py-1 text-xs text-muted-foreground">Some folders could not be read. Try a smaller folder.</p> : null}
+        {truncated && !filling ? <p role="status" className="px-3 py-1 text-xs text-muted-foreground">Showing the first 20,000 names. Open a smaller folder to find more.</p> : null}
+        {filling ? <p role="status" className="px-3 py-1 text-xs text-muted-foreground">File names are still filling.</p> : null}
         <div className="flex items-center gap-2 border-b border-border px-3">
           <Icon name="Search" aria-hidden className="size-4 shrink-0 text-muted-foreground" />
           <input

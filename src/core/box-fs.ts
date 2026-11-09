@@ -25,6 +25,7 @@ export const SEARCH_CAP = 2_000;
 export const SEARCH_FILES = 500;
 
 export const PANEL_FILES_RPC: readonly { readonly name: string; readonly does: string }[] = [
+  { name: "files.tree", does: "The home or a folder and its first level in one command. A name index runs after the tree is drawn. Cached folders reopen before refresh." },
   { name: "files.home", does: "The box user's home directory, as an absolute path." },
   { name: "files.list", does: "The names in one directory, in one command. At most 5,000. A name with a newline is left out." },
   { name: "files.read", does: "A file and its SHA-256. Text up to 4 MB, an image up to 2 MB. Past that, the size and the hash, and no bytes." },
