@@ -5,7 +5,6 @@ import type { BoxSnapshotsView, RestorePreview, SnapshotRowView } from "../plugi
 import { PRODUCT } from "./product.ts";
 
 const DAY_MS = 24 * 60 * 60_000;
-const MINUTE_MS = 60_000;
 const SHARES_BLOCKS: ReadonlySet<string> = new Set(["lvmthin", "zfspool", "rbd", "btrfs"]);
 
 function clock24(at: number): string {
@@ -67,16 +66,6 @@ export function screenAround(name: string, at: number, now: number): string {
   if (when.startsWith("today at ")) return `${name}'s screen around ${when.slice("today at ".length)}`;
   if (when.startsWith("yesterday at ")) return `${name}'s screen yesterday around ${when.slice("yesterday at ".length)}`;
   return `${name}'s screen around ${when}`;
-}
-
-export function agoWords(ms: number): string {
-  const minutes = Math.max(0, Math.round(ms / MINUTE_MS));
-  if (minutes < 1) return "under a minute";
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
-  const days = Math.floor(hours / 24);
-  return hours % 24 ? `${days} d ${hours % 24} h` : `${days} d`;
 }
 
 export function aboutWords(ms: number): string {

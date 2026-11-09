@@ -60,7 +60,7 @@ test("071 unit 13: guests outside this install do not fill a card", () => {
   const shared = gpuFormLine([crowded], "shared", NOW);
   assert.equal(shared.state, "shared");
   assert.equal(shared.blocked, false);
-  assert.match(shared.words, /^Card 1 on pve-1, shared with 3 boxes; 94\.8 GiB free when read, 20 s ago\. Boxes on a card share its memory\.$/);
+  assert.match(shared.words, /^Card 1 on pve-1, shared with 3 boxes; 94\.8 GiB free when read, just now\. Boxes on a card share its memory\.$/);
   const ours = offer({ gpuRoom: room([card({ index: 0, boxes: 5, own: 2 })], { limit: 2, parts: ["none", "shared"] }) });
   assert.equal(gpuFormLine([ours], "shared", NOW).state, "refused");
   assert.equal(gpuRowReason(ours, "shared"), "Card 0 is full");
@@ -85,7 +85,9 @@ test("071 unit 13: the GPU line keeps one height, and each state says what the n
 
   const shared = gpuFormLine([held], "shared", NOW);
   assert.equal(shared.state, "shared");
-  assert.equal(shared.words, "Card 1 on pve-1, shared with 2 boxes; 17.8 GiB free when read, 20 s ago. Boxes on a card share its memory.");
+  assert.equal(shared.words, "Card 1 on pve-1, shared with 2 boxes; 17.8 GiB free when read, just now. Boxes on a card share its memory.");
+  const dayOld = offer({ gpuRoom: room([card({ index: 0, boxes: 0, wholeBy: "quiet-elm" }), card({ index: 1, boxes: 2 })], { at: NOW - 30 * 60 * 60_000 }) });
+  assert.match(gpuFormLine([dayOld], "shared", NOW).words, /free when read, 1 d 6 h ago\./);
 
   const refused = gpuFormLine([held], "whole", NOW);
   assert.equal(refused.state, "refused");

@@ -1,4 +1,5 @@
 import type { GpuPart, GpuResizing, GpuRoom, CardRoom } from "../backends/types.ts";
+import { ago } from "./box-words.ts";
 import { PRODUCT } from "./product.ts";
 
 export const GPU_LINE_CLASS = "h-[3lh] overflow-hidden text-xs leading-snug @sm:h-[2lh]";
@@ -222,13 +223,4 @@ function listed(items: readonly string[]): string {
 function gibWords(mib: number): string {
   const text = (mib / 1024).toFixed(1);
   return `${text.endsWith(".0") ? text.slice(0, -2) : text} GiB`;
-}
-
-function ago(at: number, now: number): string {
-  const seconds = Math.max(0, Math.round((now - at) / 1000));
-  if (seconds < 60) return `${seconds} s ago`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return minutes === 1 ? "1 min ago" : `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  return hours === 1 ? "1 h ago" : `${hours} h ago`;
 }

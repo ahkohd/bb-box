@@ -4,6 +4,7 @@ import { backendWholeCards, KINDS_WITH_GPU_DEFAULT, wholeCardsAnywhere, type Bac
 import { gpuWhenNotAsked } from "../core/gpu.ts";
 import type { ConfigState } from "../plugin/configuration.ts";
 import type { SettingsCard } from "../plugin/gpu-settings.ts";
+import { ago } from "./box-words.ts";
 import { PRODUCT } from "./product.ts";
 
 export function wholeCardsNow(document: Pick<ConfigDocument, "general">, config: Pick<BackendConfig, "fields">, pending: boolean | null): { readonly on: boolean; readonly fromInstall: boolean } {
@@ -54,13 +55,10 @@ export function loweredLimitWords(cards: readonly SettingsCard[], limit: number,
   return `With ${limit}, ${inWords(each)}. They keep running; no new box goes on a card over the limit until it has room.`;
 }
 
-export function readAgo(at: number, now: number): string {
-  const seconds = Math.max(0, Math.round((now - at) / 1000));
-  if (seconds < 60) return `${seconds} s ago`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
-  const hours = Math.round(minutes / 60);
-  return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
+export function cardsReadWords(host: string, source: "helper" | "docker", at: number | null, now: number): string {
+  const when = at === null ? "" : ` ${ago(at, now)}`;
+  const read = source === "helper" ? "as its GPU helper reported them" : "as Docker lists them";
+  return `The cards on ${host}, ${read}${when}.`;
 }
 
 export const GPU_CHOICE_LABELS: Readonly<Record<GpuPart, string>> = { none: "None", shared: "Shared", whole: "Whole card" };

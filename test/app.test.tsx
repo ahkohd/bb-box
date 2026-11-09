@@ -1475,7 +1475,7 @@ test("071 unit 13: the New box form offers None, Shared and Whole card, and the 
   await waitFor(() => expect(line.getAttribute("data-gpu-state")).toBe("reading"));
   expect(submitButton().disabled).toBe(true);
   release();
-  await waitFor(() => expect(line.textContent).toMatch(/^Card 1 on pve-1, shared with 2 boxes; 17\.8 GiB free when read, \d+ s ago\. Boxes on a card share its memory\.$/));
+  await waitFor(() => expect(line.textContent).toMatch(/^Card 1 on pve-1, shared with 2 boxes; 17\.8 GiB free when read, just now\. Boxes on a card share its memory\.$/));
   expect(line.getAttribute("data-gpu-state")).toBe("shared");
   await choose("GPU", "Whole card");
   await waitFor(() => expect(line.textContent).toBe("pve-1 has no free card now: see below."));
@@ -11910,7 +11910,7 @@ test("071 unit 15 gate: the GPUs section shows an explicit old 0 as Boxes per ca
   expect(within(gpus).getByText(spanSaying("Empty: 0, from desktops-per-gpu, the field it replaces"))).toBeTruthy();
   expect(slot.queryByText(/Desktops per GPU/)).toBeNull();
   expect(slot.queryByRole("region", { name: "Advanced" })).toBeNull();
-  expect(await within(gpus).findByText(/^The cards on pve-1, as its GPU helper reported them \d+ s ago\.$/)).toBeTruthy();
+  expect(await within(gpus).findByText("The cards on pve-1, as its GPU helper reported them just now.")).toBeTruthy();
   expect(within(gpus).getByRole("link", { name: /amber-fox/ }).getAttribute("href")).toContain("bxamberfox001");
   fireEvent.change(perCard, { target: { value: "3" } });
   expect(within(gpus).getByText("With 3, card 1 has 4 of this install's boxes running, 1 over: amber-fox, lone-pine, calm-reef and tidy-glade. They keep running; no new box goes on a card over the limit until it has room.")).toBeTruthy();

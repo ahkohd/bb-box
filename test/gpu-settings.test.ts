@@ -13,7 +13,7 @@ import { setKind } from "../src/plugin/config-edits.ts";
 import { fieldLine } from "../src/plugin/config-cli.ts";
 import { settingsCards } from "../src/plugin/gpu-settings.ts";
 import { candidateOf, plain } from "../src/app/settings-paths.ts";
-import { draftLimit, kindGpuChoices, kindGpuWords, limitAfterSave, loweredLimitWords, readAgo, wholeCardsNow, wholeKeptWords } from "../src/app/gpu-settings-words.ts";
+import { cardsReadWords, draftLimit, kindGpuChoices, kindGpuWords, limitAfterSave, loweredLimitWords, wholeCardsNow, wholeKeptWords } from "../src/app/gpu-settings-words.ts";
 import type { ConfigState } from "../src/plugin/configuration.ts";
 import { ClaimsBridge, CARD_A, CARD_B, SECOND_INSTALL, SECOND_POOL } from "./gpu-helper/claims-bridge.ts";
 import { marker } from "./gpu-helper/node.ts";
@@ -216,7 +216,10 @@ test("071 unit 15: a limit typed lower than a card's boxes names them before Sav
   assert.equal(loweredLimitWords(view.cards, 0, 4, "this-install-running"), null, "0 is no limit");
   assert.equal(loweredLimitWords(view.cards, 1, null, "this-install-running")?.startsWith("With 1, card 1 has 3 of this install's boxes running, 2 over"), true, "from no limit, any limit is lower");
   assert.deepEqual([draftLimit("3"), draftLimit(" 2 "), draftLimit(""), draftLimit("x"), draftLimit(-1)], [3, 2, null, null, null]);
-  assert.deepEqual([readAgo(1_000, 6_000), readAgo(0, 120_000)], ["5 s ago", "2 minutes ago"]);
+  const now = 1_700_000_000_000;
+  assert.equal(cardsReadWords("pve-1", "helper", now - 5_000, now), "The cards on pve-1, as its GPU helper reported them just now.");
+  assert.equal(cardsReadWords("pve-1", "docker", now - 30 * 60 * 60_000, now), "The cards on pve-1, as Docker lists them 1 d 6 h ago.");
+  assert.equal(cardsReadWords("pve-1", "helper", null, now), "The cards on pve-1, as its GPU helper reported them.");
 });
 
 test("071 unit 15: Whole cards shows its value with where it comes from, and off lists the boxes that keep their whole card", () => {
