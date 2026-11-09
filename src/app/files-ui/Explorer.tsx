@@ -350,7 +350,7 @@ export function Explorer({
           }}
         />
       )}
-      <AlertDialog open={removing !== null} onOpenChange={(open) => !open && setRemoving(null)}>
+      <AlertDialog open={removing !== null} onOpenChange={(open) => { if (!open && !busy) setRemoving(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {removing === null ? "this" : basename(removing.path)}?</AlertDialogTitle>
@@ -359,7 +359,7 @@ export function Explorer({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
             <DialogButton danger disabled={busy} onClick={() => void confirmDelete()}>
               {busy ? "Deleting…" : "Delete"}
             </DialogButton>

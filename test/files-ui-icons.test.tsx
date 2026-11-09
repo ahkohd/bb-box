@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, test } from "vitest";
 import { installTestPluginRuntime } from "@get-bb/plugin-sdk/testing/app";
 import { Explorer } from "../src/app/files-ui/Explorer.tsx";
@@ -117,6 +117,46 @@ test("refresh uses the rotate icon and spins while a folder is read, with no rea
   expect(icon?.getAttribute("class") ?? "").toContain("animate-spin");
   expect(container.textContent ?? "").not.toMatch(/Reading/);
   expect(container.textContent ?? "").not.toMatch(/0 files/);
+});
+
+test("delete keeps Cancel off and the dialog open while the file is going", async () => {
+  let release: (result: string | null) => void = () => undefined;
+  const deleting = new Promise<string | null>((resolve) => {
+    release = resolve;
+  });
+  render(
+    <Explorer
+      entries={[{ path: "notes.md", kind: "file" }]}
+      activePath={null}
+      isLoading={false}
+      error={null}
+      truncated={false}
+      hiddenSupported
+      includeHidden={false}
+      onToggleHidden={() => undefined}
+      onOpenFile={() => undefined}
+      onOpenMatch={() => undefined}
+      onRefresh={() => undefined}
+      onQuickOpen={() => undefined}
+      onCreate={async () => null}
+      onRename={async () => null}
+      onDelete={() => deleting}
+      scope={null}
+      searchFocusRequest={0}
+      header={null}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Actions for notes.md" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+  const dialog = await screen.findByRole("alertdialog", { name: "Delete notes.md?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+  const cancel = await within(dialog).findByRole("button", { name: "Cancel" });
+  expect((cancel as HTMLButtonElement).disabled).toBe(true);
+  expect(within(dialog).getByRole("button", { name: "Deleting…" })).toBeTruthy();
+  fireEvent.click(cancel);
+  expect(screen.getByRole("alertdialog", { name: "Delete notes.md?" })).toBeTruthy();
+  release(null);
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
 });
 
 test("the search row never wraps, so New folder stays beside the other actions", () => {
