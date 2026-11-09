@@ -1,5 +1,5 @@
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import { useRef, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import type { BoxPageState, Contract, PanelState } from "../plugin/contract.ts";
 import { BackControl, BOXES_ACTION, EmptyPanel, forThread, Notice, ReleasedNotice, useLive, type BackTo } from "./common.tsx";
@@ -7,6 +7,7 @@ import { BoxName, type PageLink } from "./box-nav.tsx";
 import { FolderGlyph } from "./glyphs.tsx";
 import { canOpenFiles, useOpenFiles } from "./files-open.ts";
 import { Workspace } from "./files-ui/Workspace.tsx";
+import { forgetWorkspaceBox } from "./files-ui/workspace-memory.ts";
 
 type Os = "linux" | "windows" | "macos";
 
@@ -64,14 +65,18 @@ export function BoxFiles({ threadId, boxId, onBack, page, otherViews }: { thread
   const box = value?.box ?? null;
   const lastName = useRef<string | null>(null);
   if (box) lastName.current = box.name;
+  const switcher = otherViews?.("files");
+  useLayoutEffect(() => {
+    if (value && (!box || box.state === "releasing")) forgetWorkspaceBox(boxId);
+  }, [value, box, boxId]);
   return (
     <div data-files={boxId} className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs">
+      {onBack || switcher ? <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2 text-xs">
         {onBack ? <BackControl back={onBack} /> : null}
         <FolderGlyph className="text-muted-foreground" />
         <BoxName name={box?.name ?? lastName.current ?? "Files"} page={page} />
-        {otherViews?.("files")}
-      </div>
+        {switcher}
+      </div> : null}
       {error ? (
         <Notice action={<Button type="button" variant="outline" size="sm" className="h-7" onClick={() => void refresh()}>Try again</Button>}>
           {error}
@@ -82,7 +87,7 @@ export function BoxFiles({ threadId, boxId, onBack, page, otherViews }: { thread
       {box?.device ? <Notice>A device box has no files. Open the computer it runs on.</Notice> : null}
       {box && !box.device && box.state !== "ready" ? <Notice>This box is not ready.</Notice> : null}
       {box && !box.device && box.state === "ready" && !box.terminal ? <Notice>This box has no shell, so its files cannot be read.</Notice> : null}
-      {box && canOpenFiles(box) ? <Workspace key={`${threadId}:${box.id}`} boxId={box.id} os={asOs(box.os)} /> : null}
+      {box && canOpenFiles(box) ? <Workspace key={JSON.stringify([threadId, box.id])} threadId={threadId} boxId={box.id} os={asOs(box.os)} /> : null}
     </div>
   );
 }

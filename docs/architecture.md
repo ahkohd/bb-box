@@ -692,6 +692,12 @@ route and carries messages, not bytes:
   window, so in the foreground, and an element Cua cannot click is clicked
   at the centre of its frame (048).
 
+## Files in the app
+
+The Files panel reads and writes through panel-only RPC and the box's command transport. Its workspace state stays in app memory, keyed by thread and box, across panel unmounts. It restores before the first draw and refreshes directory names quietly. Drafts keep their original open hashes, so a later save still checks the file on disk.
+
+The hidden workspace cache holds at most eight snapshots and 32 MiB of encoded data, evicting the least recently used snapshots. It never writes file contents to browser storage. The app's lifetime overlay checks retained boxes on change signals and reconnection, and drops a released box's state across threads. An app reload clears all snapshots. See [078](decisions/078-files-keep-the-workspace-in-memory.md).
+
 ## Images
 
 [049](decisions/049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md).

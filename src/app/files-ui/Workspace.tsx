@@ -18,33 +18,39 @@ import { FileView, fileMetaLabel } from "./FileView.tsx";
 import { QuickOpen } from "./QuickOpen.tsx";
 import { canPreview, isDirty, useFileTabs, type FileTab, type FileViewMode } from "./use-file-tabs.ts";
 import type { FilesScope } from "./files-scope.ts";
+import { WorkspaceSession, useWorkspaceMemory, useWorkspaceState } from "./workspace-context.tsx";
 
 const MIN_EXPLORER_PX = 220;
 const MAX_EXPLORER_PX = 560;
 const WIDTH_STORAGE_KEY = "bb-box:files-explorer-width";
 const HIDDEN_STORAGE_KEY = "bb-box:files-include-hidden";
 
-export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
+export function Workspace({ threadId, boxId, os }: { threadId: string; boxId: string; os: GuestOs }) {
+  return <WorkspaceSession key={JSON.stringify([threadId, boxId])} threadId={threadId} boxId={boxId}><WorkspaceBody boxId={boxId} os={os} /></WorkspaceSession>;
+}
+
+function WorkspaceBody({ boxId, os }: { boxId: string; os: GuestOs }) {
+  const memory = useWorkspaceMemory();
   const rpc = useRpc<Contract>();
-  const [home, setHome] = useState<string | null>(null);
-  const [root, setRoot] = useState<string | null>(null);
-  const [names, setNames] = useState<string[]>([]);
-  const [directories, setDirectories] = useState<string[]>([]);
-  const [truncated, setTruncated] = useState(false);
-  const [treeStatus, setTreeStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [home, setHome] = useWorkspaceState("home", null);
+  const [root, setRoot] = useWorkspaceState("root", null);
+  const [names, setNames] = useWorkspaceState("names", []);
+  const [directories, setDirectories] = useWorkspaceState("directories", []);
+  const [truncated, setTruncated] = useWorkspaceState("truncated", false);
+  const [treeStatus, setTreeStatus] = useWorkspaceState("treeStatus", "idle");
   const [treeError, setTreeError] = useState<string | null>(null);
-  const [includeHidden, setIncludeHidden] = useState(readStoredHidden);
-  const [explorerWidth, setExplorerWidth] = useState(readStoredWidth);
-  const [isExplorerOpen, setIsExplorerOpen] = useState(true);
+  const [includeHidden, setIncludeHidden] = useWorkspaceState("includeHidden", readStoredHidden);
+  const [explorerWidth, setExplorerWidth] = useWorkspaceState("explorerWidth", readStoredWidth);
+  const [isExplorerOpen, setIsExplorerOpen] = useWorkspaceState("isExplorerOpen", true);
   const [frameWidth, setFrameWidth] = useState(readFrame);
-  const [treeForward, setTreeForward] = useState(true);
+  const [treeForward, setTreeForward] = useWorkspaceState("treeForward", true);
   const [isQuickOpen, setIsQuickOpen] = useState(false);
-  const [findRequest, setFindRequest] = useState(0);
+  const [findRequest, setFindRequest] = useWorkspaceState("findRequest", 0);
   const [searchFocusRequest, setSearchFocusRequest] = useState(0);
   const [reveal, setReveal] = useState<{ path: string; line: number; nonce: number } | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const requestRef = useRef(0);
-  const requestedRoot = useRef<string | null>(null);
+  const requestedRoot = useRef<string | null>(root);
   const previousBox = useRef(boxId);
   const previousHidden = useRef(includeHidden);
   const revealNonce = useRef(0);
@@ -53,10 +59,10 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
   const tabs = useFileTabs(scope, os);
 
   useEffect(() => {
-    rootRef.current?.focus({ preventScroll: true });
+    if (memory?.state.root == null) rootRef.current?.focus({ preventScroll: true });
   }, []);
 
-  const [indexEntries, setIndexEntries] = useState<FlatEntry[]>([]);
+  const [indexEntries, setIndexEntries] = useWorkspaceState("indexEntries", []);
   const [indexFilling, setIndexFilling] = useState(true);
   const [indexTruncated, setIndexTruncated] = useState(false);
   const [loadingFolders, setLoadingFolders] = useState<ReadonlySet<string>>(new Set());
@@ -64,7 +70,8 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
   const [indexError, setIndexError] = useState<string | null>(null);
   const [indexPartial, setIndexPartial] = useState(false);
   const folderLoader = useRef<(path: string) => void>(() => {});
-  const loadedFolders = useRef(new Set<string>());
+  const loadedFolders = useRef(new Set(memory?.loadedFolders));
+  useEffect(() => () => { if (memory?.valid) memory.loadedFolders = loadedFolders.current; }, [memory]);
   const applyTree = useCallback((result: { paths: string[]; directories: string[]; truncated: boolean }) => {
     setNames(result.paths);
     setDirectories(result.directories);
@@ -77,16 +84,20 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
     loadedFolders.current.clear();
     setLoadingFolders(new Set());
     setFolderErrors(new Map());
-    setIndexEntries([]);
+    if (!refresh) setIndexEntries([]);
     setIndexTruncated(false);
     setIndexError(null);
     setTreeError(null);
-    setTreeStatus("loading");
+    if (!refresh) setTreeStatus("loading");
     setIndexFilling(true);
     void rpc.call("files.tree", { box: boxId, path: target, hidden: includeHidden, refresh }).then((result) => {
       if (generation !== requestRef.current) return;
       if (result.error !== null) { setTreeError(result.error); setTreeStatus("error"); return; }
       if (target === null) setHome(result.path);
+      if (memory && requestedRoot.current !== null && requestedRoot.current !== result.path) {
+        memory.state.expanded = new Set();
+        memory.treeTop = 0;
+      }
       setRoot(result.path);
       requestedRoot.current = result.path;
       if (refresh) {
@@ -121,10 +132,10 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
   useEffect(() => {
     const visibilityChanged = previousHidden.current !== includeHidden;
     previousHidden.current = includeHidden;
-    if (!visibilityChanged) { setNames([]); setDirectories([]); }
-    setIndexEntries([]);
+    const restoring = requestedRoot.current !== null;
+    if (!visibilityChanged && !restoring) { setNames([]); setDirectories([]); setIndexEntries([]); }
     if (previousBox.current !== boxId) { requestedRoot.current = null; previousBox.current = boxId; }
-    loadTree(visibilityChanged ? root : requestedRoot.current, visibilityChanged);
+    loadTree(visibilityChanged ? root : requestedRoot.current, visibilityChanged || restoring);
     return () => { requestRef.current++; };
   }, [loadTree]);
   const loadFolder = useCallback((relative: string) => {
@@ -473,6 +484,7 @@ export function Workspace({ boxId, os }: { boxId: string; os: GuestOs }) {
           <EmptyEditor hasRoot={root !== null} error={treeError} truncated={truncated} onQuickOpen={() => setIsQuickOpen(true)} />
         ) : (
           <FileView
+            key={activeTab.path}
             tab={activeTab}
             onChangeDraft={tabs.setDraft}
             onSave={tabs.save}
