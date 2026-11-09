@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { homePageHead, icons, shareImage, siteHead, type HeadTag } from "../site/src/head.ts";
 import { descriptions, entryData, fullTextPath, headingAnchors as anchorsInMarkdown, llmsFullTxt, llmsTxt, markdownCopies, markdownPath } from "../site/src/llms.ts";
 import { blankedCode, lightTwinOf, pagesByFile, readPages, repoRoot, repository, siteHref, withoutFrontmatter, type Page } from "../site/src/repo.ts";
+import { aimFor } from "../site/src/effects/aim.ts";
 import { sampleBoxName } from "../site/src/effects/sample-names.ts";
 import { cipherFrame, letterGlyphsFor, revealTimes } from "../site/src/effects/cipher-text.ts";
 import { glyphRule } from "../site/src/effects/glyph-rule.ts";
@@ -75,6 +76,20 @@ test("a section rule is a line of the ramp's characters, the same for a seed eve
   assert.notEqual(glyphRule(3.9, 220), rule);
   assert.match(rule, /[ .·:]{6}/, "a quiet stretch");
   assert.match(rule, /[+*=]{4}/, "a dense stretch");
+});
+
+test("the aim reticle frames a button outside its edges with corners sized to it, and marks an inline link below its line, so it never covers text", () => {
+  const button = { left: 100, top: 200, width: 180, height: 44 };
+  const frame = aimFor("frame", button);
+  assert.ok(frame.left < button.left && frame.top < button.top);
+  assert.ok(frame.left + frame.width > button.left + button.width && frame.top + frame.height > button.top + button.height);
+  assert.ok(frame.corner >= 5 && frame.corner <= 12);
+  assert.ok(aimFor("frame", { left: 0, top: 0, width: 400, height: 400 }).corner <= 12, "corners stay short on large targets");
+  assert.ok(aimFor("frame", { left: 0, top: 0, width: 16, height: 16 }).corner >= 5, "corners stay visible on small targets");
+  const link = { left: 40, top: 300, width: 90, height: 18 };
+  const under = aimFor("underline", link);
+  assert.ok(under.top >= link.top + link.height, "the bracket starts below the link's line");
+  assert.ok(under.left <= link.left && under.left + under.width >= link.left + link.width);
 });
 
 test("a sample box name is an adjective and a noun that no other sample box has", () => {
