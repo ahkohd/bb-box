@@ -12439,7 +12439,7 @@ test("Stop anyway says Stopping while it runs", async () => {
   };
   const slot = panel(hanging);
   await slot.findByText("calm-otter");
-  fireEvent.click(slot.getByRole("button", { name: "Stop" }));
+  await chooseMenuItem(slot.getByRole("button", { name: "calm-otter actions" }), "Stop");
   const dialog = await screen.findByRole("alertdialog", { name: "Stop calm-otter anyway?" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Stop anyway" }));
   expect(within(dialog).getByRole("button", { name: "Stopping…" })).toBeTruthy();
