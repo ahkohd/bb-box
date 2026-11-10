@@ -67,7 +67,23 @@
     const range = document.createRange();
     range.selectNodeContents(target);
     const content = range.getBoundingClientRect();
-    return content.width > 0 && content.height > 0 ? content : box;
+    if (content.width === 0 || content.height === 0) return box;
+    return inkOf(target, content);
+  }
+
+  const measure = document.createElement("canvas").getContext("2d");
+
+  function inkOf(target: Element, content: DOMRect): DOMRect {
+    const text = target.textContent?.trim();
+    if (!measure || !text || target.children.length > 0) return content;
+    const style = getComputedStyle(target);
+    measure.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const metrics = measure.measureText(text);
+    const fontHeight = metrics.fontBoundingBoxAscent + metrics.fontBoundingBoxDescent;
+    const baseline = content.top + (content.height - fontHeight) / 2 + metrics.fontBoundingBoxAscent;
+    const top = baseline - metrics.actualBoundingBoxAscent;
+    const bottom = baseline + metrics.actualBoundingBoxDescent;
+    return bottom > top ? new DOMRect(content.left, top, content.width, bottom - top) : content;
   }
 
   function place(target: Element, y: number): boolean {
