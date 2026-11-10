@@ -5,8 +5,8 @@ Date: 10 November 2026
 
 ## Context
 
-Docker, microsandbox, Tart and Proxmox can pause a box while they take its
-snapshot: nothing in it runs until the take is done. A large Docker box pauses
+Docker, microsandbox, Tart and Proxmox pause a running box while they take
+its snapshot: nothing in it runs until the take is done. A large Docker box pauses
 for up to about 45 seconds ([082](082-docker-snapshots.md)). Before this
 record, nobody was told before a take, and the take's answer gave only the
 whole take's time, which includes other work. A record rebuilt from a
@@ -32,13 +32,32 @@ cannot speak while it runs.
   take's answer, and its row on the box's page, say the pause measured.
 - A backend may give a size with each snapshot it lists. A record rebuilt
   from that listing keeps it.
-- A Proxmox LXC take of a running container says it pauses the box with no
-  estimate: Proxmox freezes the container while it snapshots its volumes
-  (`PVE::LXC::Config` `__snapshot_freeze`), for a time it does not report.
+- A measured pause covers only the time the box was paused, never work
+  before the pause or after the resume. When a backend cannot read that
+  interval, the result is null, never 0.
+
+What each backend says of a take of a running box:
+
+| Backend | Plan | Measured pause |
+| --- | --- | --- |
+| Docker | pauses, with an estimate from the changed disk and the Docker data | from `docker pause` to `docker unpause` |
+| microsandbox, disk | pauses, with no estimate: `msb` 0.7.7 pauses the microVM, captures its disk and resumes it | `pause_us` from the `capture_disk` line of `msb`'s runtime log, or null when the log has no single such line |
+| microsandbox, memory | pauses, about 1.5 seconds, from the box's memory | `vm_pause_window_us` from the `capture` line of `msb`'s runtime log, or null when the log has no single such line |
+| Tart, macOS | pauses, with an estimate from the VM's memory | from the suspend to when Tart runs the VM again, before BB Box's SSH, identity and clock checks; null when the VM does not resume |
+| Proxmox LXC | pauses, with no estimate: Proxmox freezes the container while it snapshots its volumes (`PVE::LXC::Config` `__snapshot_freeze`) | null: Proxmox does not report it |
+| Proxmox QEMU, disk | pauses, with no estimate: Proxmox calls `savevm-start` with no state file, which stops the VM until its disks are snapshotted | null: Proxmox does not report it |
+| Proxmox QEMU, memory | pauses, with no estimate: the VM stops at the end of saving its memory | null: Proxmox does not report it |
+| boat.dev | does not pause | 0 |
+
+A stopped box is not paused, and its take's measured pause is 0.
 
 ## Consequences
 
 - A person or an agent can decide before a long pause, and see how good the
   estimate was after.
-- Proxmox does not measure its pauses, so its takes say they cannot.
+- Proxmox does not report its pauses, so its takes say they cannot be
+  measured.
+- microsandbox's measure depends on the line its runtime logs at info level.
+  A release of `msb` that changes that line leaves the pause unknown, not
+  wrong, until BB Box reads the new one.
 - A new backend cannot leave its pause unsaid: the type does not allow it.

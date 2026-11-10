@@ -265,8 +265,10 @@ BB Box starts an Android model cold when its unsaved marker is present. A snapsh
 - A take can pause the box: nothing in it runs until the take is done.
   Call `box_snapshot` with `check` first to see whether it pauses the box
   and for about how long. Tell the person before a pause of more than a few
-  seconds, such as a large Docker box's. The take's answer says how long
-  it paused the box.
+  seconds, such as a large Docker box's. Docker, microsandbox, Tart's
+  macOS VMs and Proxmox all pause a box that runs. The take's answer says
+  how long it paused the box, or that its backend cannot measure it, as
+  Proxmox cannot.
 - When an attempt went wrong, restore with `box_restore` rather than
   undoing it by hand. BB Box always takes an undo first, named "before the
   restore at 11:02": restore that to undo the restore.
