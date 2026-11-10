@@ -9,6 +9,7 @@ import { blankedCode, lightTwinOf, pagesByFile, readPages, repoRoot, repository,
 import { aimFor } from "../site/src/effects/aim.ts";
 import { sampleBoxName } from "../site/src/effects/sample-names.ts";
 import { cipherFrame, letterGlyphsFor, revealTimes } from "../site/src/effects/cipher-text.ts";
+import { stillFieldValue, type StillFieldLook } from "../site/src/effects/still-field.ts";
 import { glyphRule } from "../site/src/effects/glyph-rule.ts";
 import { installCommand, setupPrompt } from "../site/src/setup-prompt.ts";
 import { sidebar } from "../site/src/sidebar.ts";
@@ -66,6 +67,120 @@ test("a cipher heading keeps its words' length and spaces while it scrambles, an
   const resolved = cipherFrame(text, 1000, revealAt, letterGlyphsFor, Math.random);
   assert.equal(resolved.map((piece) => piece.glyph).join(""), text);
   assert.ok(resolved.every((piece) => piece.settled));
+});
+
+test("the still hero field stays between 0 and 1, fades out along the bottom, and is quieter on the left when that side is hushed", () => {
+  const columns = 48;
+  const rows = 32;
+  const aspect = 7.2 / 14;
+  const open: StillFieldLook = { lowest: 0.2, quietLeft: 0, leftFloor: 0.1 };
+  const hushed: StillFieldLook = { lowest: 0.2, quietLeft: 1, leftFloor: 0.1 };
+  const at = (look: StillFieldLook, column: number, row: number) => stillFieldValue(column, row, columns, rows, aspect, look);
+
+  let highest = 0;
+  let sawQuieterLeft = false;
+
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const value = at(open, column, row);
+      const hushedValue = at(hushed, column, row);
+      assert.ok(value >= 0 && value <= 1);
+      assert.ok(hushedValue <= value + 1e-12);
+      if (hushedValue < value) sawQuieterLeft = true;
+      if (row > rows * 0.75 && value > highest) highest = value;
+      if (row === 0) assert.ok(value < 0.02);
+    }
+  }
+
+  assert.ok(sawQuieterLeft);
+  assert.ok(highest > 0.2);
+  assert.equal(at(open, 3, 9), stillFieldValue(3, 9, columns, rows, aspect, { ...open }));
+  assert.ok(at({ lowest: 0.75, quietLeft: 0, leftFloor: 0.1 }, 24, 28) <= at({ lowest: 0.05, quietLeft: 0, leftFloor: 0.1 }, 24, 28));
+});
+
+test("a cipher plays when most of it is on screen, and does not play again when it comes back", async () => {
+  const clock = { ms: 5_000 };
+  const frames: FrameRequestCallback[] = [];
+  let onSeen: (entries: { target: object; isIntersecting: boolean; intersectionRatio: number }[]) => void = () => {};
+  const browser = globalThis as unknown as Record<string, unknown>;
+  const previousNow = performance.now;
+
+  browser.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  browser.document = {
+    documentElement: { dataset: {} },
+    hidden: false,
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent() {
+      return true;
+    },
+  };
+  browser.requestAnimationFrame = (callback: FrameRequestCallback) => {
+    frames.push(callback);
+    return frames.length;
+  };
+  browser.IntersectionObserver = class {
+    constructor(callback: typeof onSeen) {
+      onSeen = callback;
+    }
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+    takeRecords(): [] {
+      return [];
+    }
+  };
+  Object.defineProperty(performance, "now", { configurable: true, value: () => clock.ms });
+
+  const { watchCiphers } = await import("../site/src/effects/cipher.ts");
+  const attributes = new Map<string, string>();
+  const element = {
+    dataset: { cipher: "mono", cipherDelay: "0" },
+    querySelectorAll: () => [],
+    querySelector(selector: string) {
+      if (selector === ".cipher-real") return { dataset: { text: "Hello" }, textContent: "Hello" };
+      if (selector === ".cipher-layer") return { innerHTML: "", textContent: "" };
+      return null;
+    },
+    setAttribute(name: string, value: string) {
+      attributes.set(name, value);
+    },
+    removeAttribute(name: string) {
+      attributes.delete(name);
+    },
+    closest: () => null,
+  };
+  const root = { querySelectorAll: (selector: string) => (selector === "[data-cipher]" ? [element] : []) };
+
+  const flush = () => frames.shift()?.(clock.ms);
+  const see = (ratio: number) => onSeen([{ target: element, isIntersecting: ratio > 0, intersectionRatio: ratio }]);
+
+  try {
+    watchCiphers(root as unknown as ParentNode);
+
+    see(0.59);
+    flush();
+    assert.equal(attributes.has("data-running"), false);
+
+    see(0.6);
+    flush();
+    assert.equal(attributes.has("data-running"), true);
+
+    see(0);
+    assert.equal(attributes.has("data-running"), false);
+    flush();
+
+    clock.ms += 50;
+    see(1);
+    flush();
+    assert.equal(attributes.has("data-running"), false);
+  } finally {
+    Object.defineProperty(performance, "now", { configurable: true, value: previousNow });
+    delete browser.matchMedia;
+    delete browser.document;
+    delete browser.requestAnimationFrame;
+    delete browser.IntersectionObserver;
+  }
 });
 
 test("a section rule is a line of the ramp's characters, the same for a seed every time, with quiet and dense stretches, and different for each seed", () => {
