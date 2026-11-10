@@ -248,6 +248,7 @@ export class DockerSnapshotEngine {
       if (state?.phase === "taking") pending.push(state.id);
     }
     const incomplete = (await this.listed(signal)).filter((held) => held.state === "incomplete");
+    const dangling = (await this.#cli.ok(["image", "ls", "--quiet", "--filter", "dangling=true", "--filter", `label=${SNAPSHOT_INSTALL}=${this.#context.installId}`], { signal })).trim().split(/\s+/).filter(Boolean);
     const deep: string[] = [];
     for (const container of containers) {
       const images = snapshotImagesSchema.parse(JSON.parse(await this.#cli.ok(["image", "inspect", container.imageId], { signal })));
@@ -256,7 +257,7 @@ export class DockerSnapshotEngine {
     const facts = box ? await this.#facts({ ref: box.name, host: null, address: null, size: null, data: { box: box.labels[LABELS.box] } }, signal) : null;
     return [
       { id: "docker.snapshots", name: "Snapshots", status: facts ? facts.storage.percentFull >= 85 ? "warn" : "ok" : "skipped", detail: facts ? `${facts.store}: allow about ${facts.store === "containerd" ? "twice" : "once"} the changed disk bytes. ${facts.volume ? "Add the box's Docker data." : "This box has no Docker volume: snapshots hold its disk only."} Docker's disk is ${facts.storage.percentFull.toFixed(1)}% full.` : "Make a box to measure snapshot space on this engine.", fix: null },
-      { id: "docker.snapshot-leftovers", name: "Snapshot leftovers", status: pending.length || incomplete.length ? "warn" : "ok", detail: pending.length || incomplete.length ? `${pending.length} snapshot tasks await recovery; ${incomplete.length} copies are incomplete. Maintenance unpauses interrupted takes after their time bound.` : "No snapshot tasks await recovery.", fix: null },
+      { id: "docker.snapshot-leftovers", name: "Snapshot leftovers", status: pending.length || incomplete.length || dangling.length ? "warn" : "ok", detail: pending.length || incomplete.length || dangling.length ? `${pending.length} snapshot tasks await recovery; ${incomplete.length} copies are incomplete; images without tags: ${dangling.length}. Maintenance unpauses interrupted takes after their time bound and prunes images no container uses.` : "No snapshot tasks await recovery.", fix: null },
       { id: "docker.snapshot-layers", name: "Snapshot layers", status: deep.length ? "warn" : "ok", detail: deep.length ? `Images near the layer limit: ${deep.join(", ")}. Make new boxes and move their files.` : "No box image has 110 or more layers.", fix: null },
     ];
   }

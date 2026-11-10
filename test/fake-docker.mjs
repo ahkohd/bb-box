@@ -139,6 +139,12 @@ function run(rest) {
   if (rest.at(-1) === "df -Pk /space") return console.log(`Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/fake 1000000 ${host.snapshotUsedKiB ?? 100000} 900000 10% /space`);
   if (rest.includes("/from/.")) {
     if (host.failSnapshotCopy) fail("Snapshot copy failed");
+    const source = rest.find((arg) => arg.endsWith(":/from:ro"))?.split(":")[0];
+    const target = rest.find((arg) => arg.endsWith(":/to"))?.split(":")[0];
+    const volumes = read("volumes.json", {});
+    if (!volumes[source] || !volumes[target]) fail("Snapshot copy has a missing volume");
+    volumes[target].Files = structuredClone(volumes[source].Files ?? {});
+    write("volumes.json", volumes);
     return;
   }
   appendFileSync(join(root, "probes"), `${JSON.stringify(rest)}\n`);
@@ -594,6 +600,11 @@ switch (command) {
       write("images.json", left);
       console.log(`Untagged: ${gone.join(" ")}`);
     } else if (sub === "ls") {
+      if (more.includes("dangling=true")) {
+        const install = more.find((arg) => arg.startsWith("label=bbbox.snapshot.install="))?.split("=").at(-1);
+        for (const image of host.snapshotDangling ?? []) if (image.install === install) console.log(image.id);
+        break;
+      }
       const filters = [];
       for (let i = 0; i < more.length; i++) if (more[i] === "--filter") filters.push(more[++i].replace(/^label=/, ""));
       for (const [name, labels] of Object.entries(images)) {
@@ -604,6 +615,8 @@ switch (command) {
         if (matches) console.log(name);
       }
     } else if (sub === "prune") {
+      const install = more.find((arg) => arg.startsWith("label=bbbox.snapshot.install="))?.split("=").at(-1);
+      if (host.snapshotDangling) write("host.json", { ...host, snapshotDangling: (host.snapshotDangling ?? []).filter((image) => image.install !== install || image.inUse) });
       console.log("Total reclaimed space: 0B");
     } else fail(`fake docker: unknown command image ${sub}`, 2);
     break;

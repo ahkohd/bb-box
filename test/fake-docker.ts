@@ -41,6 +41,8 @@ export interface FakeDockerHost {
   /** The names of the containers on the host. */
   containers(): string[];
   inspect(name: string): FakeContainer;
+  writeVolumeFiles(name: string, files: Readonly<Record<string, string>>): void;
+  volumeFiles(name: string): Readonly<Record<string, string>>;
   /** The box user's home in a container. */
   home(name: string): string;
 }
@@ -84,6 +86,14 @@ export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHo
         : [],
     containers: () => (existsSync(containers) ? readdirSync(containers).filter((name) => existsSync(join(containers, name, "config.json"))).sort() : []),
     inspect: (name) => JSON.parse(readFileSync(join(containers, name, "config.json"), "utf8")) as FakeContainer,
+    writeVolumeFiles: (name, files) => {
+      const path = join(root, "volumes.json");
+      const volumes = JSON.parse(readFileSync(path, "utf8"));
+      if (!volumes[name]) throw new Error(`No such volume: ${name}`);
+      volumes[name].Files = files;
+      writeFileSync(path, JSON.stringify(volumes));
+    },
+    volumeFiles: (name) => JSON.parse(readFileSync(join(root, "volumes.json"), "utf8"))[name]?.Files ?? {},
     home: (name) => join(containers, name, "home"),
   };
 }

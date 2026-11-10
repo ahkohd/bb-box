@@ -24,11 +24,13 @@ async function setup(anonymous = false) {
 
 test("Docker snapshots retain disk and Docker data, and can be deleted", async () => {
   const { engine, cli, guest, hooks, fake } = await setup();
+  fake.writeVolumeFiles("box-docker", { value: "A" });
   const plan = await engine.plan(guest);
   assert.equal(plan.take.ok, true);
 
   const taken = await engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks);
   assert.equal(taken.holds, "disk");
+  assert.deepEqual(fake.volumeFiles("bbbox-snapshot-sn123-docker"), { value: "A" });
   const images = JSON.parse(await cli.ok(["image", "inspect", taken.ref]));
   assert.equal(images[0].Config.Labels["bbbox.box"], "");
   assert.ok(images[0].Config.Env.includes("BBBOX_IDENTITY="));
@@ -220,4 +222,18 @@ test("Docker deletes the snapshot tag and volume while another container uses it
   assert.deepEqual(await engine.listed(), []);
   assert.equal((await cli.inspect(["manual-copy"])).length, 1);
   assert.notEqual((await cli.run(["volume", "inspect", "bbbox-snapshot-sn123-docker"])).exitCode, 0);
+});
+
+
+test("Docker reports and prunes this install's unused snapshot images without tags", async () => {
+  const { engine, fake } = await setup();
+  fake.set({ snapshotDangling: [{ id: "sha256:one", install: "test" }, { id: "sha256:two", install: "other" }] });
+
+  const check = (await engine.doctor()).find((check) => check.id === "docker.snapshot-leftovers");
+  assert.equal(check?.status, "warn");
+  assert.match(check?.detail ?? "", /images without tags: 1/);
+
+  await engine.maintain();
+  const cleaned = (await engine.doctor()).find((check) => check.id === "docker.snapshot-leftovers");
+  assert.equal(cleaned?.status, "ok");
 });
