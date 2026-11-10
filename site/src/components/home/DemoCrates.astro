@@ -1,0 +1,75 @@
+<div class="crates" data-motion aria-hidden="true" hidden></div>
+
+<script>
+  import { onMotionChange, pausedByPerson, reducedMotion } from "../../motion.ts";
+
+  const layer = document.querySelector<HTMLElement>(".crates");
+  const shelf = document.querySelector(".demo .frame-top");
+  const floor = document.querySelector(".foot-inner");
+  const roomToBash = matchMedia("(hover: hover) and (pointer: fine) and (min-width: 48rem)");
+  const motionAllowed = () => roomToBash.matches && !reducedMotion() && !pausedByPerson();
+
+  if (layer && shelf && floor) {
+    document.body.append(layer);
+    let started = false;
+
+    const start = async () => {
+      if (started || !motionAllowed()) return;
+      started = true;
+      await document.fonts.ready;
+      const { stackCrates } = await import("../../effects/crates.ts");
+      layer.hidden = false;
+      const crates = stackCrates(layer, shelf, floor, motionAllowed());
+      crates.setActive(motionAllowed());
+      const follow = () => crates.setActive(motionAllowed());
+      onMotionChange(follow);
+      roomToBash.addEventListener("change", follow);
+    };
+
+    new IntersectionObserver(
+      (entries, observer) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        void start();
+      },
+      { rootMargin: "200px" },
+    ).observe(shelf);
+    onMotionChange(() => void start());
+    roomToBash.addEventListener("change", () => void start());
+  }
+</script>
+
+<style is:global>
+  .crates {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    overflow: clip;
+    pointer-events: none;
+    z-index: 15;
+  }
+
+  .crates[hidden] {
+    display: none;
+  }
+
+  .crate {
+    position: absolute;
+    top: 0;
+    left: 0;
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+    font-size: 0.8125rem;
+    line-height: 1;
+    color: var(--frame-ink);
+    background: linear-gradient(var(--background), var(--background)) center / calc(100% - 1ch) calc(100% - 1em) no-repeat;
+    transform-origin: center;
+    will-change: transform;
+    user-select: none;
+  }
+
+  .crate-accent {
+    color: var(--accent);
+  }
+</style>
