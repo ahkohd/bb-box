@@ -16,6 +16,7 @@ import HomeHead from "../components/home/HomeHead.astro";
 import AimReticle from "../components/home/AimReticle.astro";
 import DeadEndRunner from "../components/home/DeadEndRunner.astro";
 import DemoCrates from "../components/home/DemoCrates.astro";
+import StripFire from "../components/home/StripFire.astro";
 import SwappingWord from "../components/home/SwappingWord.astro";
 import MotionToggle from "../components/home/MotionToggle.astro";
 import BoxPanelPiece from "../components/home/BoxPanelPiece.astro";
@@ -230,7 +231,7 @@ import appIcon from "../assets/app-icon.png";
     <AimReticle />
     <DemoCrates />
     <footer class="foot">
-      <div class="dither-strip" aria-hidden="true"><span class="strip-surface"></span></div>
+      <div class="dither-strip" aria-hidden="true"><StripFire /></div>
       <div class="foot-inner">
         <AsciiWordmark />
         <ul class="ways">
@@ -974,70 +975,21 @@ import appIcon from "../assets/app-icon.png";
     margin-top: 8rem;
   }
 
-  @property --strip-scan {
-    syntax: "<percentage>";
-    inherits: false;
-    initial-value: -20%;
-  }
-
   .dither-strip {
     position: relative;
     height: 3rem;
     overflow-x: clip;
   }
 
-  .dither-strip::before,
-  .dither-strip::after {
+  .dither-strip::before {
     content: "";
     position: absolute;
     inset: 0;
-    background-size: 6px 6px;
-    pointer-events: none;
-  }
-
-  .dither-strip::before {
     background-image: radial-gradient(var(--dither-ink) 0.75px, transparent 1px);
+    background-size: 6px 6px;
     opacity: 0.35;
     mask-image: linear-gradient(to top, #000, transparent);
-  }
-
-  .dither-strip::after {
-    background-image: radial-gradient(var(--accent) 0.85px, transparent 1.15px);
-    opacity: 0.8;
-    filter: drop-shadow(0 0 2px color-mix(in oklab, var(--accent) 70%, transparent));
-    mask-image:
-      linear-gradient(to top, #000, transparent 90%),
-      linear-gradient(90deg, transparent calc(var(--strip-scan) - 12%), #000 var(--strip-scan), transparent calc(var(--strip-scan) + 12%));
-    mask-composite: intersect;
-    animation: strip-scan 7s linear infinite;
-  }
-
-  .strip-surface {
-    position: absolute;
-    inset: auto 0 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--accent) 45%, transparent) 15%, color-mix(in oklab, var(--accent) 45%, transparent) 85%, transparent);
-    box-shadow: 0 0 10px 1px color-mix(in oklab, var(--accent) 22%, transparent);
-  }
-
-  @keyframes strip-scan {
-    from {
-      --strip-scan: -20%;
-    }
-    to {
-      --strip-scan: 120%;
-    }
-  }
-
-  :global([data-motion="paused"]) .dither-strip::after {
-    animation-play-state: paused;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .dither-strip::after {
-      animation: none;
-      opacity: 0;
-    }
+    pointer-events: none;
   }
 
   .foot-inner {
