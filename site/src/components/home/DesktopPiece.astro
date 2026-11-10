@@ -68,7 +68,7 @@ const boxName = "proud-crane";
       const yours = piece.dataset.owner !== "you";
       piece.dataset.owner = yours ? "you" : "agent";
       take.textContent = yours ? "Hand back to the agent" : "Take control";
-      words.textContent = yours ? "You have control. Hand back when done." : "The agent has control.";
+      words.textContent = yours ? "You have control." : "The agent has control.";
       say(yours ? "The agent waits while you have control. Select the desktop to use it." : "The agent carries on where it left off.");
     });
 
