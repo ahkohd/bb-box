@@ -543,3 +543,8 @@ agent mostly needs:
   each step of joining BB took.
 
 The Files view opens one folder level first, then fills quick open in the background. Cached folders refresh quietly. Its tree is on the right on wide windows; the create menu sits beside the path. These panel calls remain unavailable to agents.
+
+Docker snapshots allow LXCFS mounts and leave their contents out. A crash during
+a take can leave the box paused for several minutes until maintenance recovers it.
+Deleting an image used by another container removes its tag; its layers stay
+until Docker can reclaim them. Report the size as an estimate, not space freed.

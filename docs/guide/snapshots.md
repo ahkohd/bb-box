@@ -2,7 +2,7 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools. Where the backend allows it, you [fork](#forking-a-snapshot) a snapshot into a new box and [keep](#keeping-a-snapshot) one past the box's release. This works on Proxmox LXC boxes, Proxmox QEMU Linux boxes, Proxmox QEMU Windows desktops and Android boxes, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
+You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools. Where the backend allows it, you [fork](#forking-a-snapshot) a snapshot into a new box and [keep](#keeping-a-snapshot) one past the box's release. Docker boxes also take, list and delete snapshots. This works on Proxmox LXC boxes, Proxmox QEMU Linux boxes, Proxmox QEMU Windows desktops and Android boxes, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
 
 ## What each backend offers
 
@@ -417,8 +417,8 @@ not available yet.
 
 An older box's anonymous Docker volume can be copied too. Other writable mounts
 are refused before pausing. Move those files into the box before taking a snapshot.
-Docker on an LXC host can also refuse the writable LXCFS mounts at `/proc`,
-which BB Box currently creates. Read-only mounts are not copied. An image with 120 or more layers is refused;
+LXCFS mounts are allowed, including existing writable mounts. Docker leaves their
+contents out of the committed image. Read-only mounts are not copied. An image with 120 or more layers is refused;
 make a new box and move its files.
 
 Space estimates count the changed disk bytes once on overlay2 and twice on the
@@ -426,3 +426,8 @@ containerd image store, then add the Docker volume's size. The space check reads
 Docker's own filesystem, including the virtual disk on Docker Desktop or WSL 2.
 Records rebuilt after losing BB Box's database have no displayed size yet; the
 image labels retain the byte counts.
+
+If BB Box crashes during a take, the box can stay paused until recovery runs.
+Recovery waits three times the estimated pause plus 60 seconds, capped at
+15 minutes, then the next maintenance sweep. This can take several minutes.
+Lost snapshot records alone never authorise unpausing a box.

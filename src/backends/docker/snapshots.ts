@@ -1,4 +1,6 @@
 import type { Snapshotting } from "../types.ts";
+import { LXCFS_TARGETS } from "./lxcfs.ts";
+import { LABELS } from "./cli.ts";
 import { ENV_A_BOX_IS_GIVEN } from "./box-container.ts";
 
 export const SNAPSHOT_LABEL = "bbbox.snapshot";
@@ -54,6 +56,7 @@ export function layerRefusal(layers: number): string | null {
 
 export function mountRefusal(mounts: readonly SnapshotMount[]): string | null {
   const unsupported = mounts.find((mount) => mount.writable
+    && !(mount.type === "bind" && LXCFS_TARGETS.includes(mount.destination))
     && !(mount.type === "volume" && mount.destination === "/var/lib/docker" && mount.name)
     && !(mount.type === "tmpfs" && ["/run", "/dev/shm"].includes(mount.destination)));
   return unsupported
@@ -63,7 +66,7 @@ export function mountRefusal(mounts: readonly SnapshotMount[]): string | null {
 
 export function commitChanges(inherited: Readonly<Record<string, string>>, labels: Readonly<Record<string, string>>): string[] {
   return [
-    ...Object.keys(inherited).filter((key) => key.startsWith("bbbox.")).map((key) => `LABEL ${key}=""`),
+    ...Object.keys(inherited).filter((key) => [LABELS.backend, LABELS.install, LABELS.box, LABELS.thread, LABELS.name, LABELS.kind, LABELS.created, LABELS.gpu, LABELS.gpuCard, LABELS.gpuPart, LABELS.fromSnapshot].some((label) => label === key)).map((key) => `LABEL ${key}=""`),
     ...ENV_A_BOX_IS_GIVEN.map((key) => `ENV ${key}=`),
     ...Object.entries(labels).map(([key, value]) => `LABEL ${key}=${JSON.stringify(value)}`),
   ];

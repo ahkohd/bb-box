@@ -1198,7 +1198,7 @@ export class DockerBackend implements Backend {
   }
 
   async maintain(signal?: AbortSignal): Promise<void> {
-    await this.#snapshots.maintain();
+    await this.#snapshots.maintain().catch((error) => this.#context.logError("maintaining Docker snapshots", error));
     await this.#underPlacement(async () => {
       const state = await this.#state(signal);
       await this.#dropDaemonRecords(GPU_PARTS, state, signal);
@@ -1493,9 +1493,6 @@ export class DockerBackend implements Backend {
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
     const started = performance.now();
-    for (const snapshot of await this.snapshotsOn(guest, signal)) {
-      await this.deleteSnapshot({ id: snapshot.id, ref: snapshot.ref, guest }, { submitting: async () => {}, task: async () => {} }, signal);
-    }
     this.#selkies.forget(guest.ref);
     this.#cursor.forget(guest.ref);
     const removed = await this.#remove(guest.ref, this.#boxOf(guest), signal);

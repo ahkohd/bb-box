@@ -196,7 +196,7 @@ test("Docker recovery does not take ownership of a later manual pause", async ()
 });
 
 
-test("Docker release removes its snapshots and leaves another box's alone", async () => {
+test("Docker backend release leaves snapshots for the core to manage", async () => {
   const { engine, guest, hooks, cli, fake, context } = await setup();
   await engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks);
   await cli.ok(["container", "create", "--name", "bbbox-bxother", "--network", "snapshot-test", "--label", "bbbox.install=test", "--label", "bbbox.box=bxother", "--volume", "/var/lib/docker", "bbbox/linux:1"]);
@@ -206,7 +206,7 @@ test("Docker release removes its snapshots and leaves another box's alone", asyn
 
   await backend.release(guest, { resetting: async () => {}, timing: () => {} });
 
-  assert.deepEqual((await engine.listed()).map((held) => held.id), ["snother"]);
+  assert.deepEqual((await engine.listed()).map((held) => held.id), ["sn123", "snother"]);
   assert.equal((await cli.inspect([guest.ref])).length, 0);
   assert.equal((await cli.inspect([other.ref])).length, 1);
 });
@@ -236,4 +236,43 @@ test("Docker reports and prunes this install's unused snapshot images without ta
   await engine.maintain();
   const cleaned = (await engine.doctor()).find((check) => check.id === "docker.snapshot-leftovers");
   assert.equal(cleaned?.status, "ok");
+});
+
+test("Docker retires failed takes after cleanup", async () => {
+  const { engine, guest, hooks, fake, context } = await setup();
+  fake.set({ failSnapshotCommit: true });
+
+  await assert.rejects(engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks));
+  await engine.maintain();
+  const before = fake.calls().filter((args) => args[0] === "image" && args[1] === "rm").length;
+  await engine.maintain();
+
+  assert.equal(fake.calls().filter((args) => args[0] === "image" && args[1] === "rm").length, before);
+  assert.deepEqual(await context.storage.list("docker-snapshot-take:"), []);
+});
+
+test("Docker retires the task when its snapshot is deleted", async () => {
+  const { engine, guest, hooks, context } = await setup();
+  const taken = await engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks);
+
+  await engine.remove({ id: "sn123", ref: taken.ref, guest }, hooks);
+
+  assert.deepEqual(await context.storage.list("docker-snapshot-take:"), []);
+});
+
+test("Docker rebuilding lost records leaves a person's pause alone", async () => {
+  const { engine, guest, hooks, cli } = await setup();
+  await engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks);
+  await cli.ok(["pause", guest.ref]);
+  const recovered = new DockerSnapshotEngine(cli, testContext(), () => 1_000_000);
+
+  await recovered.maintain();
+
+  assert.equal((await cli.inspect([guest.ref]))[0]?.status, "paused");
+});
+
+test("Docker snapshot changes preserve image metadata", () => {
+  const changes = commitChanges({ "bbbox.box": "source", "bbbox.image-version": "1", "bbbox.bb-app": "digest", "bbbox.image-record": "record", "bbbox.gpu-bus-id": "slot" }, {});
+
+  assert.deepEqual(changes.filter((value) => value.startsWith("LABEL")), ['LABEL bbbox.box=""']);
 });

@@ -615,6 +615,7 @@ switch (command) {
         if (matches) console.log(name);
       }
     } else if (sub === "prune") {
+      if (host.failSnapshotPrune) fail("a prune operation is already running");
       const install = more.find((arg) => arg.startsWith("label=bbbox.snapshot.install="))?.split("=").at(-1);
       if (host.snapshotDangling) write("host.json", { ...host, snapshotDangling: (host.snapshotDangling ?? []).filter((image) => image.install !== install || image.inUse) });
       console.log("Total reclaimed space: 0B");
