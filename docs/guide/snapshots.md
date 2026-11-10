@@ -2,7 +2,7 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools. Where the backend allows it, you [fork](#forking-a-snapshot) a snapshot into a new box and [keep](#keeping-a-snapshot) one past the box's release. Docker boxes also take, list and delete snapshots. This works on Proxmox LXC boxes, Proxmox QEMU Linux boxes, Proxmox QEMU Windows desktops and Android boxes, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
+You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools. Where the backend allows it, you [fork](#forking-a-snapshot) a snapshot into a new box and [keep](#keeping-a-snapshot) one past the box's release. Docker boxes take, list, restore and delete snapshots. This works on Docker boxes, Proxmox LXC boxes, Proxmox QEMU Linux boxes, Proxmox QEMU Windows desktops and Android boxes, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
 
 ## What each backend offers
 
@@ -16,7 +16,7 @@ You take, restore, rename and delete snapshots on a box's page, in its [Snapshot
 | microsandbox | the disk, with the box's Docker data, or the disk and memory | the disk live, in under a second; with memory the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
 | Tart, macOS | the disk and memory, always: every snapshot is a copy of the suspended VM | suspends the VM, copies it and resumes it: 11 s for a 16 GiB VM | in place: it suspends the box, takes the undo, puts the snapshot's copy in the VM's place and resumes it, running as it was | by a copy of the snapshot's disk, without its memory, from a snapshot taken with macOS's identity reset | as it is: the copy stays beside the VMs |
 | Tart, Linux | the disk | only while the box is stopped, as Tart cannot suspend a Linux VM | in place, after a shutdown | by a copy of the snapshot's disk, from a snapshot taken with reset version 8 for Linux servers, or version 9 for Linux desktops | as it is: the copy stays beside the VMs |
-| Docker | the disk and the box's Docker data | pauses the box; measured pauses range from 3.5 to 4.9 seconds on small overlay2 boxes to about 45 seconds for a 1.8 GB change on containerd | not yet | not yet | no |
+| Docker | the disk and the box's Docker data | pauses the box; measured pauses range from 3.5 to 4.9 seconds on small overlay2 boxes to about 45 seconds for a 1.8 GB change on containerd | by a new container made from the snapshot, with a snapshot as the undo, which runs the box with its ID, name and labels; the old container is deleted once the new one runs | not yet | no |
 | Hetzner and Namespace boxes, the SSH host pool's machines, Windows boxes on Tart, iOS boxes | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
 
 Linux desktops need an image built with identity reset version 9 or later. Older images refuse forks and Keep, saying why. Refresh the image and make the box again; an image rebuild does not update existing boxes or snapshots.
@@ -413,8 +413,22 @@ Snapshots stay on the box's Docker engine. Their images use
 A restart finds them again. A release deletes them. If another container uses a
 snapshot image, deleting the snapshot removes its tag and volume; Docker keeps
 the shared image layers until that container goes. The listed size is an estimate
-with shared layers, not a promise of space freed by deleting it. Restore, fork and Keep are
+with shared layers, not a promise of space freed by deleting it. Fork and Keep are
 not available yet.
+
+A restore flushes the box's writes, stops it at once, as a power cut would, and
+takes its undo from the stopped box: no pause, as nothing runs. It then makes a new container,
+`bbbox-<box>-<8 hex>`, from the snapshot's image, with the box's ID, name and
+labels, at the cores and memory the snapshot was taken at. Its Docker data is a
+new volume copied from the snapshot's, so the snapshot stays as it was taken and
+can be restored again. Once the new container has started and is ready, BB Box
+deletes the old container and its Docker data. If the new one does not start,
+BB Box deletes it and starts the old one again. If BB Box or BB stops part way,
+its next start finishes the restore or puts the old container back, so the box
+has one container. A restore takes about as long as a take of the box, for its
+undo, plus about 15 seconds for each GB of the snapshot's Docker data and a few
+seconds to start. The box comes back with its programs started afresh: what was
+running and in memory when the snapshot was taken is not there.
 
 An older box's anonymous Docker volume can be copied too. Other writable mounts
 are refused before pausing. Move those files into the box before taking a snapshot.
