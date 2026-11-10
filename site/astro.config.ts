@@ -1,6 +1,8 @@
+import { satteri } from "@astrojs/markdown-satteri";
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 import { codeStyle, codeThemes } from "./src/code-themes.ts";
+import { monoFigures } from "./src/mono-figures.ts";
 import { siteHead } from "./src/head.ts";
 import { readPages, repoRoot, repository } from "./src/repo.ts";
 import { sidebar } from "./src/sidebar.ts";
@@ -24,5 +26,6 @@ export default defineConfig({
       sidebar: sidebar(readPages()),
     }),
   ],
+  markdown: { processor: satteri({ hastPlugins: [monoFigures] }) },
   vite: { server: { fs: { allow: [repoRoot] } } },
 });

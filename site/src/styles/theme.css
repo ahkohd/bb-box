@@ -719,3 +719,9 @@ dialog[aria-label="Search"] .dialog-frame {
 .expressive-code .copy button {
   opacity: 0.75;
 }
+
+.figure {
+  font-family: var(--sl-font-mono);
+  font-size: 0.9em;
+  letter-spacing: -0.01em;
+}
