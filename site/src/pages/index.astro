@@ -815,12 +815,20 @@ import appIcon from "../assets/app-icon.png";
   main :global(a:not(.button)) {
     color: inherit;
     text-decoration-line: underline;
+    text-decoration-style: dotted;
     text-decoration-color: var(--muted-foreground);
-    text-decoration-thickness: 1px;
-    text-underline-offset: 2px;
+    text-decoration-thickness: 1.5px;
+    text-underline-offset: 3px;
+    transition: color 120ms ease, text-decoration-color 120ms ease;
+  }
+
+  main :global(a:not(.button):visited) {
+    color: color-mix(in oklab, var(--accent) 45%, var(--muted-foreground));
+    text-decoration-color: color-mix(in oklab, var(--accent) 45%, var(--muted-foreground));
   }
 
   main :global(a:not(.button):hover) {
+    color: var(--accent);
     text-decoration-color: var(--accent);
   }
 

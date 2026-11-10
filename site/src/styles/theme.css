@@ -353,13 +353,20 @@ body,
 .sl-markdown-content a:not(:where(.not-content *)) {
   color: inherit;
   text-decoration-line: underline;
+  text-decoration-style: dotted;
   text-decoration-color: var(--muted-foreground);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  transition: color 120ms ease, text-decoration-color 120ms ease;
+}
+
+.sl-markdown-content a:visited:not(:where(.not-content *)) {
+  color: color-mix(in oklab, var(--accent) 45%, var(--muted-foreground));
+  text-decoration-color: color-mix(in oklab, var(--accent) 45%, var(--muted-foreground));
 }
 
 .sl-markdown-content a:hover:not(:where(.not-content *)) {
-  color: inherit;
+  color: var(--accent);
   text-decoration-color: var(--accent);
 }
 
