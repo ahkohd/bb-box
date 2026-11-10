@@ -1735,3 +1735,70 @@ test("the sweep probes a host with boxes again before its probes are 10 minutes 
   assert.equal(probes(), 2, "a create 11 minutes after the first probe did not wait on one");
   assert.equal(fake.inspect(b.ref).HostConfig.CpusetCpus, "61");
 });
+
+test("a volume creation collision never mounts or deletes another install's data", async () => {
+  for (const image of ["bbbox/linux:1", "example/missing:1"]) {
+    const { fake, backend } = setup({ "linux-image": image }, { volumeCreateLabels: { "bbbox.install": "other", "bbbox.volume-of": "foreign" } });
+    const box = identity();
+    const volume = boxVolumeName(containerName(box.boxId));
+
+    await assert.rejects(backend.acquire(box, null, hooks().hooks, signal()), /not labelled as/);
+
+    assert.deepEqual(fake.containers(), []);
+    assert.deepEqual(volumeLabels(fake.binary, volume), { "bbbox.install": "other", "bbbox.volume-of": "foreign" });
+  }
+});
+
+test("maintenance retries an orphan volume after a failed release", async () => {
+  const { fake, backend, make } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const volume = boxVolumeName(guest.ref);
+  execFileSync(fake.binary, ["container", "create", "--name", "holder", "--network", "bbbox", "--volume", volume + ":/data", "bbbox/linux:1"]);
+
+  await assert.rejects(backend.release(guest, releasing, signal()), /volume is in use/);
+  execFileSync(fake.binary, ["container", "rm", "--force", "holder"]);
+  await make().maintain(signal());
+
+  assert.deepEqual(volumeNames(fake.binary), []);
+});
+
+test("a missing volume does not hide another volume's removal failure", async () => {
+  const { fake, backend } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const first = boxVolumeName(guest.ref);
+  const held = first + "-held";
+  execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=test", "--label", "bbbox.volume-of=" + guest.ref, held]);
+  execFileSync(fake.binary, ["container", "create", "--name", "holder", "--network", "bbbox", "--volume", held + ":/data", "bbbox/linux:1"]);
+  fake.set({ volumeDisappearOnRemove: first });
+
+  await assert.rejects(backend.release(guest, releasing, signal()), /volume is in use/);
+
+  assert.deepEqual(volumeNames(fake.binary), [held]);
+});
+
+test("maintenance preserves a volume while its box is being made and other owners' volumes", async () => {
+  const { fake, backend, make } = setup();
+  const box = identity();
+  const name = containerName(box.boxId);
+  const volume = boxVolumeName(name);
+  const foreign = "foreign-data";
+  execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=other", "--label", "bbbox.volume-of=bbbox-foreign", foreign]);
+  const acquiring = hooks();
+  const claim = acquiring.hooks.claim;
+  const guarded: AcquireHooks = {
+    ...acquiring.hooks,
+    claim: async (guest) => {
+      await claim(guest);
+      if (guest.address) return;
+      execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=test", "--label", "bbbox.volume-of=" + name, volume]);
+      await make().maintain(signal());
+      assert.ok(volumeNames(fake.binary).includes(volume));
+    },
+  };
+
+  const guest = await backend.acquire(box, null, guarded, signal());
+  await make().maintain(signal());
+
+  assert.deepEqual(volumeNames(fake.binary), [volume, foreign].sort());
+  assert.equal(await backend.power(guest, signal()), "running");
+});

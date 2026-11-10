@@ -473,8 +473,9 @@ switch (command) {
       }
       if (!name) fail("docker: 'docker volume create' requires 1 argument");
       const known = volumes();
-      if (name in known) fail(`Error response from daemon: volume '${name}' already exists`);
-      write("volumes.json", { ...known, [name]: { Name: name, Labels: labels, Anonymous: false } });
+      if (host.volumeCreateLabels && !(name in known)) known[name] = { Name: name, Labels: host.volumeCreateLabels, Anonymous: false };
+      if (!(name in known)) known[name] = { Name: name, Labels: labels, Anonymous: false };
+      write("volumes.json", known);
       console.log(name);
     } else if (sub === "inspect") {
       const formatAt = more.indexOf("--format");
@@ -509,13 +510,18 @@ switch (command) {
     } else if (sub === "rm") {
       const wanted = more.filter((arg) => !arg.startsWith("-"));
       const known = volumes();
+      const errors = [];
       for (const name of wanted) {
-        if (!(name in known)) fail(`Error response from daemon: get ${name}: no such volume`);
-        if (inUse(name)) fail(`Error response from daemon: remove ${name}: volume is in use - [${names().map(load).find((container) => (container.HostConfig.Mounts ?? []).some((mount) => mount.Name === name))?.Id ?? ""}]`);
+        if (host.volumeDisappearOnRemove === name) delete known[name];
+        if (!(name in known)) errors.push(`Error response from daemon: get ${name}: no such volume`);
+        else if (inUse(name)) errors.push(`Error response from daemon: remove ${name}: volume is in use`);
+        else {
+          delete known[name];
+          console.log(name);
+        }
       }
-      for (const name of wanted) delete known[name];
       write("volumes.json", known);
-      for (const name of wanted) console.log(name);
+      if (errors.length) fail(errors.join("\n"));
     } else fail(`fake docker: unknown command volume ${sub}`, 2);
     break;
   }
