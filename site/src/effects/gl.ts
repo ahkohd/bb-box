@@ -127,7 +127,7 @@ export function releaseGl(gl: WebGLRenderingContext | null, made: GlAllocations 
   if (!gl.isContextLost()) {
     made.programs?.forEach((program) => program && gl.deleteProgram(program));
     made.buffers?.forEach((buffer) => buffer && gl.deleteBuffer(buffer));
-    made.textures?.forEach((made) => made && gl.deleteTexture(made));
+    made.textures?.forEach((texture) => texture && gl.deleteTexture(texture));
     made.framebuffers?.forEach((framebuffer) => framebuffer && gl.deleteFramebuffer(framebuffer));
   }
   gl.getExtension("WEBGL_lose_context")?.loseContext();
