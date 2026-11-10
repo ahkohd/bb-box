@@ -251,6 +251,11 @@ memory snapshot. Fork and Keep refuse, because a Windows box has no identity
 reset BB Box has checked. On ZFS, take and delete work, and restore refuses
 for that reason.
 
+An Android box on Proxmox QEMU snapshots its whole VM disk while running,
+including Android data and Linux host files. Restore uses a snapshot undo
+on LVM-thin, Ceph RBD, BTRFS and qcow2; ZFS refuses restore. Memory, fork
+and Keep are refused because memory restore and identity reset are unproved.
+
 - Take one with `box_snapshot` before a change you cannot undo: a
   migration, an upgrade, a deletion, or a change to the system. Take one
   when the person asks. Never take them on a schedule of your own.

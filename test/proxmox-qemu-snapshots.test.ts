@@ -16,12 +16,15 @@ after(async () => {
 
 const SNAPSHOT = "sn7kq2m6xa4pdq";
 
-function world() {
+function world(android = false) {
   const ssh = fakeSsh();
   for (let last = 150; last <= 159; last++) ssh.windows(`192.0.2.${last}`);
   const proxmox = new FakeProxmox();
   proxmox.addVmTemplate(9104);
   proxmox.addVmTemplate(9120);
+  const runtime = { platform: "android", api: 35, image: "google_apis", revision: 9, abi: "x86_64", emulator: "37.2.12.0", snapshot: null };
+  const record = { contract: 1, image: "standard", kind: "android", arch: "x86_64", build: "build.20261026-051500-1a2b", built: "2026-10-26T05:15:00Z", os: "Ubuntu 24.04", pins: "p".repeat(64), tools: {}, devices: [{ model: "Pixel 8", native: "pixel_8", runtime }] };
+  proxmox.guests.get(9120)!.config.description = JSON.stringify(record);
   const parsed = parseQemuPart({
     id: "proxmox-qemu",
     fields: {
@@ -29,7 +32,9 @@ function world() {
       "token-id": FAKE_TOKEN.tokenId,
       "token-secret": FAKE_TOKEN.tokenSecret,
       "windows-templates": "9104",
-      "linux-templates": "9120",
+      "linux-templates": android ? "" : "9120",
+      "android-templates": android ? "9120" : "",
+      "linux-kvm": android,
       bridge: "vmbr1",
       subnet: "192.0.2.0/24",
       gateway: "192.0.2.1",
@@ -368,4 +373,39 @@ test("a Windows desktop restores in place to a snapshot and then to its undo, an
   await state.backend.deleteSnapshot({ id: SNAPSHOT, ref: "", guest }, tasks().hooks);
   await state.backend.deleteSnapshot({ id: UNDO, ref: "", guest }, tasks().hooks);
   assert.deepEqual(await state.backend.heldSnapshots(), []);
+});
+
+
+test("Android offers the whole disk live and plans only a snapshot undo, with reasons for memory, fork, Keep and ZFS restore refusals", async () => {
+  const state = world(true);
+  await state.backend.withheldKinds("android");
+
+  const offer = state.backend.snapshotting("android");
+  assert.ok(offer);
+  assert.equal(offer.scope, "box");
+  assert.deepEqual(offer.holds, ["disk"]);
+  assert.equal(offer.whileRunning, "live");
+  assert.equal(offer.restore, "in-place");
+  assert.equal(offer.fork, "none");
+  assert.equal(offer.keepsPastRelease, "no");
+  assert.match(offer.forkWhy ?? "", /identity reset/);
+
+  rmSync(join(state.ssh.dir, "windows", "192.0.2.150"), { force: true });
+  const guest = await state.backend.acquire({ boxId: "bxandroidaaaaa", threadId: "thr_abc123", name: "calm-otter", kind: "android", createdAt: 1790000000000, size: { ...defaultSize(kindSizes("android")), gpu: "none" } }, null, quiet, new AbortController().signal);
+
+  const plan = await state.backend.planSnapshots(guest, "android", null);
+  assert.equal(plan.restore.way, "rollback");
+  assert.equal(plan.restore.undo, "snapshot");
+  assert.equal(plan.take.memory, null);
+  assert.match(plan.take.memoryWhy ?? "", /disk only/);
+  assert.equal(plan.fork.ok, false);
+  assert.match(plan.fork.why ?? "", /identity reset/);
+  assert.equal(plan.keep.way, "no");
+  assert.match(plan.keep.why ?? "", /identity reset/);
+
+  state.proxmox.storageTypes.set("local-lvm", "zfspool");
+  const zfs = await state.backend.planSnapshots(guest, "android", null);
+  assert.equal(zfs.restore.way, "none");
+  assert.match(zfs.restore.why ?? "", /ZFS/);
+  await assert.rejects(state.backend.snapshot(guest, { id: SNAPSHOT, box: "bxandroidaaaaa", memory: true }, tasks().hooks), /disk only/);
 });

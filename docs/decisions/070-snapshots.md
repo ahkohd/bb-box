@@ -384,6 +384,7 @@ boat's new-guest restores keep the box the same machine.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Proxmox LXC | box; disk | live (0.7 s) | in-place, after a hard stop; by storage, above | a snapshot after the stop, or a held copy on ZFS | copy (9.3 s for 4 GiB used) | held-copy | none | 1a, 2, 3, 7, 8 |
 | Proxmox QEMU, Linux | box; disk, or disk and memory | live (1.1 s); memory about 1 s a GiB | in-place; by storage | as LXC | copy (6.5 s) | held-copy, disk only | none | 1b, 2, 3, 7, 8 |
+| Proxmox QEMU, Android | box; the whole VM disk, including Android data and Linux host files | live | in-place where storage rolls back past newer snapshots; none on ZFS | a snapshot; no held copy, because the device and host identity reset is unproved | none | no | none | 3 |
 | Proxmox QEMU, Windows | box; disk, with its EFI and TPM state volumes | live | in-place on storage that rolls back past newer snapshots; none on ZFS | a snapshot. No held copy, because a Windows box has no identity reset BB Box has checked | none | no | none | 3 |
 | Tart, macOS | box; disk and memory only | suspends (about 7 s, then resumes) | in-place: puts a copy back, then resumes (11 s) | a copy of the suspended VM, memory included | copy from the disk, new MAC address, once unit 9 builds macOS's reset | as-is, once forks are built: the copy stays on the VMs' volume, holding its whole size once the VM is deleted | none | 9 |
 | Tart, Linux | box; disk | stopped-only | in-place | a copy, after the stop | copy | as-is | none | 9 |
