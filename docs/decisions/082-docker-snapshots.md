@@ -339,5 +339,5 @@ freeze, and whether cancelling a commit client stops the engine's commit.
 
 ## Item 2 results
 
-The take, list and delete implementation is measured in [082 results](082-results.md).
-Restore, fork and Keep remain later units.
+The take, list and delete implementation is measured in [082 results](082-results.md),
+with the restore and the fork after it. Keep remains a later unit.

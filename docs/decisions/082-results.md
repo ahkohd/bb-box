@@ -111,3 +111,52 @@ The box's page was open in the separate BB's panel, in Chromium with
 Playwright, through every run. It recorded each Read at time the Activity card
 showed. Across 39 readings in five runs, including both kinds of kill, the card
 never showed a reading older than the one before it (issue 1428).
+
+## Fork, verified live
+
+Measured on 10 November 2026 on a Proxmox QEMU VM with 8 vCPU, 16 GiB of
+memory and a 100 GiB disk: Ubuntu 24.04.5, kernel 6.8.0-149, Docker 29.1.3
+with the containerd image store. A separate BB ran there, a fresh
+`npx bb-app@0.49.0` with no account, its ports dropped from outside the VM,
+with BB Box installed from the branch and markers on for its Docker backend
+(`general.identityResetBackends`). Each source was one of the person's
+machines, `linux` with 2 cores and 2 GiB, or `linux-desktop-cpu` with 2 cores
+and 4 GiB, from images with identity reset version 9. The older versions were
+made by changing the version the box's reset reports before the take, and the
+failed resets by changing what its `boot` does.
+
+| Run | What happened |
+| --- | --- |
+| Fork of `A` | Ready 2.3 s after the request: its start 0.6 s, BB Box's check 0.13 s, then it joined BB in 2.0 s more |
+| A snapshot taken under reset version 6 | Refused before anything was made: "src-n had version 6 of the identity reset when "v6" was taken, and BB Box forks Docker on build-1's boxes only from version 7". Docker made no container and no volume |
+| A reset that fails at its first start | The fork stopped as it started, saying "the identity reset failed, so the box starts nothing and never says it is ready". BB Box released it, and Docker deleted its container and Docker data |
+| A reset that does not run at all | BB Box's check refused it: "its boot's identity check says "none", not that it reset". It was released. Its restart policy was `no` at its start and never became `unless-stopped` |
+| Fork of a Linux desktop on the CPU, from a snapshot taken under reset version 9 | Ready 1.5 s after the request: its start 0.6 s, BB Box's check 66 ms. Its reset ran, it held the source's file, and its identity value was its own box ID |
+| A Linux desktop snapshot taken under reset version 8 | Refused before anything was made: "BB Box forks Docker on build-1's boxes only from version 9". Docker made no container and no volume |
+| BB's server killed with `kill -9` at the fork's `start` event | The half-made fork ran with restart policy `no`, its own reset done. When BB started again its BB machine had not reconnected, so the fork failed and said it was released; the sweep 3 minutes later deleted its container and Docker data. The source was untouched |
+
+The source wrote `A` to `~/work.txt` and, in a running inner container, to its
+volume and its writable layer. The fork had `A` in all three. It was named
+`bbbox-<fork>-<8 hex>`, with its own box ID, name and labels,
+`bbbox.from-snapshot`, and `BBBOX_IDENTITY` its own box ID. Docker's events
+for it, from the volume's create: its container's create at 883 ms, after the
+copy of the Docker data, its start at 1,258 ms, BB Box's check at 1,568 ms, and
+the change of its restart policy to `unless-stopped` at 1,825 ms.
+
+What the fork's identity read, against its source:
+
+| Item | Source | Fork |
+| --- | --- | --- |
+| Marker | its own box ID and value | before hand-over its own value and no box; after it, its own box ID and value |
+| Boot | `unarmed` | `reset`: "the value bb-box set on this guest is not the marker's; BB machines removed: host_<id>", naming the source's BB machine |
+| BB's machine credentials and the access file | the source's | the source's gone; new ones from its own enrolment, as a BB machine of its own |
+| Machine ID | its own | a new one |
+| SSH host keys | none: a Docker box runs no SSH server | new ones its reset made |
+| Tailnet node | none: this BB has no tailnet | none |
+
+A write of `B` in the fork, in all three places, left the source with `A`.
+The source kept its container, marker, BB machine and credentials through
+every run, and its inner Docker still ran containers. A Docker box's start
+script never starts BB's daemon: BB Box starts it with BB's bootstrap once the
+box is handed over, so no refused copy ran as its source's BB machine. After
+the releases, Docker listed no BB Box containers, volumes or snapshot images.
