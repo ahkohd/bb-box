@@ -140,7 +140,6 @@
     border: 1px solid var(--muted-foreground);
     background-color: var(--background);
     background-image: repeating-linear-gradient(-45deg, var(--muted-foreground) 0 1px, transparent 1px 4px);
-    cursor: grab;
     transition:
       border-color 150ms ease,
       background-image 150ms ease;
@@ -151,9 +150,5 @@
   .scroll-rail[data-dragging] .scroll-thumb {
     border-color: var(--accent);
     background-image: repeating-linear-gradient(-45deg, var(--accent) 0 1px, transparent 1px 4px);
-  }
-
-  .scroll-rail[data-dragging] .scroll-thumb {
-    cursor: grabbing;
   }
 </style>
