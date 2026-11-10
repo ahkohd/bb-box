@@ -64,12 +64,10 @@
 
   function visibleBox(target: Element, box: DOMRect): DOMRect {
     if (!hasNoSurface(target)) return box;
-    const style = getComputedStyle(target);
-    const left = parseFloat(style.paddingLeft);
-    const right = parseFloat(style.paddingRight);
-    const top = parseFloat(style.paddingTop);
-    const bottom = parseFloat(style.paddingBottom);
-    return new DOMRect(box.left + left, box.top + top, Math.max(0, box.width - left - right), Math.max(0, box.height - top - bottom));
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    const content = range.getBoundingClientRect();
+    return content.width > 0 && content.height > 0 ? content : box;
   }
 
   function place(target: Element, y: number): boolean {
