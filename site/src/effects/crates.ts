@@ -35,10 +35,25 @@ interface CrateLook {
   label?: string;
 }
 
-const pile: CrateLook[][] = [
-  [{ columns: 9 }, { columns: 5 }, { columns: 7 }],
-  [{ columns: 5 }, { columns: 7, label: "box" }],
-  [{ columns: 5 }],
+interface Pile {
+  across: number;
+  rows: CrateLook[][];
+}
+
+const piles: Pile[] = [
+  {
+    across: 0.74,
+    rows: [
+      [{ columns: 9 }, { columns: 5 }, { columns: 7 }, { columns: 5 }],
+      [{ columns: 7 }, { columns: 5 }, { columns: 7, label: "box" }],
+      [{ columns: 5 }, { columns: 9 }],
+      [{ columns: 5 }],
+    ],
+  },
+  {
+    across: 0.44,
+    rows: [[{ columns: 7 }, { columns: 5 }], [{ columns: 5 }]],
+  },
 ];
 
 const stepMs = 1000 / 60;
@@ -47,7 +62,6 @@ const gravityScale = 0.0016;
 const knockOffSpeed = 0.35;
 const bashCooldownMs = 180;
 const settleSteps = 90;
-const pileAcross = 0.76;
 const shelfThickness = 4;
 const crateGap = 2;
 
@@ -114,12 +128,8 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
   let owed = 0;
   let lastPointer: { x: number; y: number; time: number } | undefined;
 
-  function build(): void {
-    Composite.clear(engine.world, false);
-    layer.replaceChildren();
-    layer.style.height = `${stage.floorY + 2}px`;
-    Composite.add(engine.world, staticBodies(stage));
-    const looks = pile.map((row) =>
+  function stack(pile: Pile): Crate[] {
+    const looks = pile.rows.map((row) =>
       row.map((look) => {
         const element = document.createElement("pre");
         element.className = look.label ? "crate crate-accent" : "crate";
@@ -130,9 +140,9 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
     );
     const rowWidth = (row: Sized[]) => row.reduce((sum, crate) => sum + crate.width, 0) + crateGap * (row.length - 1);
     const widest = Math.max(...looks.map(rowWidth));
-    const centre = Math.min(stage.shelfLeft + (stage.shelfRight - stage.shelfLeft) * pileAcross, stage.shelfRight - widest / 2 - 16);
+    const centre = Math.min(stage.shelfLeft + (stage.shelfRight - stage.shelfLeft) * pile.across, stage.shelfRight - widest / 2 - 16);
     let rowBottom = stage.shelfY;
-    crates = looks.flatMap((row) => {
+    return looks.flatMap((row) => {
       let left = centre - rowWidth(row) / 2;
       const height = Math.max(...row.map((crate) => crate.height));
       const placed = row.map(({ element, width, height }) => {
@@ -143,6 +153,14 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
       rowBottom -= height;
       return placed;
     });
+  }
+
+  function build(): void {
+    Composite.clear(engine.world, false);
+    layer.replaceChildren();
+    layer.style.height = `${stage.floorY + 2}px`;
+    Composite.add(engine.world, staticBodies(stage));
+    crates = piles.flatMap((pile) => stack(pile));
     Composite.add(engine.world, crates.map((crate) => crate.body));
     for (let step = 0; step < settleSteps; step++) Engine.update(engine, stepMs);
     draw();
