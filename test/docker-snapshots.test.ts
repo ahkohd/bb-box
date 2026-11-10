@@ -300,3 +300,29 @@ test("Docker cleans an orphan snapshot volume without unpausing its box", async 
   assert.equal((await cli.inspect([guest.ref]))[0]?.status, "paused");
   assert.notEqual((await cli.run(["volume", "inspect", "bbbox-snapshot-sn123-docker"])).exitCode, 0);
 });
+
+test("Docker maintenance unpauses later takes when an earlier cleanup fails", async () => {
+  const { cli, guest, context } = await setup();
+  await context.storage.set("docker-snapshot-take:stuck", { id: "stuck", box: "bx123", container: guest.ref, startedAt: 0, estimateMs: 1000, phase: "failed-resumed" });
+  await cli.ok(["volume", "create", "--label", "bbbox.snapshot.install=other", "bbbox-snapshot-stuck-docker"]);
+  await context.storage.set("docker-snapshot-take:later", { id: "later", box: "bx123", container: guest.ref, startedAt: 0, estimateMs: 1000, phase: "taking" });
+  await cli.ok(["pause", guest.ref]);
+  const restarted = new DockerSnapshotEngine(cli, context, () => 100_000);
+
+  await restarted.maintain();
+
+  assert.equal((await cli.inspect([guest.ref]))[0]?.status, "running");
+  assert.equal((await cli.run(["volume", "inspect", "bbbox-snapshot-stuck-docker"])).exitCode, 0);
+});
+
+test("Docker recovery unpauses before a cleanup that fails", async () => {
+  const { cli, guest, context } = await setup();
+  await context.storage.set("docker-snapshot-take:stuck", { id: "stuck", box: "bx123", container: guest.ref, startedAt: 0, estimateMs: 1000, phase: "taking" });
+  await cli.ok(["volume", "create", "--label", "bbbox.snapshot.install=other", "bbbox-snapshot-stuck-docker"]);
+  await cli.ok(["pause", guest.ref]);
+  const restarted = new DockerSnapshotEngine(cli, context, () => 100_000);
+
+  await assert.rejects(restarted.settle({ ref: "take:stuck@0", host: null }), /another box or install/);
+
+  assert.equal((await cli.inspect([guest.ref]))[0]?.status, "running");
+});

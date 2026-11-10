@@ -178,10 +178,10 @@ export class DockerSnapshotEngine {
     }
     if (state.phase !== "failed" && !pausedTooLong(state, this.#now())) return { state: "running" };
     await this.#context.storage.set(this.#key(state.id), { ...state, phase: "failed" });
-    await this.#discard(state);
     const container = (await this.#cli.inspect([state.container]))[0];
     if (container?.status === "paused" && container.labels[LABELS.install] === this.#context.installId && container.labels[LABELS.box] === state.box) await this.#cli.ok(["unpause", state.container]);
     await this.#context.storage.set(this.#key(state.id), { ...state, phase: "failed-resumed" });
+    await this.#discard(state);
     return { state: "failed", words: "The snapshot was interrupted. Its partial copy was removed and the box was unpaused." };
   }
 
@@ -284,7 +284,11 @@ export class DockerSnapshotEngine {
     }
     for (const key of await this.#context.storage.list("docker-snapshot-take:")) {
       const state = await this.#context.storage.get<TakeState>(key);
-      if (state && state.phase !== "complete") await this.settle({ ref: `take:${state.id}@${state.startedAt}`, host: null });
+      try {
+        if (state && state.phase !== "complete") await this.settle({ ref: `take:${state.id}@${state.startedAt}`, host: null });
+      } catch (error) {
+        this.#context.logError("recovering a Docker snapshot take", error);
+      }
     }
     await this.#cli.ok(["image", "prune", "--force", "--filter", `label=${SNAPSHOT_INSTALL}=${this.#context.installId}`]);
   }
