@@ -106,5 +106,5 @@ In a separate BB instance, write matching markers on an Android device and
 its Linux host. Take a snapshot, change both markers, restore and undo.
 Wait for Android to boot after each restore and show both markers. Use the
 Box panel to switch to another device and back, then tap an app on the
-screen. Capture the screen before and after the tap. Each model first
-boots cold after the host restarts.
+screen. Capture the screen before and after the tap. A model whose unsaved
+marker is present boots cold. Models with clean saves can quick-boot.

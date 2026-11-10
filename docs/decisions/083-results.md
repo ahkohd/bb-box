@@ -1,4 +1,4 @@
-# Android cold boot checks
+# Android snapshot checks
 
 10 November 2026. Separate BB 0.49.0 in a Proxmox LXC Linux box, no account.
 BB Box was built and installed from the branch. The Android VM used
@@ -50,7 +50,7 @@ Phone icon opened Phone through the panel's device input.
 
 ![Pixel 8 after switching back](083-images/pixel-8-again.png)
 
-## Automated checks
+## Checks of the withdrawn boot-ID rule
 
 Typecheck passed. The Proxmox, snapshot, conformance and Android tests
 passed: 772 passed, 242 skipped, none failed. The new host-boot regression
@@ -60,7 +60,37 @@ flag and the fourth, within the same host boot after a saved stop, did not.
 All 38 Android tests passed. Reference generation produced no diff.
 The documentation site built and its link check passed.
 
-The original head also passed two normal marker restore and undo runs.
-The earlier builder's missing startup was not reproduced. The change
-makes the cold-boot choice independent of a saved model's unsaved marker;
-it does not add another device startup path.
+## Evidence for the retained design
+
+At 7d01cfda, before the boot-ID rule, two runs through BB restored A/A
+and undid to B/B without a manual service start. The existing unsaved
+marker selected cold boots. This is the live evidence for the retained
+design from [063](063-device-boxes.md).
+
+The first live failure used a manual
+`systemctl --user start bb-box-emulator@pixel_8`. That bypassed
+`Emulator.start()`, including its marker check and cold-boot flags.
+The later clean stop removed the marker. The boot-ID rule does not fix
+manual service starts.
+
+The earlier failure to start the device automatically after undo remains
+unexplained and was not reproduced. It is not evidence for the boot-ID rule.
+
+The rule in 4efe1f73 was tried and removed before merge. Its test checked
+a new rule, not stale data: after a clean save, quick boot was correct.
+The rule also discarded the image's checked saves on every new box's first
+start. The timings in 063 imply about 11 to 15 seconds extra for affected
+starts; this pass did not measure that difference live.
+
+## Checks after removing the rule
+
+On a separate Linux test box with Node 24.21.0, typecheck passed.
+The required Proxmox, snapshot, Android and conformance suite passed:
+1,013 tests, 771 passed, 242 skipped, none failed. All 37 Android tests
+also passed on their own. Restoring the 4efe1f73 emulator made the
+first-start assertion fail: it expected quick boot but got cold boot.
+
+Reference generation produced identical file hashes. The documentation
+site built and checked 33,489 links and assets, none broken.
+No new live backend run was made in this correction pass; the two
+7d01cfda runs above are the evidence for the restored emulator code.

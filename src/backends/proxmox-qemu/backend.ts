@@ -1,4 +1,3 @@
-import { ANDROID_NO_FORK, ANDROID_SNAPSHOTS, androidSnapshotPlan } from "./android-snapshots.ts";
 // The Proxmox QEMU backend: Windows desktops as VMs. A box is a linked clone
 // of a Windows template that setup/proxmox-qemu/build.sh makes, in bb-box's
 // pool, with a VMID from its range and the static address fixed to it. The
@@ -28,6 +27,7 @@ import { ANDROID_NO_FORK, ANDROID_SNAPSHOTS, androidSnapshotPlan } from "./andro
 // in memory until the VM resumes or goes. A claim resumes the VM, gives it
 // the box's tags, name and description, waits for SSH and sets the clock.
 
+import { ANDROID_NO_FORK, ANDROID_SNAPSHOTS, androidSnapshotPlan } from "./android-snapshots.ts";
 import { SPARES } from "../../core/boxes.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { withDesktopForkSafety } from "../../core/identity.ts";

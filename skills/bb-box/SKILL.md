@@ -242,14 +242,6 @@ Beyond those:
 
 ## Snapshots
 
-After an Android host restarts, including a snapshot restore or undo, BB Box
-starts its selected device cold. Each other model also starts cold the first
-time you switch to it in that host boot. This keeps an older quick-boot save
-from replacing the restored disk data. Later switches in the same host boot
-can use quick boot. Wait for Android to finish booting before running adb
-commands.
-
-
 Where a box's backend takes them (`box_status` and `box_list` say), a
 snapshot keeps a box's disk, or with `memory` its running apps too, so you
 can put the box back to it. A Windows desktop on Proxmox QEMU snapshots its
@@ -263,6 +255,8 @@ An Android box on Proxmox QEMU snapshots its whole VM disk while running,
 including Android data and Linux host files. Restore uses a snapshot undo
 on LVM-thin, Ceph RBD, BTRFS and qcow2; ZFS refuses restore. Memory, fork
 and Keep are refused because memory restore and identity reset are unproved.
+
+BB Box starts an Android model cold when its unsaved marker is present. A snapshot taken while that model runs keeps the marker, as does an undo taken after a hard stop. A clean emulator save removes the marker, so a matching quick-boot save can still load after a host restart. New boxes can use the image's quick-boot saves. Wait for Android to finish booting before running adb commands.
 
 - Take one with `box_snapshot` before a change you cannot undo: a
   migration, an upgrade, a deletion, or a change to the system. Take one
