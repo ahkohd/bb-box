@@ -150,3 +150,18 @@ test("LastRect ends the update, and an encoding with no length stops tracking", 
   lost.read(framebuffer([desktopSize(10, 10)]));
   assert.equal(sizeOf(lost), "1920x1080");
 });
+
+test("an unknown Tight pixel layout ends tracking before a later resize", () => {
+  const stream = new ServerParser({ width: 1920, height: 1080, bitsPerPixel: 16 });
+
+  stream.read(framebuffer([rectangle(7, 1, 1, Uint8Array.of(0x80, 0, 0)), desktopSize(800, 600)]));
+
+  assert.equal(stream.tracking, false);
+  assert.equal(sizeOf(stream), "1920x1080");
+});
+
+test("an invalid initial pixel width disables tracking", () => {
+  const stream = new ServerParser({ width: 1920, height: 1080, bitsPerPixel: 0 });
+
+  assert.equal(stream.tracking, false);
+});
