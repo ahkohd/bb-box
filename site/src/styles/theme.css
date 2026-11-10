@@ -212,6 +212,16 @@ button.sl-menu-button:has(~ :popover-open),
 
 .sidebar-content summary .caret {
   color: var(--muted-foreground);
+  background-color: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='square' stroke-linejoin='miter'/%3E%3C/svg%3E") center / 0.875rem 0.875rem no-repeat;
+}
+
+.sidebar-content summary .caret path {
+  display: none;
+}
+
+.sidebar-content summary:hover .caret {
+  color: var(--foreground);
 }
 
 .sidebar-content a {
