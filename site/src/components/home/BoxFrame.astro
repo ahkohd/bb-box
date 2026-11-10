@@ -70,6 +70,9 @@ const { title, class: className } = Astro.props;
   }
 
   .frame-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     padding: 0 0.6em;
     color: var(--muted-foreground);
   }
