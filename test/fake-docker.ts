@@ -12,8 +12,9 @@ import { fakeGroup, tempDir } from "./helpers.ts";
 /** A container as the fake's `docker container inspect` prints it. */
 export interface FakeContainer {
   readonly Id: string;
+  readonly Image: string;
   readonly Name: string;
-  readonly State: { readonly Status: string; readonly ExitCode: number };
+  readonly State: { readonly Status: string; readonly ExitCode: number; readonly Paused?: boolean };
   readonly Config: { readonly Hostname: string; readonly Image: string; readonly Labels: Record<string, string>; readonly Env: string[]; readonly Cmd: string[] };
   readonly HostConfig: {
     readonly NanoCpus: number;

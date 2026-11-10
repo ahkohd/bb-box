@@ -139,6 +139,9 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | --- | --- | --- |
 | `gpu.<gpu>.whole` | GPU &lt;gpu> whole | A card a box holds whole has no other holder. It fails, naming the guests, when a claim went wrong (071). |
 | `gpu.<gpu>.limit` | GPU &lt;gpu> boxes | A card has no more boxes than the boxes per card. It warns, naming the boxes over the limit, which keep running while no new box goes on the card (071). |
+| `docker.snapshots` | Snapshots | Docker's image store, the space snapshots need and the disk's use. |
+| `docker.snapshot-leftovers` | Snapshot leftovers | Interrupted snapshot tasks and paused boxes waiting for recovery. |
+| `docker.snapshot-layers` | Snapshot layers | Box images near Docker's layer limit. A take refuses from 120 layers. |
 | `docker.cli` | docker CLI | The docker CLI runs on BB's server. |
 | `docker.daemon` | Docker daemon | The Docker host answers, runs Linux containers, and its architecture. |
 | `docker.attach` | Attached output | On a Windows machine, a Docker host at tcp://127.0.0.1, or a BB machine whose Docker there is, returns an attached command's output. WSL's localhost forwarder does not: docker run and docker exec print nothing and exit 0. For a BB machine, set machine-docker-host to wsl://&lt;distro>. |

@@ -3,6 +3,7 @@
 // ssh:// host alike, and its `docker exec` is a plain command line, which
 // the command transport and the desktop's route use (031).
 
+import { z } from "zod";
 import { execFile } from "node:child_process";
 import { startChild } from "../../transports/forker.ts";
 import { Capture } from "../../transports/process.ts";
@@ -361,3 +362,29 @@ export class DockerCli {
   }
 }
 
+
+const snapshotLabelSchema = z.record(z.string(), z.string()).nullable().transform((labels) => labels ?? {});
+
+export const snapshotContainersSchema = z.array(z.object({
+  Id: z.string(),
+  Image: z.string(),
+  SizeRw: z.number().nonnegative(),
+  Config: z.object({ Labels: snapshotLabelSchema }),
+  State: z.object({ Status: z.string(), Paused: z.boolean().optional().default(false) }),
+  Mounts: z.array(z.object({ Type: z.string(), Name: z.string().optional(), Destination: z.string(), RW: z.boolean() })),
+}));
+
+export const snapshotImagesSchema = z.array(z.object({
+  Id: z.string(),
+  RepoTags: z.array(z.string()).nullable().transform((tags) => tags ?? []),
+  Config: z.object({ Labels: snapshotLabelSchema }),
+  RootFS: z.object({ Layers: z.array(z.string()).optional().default([]) }),
+}));
+
+export const snapshotVolumesSchema = z.array(z.object({ Name: z.string(), Labels: snapshotLabelSchema }));
+
+export const snapshotStoreSchema = z.object({
+  ID: z.string().min(1),
+  Driver: z.string().optional(),
+  DriverStatus: z.array(z.array(z.string())).optional(),
+});

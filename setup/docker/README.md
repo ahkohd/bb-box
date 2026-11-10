@@ -371,3 +371,10 @@ npm run conformance -- --backend docker --settings docker.json
 - **Each `docker` call is slow over SSH**: share one connection (step 1).
 - **Rootless Docker refuses a box's CPU limit**: its systemd is older than
   252. The doctor fails and gives the fix.
+
+## Room for snapshots
+
+Snapshots share Docker's disk. Allow the changed disk bytes once on overlay2 or
+twice on the containerd image store, plus a copy of the box's Docker volume.
+BB Box checks room before taking one. A take pauses the box; see
+[Snapshots](../../docs/guide/snapshots.md#docker).

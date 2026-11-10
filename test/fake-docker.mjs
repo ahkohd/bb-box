@@ -135,6 +135,12 @@ function probeCards(devices) {
 }
 
 function run(rest) {
+  if (rest.at(-1) === "du -sk /from") return console.log(`${host.snapshotVolumeKiB ?? 1024} /from`);
+  if (rest.at(-1) === "df -Pk /space") return console.log(`Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/fake 1000000 ${host.snapshotUsedKiB ?? 100000} 900000 10% /space`);
+  if (rest.includes("/from/.")) {
+    if (host.failSnapshotCopy) fail("Snapshot copy failed");
+    return;
+  }
   appendFileSync(join(root, "probes"), `${JSON.stringify(rest)}\n`);
   const runDevices = rest.flatMap((arg, i) => (rest[i - 1] === "--device" ? [arg] : []));
   if (rest.at(-1)?.includes("--query-gpu=index,uuid,name,memory.total,memory.free")) {
@@ -281,7 +287,7 @@ function container(command, rest) {
     case "inspect": {
       const refs = rest.filter((ref) => !ref.startsWith("-"));
       const found = refs.map((ref) => [ref, find(ref)]);
-      console.log(JSON.stringify(found.filter(([, entry]) => entry).map(([, entry]) => entry), null, 2));
+      console.log(JSON.stringify(found.filter(([, entry]) => entry).map(([, entry]) => ({ ...entry, SizeRw: host.snapshotLayerBytes ?? 4096, Mounts: host.snapshotMounts ?? (entry.HostConfig.Mounts ?? []).map((mount) => ({ Type: mount.Type, Name: mount.Name, Destination: mount.Target, RW: !mount.ReadOnly })) })), null, 2));
       const missing = found.find(([, entry]) => !entry);
       if (missing) fail(`Error response from daemon: No such container: ${missing[0]}`);
       return;
@@ -350,6 +356,7 @@ function container(command, rest) {
       return console.log(ref);
     }
     case "commit": {
+      if (host.failSnapshotCommit) fail("Snapshot commit failed");
       // The image of a container: its image's labels, the container's, then each --change LABEL.
       const [ref, tag] = rest.filter((arg, i) => !arg.startsWith("--") && rest[i - 1] !== "--change");
       const found = find(ref) ?? fail(`Error response from daemon: No such container: ${ref}`);
@@ -360,6 +367,12 @@ function container(command, rest) {
         const label = change && /^LABEL ([^=]+)=(.*)$/s.exec(change);
         if (label) labels[label[1]] = JSON.parse(label[2]);
       }
+      const env = new Map((found.Config.Env ?? []).map((entry) => { const at = entry.indexOf("="); return [entry.slice(0, at), entry.slice(at + 1)]; }));
+      for (let i = 0; i < rest.length; i++) {
+        const match = rest[i] === "--change" && /^ENV ([^=]+)=(.*)$/s.exec(rest[++i]);
+        if (match) env.set(match[1], match[2]);
+      }
+      write("image-env.json", { ...read("image-env.json", {}), [tag]: [...env].map(([key, value]) => `${key}=${value}`) });
       write("images.json", { ...images, [tag]: labels });
       write("image-ids.json", { ...read("image-ids.json", {}), [tag]: `sha256:${randomBytes(32).toString("hex")}` });
       return console.log(`sha256:${randomBytes(32).toString("hex")}`);
@@ -432,6 +445,17 @@ switch (command) {
   case "container":
     container(rest[0], rest.slice(1));
     break;
+  case "run":
+    run(rest);
+    break;
+  case "pause":
+  case "unpause": {
+    if (command === "unpause" && host.failSnapshotUnpause) fail("Unpause failed");
+    const found = find(rest[0]) ?? fail("No such container");
+    found.State = { ...found.State, Status: command === "pause" ? "paused" : "running", Paused: command === "pause" };
+    save(found);
+    break;
+  }
   case "exec":
     exec(rest);
     break;
@@ -536,6 +560,14 @@ switch (command) {
     const listContainers = () => readdirSync(join(root, "containers")).filter((n) => existsSync(join(root, "containers", n, "config.json"))).map((n) => JSON.parse(readFileSync(join(root, "containers", n, "config.json"), "utf8")));
     const [sub, ...more] = rest;
     if (sub === "inspect") {
+      if (!more.includes("--format")) {
+        console.log(JSON.stringify(more.map((ref) => {
+          const [name] = named(ref);
+          if (!name) fail(`No such image: ${ref}`);
+          return { Id: idOf(name), RepoTags: Object.keys(images).filter((tag) => idOf(tag) === idOf(name)), Config: { Labels: images[name], Env: read("image-env.json", {})[name] ?? [] }, RootFS: { Layers: Array.from({ length: host.snapshotLayers ?? 2 }, (_, i) => `layer-${i}`) } };
+        })));
+        break;
+      }
       const image = more.at(-1);
       const [name] = named(image);
       if (!name) fail(`Error response from daemon: No such image: ${image}`);
@@ -556,7 +588,7 @@ switch (command) {
       // By ID, every name goes, unless a container uses the image; by name, the name goes, as a tag, unless it is the image's last and a container uses it.
       const gone = ref in images ? [ref] : names;
       const busy = ref in images ? (used([ref]) ? ref : null) : names.find(containersOf) ?? null;
-      if (busy) fail(`Error response from daemon: conflict: unable to delete ${ref} - image is being used by stopped container`);
+      if (busy && !more.includes("--force")) fail(`Error response from daemon: conflict: unable to delete ${ref} - image is being used by stopped container`);
       const left = { ...images };
       for (const name of gone) delete left[name];
       write("images.json", left);
@@ -571,6 +603,8 @@ switch (command) {
         });
         if (matches) console.log(name);
       }
+    } else if (sub === "prune") {
+      console.log("Total reclaimed space: 0B");
     } else fail(`fake docker: unknown command image ${sub}`, 2);
     break;
   }

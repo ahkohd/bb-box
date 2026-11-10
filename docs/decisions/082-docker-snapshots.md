@@ -326,3 +326,8 @@ freeze, and whether cancelling a commit client stops the engine's commit.
 - Decision 070's Docker row still says a pause of 15 s for 1 GiB changed.
   The cold rates above replace that figure for a plan. The row itself is
   left as it was written.
+
+## Item 2 results
+
+The take, list and delete implementation is measured in [082 results](082-results.md).
+Restore, fork and Keep remain later units.

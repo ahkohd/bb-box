@@ -894,6 +894,9 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
       ["docker.privileged", "ok"],
       ["docker.capacity", "ok"],
       ["docker.sizes", "ok"],
+      ["docker.snapshots", "skipped"],
+      ["docker.snapshot-leftovers", "ok"],
+      ["docker.snapshot-layers", "ok"],
     ],
   );
   assert.match(report.checks[1]!.detail, /Docker 29\.0\.0 on fake-docker \(Ubuntu 24\.04 LTS, x86_64, 16 cores, 64 GiB\)/);

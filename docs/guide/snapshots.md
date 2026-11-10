@@ -16,7 +16,8 @@ You take, restore, rename and delete snapshots on a box's page, in its [Snapshot
 | microsandbox | the disk, with the box's Docker data, or the disk and memory | the disk live, in under a second; with memory the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
 | Tart, macOS | the disk and memory, always: every snapshot is a copy of the suspended VM | suspends the VM, copies it and resumes it: 11 s for a 16 GiB VM | in place: it suspends the box, takes the undo, puts the snapshot's copy in the VM's place and resumes it, running as it was | by a copy of the snapshot's disk, without its memory, from a snapshot taken with macOS's identity reset | as it is: the copy stays beside the VMs |
 | Tart, Linux | the disk | only while the box is stopped, as Tart cannot suspend a Linux VM | in place, after a shutdown | by a copy of the snapshot's disk, from a snapshot taken with reset version 8 for Linux servers, or version 9 for Linux desktops | as it is: the copy stays beside the VMs |
-| Docker, Hetzner and Namespace boxes, the SSH host pool's machines, Windows boxes on Tart, iOS boxes, and Android devices on Proxmox QEMU | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
+| Docker | the disk and the box's Docker data | pauses the box; measured pauses range from 3.5 to 4.9 seconds on small overlay2 boxes to about 45 seconds for a 1.8 GB change on containerd | not yet | not yet | no |
+| Hetzner and Namespace boxes, the SSH host pool's machines, Windows boxes on Tart, iOS boxes, and Android devices on Proxmox QEMU | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
 
 Linux desktops need an image built with identity reset version 9 or later. Older images refuse forks and Keep, saying why. Refresh the image and make the box again; an image rebuild does not update existing boxes or snapshots.
 
@@ -42,7 +43,7 @@ A Windows desktop's snapshot holds its disk and its EFI and TPM state volumes. I
 - **A copy made outside BB Box can keep its source's identity.** BB Box's own forks always give it up. On Docker, microsandbox and boat.dev, a box's identity is a value BB Box sets, and a copy made with the provider's own tools, such as a fork in boat.dev's dashboard, gets its source's value. So it does not reset, and comes up as its source: the same BB machine, tailnet node and thread's access. Copy a box only through BB Box.
 - **The identity reset across a Proxmox node's restart is unproved.** Held copies and earlier guests were checked not to start by themselves, and an earlier guest started by hand reset before its network. But no node was restarted in the checks, so it is not known what they do when one is. Restart a node with a held copy on it, and check that the copy stays stopped, before you rely on Keep there.
 - **ZFS restores stay off** until they are checked on a ZFS node. Snapshots on ZFS are taken and deleted as elsewhere.
-- **Docker, Hetzner and Namespace boxes take no snapshots yet.** They are planned for later, as a copy of the paused container with the box's Docker data, restored as a new container. A Docker box made now keeps that data on a named volume labelled as the box's, so a later snapshot can copy it. A box made before keeps its anonymous volume, and a release still removes it. If removing a named volume fails after its container has gone, maintenance retries the removal. It checks ownership before mounting or removing a volume. [082](../decisions/082-docker-snapshots.md) records the design.
+- **Hetzner and Namespace boxes take no snapshots yet.** They are planned for later, as a copy of the paused container with the box's Docker data, restored as a new container. A Docker box made now keeps that data on a named volume labelled as the box's, so a later snapshot can copy it. A box made before keeps its anonymous volume, and a release still removes it. If removing a named volume fails after its container has gone, maintenance retries the removal. It checks ownership before mounting or removing a volume. [082](../decisions/082-docker-snapshots.md) records the design.
 - **An Android device's own snapshots are planned for later**: the emulator's snapshot of the device alone. Until then, an Android box on boat.dev takes snapshots of its whole VM, and one on Proxmox QEMU takes none.
 - **A Windows desktop on Proxmox QEMU takes no snapshot of its memory yet**, and it does not fork or Keep until a Windows identity reset is checked. A restore on ZFS stays off for that reason.
 - **Windows boxes on Tart, iOS boxes, and the SSH host pool's machines take no snapshots**, and none are planned yet.
@@ -393,3 +394,31 @@ bb box snapshot forget <backend> --yes
 ```
 
 Forgetting removes BB Box's records only. The snapshots may still exist on the backend, and be billed there.
+
+### Docker
+
+A Docker snapshot holds the disk and a separate copy of the box's Docker data.
+It does not hold running programs, memory, `/run` or `/dev/shm`. A take pauses
+the box while copying the Docker data and committing the disk. BB Box logs the
+actual pause in milliseconds. The pause measurements above are from the design
+experiments in decision 082, not a promise for every disk.
+
+Snapshots stay on the box's Docker engine. Their images use
+`bbbox-snapshot/<install>/<box>:<snapshot>` and their Docker volumes use
+`bbbox-snapshot-<snapshot>-docker`. Labels identify the install, box and snapshot.
+A restart finds them again. A release deletes them. If another container uses a
+snapshot image, deleting the snapshot removes its tag and volume; Docker keeps
+the shared image layers until that container goes. Restore, fork and Keep are
+not available yet.
+
+An older box's anonymous Docker volume can be copied too. Other writable mounts
+are refused before pausing. Move those files into the box before taking a snapshot.
+Docker on an LXC host can also refuse the writable LXCFS mounts at `/proc`,
+which BB Box currently creates. Read-only mounts are not copied. An image with 120 or more layers is refused;
+make a new box and move its files.
+
+Space estimates count the changed disk bytes once on overlay2 and twice on the
+containerd image store, then add the Docker volume's size. The space check reads
+Docker's own filesystem, including the virtual disk on Docker Desktop or WSL 2.
+Records rebuilt after losing BB Box's database have no displayed size yet; the
+image labels retain the byte counts.
