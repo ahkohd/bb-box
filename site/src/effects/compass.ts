@@ -5,14 +5,14 @@ interface Needle {
   x: number;
   y: number;
   angle: number;
-  quickness: number;
+  level: boolean;
 }
 
 const spacing = { alongPx: 9, downPx: 12 };
 const needlePx = 7;
 const restAngle = -Math.PI / 3;
+const levelPx = spacing.alongPx - 1.5;
 const turnRate = { least: 7, most: 16, nearPx: 600 };
-const warmWithinPx = 240;
 const settledRadians = 0.003;
 const halfTurn = Math.PI;
 
@@ -33,10 +33,10 @@ function edgeNeedles(frame: HTMLElement): Needle[] {
   const right = box.width - inset;
   const topY = top.top - box.top + top.height / 2;
   const bottomY = bottom.top - box.top + bottom.height / 2;
-  const needle = (x: number, y: number): Needle => ({ x, y, angle: restAngle, quickness: 0 });
+  const needle = (x: number, y: number): Needle => ({ x, y, angle: restAngle, level: false });
   const needles: Needle[] = [];
   for (let x = left; x <= right; x += spacing.alongPx) {
-    if (!gaps.some(([from, to]) => x > from && x < to)) needles.push(needle(x, topY));
+    if (!gaps.some(([from, to]) => x > from && x < to)) needles.push({ x, y: topY, angle: 0, level: true });
     needles.push(needle(x, bottomY));
   }
   for (let y = topY + spacing.downPx; y < bottomY; y += spacing.downPx) {
@@ -56,7 +56,7 @@ export function pointFramesAtPointer(frame: HTMLElement): void {
   let frameId = 0;
   let previous: number | undefined;
   let onScreen = false;
-  const ink = { line: "", warm: "" };
+  const ink = { line: "" };
 
   const still = () => reducedMotion() || pausedByPerson();
 
@@ -74,7 +74,6 @@ export function pointFramesAtPointer(frame: HTMLElement): void {
 
   const restyle = () => {
     ink.line = cssValue(frame, "--frame-ink");
-    ink.warm = cssValue(frame, "--accent");
   };
 
   const targetOf = (needle: Needle, at: { x: number; y: number }) => Math.atan2(at.y - needle.y, at.x - needle.x);
@@ -87,26 +86,18 @@ export function pointFramesAtPointer(frame: HTMLElement): void {
 
   const draw = () => {
     pen.clearRect(0, 0, size.width, size.height);
-    const at = still() ? undefined : pointerHere();
-    pen.lineCap = "square";
+    pen.lineCap = "butt";
     pen.lineWidth = 1.25;
+    pen.strokeStyle = ink.line;
+    pen.beginPath();
     for (const needle of needles) {
-      const dx = (Math.cos(needle.angle) * needlePx) / 2;
-      const dy = (Math.sin(needle.angle) * needlePx) / 2;
-      pen.globalAlpha = 1;
-      pen.strokeStyle = ink.line;
-      pen.beginPath();
+      const length = needle.level ? levelPx : needlePx;
+      const dx = (Math.cos(needle.angle) * length) / 2;
+      const dy = (Math.sin(needle.angle) * length) / 2;
       pen.moveTo(needle.x - dx, needle.y - dy);
       pen.lineTo(needle.x + dx, needle.y + dy);
-      pen.stroke();
-      if (!at) continue;
-      const near = 1 - Math.hypot(at.x - needle.x, at.y - needle.y) / warmWithinPx;
-      if (near <= 0) continue;
-      pen.globalAlpha = near * 0.85;
-      pen.strokeStyle = ink.warm;
-      pen.stroke();
     }
-    pen.globalAlpha = 1;
+    pen.stroke();
   };
 
   const turn = (now: number) => {
@@ -117,6 +108,7 @@ export function pointFramesAtPointer(frame: HTMLElement): void {
     let moving = false;
     if (at && !still()) {
       for (const needle of needles) {
+        if (needle.level) continue;
         const distance = Math.hypot(at.x - needle.x, at.y - needle.y);
         const rate = turnRate.most - (turnRate.most - turnRate.least) * Math.min(1, distance / turnRate.nearPx);
         const delta = towardsHalfTurn(targetOf(needle, at) - needle.angle);
@@ -134,7 +126,7 @@ export function pointFramesAtPointer(frame: HTMLElement): void {
   };
 
   const rest = () => {
-    for (const needle of needles) needle.angle = restAngle;
+    for (const needle of needles) if (!needle.level) needle.angle = restAngle;
     draw();
   };
 
