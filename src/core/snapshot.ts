@@ -1,5 +1,5 @@
 import { PRODUCT } from "../brand.ts";
-import type { Guest, Holds, Price, SnapshotGuest, SnapshotScope, SnapshotSize, TaskRef } from "../backends/types.ts";
+import type { Guest, Holds, PauseBasis, Price, SnapshotGuest, SnapshotScope, SnapshotSize, TakePause, TaskRef } from "../backends/types.ts";
 import { snapshotGpuWordsFor, type SnapshotGpu } from "./gpu.ts";
 import type { Actor } from "./box-log.ts";
 import type { Charge } from "./snapshot-cost.ts";
@@ -65,6 +65,7 @@ export interface SnapshotRecord {
   readonly takenAt: number;
   readonly capturedAt: number | null;
   readonly tookMs: number | null;
+  readonly pausedMs?: number | null;
   readonly by: Actor;
   readonly scope: SnapshotScope;
   readonly holds: Holds;
@@ -488,6 +489,30 @@ export function gbWords(bytes: number): string {
   const gb = bytes / 1e9;
   if (gb < 1) return `${Math.max(1, Math.round(gb * 1000))} MB`;
   return gb >= 10 ? `${Math.round(gb)} GB` : `${gb.toFixed(1)} GB`;
+}
+
+export function aboutSecondsWords(ms: number): string {
+  return ms < 1000 ? "under a second" : `about ${Math.round(ms / 1000)} s`;
+}
+
+export function measuredWords(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return ms < 10_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 1000)} s`;
+}
+
+function basisWords(basis: PauseBasis): string {
+  return basis.of === "disk" ? `while it copies ${gbWords(basis.bytes)}` : `while it saves ${gbWords(basis.bytes)} of memory`;
+}
+
+export function pauseWords(pause: TakePause, boxName: string): string {
+  if (!pause.pauses) return `It does not pause ${boxName}.`;
+  const how = [`Pauses ${boxName}`, ...(pause.aboutMs !== null ? [`for ${aboutSecondsWords(pause.aboutMs)}`] : []), ...(pause.basis ? [basisWords(pause.basis)] : [])].join(" ");
+  return pause.aboutMs !== null ? `${how}.` : `${how}. Its backend cannot say for how long.`;
+}
+
+export function pausedWords(taken: { readonly pausedMs?: number | null; readonly backend: { readonly label: string } }, boxName: string): string | null {
+  if (taken.pausedMs === null) return `${taken.backend.label} cannot measure how long it paused ${boxName}.`;
+  return taken.pausedMs ? `It paused ${boxName} for ${measuredWords(taken.pausedMs)}.` : null;
 }
 
 export function sizeWords(size: SnapshotSize | null): string {

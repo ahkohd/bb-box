@@ -1,4 +1,4 @@
-import type { BoxOwner, Guest, HeldSnapshot, HeldSnapshotState, Holds, Snapshotting, SnapshotStorage } from "../types.ts";
+import type { BoxOwner, Guest, HeldSnapshot, HeldSnapshotState, Holds, SnapshotSize, Snapshotting, SnapshotStorage } from "../types.ts";
 import { endOfUtcDay } from "../../core/snapshot.ts";
 import { MSB_VERSION } from "./release.ts";
 import { PRODUCT } from "../../brand.ts";
@@ -86,6 +86,64 @@ export function parseSnapshotList(stdout: string): MsbSnapshot[] {
   });
 }
 
+const CHECKPOINT_TIMING_LOG = "microsandbox_checkpoint_timing";
+const PAUSE_LOG_WINDOW_S = Math.ceil((SNAPSHOT_MS + 60_000) / 1_000);
+const MICROSECONDS_PER_MS = 1_000;
+
+const PAUSE_LOGGED: Readonly<Record<Holds, { readonly operation: string; readonly pausedFor: RegExp }>> = {
+  disk: { operation: 'operation="capture_disk"', pausedFor: /\bpause_us=(\d+)\b/ },
+  "disk-and-memory": { operation: 'operation="capture"', pausedFor: /\bvm_pause_window_us=(\d+)\b/ },
+};
+
+interface SystemLogEntry {
+  readonly said: string;
+  readonly at: number;
+}
+
+export type TimingLoggedBeforeTake = ReadonlySet<string>;
+
+export function pauseLogArgs(sandbox: string): string[] {
+  return ["logs", "--source", "system", "--json", "--since", `${PAUSE_LOG_WINDOW_S}s`, "--grep", CHECKPOINT_TIMING_LOG, sandbox];
+}
+
+export function timingLoggedBeforeTake(stdout: string): TimingLoggedBeforeTake {
+  return new Set(systemLogEntries(stdout).map(entryKey));
+}
+
+export function loggedPauseMs(stdout: string, before: TimingLoggedBeforeTake, holds: Holds, createdAt: number): number | null {
+  const captures = systemLogEntries(stdout).filter((entry) => !before.has(entryKey(entry)) && entry.at <= createdAt && isCaptureTiming(entry));
+  const only = captures.length === 1 ? captures[0]! : null;
+  const { operation, pausedFor } = PAUSE_LOGGED[holds];
+  const microseconds = only?.said.includes(operation) ? pausedFor.exec(only.said)?.[1] : undefined;
+  return microseconds ? Math.ceil(Number(microseconds) / MICROSECONDS_PER_MS) : null;
+}
+
+function isCaptureTiming(entry: SystemLogEntry): boolean {
+  return Object.values(PAUSE_LOGGED).some(({ operation }) => entry.said.includes(operation));
+}
+
+function entryKey(entry: SystemLogEntry): string {
+  return `${entry.at} ${entry.said}`;
+}
+
+function systemLogEntries(stdout: string): SystemLogEntry[] {
+  return stdout.split("\n").flatMap((line) => {
+    const entry = systemLogEntry(line);
+    return entry ? [entry] : [];
+  });
+}
+
+function systemLogEntry(line: string): SystemLogEntry | null {
+  if (!line.trim()) return null;
+  try {
+    const entry = JSON.parse(line) as { readonly d?: unknown; readonly s?: unknown; readonly t?: unknown };
+    const at = typeof entry.t === "string" ? Date.parse(entry.t) : Number.NaN;
+    return entry.s === "system" && typeof entry.d === "string" && Number.isFinite(at) ? { said: entry.d, at } : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface SnapshotExtras {
   readonly sizes: ReadonlyMap<string, number>;
   readonly kept: ReadonlyMap<string, number>;
@@ -155,7 +213,12 @@ export function heldFrom(input: HeldInput): HeldSnapshot {
     storage: input.storage,
     forkSafe: named.forkSafe,
     dependsOn: dependsOnOf(snapshot, input.all, named.install),
+    size: sizeOfHeld(extras.sizes.get(snapshot.id)),
   };
+}
+
+function sizeOfHeld(bytes: number | undefined): SnapshotSize | null {
+  return bytes ? { bytes, means: "whole" } : null;
 }
 
 export function msbOffer(): Snapshotting {

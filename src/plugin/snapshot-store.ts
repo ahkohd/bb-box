@@ -149,6 +149,7 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
   `ALTER TABLE ${SCHEMA}.snapshot_operations ADD COLUMN attempts TEXT`,
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN fork_safe_why TEXT CHECK(fork_safe_why IS NULL OR fork_safe_why IN ('reset-off', 'unread'))`,
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN gpu TEXT`,
+  `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN paused_ms INTEGER CHECK(paused_ms IS NULL OR paused_ms >= 0)`,
 ];
 
 export const PICTURES_HELD_BYTES = 48 * 1024 * 1024;
@@ -202,6 +203,7 @@ interface SnapshotRow {
   taken_at: number;
   captured_at: number | null;
   took_ms: number | null;
+  paused_ms: number | null;
   who: Actor["is"];
   agent: string | null;
   why: string | null;
@@ -304,6 +306,7 @@ function recordOf(row: SnapshotRow): SnapshotRecord {
     takenAt: row.taken_at,
     capturedAt: row.captured_at,
     tookMs: row.took_ms,
+    pausedMs: row.paused_ms,
     by: actorOf(row.who, row.agent, row.why),
     scope: row.scope,
     holds: row.holds,
@@ -352,6 +355,7 @@ function rowOf(record: SnapshotRecord): SnapshotRow {
     taken_at: record.takenAt,
     captured_at: record.capturedAt,
     took_ms: record.tookMs,
+    paused_ms: record.pausedMs ?? null,
     ...actorColumns(record.by),
     scope: record.scope,
     holds: record.holds,

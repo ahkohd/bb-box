@@ -54,7 +54,7 @@
 | [`bb box option get`](#bb-box-option-get) | Show one general or Monitor option: its value now, its default, and what it does. |
 | [`bb box option set`](#bb-box-option-set) | Set general and Monitor options, such as monitor.enabled=false, defaultKind=linux or general.snapshots.ceilings.&lt;backend>=7.50, a ceiling on a backend's paid snapshots, in one checked save, as the settings page saves them. bb box option list lists them. |
 | [`bb box option unset`](#bb-box-option-unset) | Give general and Monitor options back their defaults, in one checked save. general.tailnet.mode turns the tailnet off and clears its client. |
-| [`bb box snapshot take`](#bb-box-snapshot-take) | Take a snapshot of a thread's box, or with `--machine` one of your machines: its disk, or with `--memory` its disk and its memory where its backend can. Waits until the backend confirms it. A box holds as many as Settings, Snapshots allows, 5 unless set. |
+| [`bb box snapshot take`](#bb-box-snapshot-take) | Take a snapshot of a thread's box, or with `--machine` one of your machines: its disk, or with `--memory` its disk and its memory where its backend can. Waits until the backend confirms it, then says how long it paused the box. Run it with `--check` first to see how long it would pause the box. A box holds as many as Settings, Snapshots allows, 5 unless set. |
 | [`bb box snapshot list`](#bb-box-snapshot-list) | List the snapshots of a box, of a thread's boxes, of your machines with `--machine`, or with `--all` every snapshot BB Box records, those of released boxes too. |
 | [`bb box snapshot delete`](#bb-box-snapshot-delete) | Delete a snapshot of a thread's box, or with `--machine` one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list `--all` gives. |
 | [`bb box snapshot restore`](#bb-box-snapshot-restore) | Restore a thread's box, or with `--machine` one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. BB Box takes an undo first, a snapshot of the box once stopped, unless `--no-undo`. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless `--force`. It refuses a box threads run on, as restores of such boxes stay off until BB Box can hold every turn on them. Asks for `--replace`. |
@@ -949,11 +949,11 @@ Options:
 
 ## bb box snapshot take
 
-Take a snapshot of a thread's box, or with `--machine` one of your machines: its disk, or with `--memory` its disk and its memory where its backend can. Waits until the backend confirms it. A box holds as many as Settings, Snapshots allows, 5 unless set.
+Take a snapshot of a thread's box, or with `--machine` one of your machines: its disk, or with `--memory` its disk and its memory where its backend can. Waits until the backend confirms it, then says how long it paused the box. Run it with `--check` first to see how long it would pause the box. A box holds as many as Settings, Snapshots allows, 5 unless set.
 
 ```text
 Usage:
-  bb box snapshot take <box> [--thread <value>] [--machine] [--json] [--name <value>] [--note <value>] [--memory] [--no-memory] [--request <value>]
+  bb box snapshot take <box> [--thread <value>] [--machine] [--json] [--name <value>] [--note <value>] [--memory] [--no-memory] [--request <value>] [--check]
 
 Arguments:
   <box>  The box's name or ID. (required)
@@ -967,6 +967,7 @@ Options:
   --memory           Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower. Where every snapshot holds it, as on a macOS box on Tart, a take holds it unasked.
   --no-memory        Hold the box's disk only. Refused where every snapshot holds the memory.
   --request <value>  An ID you make, so a repeat of this command is the same take.
+  --check            Say how long the take would take and pause the box, and refuse what it would refuse, taking nothing.
   --help, -h         Show this help and exit
 ```
 

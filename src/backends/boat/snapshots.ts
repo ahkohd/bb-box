@@ -151,5 +151,6 @@ export function heldFrom(saved: SavedSnapshot, box: string, snapshot: string, gu
     keptUntil: kept ? endOfUtcDay(kept) : null,
     storage: { name: BOAT_STORAGE.name, type: BOAT_STORAGE.type },
     forkSafe: facts?.forkSafe ?? null,
+    size: saved.bytes !== null ? { bytes: saved.bytes, means: "own" } : null,
   };
 }

@@ -108,6 +108,61 @@ test("070 unit 10 review (Astra 2): msb changed under a running backend is read 
   assert.equal(fake.snapshots().length, 1);
 });
 
+test("a microsandbox take of a running box pauses it, disk or memory, for the time msb's runtime logs, not the time its command takes", async () => {
+  const fake = fakeMsbHost();
+  fake.set({ diskPauseUs: 24_272, fullPauseUs: 289_747 });
+  const backend = new MsbBackend(msbConfig(), testContext(), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
+  const box = identity();
+  const guest = await backend.acquire(box, null, acquiring(), signal());
+
+  const plan = await backend.planSnapshots(guest, "linux", null, signal());
+  const disk = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal());
+  const memory = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: true, forkSafe: 7 }, QUIET, signal());
+
+  assert.deepEqual(plan.take.pause, { pauses: true, aboutMs: null, basis: null }, "msb pauses the VM while it captures its disk");
+  assert.deepEqual(plan.take.memory?.pause, { pauses: true, aboutMs: 1_500, basis: { bytes: SMALL.memoryMiB * 2 ** 20, of: "memory" } });
+  assert.equal(disk.pausedMs, 25, "msb's pause_us, 24,272 us, not the time its command takes");
+  assert.equal(memory.pausedMs, 290, "msb's vm_pause_window_us, 289,747 us, not the time its command takes");
+  const listed = await backend.heldSnapshots(signal());
+  assert.deepEqual(disk.size, { bytes: 2048 * 1024, means: "whole" });
+  assert.deepEqual(listed.map((held) => held.size), [disk.size, memory.size], "its listing gives each snapshot's size, as its take did");
+});
+
+test("a microsandbox take whose pause msb does not log says the pause is unknown, never 0; a stopped box's take does not pause", async () => {
+  const fake = fakeMsbHost();
+  fake.set({ pauseLogged: false });
+  const backend = new MsbBackend(msbConfig(), testContext(), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
+  const box = identity();
+  const guest = await backend.acquire(box, null, acquiring(), signal());
+
+  const unlogged = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal());
+  await backend.stop(guest, signal());
+  const stoppedPlan = await backend.planSnapshots(guest, "linux", null, signal());
+  const stopped = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal());
+
+  assert.equal(unlogged.pausedMs, null);
+  assert.deepEqual(stoppedPlan.take.pause, { pauses: false });
+  assert.equal(stopped.pausedMs, 0);
+});
+
+test("a microsandbox take never reports the pause msb logged for an earlier take of the box, disk or memory", async () => {
+  const fake = fakeMsbHost();
+  const backend = new MsbBackend(msbConfig(), testContext(), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
+  const box = identity();
+  const guest = await backend.acquire(box, null, acquiring(), signal());
+
+  const loggedDisk = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal());
+  const loggedMemory = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: true, forkSafe: 7 }, QUIET, signal());
+  fake.set({ pauseLogged: false });
+  const unloggedDisk = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal());
+  const unloggedMemory = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: true, forkSafe: 7 }, QUIET, signal());
+
+  assert.equal(loggedDisk.pausedMs, 25);
+  assert.equal(loggedMemory.pausedMs, 290);
+  assert.equal(unloggedDisk.pausedMs, null, "the disk take before it logged 25 ms, which is not this take's pause");
+  assert.equal(unloggedMemory.pausedMs, null, "the memory take before it logged 290 ms, which is not this take's pause");
+});
+
 test("070 close-out: a Mac host's microsandbox boxes take and delete snapshots, as the probe on a Mac measured, and the doctor says so; another msb is still refused", async () => {
   const fake = fakeMsbHost();
   fake.facts({ os: "Darwin", arch: "arm64", docker: "" });

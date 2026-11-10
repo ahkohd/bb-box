@@ -75,8 +75,10 @@ import {
   type SnapshotTake,
   type SnapshotTaken,
   type Snapshotting,
+  type TakePause,
   type TaskOutcome,
   type TaskRef,
+  NO_PAUSE,
   SnapshotFailed,
   SnapshotIncomplete,
 } from "../types.ts";
@@ -109,6 +111,7 @@ import {
   groupMember,
   heldFrom,
   heldStateOf,
+  loggedPauseMs,
   msbOffer,
   nextHead,
   parseHead,
@@ -116,13 +119,16 @@ import {
   parseSnapshotExtras,
   parseSnapshotList,
   parseSnapshotNaming,
+  pauseLogArgs,
   restoreNetwork,
   snapshotGroup,
   snapshotName,
   storageOf,
+  timingLoggedBeforeTake,
   versionRefusal,
   type MsbSnapshot,
   type SnapshotExtras,
+  type TimingLoggedBeforeTake,
 } from "./snapshots.ts";
 
 /** A box is ready in under a second, a desktop in about one; an import of its image can come first. */
@@ -161,6 +167,9 @@ const VNC_PORT = 5900;
 const VNC_PASSWORD_FILE = "/var/lib/bb-box/vnc-password";
 const MiB_PER_GiB = 1024;
 const MiB = 1024 * 1024;
+const PAUSES_FOR_AN_UNKNOWN_TIME: TakePause = { pauses: true, aboutMs: null, basis: null };
+const PAUSE_UNMEASURED = null;
+const DID_NOT_PAUSE_MS = 0;
 /** A Docker disk this old with no microVM of its name is a leftover, which the upkeep removes. */
 const ORPHAN_DISK_S = 15 * 60;
 /**
@@ -1566,7 +1575,8 @@ export class MsbBackend implements Backend {
         aboutMs: DISK_TAKE_ABOUT_MS,
         memoryAboutMs: running ? FULL_TAKE_ABOUT_MS : null,
         addsBytes: null,
-        memory: running && memoryMiB ? { storage, addsBytes: memoryMiB * MiB } : null,
+        pause: running ? PAUSES_FOR_AN_UNKNOWN_TIME : NO_PAUSE,
+        memory: running && memoryMiB ? { storage, addsBytes: memoryMiB * MiB, pause: { pauses: true, aboutMs: FULL_TAKE_ABOUT_MS, basis: { bytes: memoryMiB * MiB, of: "memory" } } } : null,
         memoryWhy: running ? null : "msb saves a box's memory only while it runs.",
       },
       restore: {
@@ -1591,7 +1601,8 @@ export class MsbBackend implements Backend {
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     const refused = (await this.#changeRefusal(signal)) ?? this.#guestRefusal(found, guest);
     if (refused) throw new SnapshotFailed(refused);
-    if (take.memory && powerOf(found!.status) !== "running") throw new SnapshotFailed(`msb saves a box's memory only while it runs, and the microVM ${guest.ref} is ${found!.status.toLowerCase()}.`);
+    const running = powerOf(found!.status) === "running";
+    if (take.memory && !running) throw new SnapshotFailed(`msb saves a box's memory only while it runs, and the microVM ${guest.ref} is ${found!.status.toLowerCase()}.`);
     const group = snapshotGroup(take.box);
     const name = snapshotName(this.#context.installId, take.id, take.forkSafe);
     const size = sizeOf(found!);
@@ -1604,6 +1615,7 @@ export class MsbBackend implements Backend {
     };
     await hooks.submitting();
     await hooks.task({ ref: `${TAKE_TASK}${group}:${name}`, host: this.#host });
+    const timingBefore = running ? await this.#timingLoggedBeforeTake(guest.ref, signal) : null;
     const result = await this.#cli.run(
       ["snapshot", "create", name, "--sandbox", guest.ref, "--group", group, ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]), ...(take.memory ? ["--full"] : []), "--quiet"],
       { timeoutMs: SNAPSHOT_MS, signal },
@@ -1626,7 +1638,24 @@ export class MsbBackend implements Backend {
     if (!made) throw new Error(`msb took snapshot ${name} of ${guest.ref} but does not list it.`);
     if (made.availability !== "ready") throw new SnapshotIncomplete(`msb lists snapshot ${made.id} as ${made.availability}.`);
     const bytes = (await this.#snapshotExtras(signal).catch(() => null))?.sizes.get(made.id) ?? null;
-    return { ref: made.id, holds: made.holds, capturedAt: made.createdAt ?? Date.now(), size: bytes ? { bytes, means: "whole" } : null, dependsOn: dependsOnOf(made, listed, this.#context.installId) };
+    const pausedMs = running ? await this.#pauseLogged(guest.ref, made, timingBefore, signal) : DID_NOT_PAUSE_MS;
+    return { ref: made.id, holds: made.holds, capturedAt: made.createdAt ?? Date.now(), size: bytes ? { bytes, means: "whole" } : null, pausedMs, dependsOn: dependsOnOf(made, listed, this.#context.installId) };
+  }
+
+  async #timingLoggedBeforeTake(sandbox: string, signal?: AbortSignal): Promise<TimingLoggedBeforeTake | null> {
+    const logged = await this.#timingLog(sandbox, signal);
+    return logged === null ? null : timingLoggedBeforeTake(logged);
+  }
+
+  async #pauseLogged(sandbox: string, made: MsbSnapshot, before: TimingLoggedBeforeTake | null, signal?: AbortSignal): Promise<number | null> {
+    if (made.createdAt === null || before === null) return PAUSE_UNMEASURED;
+    const logged = await this.#timingLog(sandbox, signal);
+    return logged === null ? PAUSE_UNMEASURED : loggedPauseMs(logged, before, made.holds, made.createdAt);
+  }
+
+  async #timingLog(sandbox: string, signal?: AbortSignal): Promise<string | null> {
+    const result = await this.#cli.run(pauseLogArgs(sandbox), { timeoutMs: 30_000, signal }).catch(() => null);
+    return result?.exitCode === 0 ? result.stdout : null;
   }
 
   async #removeSnapshot(snapshot: MsbSnapshot, listed: readonly MsbSnapshot[], signal?: AbortSignal): Promise<void> {
