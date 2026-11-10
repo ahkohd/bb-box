@@ -86,21 +86,21 @@
   --muted-foreground: #6b6b6b;
   --muted: #f4f3f0;
   --surface: #faf9f7;
-  --border: #e8e6e1;
+  --border: #dedad3;
   --muted-strong: #ebe8e2;
   --accent: #a85000;
   --accent-fill: #f5a524;
   --accent-soft: rgb(245 165 36 / 0.16);
-  --frame-ink: #c9c5bd;
-  --dither-ink: #f5a524;
-  --field-hot: #d97706;
+  --frame-ink: #9c968c;
+  --dither-ink: #c2710c;
+  --field-hot: #b45309;
   --ready: #16a34a;
   --box-ink: rgb(0 0 0 / 0.42);
-  --dither-strength: 0.74;
-  --dither-floor: 0.24;
+  --dither-strength: 1;
+  --dither-floor: 0.32;
   --field-left: 0.1;
-  --wordmark-ink: #a59d90;
-  --wordmark-dense: color-mix(in srgb, var(--accent) 48%, transparent);
+  --wordmark-ink: #7d766b;
+  --wordmark-dense: color-mix(in srgb, var(--accent) 70%, transparent);
 
   --sl-color-gray-1: #171717;
   --sl-color-gray-4: #a1a1a1;
@@ -210,10 +210,14 @@ button.sl-menu-button:has(~ :popover-open),
   color: var(--muted-foreground);
 }
 
+:root {
+  --chevron-drawn: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='square' stroke-linejoin='miter'/%3E%3C/svg%3E");
+}
+
 .sidebar-content summary .caret {
   color: var(--muted-foreground);
   background-color: currentColor;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 3.5 10.5 8 6 12.5' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='square' stroke-linejoin='miter'/%3E%3C/svg%3E") center / 0.875rem 0.875rem no-repeat;
+  mask: var(--chevron-drawn) center / 0.875rem 0.875rem no-repeat;
 }
 
 .sidebar-content summary .caret path {
@@ -488,9 +492,9 @@ body,
   color: var(--foreground);
 }
 
-.sl-markdown-content details:not(:where(.not-content *)) summary::marker,
-.sl-markdown-content details:not(:where(.not-content *)) summary::-webkit-details-marker {
-  color: var(--accent);
+.sl-markdown-content details:not(:where(.not-content *)) summary::before {
+  -webkit-mask: var(--chevron-drawn) center / 0.875rem 0.875rem no-repeat;
+  mask: var(--chevron-drawn) center / 0.875rem 0.875rem no-repeat;
 }
 
 .starlight-aside {
