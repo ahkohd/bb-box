@@ -215,6 +215,7 @@ scrub_disk() {
   sync
   scrub_end
 }
+made_as_kind() { [ "$(sed -n 's/^kind=//p' "$d/owners/$1" 2>/dev/null | head -n 1)" = "$2" ]; }
 alive_in() { [ -f "$1" ] && read -r _p _st < "$1" && runs_still "$_p" "$_st"; }
 journal() { mkdir -p "$snaps/.rollbacks" && printf '%s\n' "$2" > "$snaps/.rollbacks/$1.new" && mv -f "$snaps/.rollbacks/$1.new" "$snaps/.rollbacks/$1"; }
 `;
@@ -268,7 +269,7 @@ room_for_copy "$snaps" ${input.minFreeGiB} || exit 7
 rm -rf "$sd.part" && mkdir -p "$sd.part" || exit 1
 os=$(os_of "$vm"); [ -n "$os" ] || os=darwin
 holds=disk; [ ! -f "$tart_vms/$vm/state.vzvmsave" ] || holds=disk-and-memory
-kind=${quote(input.kind)}; [ "$(sed -n 's/^kind=//p' "$d/owners/$vm" | head -n 1)" != ${IOS_IMAGE_KIND} ] || kind=${IOS_IMAGE_KIND}
+kind=${quote(input.kind)}; ! made_as_kind "$vm" ${IOS_IMAGE_KIND} || kind=${IOS_IMAGE_KIND}
 saved=$d/run/$vm.saved-under
 under() { _u=$(sed -n "s/^$1=//p" "$saved" 2>/dev/null | head -n 1); printf '%s' "${"$"}{_u:-unknown}"; }
 { printf '%s\n' ${quote(head)}; echo "holds=$holds"; echo "os=$os"; echo "kind=$kind"; if [ "$holds" = disk-and-memory ]; then echo "macos=$(under macos)"; echo "tart=$(under tart)"; fi; g=$(disk_gb "$tart_vms/$vm"); [ -z "$g" ] || echo "diskgb=$g"; } > "$sd.part/label" || exit 1
