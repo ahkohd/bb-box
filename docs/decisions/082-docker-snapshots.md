@@ -143,7 +143,12 @@ that container name are still removed, so a release interrupted after the
 container went can finish. At each maintenance pass, the backend also finds
 this install's labelled volumes without a container and removes them. It
 leaves volumes of boxes being made alone, using the engine's shared placement
-reservations. Removal failures are reported and retried on the next pass.
+reservations. Restored and forked containers use names of the form
+`bbbox-<box>-<8 hex>` and make their volumes before their containers.
+Those units must reserve creation under the new container name, so cleanup
+cannot remove the volume in between. Cleanup runs after CPU and LXCFS
+upkeep. Each removal failure is logged and retried on the next pass,
+without stopping cleanup of other volumes.
 
 A box made before this record keeps its anonymous volume. Making it again
 finds the container, leaves it, and removes the named volume this attempt

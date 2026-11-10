@@ -1724,6 +1724,9 @@ test("the sweep probes a host with boxes again before its probes are 10 minutes 
   await backend.maintain(signal());
   assert.equal(probes(), 1, "probes under 6 minutes old stand");
 
+  execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=test", "--label", "bbbox.volume-of=bbbox-gone", "held-orphan"]);
+  execFileSync(fake.binary, ["container", "create", "--name", "holder", "--network", "bbbox", "--volume", "held-orphan:/data", "bbbox/linux:1"]);
+
   fake.set({ cpuList: "3,61" });
   now += 7 * 60_000;
   await backend.maintain(signal());
@@ -1804,14 +1807,15 @@ test("maintenance preserves a volume while its box is being made and other owner
 });
 
 test("maintenance reports a held orphan and still removes other orphans", async () => {
-  const { fake, backend } = setup();
+  const { fake, backend, context } = setup();
   execFileSync(fake.binary, ["network", "create", "bbbox"]);
   for (const name of ["a-held", "z-free"]) {
     execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=test", "--label", "bbbox.volume-of=bbbox-gone", name]);
   }
   execFileSync(fake.binary, ["container", "create", "--name", "holder", "--network", "bbbox", "--volume", "a-held:/data", "bbbox/linux:1"]);
 
-  await assert.rejects(backend.maintain(signal()), /volume is in use/);
+  await backend.maintain(signal());
 
   assert.deepEqual(volumeNames(fake.binary), ["a-held"]);
+  assert.match(context.errors.join("\n"), /removing orphan Docker volume a-held.*volume is in use/);
 });

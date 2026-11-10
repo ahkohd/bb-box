@@ -1196,14 +1196,18 @@ export class DockerBackend implements Backend {
       const state = await this.#state(signal);
       await this.#dropDaemonRecords(GPU_PARTS, state, signal);
       await this.#dropRelabels(state);
+      const needsProbe = state.containers.some((container) => ACTIVE.has(container.status))
+        && (!this.#hostCpus || this.#now() - this.#hostCpus.at >= PROBES_REFRESHED_AFTER_MS);
+      if (needsProbe) {
+        await this.#lxcfsOnHost(signal, true);
+        if (this.#pinsCpus(state.info)) {
+          this.#daemonCpus = null;
+          await this.#probedCpus(state.info, signal, true);
+          await this.#moveSharingBoxes(signal);
+        }
+      }
+
       await this.#removeOrphanVolumes(state, signal);
-      if (!state.containers.some((container) => ACTIVE.has(container.status))) return;
-      if (this.#hostCpus && this.#now() - this.#hostCpus.at < PROBES_REFRESHED_AFTER_MS) return;
-      await this.#lxcfsOnHost(signal, true);
-      if (!this.#pinsCpus(state.info)) return;
-      this.#daemonCpus = null;
-      await this.#probedCpus(state.info, signal, true);
-      await this.#moveSharingBoxes(signal);
     }, signal);
   }
 
@@ -2283,7 +2287,7 @@ export class DockerBackend implements Backend {
   #requireOwnVolume(volume: string, containerName: string, labels: Readonly<Record<string, string>>): void {
     if (labels[VOLUME_OF] === containerName && labels[LABELS.install] === this.#context.installId) return;
     throw new Error(
-      `The Docker volume ${volume} on ${this.#host} is not labelled as ${containerName}'s, so ${PRODUCT} left it alone. Remove that volume, then make the box again.`,
+      `The Docker volume ${volume} on ${this.#host} is not labelled as ${containerName}'s, so ${PRODUCT} left it alone. Make the box again to use a new volume name.`,
     );
   }
 
@@ -2307,8 +2311,8 @@ export class DockerBackend implements Backend {
     return labels;
   }
 
-  async #dropDockerVolumeIfUnused(volume: string, containerName: string, signal?: AbortSignal): Promise<void> {
-    const labels = await this.#dockerVolumeLabels(volume, signal);
+  async #dropDockerVolumeIfUnused(volume: string, containerName: string, signal?: AbortSignal, knownLabels?: Readonly<Record<string, string>>): Promise<void> {
+    const labels = knownLabels ?? await this.#dockerVolumeLabels(volume, signal);
     if (!labels) return;
     this.#requireOwnVolume(volume, containerName, labels);
     const result = await this.#cli.run(["volume", "rm", volume], { timeoutMs: 60_000, signal });
@@ -2318,7 +2322,6 @@ export class DockerBackend implements Backend {
   async #removeOrphanVolumes(state: HostState, signal?: AbortSignal): Promise<void> {
     const listed = await this.#cli.ok(["volume", "ls", "--filter", `label=${LABELS.install}=${this.#context.installId}`, "--filter", `label=${VOLUME_OF}`, "--format", "{{.Name}}"], { timeoutMs: 30_000, signal });
     const making = new Set(state.placing.map((placing) => placing.name));
-    const failures: unknown[] = [];
     for (const volume of listed.split("\n").map((name) => name.trim()).filter(Boolean)) {
       try {
         const labels = await this.#dockerVolumeLabels(volume, signal);
@@ -2326,12 +2329,11 @@ export class DockerBackend implements Backend {
         if (!name || labels?.[LABELS.install] !== this.#context.installId || making.has(name)) continue;
         const containers = await this.#cli.inspect([name], signal);
         if (containers.length) continue;
-        await this.#dropDockerVolumeIfUnused(volume, name, signal);
+        await this.#dropDockerVolumeIfUnused(volume, name, signal, labels);
       } catch (error) {
-        failures.push(error);
+        this.#context.logError(`removing orphan Docker volume ${volume}`, error);
       }
     }
-    if (failures.length) throw new AggregateError(failures, failures.map(message).join("\n"));
   }
 
   async #removeLabelledVolumes(containerName: string, signal?: AbortSignal): Promise<void> {

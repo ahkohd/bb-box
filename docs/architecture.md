@@ -83,6 +83,13 @@ A backend declares its nature, virtual or real, and implements:
 | `maintain?()` | upkeep, such as topping up a warm pool, at each sweep and when the configuration is applied |
 | `members?()`, `returnToService?(ref)` | a real pool's machines and their state; puts back a machine the operator fixed |
 
+Docker maintenance removes this install's labelled orphan volumes after CPU
+and LXCFS upkeep. It leaves volumes of containers and creation reservations
+alone. Each removal failure is logged and retried on the next pass, without
+stopping other removals. Restore and fork must reserve creation under the
+new container name before making its volume.
+
+
 A real backend also says what a release restores: `home`, the box user's
 home, or `machine`, the whole machine.
 
