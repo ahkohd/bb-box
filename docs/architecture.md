@@ -940,11 +940,19 @@ Code in [src/backends/docker/](../src/backends/docker/). Set up by
   refused. It runs under `--init` with the image's start script and no
   systemd ([013](decisions/013-docker-boxes-run-unprivileged.md)), with
   `/run` as a tmpfs and the restart policy `unless-stopped`.
-- A box is privileged, with Docker's data on an anonymous volume, unless
-  `privileged` is off ([041](decisions/041-every-linux-box-has-docker.md)).
-  Its start script listens on Docker's socket, so `dockerd` starts with the
-  first `docker` command, then writes `/run/bb-box/ready`, which bb-box
-  waits for before it runs BB's bootstrap.
+- A box is privileged, unless `privileged` is off
+  ([041](decisions/041-every-linux-box-has-docker.md)). Its Docker data
+  is a named volume, `bbbox-<container>-docker`, labelled
+  `bbbox.volume-of` with the container's name and `bbbox.install` with
+  the install, on the same engine as the container: a local daemon, one
+  over SSH, or a BB machine's Docker
+  ([082](decisions/082-docker-snapshots.md)). A box made before that
+  keeps its anonymous volume at `/var/lib/docker`. A release removes the
+  named volume labelled as that container, and still removes an older
+  box's anonymous volume with the container. Its start script listens on
+  Docker's socket, so `dockerd` starts with the first `docker` command,
+  then writes `/run/bb-box/ready`, which BB Box waits for before it runs
+  BB's bootstrap.
 - A GPU desktop gets one GPU through CDI. As it is privileged, it sees
   every GPU, so its start script points Xorg at the one placed, by its PCI
   bus ID (#283).

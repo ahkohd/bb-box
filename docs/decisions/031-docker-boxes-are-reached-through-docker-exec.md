@@ -4,6 +4,9 @@ Status: accepted, 1 October 2026. Partly supersedes
 [013](013-docker-boxes-run-unprivileged.md). Extended by
 [042](042-a-docker-host-can-be-a-bb-machine.md): the Docker host can be a BB
 machine, reached through BB.
+[082](082-docker-snapshots.md) supersedes the anonymous volume for a box
+made after it. A box made before keeps that volume, and a release still
+removes it.
 
 ## Context
 
@@ -37,9 +40,11 @@ needs anyway to make and remove containers, reaches the box in every case.
   ([017](017-boxes-clear-bb-daemon-state-at-boot.md)). This supersedes 013's
   line that the start script starts the daemon again.
 - linux-docker boxes run Docker in Docker: a privileged container with its
-  own daemon and an anonymous volume for `/var/lib/docker`, not the host's
-  socket. Its containers are apart from the host's and other boxes', and a
-  bind mount names the box's own paths. `access.dockerHost` is null.
+  own daemon and a volume for `/var/lib/docker`, not the host's socket. A
+  box made after [082](082-docker-snapshots.md) uses a named volume
+  labelled as that container. A box made before keeps an anonymous volume.
+  Its containers are apart from the host's and other boxes', and a bind
+  mount names the box's own paths. `access.dockerHost` is null.
 - Boxes run no systemd, privileged or not, so linux-docker offers the
   feature `docker` alone, not 013's `docker` and `systemd`.
 - `admin` is a per-offer fact the agent sees, not a promise of the kind.
