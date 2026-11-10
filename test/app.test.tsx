@@ -10806,7 +10806,7 @@ function snapshotRow(overrides: Partial<SnapshotRowView> = {}): SnapshotRowView 
     keepWhy: null,
     boxGone: null,
     unflushed: null,
-    pausedMs: null,
+    pausedMs: 0,
     after: [],
     ...overrides,
   };
@@ -11038,6 +11038,21 @@ test("the take dialog says how long the take pauses the box and what that is bas
 
   await waitFor(() => expect(takeFactLines(dialog).find((line) => line.label === "Takes")?.value).toBe("About 5.4 s. Pauses calm-otter for about 5 s while it copies 1.1 GB."));
   expect(card.textContent).toContain("paused 3.2 s");
+});
+
+test("a snapshot row says its pause was not measured when the backend could not measure it, as the CLI does, and says nothing of a pause that did not happen", async () => {
+  const rows = [
+    snapshotRow({ id: "snbbbbbbbbbbbb", name: "unmeasured", pausedMs: null }),
+    snapshotRow({ id: "sncccccccccccc", name: "stopped", pausedMs: 0 }),
+  ];
+  const { handlers } = server([box()], { snapshots: snapshotsView({ records: rows }) });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+
+  const rowText = (id: string) => card.querySelector(`[data-snapshot-row="${id}"]`)?.textContent ?? "";
+
+  await waitFor(() => expect(rowText("snbbbbbbbbbbbb")).toContain("pause not measured"));
+  expect(rowText("sncccccccccccc")).not.toMatch(/pause/);
 });
 
 test("070 unit 6: a box whose plan refuses a take says why in the card with Take snapshot off, and a box whose backend has none says so", async () => {

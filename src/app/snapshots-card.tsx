@@ -225,6 +225,11 @@ function Dot() {
   );
 }
 
+function pausedRowWords(pausedMs: SnapshotRowView["pausedMs"]): string | null {
+  if (pausedMs === null) return "pause not measured";
+  return pausedMs ? `paused ${measuredWords(pausedMs)}` : null;
+}
+
 function rowLine(row: SnapshotRowView, place: RowPlace, now: number, titles: ThreadTitles): { attention: string | null; soon: boolean; rest: string[] } {
   const keep = row.keptUntil !== null ? keepWords(row.keptUntil, now) : null;
   const attention = attentionWords(row, place.box.name);
@@ -240,7 +245,7 @@ function rowLine(row: SnapshotRowView, place: RowPlace, now: number, titles: Thr
       actorWords(row.by, titles),
       place.wide ? holdsWords(row.holds, row.scope) : null,
       row.state === "failed" ? null : snapshotSizeWords(row.size),
-      row.pausedMs ? `paused ${measuredWords(row.pausedMs)}` : null,
+      pausedRowWords(row.pausedMs),
       snapshotPriceWords(row.price),
       life,
       row.unflushed ? "may miss its last writes" : null,
