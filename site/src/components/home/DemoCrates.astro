@@ -1,7 +1,7 @@
 <div class="crates" data-motion aria-hidden="true" hidden></div>
 
 <script>
-  import type { Landing } from "../../effects/crates.ts";
+  import type { Burning, Landing } from "../../effects/crates.ts";
   import { onMotionChange, pausedByPerson, reducedMotion } from "../../motion.ts";
 
   const layer = document.querySelector<HTMLElement>(".crates");
@@ -9,6 +9,8 @@
   const floor = document.querySelector(".foot-inner");
   const strip = document.querySelector<HTMLElement>(".dither-strip");
   const dotPitchPx = 6;
+
+  const heatTheFire = (burning: Burning) => document.dispatchEvent(new CustomEvent<Burning>("crate-burning", { detail: burning }));
 
   const ripple = ({ pageX, speed }: Landing) => {
     if (!strip) return;
@@ -36,7 +38,7 @@
       await document.fonts.ready;
       const { stackCrates } = await import("../../effects/crates.ts");
       layer.hidden = false;
-      const crates = stackCrates(layer, shelf, floor, motionAllowed(), ripple);
+      const crates = stackCrates(layer, shelf, floor, motionAllowed(), ripple, heatTheFire);
       crates.setActive(motionAllowed());
       const follow = () => crates.setActive(motionAllowed());
       onMotionChange(follow);
@@ -93,6 +95,40 @@
     to {
       --ripple-ring: 100%;
       opacity: 0;
+    }
+  }
+
+  @property --burnt {
+    syntax: "<percentage>";
+    inherits: false;
+    initial-value: -20%;
+  }
+
+  .crate.crate-burning {
+    --crate-edge: var(--accent);
+    --crate-grain: color-mix(in oklab, var(--accent) 55%, transparent);
+    --crate-light: color-mix(in oklab, var(--accent) 45%, transparent);
+    color: var(--accent);
+    filter: drop-shadow(0 0 4px color-mix(in oklab, var(--accent) 75%, transparent));
+    mask-image: linear-gradient(calc(0rad - var(--tilt, 0rad)), transparent var(--burnt), #000 calc(var(--burnt) + 20%));
+    animation:
+      crate-burn var(--burn-seconds, 2.6s) linear forwards,
+      crate-flicker 180ms steps(2) infinite;
+  }
+
+  @keyframes crate-burn {
+    0%,
+    25% {
+      --burnt: -20%;
+    }
+    100% {
+      --burnt: 100%;
+    }
+  }
+
+  @keyframes crate-flicker {
+    50% {
+      opacity: 0.82;
     }
   }
 

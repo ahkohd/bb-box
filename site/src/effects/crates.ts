@@ -25,12 +25,22 @@ interface Crate {
   width: number;
   height: number;
   bashedAt: number;
+  look: CrateLook;
+  homeX: number;
+  burning: boolean;
+}
+
+export interface Burning {
+  pageX: number;
+  width: number;
+  seconds: number;
 }
 
 interface Sized {
   element: HTMLElement;
   width: number;
   height: number;
+  look: CrateLook;
 }
 
 type CrateSize = "small" | "medium" | "large";
@@ -80,6 +90,7 @@ const settleSteps = 90;
 const shelfThickness = 4;
 const crateGap = 2;
 const floorLabel = "floor";
+const burn = { catchMs: 700, seconds: 2.6, respawnMs: 3500, respawnDropPx: 420, respawnScatterPx: 24 };
 const landingSpeed = 2.5;
 const pileGap = 12;
 
@@ -137,14 +148,55 @@ function crateBody(x: number, y: number, width: number, height: number): Matter.
   });
 }
 
-export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, active: boolean, onLanding: (landing: Landing) => void): Crates {
+export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, active: boolean, onLanding: (landing: Landing) => void, onBurning: (burning: Burning) => void): Crates {
   const engine = Engine.create({ enableSleeping: true, gravity: { x: 0, y: 1, scale: gravityScale } });
+  let generation = 0;
   Events.on(engine, "collisionStart", ({ pairs }) => {
     for (const { bodyA, bodyB } of pairs) {
-      const crate = bodyA.label === floorLabel ? bodyB : bodyB.label === floorLabel ? bodyA : undefined;
-      if (crate && crate.speed >= landingSpeed) onLanding({ pageX: crate.position.x, speed: crate.speed });
+      const body = bodyA.label === floorLabel ? bodyB : bodyB.label === floorLabel ? bodyA : undefined;
+      if (!body) continue;
+      if (body.speed >= landingSpeed) onLanding({ pageX: body.position.x, speed: body.speed });
+      const crate = crates.find((one) => one.body === body);
+      if (crate && !crate.burning) ignite(crate);
     }
   });
+
+  function ignite(crate: Crate): void {
+    crate.burning = true;
+    const lit = generation;
+    setTimeout(() => {
+      if (lit !== generation || !crates.includes(crate)) return;
+      crate.element.style.setProperty("--tilt", `${crate.body.angle}rad`);
+      crate.element.style.setProperty("--burn-seconds", `${burn.seconds}s`);
+      crate.element.classList.add("crate-burning");
+      onBurning({ pageX: crate.body.position.x, width: crate.width, seconds: burn.seconds });
+      setTimeout(() => burnUp(crate, lit), burn.seconds * 1000);
+    }, burn.catchMs);
+  }
+
+  function burnUp(crate: Crate, lit: number): void {
+    if (lit !== generation) return;
+    Composite.remove(engine.world, crate.body);
+    crate.element.remove();
+    crates = crates.filter((one) => one !== crate);
+    setTimeout(() => respawn(crate, lit), burn.respawnMs);
+  }
+
+  function respawn(burnt: Crate, lit: number): void {
+    if (lit !== generation) return;
+    const element = crateElement(burnt.look);
+    layer.append(element);
+    const width = element.offsetWidth;
+    const height = element.offsetHeight;
+    const homeX = burnt.homeX + (Math.random() - 0.5) * burn.respawnScatterPx;
+    const body = crateBody(homeX, stage.shelfY - burn.respawnDropPx, width, height);
+    Body.setAngle(body, (Math.random() - 0.5) * 0.6);
+    const fresh: Crate = { body, element, width, height, bashedAt: 0, look: burnt.look, homeX: burnt.homeX, burning: false };
+    crates.push(fresh);
+    Composite.add(engine.world, body);
+    draw();
+    wake();
+  }
   let stage = measureStage(shelf, floor);
   let crates: Crate[] = [];
   let frame = 0;
@@ -157,7 +209,7 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
       row.map((look) => {
         const element = crateElement(look);
         layer.append(element);
-        return { element, width: element.offsetWidth, height: element.offsetHeight };
+        return { element, width: element.offsetWidth, height: element.offsetHeight, look };
       }),
     );
     const rowWidth = (row: Sized[]) => row.reduce((sum, crate) => sum + crate.width, 0) + crateGap * (row.length - 1);
@@ -173,10 +225,11 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
     return looks.flatMap((row) => {
       let left = centre - rowWidth(row) / 2;
       const height = Math.max(...row.map((crate) => crate.height));
-      const placed = row.map(({ element, width, height }) => {
-        const body = crateBody(left + width / 2, rowBottom - height / 2, width, height);
+      const placed = row.map(({ element, width, height, look }) => {
+        const homeX = left + width / 2;
+        const body = crateBody(homeX, rowBottom - height / 2, width, height);
         left += width + crateGap;
-        return { body, element, width, height, bashedAt: 0 };
+        return { body, element, width, height, bashedAt: 0, look, homeX, burning: false };
       });
       rowBottom -= height;
       return placed;
@@ -184,6 +237,7 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
   }
 
   function build(): void {
+    generation++;
     Composite.clear(engine.world, false);
     layer.replaceChildren();
     layer.style.height = `${stage.floorY + 2}px`;
