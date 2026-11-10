@@ -124,9 +124,11 @@ import {
   snapshotGroup,
   snapshotName,
   storageOf,
+  timingLoggedBeforeTake,
   versionRefusal,
   type MsbSnapshot,
   type SnapshotExtras,
+  type TimingLoggedBeforeTake,
 } from "./snapshots.ts";
 
 /** A box is ready in under a second, a desktop in about one; an import of its image can come first. */
@@ -226,7 +228,6 @@ export interface MsbBackendOptions extends MsbCliOptions {
   readonly setup?: string;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
-  readonly now?: () => number;
 }
 
 /** What the status script says of the host. */
@@ -1614,13 +1615,11 @@ export class MsbBackend implements Backend {
     };
     await hooks.submitting();
     await hooks.task({ ref: `${TAKE_TASK}${group}:${name}`, host: this.#host });
-    const now = this.#options.now ?? Date.now;
-    const began = now();
+    const timingBefore = running ? await this.#timingLoggedBeforeTake(guest.ref, signal) : null;
     const result = await this.#cli.run(
       ["snapshot", "create", name, "--sandbox", guest.ref, "--group", group, ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]), ...(take.memory ? ["--full"] : []), "--quiet"],
       { timeoutMs: SNAPSHOT_MS, signal },
     );
-    const commandMs = now() - began;
     if (result.timedOut || (result.exitCode !== 0 && this.#cli.error("msb snapshot create", result).unreachable)) throw this.#cli.error("msb snapshot create", result);
     const listed = await this.#snapshotList(signal);
     const made = listed.find((each) => each.group === group && each.name === name) ?? null;
@@ -1639,14 +1638,24 @@ export class MsbBackend implements Backend {
     if (!made) throw new Error(`msb took snapshot ${name} of ${guest.ref} but does not list it.`);
     if (made.availability !== "ready") throw new SnapshotIncomplete(`msb lists snapshot ${made.id} as ${made.availability}.`);
     const bytes = (await this.#snapshotExtras(signal).catch(() => null))?.sizes.get(made.id) ?? null;
-    const pausedMs = running ? await this.#pauseLogged(guest.ref, made, commandMs, signal) : DID_NOT_PAUSE_MS;
+    const pausedMs = running ? await this.#pauseLogged(guest.ref, made, timingBefore, signal) : DID_NOT_PAUSE_MS;
     return { ref: made.id, holds: made.holds, capturedAt: made.createdAt ?? Date.now(), size: bytes ? { bytes, means: "whole" } : null, pausedMs, dependsOn: dependsOnOf(made, listed, this.#context.installId) };
   }
 
-  async #pauseLogged(sandbox: string, made: MsbSnapshot, commandMs: number, signal?: AbortSignal): Promise<number | null> {
-    if (made.createdAt === null) return PAUSE_UNMEASURED;
-    const result = await this.#cli.run(pauseLogArgs(sandbox, made.createdAt, commandMs), { timeoutMs: 30_000, signal }).catch(() => null);
-    return result?.exitCode === 0 ? loggedPauseMs(result.stdout, made.holds, made.createdAt) : PAUSE_UNMEASURED;
+  async #timingLoggedBeforeTake(sandbox: string, signal?: AbortSignal): Promise<TimingLoggedBeforeTake | null> {
+    const logged = await this.#timingLog(sandbox, signal);
+    return logged === null ? null : timingLoggedBeforeTake(logged);
+  }
+
+  async #pauseLogged(sandbox: string, made: MsbSnapshot, before: TimingLoggedBeforeTake | null, signal?: AbortSignal): Promise<number | null> {
+    if (made.createdAt === null || before === null) return PAUSE_UNMEASURED;
+    const logged = await this.#timingLog(sandbox, signal);
+    return logged === null ? PAUSE_UNMEASURED : loggedPauseMs(logged, before, made.holds, made.createdAt);
+  }
+
+  async #timingLog(sandbox: string, signal?: AbortSignal): Promise<string | null> {
+    const result = await this.#cli.run(pauseLogArgs(sandbox), { timeoutMs: 30_000, signal }).catch(() => null);
+    return result?.exitCode === 0 ? result.stdout : null;
   }
 
   async #removeSnapshot(snapshot: MsbSnapshot, listed: readonly MsbSnapshot[], signal?: AbortSignal): Promise<void> {

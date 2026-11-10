@@ -210,17 +210,31 @@ function systemLog(name) {
   return join(dir(name), "system-log.jsonl");
 }
 
-function logCheckpointTiming(name, full) {
-  const said = full
-    ? `INFO microsandbox_checkpoint_timing: checkpoint capture timing operation="capture" source_already_paused=false checkpoint_id="checkpoint_${randomBytes(4).toString("hex")}" memory_paused_prepare_us=0 paused_capture_us=289174 resume_us=229 thaw_us=310 vm_pause_window_us=${host.fullPauseUs ?? 289_747} workload_unavailable_us=291002\n`
-    : `INFO microsandbox_checkpoint_timing: disk-only checkpoint timing operation="capture_disk" checkpoint_id="disk_${randomBytes(4).toString("hex")}" source_already_paused=false pause_us=${host.diskPauseUs ?? 24_272} total_us=39252\n`;
+const MEMORY_PREPARE_TIMING = `INFO microsandbox_checkpoint_timing: prepared immutable RAM backing before workload freeze operation="local_memory_prepare" prepare_us=1830 baseline_bytes=4294967296 reflink=true ram_backed=false\n`;
+
+function logSystem(name, said) {
   appendFileSync(systemLog(name), `${JSON.stringify({ d: said, e: null, id: null, s: "system", t: new Date().toISOString() })}\n`);
+}
+
+function logCheckpointTiming(name, full) {
+  if (full) logSystem(name, MEMORY_PREPARE_TIMING);
+  logSystem(name, full
+    ? `INFO microsandbox_checkpoint_timing: checkpoint capture timing operation="capture" source_already_paused=false checkpoint_id="checkpoint_${randomBytes(4).toString("hex")}" memory_paused_prepare_us=0 paused_capture_us=289174 resume_us=229 thaw_us=310 vm_pause_window_us=${host.fullPauseUs ?? 289_747} workload_unavailable_us=291002\n`
+    : `INFO microsandbox_checkpoint_timing: disk-only checkpoint timing operation="capture_disk" checkpoint_id="disk_${randomBytes(4).toString("hex")}" source_already_paused=false pause_us=${host.diskPauseUs ?? 24_272} total_us=39252\n`);
+}
+
+const SECONDS_AGO = /^(\d+)s$/;
+
+function sinceOf(value) {
+  if (!value) return 0;
+  const secondsAgo = SECONDS_AGO.exec(value)?.[1];
+  return secondsAgo ? Date.now() - Number(secondsAgo) * 1000 : Date.parse(value);
 }
 
 function systemLogJson(rest) {
   const { values } = flags(rest.slice(0, -1), ["--source", "--since", "--grep"]);
   const name = found(rest.at(-1)).name;
-  const since = values["--since"] ? Date.parse(values["--since"]) : 0;
+  const since = sinceOf(values["--since"]);
   const lines = existsSync(systemLog(name)) ? readFileSync(systemLog(name), "utf8").split("\n").filter(Boolean) : [];
   for (const line of lines) {
     const entry = JSON.parse(line);
