@@ -388,10 +388,19 @@ images built with `fork-hold`: build them again, then make the box again. A
 take pauses the box; see
 [Snapshots](../../docs/guide/snapshots.md#docker).
 
+A snapshot you keep stays on the engine after its box is released, as its
+image, its copy of the Docker data and a keep tag,
+`bbbox-kept/<install>/<snapshot>:<yyyy-mm-dd>`. It takes its whole size there
+until BB Box deletes it after its date. `bb box doctor` says what kept
+snapshots hold, in its Kept snapshots check. BB Box refuses to remove the
+Docker backend from its settings while the engine holds any of its snapshots,
+kept or not: delete them first with `bb box snapshot delete <box> <snapshot>`,
+as `bb box snapshot list --all` names them.
+
 ### Snapshots with LXCFS
 
 Docker snapshots include the box's disk and Docker data. Hosts with LXCFS
 also support them, including boxes with existing writable LXCFS binds.
 The snapshot image does not include the mounted LXCFS file contents.
 See [snapshots](../../docs/guide/snapshots.md#docker) for pause estimates,
-crash recovery, restores, forks and the limits on Keep.
+crash recovery, restores, forks and Keep.

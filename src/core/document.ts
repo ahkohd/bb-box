@@ -1045,7 +1045,7 @@ export interface InUse {
   /** Snapshots bb-box records by backend ID (070), with how many there are and their size and price in words. */
   readonly snapshots?: ReadonlyMap<string, { readonly count: number; readonly words: string }>;
   /** Snapshots a provider holds on its account for this install, kept or not, by the ID of a backend being removed (070 unit 11b), or why they could not be listed. */
-  readonly onProvider?: ReadonlyMap<string, { readonly count: number; readonly words: string } | { readonly unread: string }>;
+  readonly onProvider?: ReadonlyMap<string, ({ readonly count: number; readonly words: string } | { readonly unread: string }) & { readonly charges?: boolean }>;
 }
 
 export const NOTHING_IN_USE: InUse = { backends: new Map(), hosts: new Map() };
@@ -1148,12 +1148,13 @@ export function checkDocument(
 
   for (const [id, held] of inUse.onProvider ?? []) {
     if (seen.has(id)) continue;
+    const left = leftAfterRemoval(held.charges ?? true);
     if ("unread" in held) {
-      problem(`backends.${id}`, `${PRODUCT} could not list the snapshots backend ${id} holds on its provider's account (${held.unread.replace(/\.$/, "")}), so it does not remove it: one left there would go on costing, with nothing to delete it. Try again once it answers.`);
+      problem(`backends.${id}`, `${PRODUCT} could not list the snapshots backend ${id} holds ${left.where} (${held.unread.replace(/\.$/, "")}), so it does not remove it: one left there ${left.stays}, with nothing to delete it. Try again once it answers.`);
     } else if (held.count > 0) {
       problem(
         `backends.${id}`,
-        `Backend ${id} has ${plural(held.count, "snapshot")} on its provider's account, kept or not, which would go on costing after it is removed, with nothing to delete ${held.count === 1 ? "it" : "them"}: ${held.words}. Delete ${held.count === 1 ? "it" : "them"} first: bb box snapshot delete <box> <snapshot> deletes each one ${PRODUCT} records, as bb box snapshot list --all names them; delete any other in the provider's own dashboard.`,
+        `Backend ${id} has ${plural(held.count, "snapshot")} ${left.where}, kept or not, which ${left.stays} after it is removed, with nothing to delete ${held.count === 1 ? "it" : "them"}: ${held.words}. Delete ${held.count === 1 ? "it" : "them"} first: bb box snapshot delete <box> <snapshot> deletes each one ${PRODUCT} records, as bb box snapshot list --all names them; delete any other ${left.elsewhere}.`,
       );
     }
   }
@@ -1189,6 +1190,12 @@ export function checkDocument(
     }
   }
   return problems;
+}
+
+function leftAfterRemoval(charges: boolean): { readonly where: string; readonly stays: string; readonly elsewhere: string } {
+  return charges
+    ? { where: "on its provider's account", stays: "would go on costing", elsewhere: "in the provider's own dashboard" }
+    : { where: "on its host", stays: "would stay and take its disk", elsewhere: "on the host itself" };
 }
 
 function plural(count: number, word: string): string {

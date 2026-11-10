@@ -1011,6 +1011,7 @@ export interface Snapshotting {
   readonly excludes: string | null;
   readonly forkSafeFrom?: number;
   readonly forkWhy?: string;
+  readonly keepWhy?: string;
 }
 
 export interface SnapshotStorage {

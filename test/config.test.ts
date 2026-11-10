@@ -1148,7 +1148,7 @@ test("070 unit 11b review, Opus 1: a backend whose snapshots live on its provide
   let held: unknown[] = [
     { id: "snaaaaaaaaaaaa", ref: "earlier01-bxaaaaaaaaaaaa-snaaaaaaaaaaaa", box: "bxaaaaaaaaaaaa", owner: null, guest: { ref: "bbbox-bxaaaaaaaaaaaa", host: "provider", address: null, size: null, data: { box: "bxaaaaaaaaaaaa" } }, where: "current", state: "complete", words: null, holds: "disk", takenAt: null, keptUntil: Date.UTC(2026, 10, 30, 23, 59, 59, 999), storage: null },
   ];
-  backend.snapshotting = () => ({ scope: "box", holds: ["disk"], whileRunning: "live", restore: "new-guest", fork: "copy", keepsPastRelease: "as-is", lives: "provider", price: null, excludes: null });
+  backend.snapshotting = () => ({ scope: "box", holds: ["disk"], whileRunning: "live", restore: "new-guest", fork: "copy", keepsPastRelease: "as-is", lives: "provider", price: { amount: 0.01, currency: "USD", per: "day", known: true }, excludes: null });
   backend.heldSnapshots = async () => {
     lists++;
     if (held === null) throw new Error("the provider did not answer");
@@ -1170,4 +1170,31 @@ test("070 unit 11b review, Opus 1: a backend whose snapshots live on its provide
   held = [];
   const gone = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [] }, revision: 2 });
   assert.ok(gone.ok, JSON.stringify(gone));
+});
+
+test("a backend whose snapshots stay on its own engine at no charge, as Docker's do, cannot be removed while the engine holds any, kept or not, and says how to delete them", async () => {
+  const { rpc, app, world } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  const base = app().configuration.exported();
+  const backend = world.backend! as unknown as Record<string, unknown>;
+  let held: unknown[] | null = [
+    { id: "snaaaaaaaaaaaa", ref: "bbbox-snapshot/test/bxaaaaaaaaaaaa:snaaaaaaaaaaaa", box: "bxaaaaaaaaaaaa", owner: null, guest: { ref: "bbbox-bxaaaaaaaaaaaa", host: null, address: null, size: null, data: { box: "bxaaaaaaaaaaaa" } }, where: "current", state: "complete", words: null, holds: "disk", takenAt: null, keptUntil: Date.UTC(2026, 10, 30, 23, 59, 59, 999), storage: null },
+  ];
+  backend.snapshotting = () => ({ scope: "box", holds: ["disk"], whileRunning: "pauses", restore: "new-guest", fork: "copy", keepsPastRelease: "as-is", lives: "provider", price: null, excludes: null });
+  backend.heldSnapshots = async () => {
+    if (held === null) throw new Error("Docker did not answer");
+    return held;
+  };
+
+  const removed = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [] }, revision: 1 });
+
+  assert.ok(!removed.ok && removed.reason === "problems");
+  assert.equal(
+    removed.problems[0]!.message,
+    "Backend fake has 1 snapshot on its host, kept or not, which would stay and take its disk after it is removed, with nothing to delete it: bbbox-snapshot/test/bxaaaaaaaaaaaa:snaaaaaaaaaaaa, kept until 2026-11-30. Delete it first: bb box snapshot delete <box> <snapshot> deletes each one BB Box records, as bb box snapshot list --all names them; delete any other on the host itself.",
+  );
+
+  held = null;
+  const unread = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [] }, revision: 1 });
+  assert.ok(!unread.ok && unread.reason === "problems");
+  assert.match(unread.problems[0]!.message, /^BB Box could not list the snapshots backend fake holds on its host \(Docker did not answer\), so it does not remove it: one left there would stay and take its disk, with nothing to delete it\./);
 });

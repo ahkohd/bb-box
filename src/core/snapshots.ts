@@ -1227,7 +1227,7 @@ export class Snapshots {
     const offer = this.offerFor(backend, current.box.kind);
     if (offer?.forkWhy) throw new BoxError("unsupported", `${PRODUCT} keeps only a snapshot it can fork after its box's release, and ${offer.forkWhy}. So it does not keep ${quoted(current)}.`);
     const way: KeepsPastRelease = offer?.keepsPastRelease ?? "no";
-    if (!offer || way === "no") throw new BoxError("unsupported", `${backend.label} has no way to keep a snapshot of a ${current.box.kind} box past the box's release, so ${PRODUCT} does not keep ${quoted(current)}.`);
+    if (!offer || way === "no") throw new BoxError("unsupported", `${backend.label} has no way to keep a snapshot of a ${current.box.kind} box past the box's release${offer?.keepWhy ? `: ${offer.keepWhy}` : ""}, so ${PRODUCT} does not keep ${quoted(current)}.`);
     if (!backend.labelKept) throw new BoxError("unsupported", `${backend.label} cannot write a keep date on its snapshots, so ${PRODUCT} does not keep ${quoted(current)}.`);
     this.#forkableAfterRelease(current, backend, offer);
     const gone = current.boxGone !== null;

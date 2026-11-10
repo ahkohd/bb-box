@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { SnapshotFailed, type BackendContext, type DoctorCheck, type Guest, type HeldSnapshot, type MachineSize, type SnapshotHooks, type SnapshotPlan, type SnapshotRef, type SnapshotTake, type SnapshotTaken, type TaskOutcome, type TaskRef } from "../types.ts";
+import { PRODUCT } from "../../brand.ts";
+import { endOfUtcDay, gbWords, utcDay } from "../../core/snapshot.ts";
+import { NO_PAUSE, SnapshotFailed, type BoxOwner, type SnapshotStorage, type BackendContext, type DoctorCheck, type Guest, type HeldSnapshot, type MachineSize, type SnapshotHooks, type SnapshotPlan, type SnapshotRef, type SnapshotTake, type SnapshotTaken, type TaskOutcome, type TaskRef } from "../types.ts";
 import type { z } from "zod";
 import { DockerCli, LABELS, snapshotContainersSchema, snapshotImagesSchema, snapshotVolumesSchema, snapshotStoreSchema } from "./cli.ts";
-import { commitChanges, FORK_HOLD_MISSING, holdsForks, KILL_ABOUT_MS, layerRefusal, mountRefusal, pauseEstimate, pausedTooLong, restoreAboutMs, sizeFromLabels, sizeTakenAt, snapshotImage, snapshotLabels, snapshotVolume, SNAPSHOT_INSTALL, takePause, type ImageStore } from "./snapshots.ts";
+import { commitChanges, FORK_HOLD_MISSING, holdsForks, keptTag, keptTagsOf, keptUntilOf, KILL_ABOUT_MS, layerRefusal, mountRefusal, pauseEstimate, pausedTooLong, restoreAboutMs, sizeFromLabels, sizeTakenAt, snapshotImage, snapshotLabels, snapshotVolume, SNAPSHOT_BOX_NAME, SNAPSHOT_INSTALL, SNAPSHOT_THREAD, takePause, type ImageStore } from "./snapshots.ts";
 
 interface TakeState {
   readonly id: string;
@@ -22,6 +24,42 @@ export interface RestorableSnapshot {
   readonly volumeBytes: number;
   readonly size: MachineSize | null;
   readonly holdsForks: boolean;
+  readonly wholeBytes: number | null;
+}
+
+type SnapshotImage = z.infer<typeof snapshotImagesSchema>[number];
+
+function oncePerImage(images: readonly SnapshotImage[]): readonly SnapshotImage[] {
+  return [...new Map(images.map((image) => [image.Id, image])).values()];
+}
+
+type MeasuredStorage = SnapshotStorage & { readonly totalBytes: number; readonly usedBytes: number };
+
+function ownerTakenFrom(box: string, labels: Readonly<Record<string, string>>): BoxOwner {
+  return { boxId: box, threadId: labels[SNAPSHOT_THREAD] || "unknown", name: labels[SNAPSHOT_BOX_NAME] || null, kind: labels["bbbox.snapshot.kind"] || null, createdAt: null };
+}
+
+const HELPER = ["run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "/bin/sh"];
+
+function keptCheck(listed: readonly HeldSnapshot[]): DoctorCheck {
+  const kept = listed.filter((held) => held.keptUntil !== null);
+  if (!kept.length) return { id: "docker.kept-snapshots", name: "Kept snapshots", status: "ok", detail: "No snapshot here is kept.", fix: null };
+  const bytes = kept.reduce((sum, held) => sum + (held.size?.bytes ?? 0), 0);
+  const latest = utcDay(Math.max(...kept.map((held) => held.keptUntil!)));
+  const these = kept.length === 1 ? "1 kept snapshot holds" : `${kept.length} kept snapshots hold`;
+  return {
+    id: "docker.kept-snapshots",
+    name: "Kept snapshots",
+    status: "ok",
+    detail: `${these} about ${gbWords(bytes)} on Docker's disk, whether their boxes are released or not, until their keep dates, the latest ${latest}. ${PRODUCT} refuses to remove this backend while it holds them.`,
+    fix: "Delete one with bb box snapshot delete <box> <snapshot>, as bb box snapshot list --all names them.",
+  };
+}
+
+function keepPlan(keepOffBecause: string | null, wholeBytes: number | null): SnapshotPlan["keep"] {
+  return keepOffBecause
+    ? { way: "no", why: keepOffBecause, aboutMs: null, bytes: null, price: null }
+    : { way: "as-is", why: null, aboutMs: null, bytes: wholeBytes, price: null };
 }
 
 function forkPlan(refusal: string | null, volumeBytes: number, size: MachineSize | null): SnapshotPlan["fork"] {
@@ -34,11 +72,13 @@ export class DockerSnapshotEngine {
   readonly #context: BackendContext;
   readonly #active = new Set<string>();
   readonly #now: () => number;
+  readonly #keepOffBecause: string | null;
 
-  constructor(cli: DockerCli, context: BackendContext, now: () => number = Date.now) {
+  constructor(cli: DockerCli, context: BackendContext, now: () => number = Date.now, keepOffBecause: string | null = null) {
     this.#cli = cli;
     this.#context = context;
     this.#now = now;
+    this.#keepOffBecause = keepOffBecause;
   }
 
   async #container(guest: Guest, signal?: AbortSignal): Promise<InspectedContainer> {
@@ -58,35 +98,56 @@ export class DockerSnapshotEngine {
     const images = snapshotImagesSchema.parse(JSON.parse(await this.#cli.ok(["image", "inspect", container.Image], { signal })));
     const image = images[0];
     if (!image) throw new Error("The box's image is missing. Make a new box before taking a snapshot.");
+    const volumeBytes = volume && !refusal && measureVolume
+      ? Number((await this.#cli.ok([...HELPER, "--privileged", "--volume", `${volume}:/from:ro`, container.Image, "-c", "du -sk /from"], { signal })).trim().split(/\s+/)[0]) * 1024
+      : 0;
+    if (!Number.isFinite(volumeBytes + container.SizeRw)) throw new Error("Docker's disk usage could not be read. Check the Docker host's disk and try again.");
+    const { store, storage } = await this.#space(container.Image, signal);
+    const estimate = pauseEstimate({ layerBytes: container.SizeRw, volumeBytes, store });
+    return { container, volume, volumeBytes, store, estimate, storage, refusal: refusal ?? layerRefusal(image.RootFS.Layers.length) };
+  }
+
+  async #space(helperImage: string, signal?: AbortSignal): Promise<{ readonly store: ImageStore; readonly storage: MeasuredStorage }> {
     const info = snapshotStoreSchema.parse(JSON.parse(await this.#cli.ok(["info", "--format", "{{json .}}"], { signal })));
     const store: ImageStore = JSON.stringify(info.DriverStatus ?? []).includes("containerd") ? "containerd" : "overlay2";
-    const helper = ["run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "/bin/sh"];
-    const volumeBytes = volume && !refusal && measureVolume
-      ? Number((await this.#cli.ok([...helper, "--privileged", "--volume", `${volume}:/from:ro`, container.Image, "-c", "du -sk /from"], { signal })).trim().split(/\s+/)[0]) * 1024
-      : 0;
     const probe = `bbbox-snapshot-space-${this.#context.installId}-${randomUUID()}`;
     await this.#cli.ok(["volume", "create", "--label", `bbbox.snapshot.probe=${this.#context.installId}`, probe], { signal });
     let df: string;
     try {
-      df = await this.#cli.ok([...helper, "--volume", `${probe}:/space:ro`, container.Image, "-c", "df -Pk /space"], { signal });
+      df = await this.#cli.ok([...HELPER, "--volume", `${probe}:/space:ro`, helperImage, "-c", "df -Pk /space"], { signal });
     } finally {
       await this.#cli.ok(["volume", "rm", probe]);
     }
     const columns = df.trim().split("\n").at(-1)?.trim().split(/\s+/) ?? [];
     const totalBytes = Number(columns[1]) * 1024;
     const usedBytes = Number(columns[2]) * 1024;
-    if (![totalBytes, usedBytes, volumeBytes, container.SizeRw].every(Number.isFinite) || totalBytes <= 0) throw new Error("Docker's disk usage could not be read. Check the Docker host's disk and try again.");
-    const estimate = pauseEstimate({ layerBytes: container.SizeRw, volumeBytes, store });
+    if (![totalBytes, usedBytes].every(Number.isFinite) || totalBytes <= 0) throw new Error("Docker's disk usage could not be read. Check the Docker host's disk and try again.");
+    return { store, storage: { key: `docker:${info.ID}`, name: "Docker's disk", type: `docker-${store}`, percentFull: usedBytes / totalBytes * 100, metadataPercentFull: null, metadataUnread: null, totalBytes, usedBytes } };
+  }
+
+  async #boxIsGone(guest: Guest, signal?: AbortSignal): Promise<boolean> {
+    const found = await this.#cli.run(["container", "inspect", guest.ref], { signal });
+    return found.exitCode !== 0 && /no such container/i.test(found.stderr);
+  }
+
+  async #planWithoutBox(guest: Guest, target: SnapshotRef, signal?: AbortSignal): Promise<SnapshotPlan> {
+    const snapshot = await this.restorable(target, signal);
+    const { storage } = await this.#space(snapshot.image, signal);
+    const gone = "Its box was released, so only a fork of this snapshot can use it.";
     return {
-      container, volume, volumeBytes, store, estimate,
-      refusal: refusal ?? layerRefusal(image.RootFS.Layers.length),
-      storage: { key: `docker:${info.ID}`, name: "Docker's disk", type: `docker-${store}`, percentFull: usedBytes / totalBytes * 100, metadataPercentFull: null, metadataUnread: null, totalBytes, usedBytes },
+      storage,
+      take: { ok: false, why: gone, aboutMs: 0, memoryAboutMs: null, addsBytes: 0, pause: NO_PAUSE, memory: null, memoryWhy: "Docker snapshots hold the disk and Docker data only." },
+      restore: { way: "none", why: gone, undo: "none", undoAboutMs: 0, undoBytes: 0, sizeBack: snapshot.size, leavesOnEarlierGuest: 0, newer: 0, copyAboutMs: null },
+      keep: keepPlan(this.#keepOffBecause, snapshot.wholeBytes),
+      fork: forkPlan(snapshot.holdsForks ? null : FORK_HOLD_MISSING, snapshot.volumeBytes, snapshot.size ?? guest.size),
+      locked: null,
+      busy: null,
     };
   }
 
   async plan(guest: Guest, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+    if (target && (await this.#boxIsGone(guest, signal))) return this.#planWithoutBox(guest, target, signal);
     const facts = await this.#facts(guest, signal);
-    const later = "This Docker backend does not offer this operation yet.";
     const restoring = target ? await this.restorable(target, signal).catch((error: unknown) => error instanceof SnapshotFailed ? error.message : Promise.reject(error)) : null;
     const restoreWhy = typeof restoring === "string" ? restoring : null;
     const restorable = typeof restoring === "string" ? null : restoring;
@@ -104,7 +165,7 @@ export class DockerSnapshotEngine {
         newer: 0,
         copyAboutMs: null,
       },
-      keep: { way: "no", why: later, aboutMs: null, bytes: null, price: null },
+      keep: keepPlan(this.#keepOffBecause, restorable?.wholeBytes ?? facts.estimate.addsBytes),
       fork: forkPlan(restoreWhy ?? (restorable && !restorable.holdsForks ? FORK_HOLD_MISSING : null), restorable?.volumeBytes ?? facts.volumeBytes, restorable?.size ?? guest.size),
       locked: null,
       busy: facts.container.State.Paused ? "The box is paused. Unpause it, or wait for its snapshot to finish, then try again." : null,
@@ -126,6 +187,7 @@ export class DockerSnapshotEngine {
       volumeBytes: Number(labels["bbbox.snapshot.volume-bytes"]) || 0,
       size: sizeTakenAt(labels),
       holdsForks: holdsForks(labels),
+      wholeBytes: sizeFromLabels(labels)?.bytes ?? null,
     };
   }
 
@@ -161,6 +223,8 @@ export class DockerSnapshotEngine {
     const labels = {
       ...snapshotLabels(this.#context.installId, take.box, take.id),
       "bbbox.snapshot.kind": facts.container.Config.Labels[LABELS.kind] ?? "linux",
+      [SNAPSHOT_BOX_NAME]: facts.container.Config.Labels[LABELS.name] ?? "",
+      [SNAPSHOT_THREAD]: facts.container.Config.Labels[LABELS.thread] ?? "",
       "bbbox.snapshot.reset": String(take.forkSafe ?? 0),
       "bbbox.snapshot.taken": String(state.startedAt),
       "bbbox.snapshot.cores": String(guest.size?.cores ?? 0),
@@ -252,7 +316,7 @@ export class DockerSnapshotEngine {
 
   async #listed(volumes: readonly { Name: string; Labels: Record<string, string> }[], signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
     const ids = (await this.#cli.ok(["image", "ls", "--quiet", "--filter", `label=${SNAPSHOT_INSTALL}=${this.#context.installId}`], { signal })).trim().split(/\s+/).filter(Boolean);
-    const images = ids.length ? snapshotImagesSchema.parse(JSON.parse(await this.#cli.ok(["image", "inspect", ...new Set(ids)], { signal }))) : [];
+    const images = ids.length ? oncePerImage(snapshotImagesSchema.parse(JSON.parse(await this.#cli.ok(["image", "inspect", ...new Set(ids)], { signal })))) : [];
     const volumesByName = new Map(volumes.map((volume) => [volume.Name, volume.Labels]));
     const result: HeldSnapshot[] = [];
 
@@ -271,14 +335,14 @@ export class DockerSnapshotEngine {
       result.push({
         id, box,
         ref: snapshotImage(this.#context.installId, box, id),
-        owner: null,
+        owner: ownerTakenFrom(box, labels),
         guest: { ref: state?.container ?? `bbbox-${box}`, host: null, address: null, size: null, data: { box } },
         where: "current",
         state: state?.phase.startsWith("failed") || !exists ? "incomplete" : this.#active.has(id) ? "in-progress" : "complete",
         words: state?.phase.startsWith("failed") ? "The snapshot's take failed." : exists ? null : "The snapshot's Docker data is missing.",
         holds: "disk",
         takenAt,
-        keptUntil: null,
+        keptUntil: keptUntilOf(image.RepoTags, this.#context.installId, id),
         storage: { name: "Docker's disk", type: `docker-${labels["bbbox.snapshot.store"]}` },
         forkSafe: Number(labels["bbbox.snapshot.reset"]) || null,
         size: sizeFromLabels(labels),
@@ -315,7 +379,8 @@ export class DockerSnapshotEngine {
       const state = await this.#context.storage.get<TakeState>(key);
       if (state?.phase === "taking") pending.push(state.id);
     }
-    const incomplete = (await this.listed(signal)).filter((held) => held.state === "incomplete");
+    const listed = await this.listed(signal);
+    const incomplete = listed.filter((held) => held.state === "incomplete");
     const dangling = (await this.#cli.ok(["image", "ls", "--quiet", "--filter", "dangling=true", "--filter", `label=${SNAPSHOT_INSTALL}=${this.#context.installId}`], { signal })).trim().split(/\s+/).filter(Boolean);
     const deep: string[] = [];
     for (const container of containers) {
@@ -326,6 +391,7 @@ export class DockerSnapshotEngine {
     return [
       { id: "docker.snapshots", name: "Snapshots", status: facts ? facts.storage.percentFull >= 85 ? "warn" : "ok" : "skipped", detail: facts ? `${facts.store}: allow about ${facts.store === "containerd" ? "twice" : "once"} the changed disk bytes. ${facts.volume ? "Add the box's Docker data." : "This box has no Docker volume: snapshots hold its disk only."} Docker's disk is ${facts.storage.percentFull.toFixed(1)}% full.` : "Make a box to measure snapshot space on this engine.", fix: null },
       { id: "docker.snapshot-leftovers", name: "Snapshot leftovers", status: pending.length || incomplete.length || dangling.length ? "warn" : "ok", detail: pending.length || incomplete.length || dangling.length ? `${pending.length} snapshot tasks await recovery; ${incomplete.length} copies are incomplete; images without tags: ${dangling.length}. Maintenance unpauses interrupted takes after their time bound and prunes images no container uses.` : "No snapshot tasks await recovery.", fix: null },
+      keptCheck(listed),
       { id: "docker.snapshot-layers", name: "Snapshot layers", status: deep.length ? "warn" : "ok", detail: deep.length ? `Images near the layer limit: ${deep.join(", ")}. Make new boxes and move their files.` : "No box image has 110 or more layers.", fix: null },
     ];
   }
@@ -367,11 +433,41 @@ export class DockerSnapshotEngine {
     await this.#cli.ok(["volume", "rm", volume], { signal });
   }
 
+  async #ownImage(ref: SnapshotRef, signal?: AbortSignal): Promise<SnapshotImage | null> {
+    const found = await this.#cli.run(["image", "inspect", ref.ref], { signal });
+    if (found.exitCode !== 0) {
+      if (/no such image/i.test(found.stderr)) return null;
+      throw this.#cli.error("Reading the snapshot image", found);
+    }
+    const [image] = snapshotImagesSchema.parse(JSON.parse(found.stdout));
+    const labels = image?.Config.Labels ?? {};
+    return image && labels[SNAPSHOT_INSTALL] === this.#context.installId && labels["bbbox.snapshot"] === ref.id && image.RepoTags.includes(ref.ref) ? image : null;
+  }
+
+  async #untag(tag: string, signal?: AbortSignal): Promise<void> {
+    const removed = await this.#cli.run(["image", "rm", tag], { signal });
+    if (removed.exitCode !== 0 && !/no such image/i.test(removed.stderr)) throw this.#cli.error("Removing a keep date from a snapshot", removed);
+  }
+
+  async keep(ref: SnapshotRef, day: string | null, signal?: AbortSignal): Promise<void> {
+    if (this.#keepOffBecause) throw new SnapshotFailed(`${PRODUCT} keeps no snapshot here past its box's release: ${this.#keepOffBecause}.`);
+    if (day !== null && endOfUtcDay(day) === null) throw new SnapshotFailed(`"${day}" is not a date as yyyy-mm-dd. Give the keep date as one.`);
+    const image = await this.#ownImage(ref, signal);
+    if (!image) throw new SnapshotFailed(`Docker has no snapshot ${ref.id} of this install, so ${PRODUCT} cannot write its keep date. List the snapshots again.`);
+    const wanted = day === null ? null : keptTag(this.#context.installId, ref.id, day);
+    if (wanted) await this.#cli.ok(["image", "tag", ref.ref, wanted], { signal });
+    for (const earlier of keptTagsOf(image.RepoTags, this.#context.installId, ref.id)) {
+      if (earlier !== wanted) await this.#untag(earlier, signal);
+    }
+  }
+
   async remove(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
     const held = (await this.listed(signal)).find((item) => item.id === ref.id && item.ref === ref.ref && item.box === ref.guest.data?.box);
     const box = ref.guest.data?.box;
     if (typeof box !== "string" || ref.ref !== snapshotImage(this.#context.installId, box, ref.id)) throw new Error("That snapshot does not belong to this box and install.");
     await hooks.submitting();
+    const image = await this.#ownImage(ref, signal);
+    for (const kept of image ? keptTagsOf(image.RepoTags, this.#context.installId, ref.id) : []) await this.#untag(kept, signal);
     if (held) {
       const removed = await this.#cli.run(["image", "rm", "--force", held.ref], { signal });
       if (removed.exitCode !== 0 && !/no such image/i.test(removed.stderr)) throw this.#cli.error("Deleting snapshot image", removed);

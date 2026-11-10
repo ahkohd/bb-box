@@ -392,3 +392,39 @@ The hold is in the image, not in the core: the core already starts a fork
 for its check through the backend's `startForForkCheck`, and arms it for its
 boots with `armFork("boot")` after the check. Measured in
 [082 results](082-results.md#a-fork-held-until-its-check).
+
+## Item 5: Keep, as built
+
+Keep is the tag above, `bbbox-kept/<install>/<snapshot>:<yyyy-mm-dd>`, on
+the snapshot's image. Writing a date tags the image, then removes any other
+keep tag of that snapshot, so there is at most one. Stopping keeping removes
+the tag. A delete removes the keep tag before the snapshot's own tag, so a
+delete cut short leaves an unkept snapshot, never an image held by a keep
+tag alone. Listing reads the keep date from the image's tags, so a lost
+`snapshots.db` loses no keep date.
+
+Three things differ from the package:
+
+- The offer says the snapshots live with the provider, as microsandbox's
+  and boat.dev's do, not on the host with `outlivesGuest`, as Tart's do.
+  Both shapes keep a snapshot as it is past its box's release. The
+  difference is that BB Box asks the provider before it removes the backend,
+  and refuses while the engine holds any of this install's snapshots, kept
+  or not. On a person's own engine, a kept snapshot left there would take
+  its disk with nothing to delete it. The refusal's words now fit a backend
+  that charges nothing: "on its host", not "on its provider's account".
+- A snapshot's image also carries its box's name and thread,
+  `bbbox.snapshot.box-name` and `bbbox.snapshot.thread`, beside its kind.
+  A snapshot found again after a lost `snapshots.db` keeps its box's kind,
+  which a fork after the release needs, and its name. A snapshot taken
+  before this change has its kind only.
+- A plan for a snapshot whose box is gone reads the engine's space and the
+  snapshot alone, so the core can check a fork of a kept snapshot after its
+  box's release.
+
+Hetzner Cloud and Namespace make their Docker engines with Keep off and the
+reason, `keepOffBecause`: a Hetzner Cloud host is deleted when idle, and a
+Namespace machine at its box's release. They offer no snapshots yet, so the
+reason shows once items 7 and 8 pass snapshots through. The doctor's Kept
+snapshots check says what kept snapshots hold on Docker's disk and until
+when. Measured in [082 results](082-results.md#keep-verified-live).

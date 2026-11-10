@@ -695,6 +695,7 @@ switch (command) {
       const size = read("image-sizes.json", {})[name] ?? 6_500_000_000;
       console.log(format === "{{.Id}}" ? idOf(name) : format === "{{.Size}} {{json .Config.Labels}}" ? `${size} ${JSON.stringify(images[name])}` : JSON.stringify(images[name]));
     } else if (sub === "tag") {
+      if (host.failImageTag) fail("Error response from daemon: the image store refused the tag");
       const [source, target] = more;
       const [name] = named(source);
       if (!name) fail(`Error response from daemon: No such image: ${source}`);

@@ -197,6 +197,7 @@ export interface DockerBackendOptions {
   readonly now?: () => number;
   /** Runs setup/docker/build.sh with `args`, for tests; bash by default. Resolves with its exit code. */
   readonly script?: (script: string, args: readonly string[], env: NodeJS.ProcessEnv, onLine: (line: string) => void, signal: AbortSignal) => Promise<number | null>;
+  readonly keepOffBecause?: string;
 }
 
 /** setup/docker/build.sh's target for the image of each kind. */
@@ -647,7 +648,7 @@ export class DockerBackend implements Backend {
           await machines.ready(machine);
         })
       : new DockerCli(config.host, options.binary));
-    this.#snapshots = new DockerSnapshotEngine(this.#cli, context, () => this.#now());
+    this.#snapshots = new DockerSnapshotEngine(this.#cli, context, () => this.#now(), options.keepOffBecause ?? null);
     void this.#recallName();
   }
 
@@ -1469,7 +1470,7 @@ export class DockerBackend implements Backend {
   }
 
   snapshotting(kind: string): Snapshotting | null {
-    return this.kinds().some((offer) => offer.id === kind) ? withDesktopForkSafety(kind, dockerOffer()) : null;
+    return this.kinds().some((offer) => offer.id === kind) ? withDesktopForkSafety(kind, dockerOffer(this.#options.keepOffBecause ?? null)) : null;
   }
 
   planSnapshots(guest: Guest, _kind: string, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
@@ -1494,6 +1495,10 @@ export class DockerBackend implements Backend {
 
   providerTask(task: TaskRef): Promise<TaskOutcome> {
     return this.#snapshots.settle(task);
+  }
+
+  labelKept(ref: SnapshotRef, kept: string | null, signal?: AbortSignal): Promise<void> {
+    return this.#snapshots.keep(ref, kept, signal);
   }
 
   async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {

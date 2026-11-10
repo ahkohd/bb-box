@@ -970,15 +970,17 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     return held;
   };
   heldOnProvider = async (backendIds) => {
-    const held = new Map<string, { count: number; words: string } | { unread: string }>();
+    const held = new Map<string, ({ count: number; words: string } | { unread: string }) & { charges: boolean }>();
     for (const id of backendIds) {
       const backend = backends.get(id);
-      if (!backend?.heldSnapshots || !backend.kinds().some((kind) => backend.snapshotting?.(kind.id)?.lives === "provider")) continue;
+      const offers = backend ? backend.kinds().map((kind) => backend.snapshotting?.(kind.id) ?? null) : [];
+      if (!backend?.heldSnapshots || !offers.some((offer) => offer?.lives === "provider")) continue;
+      const charges = Boolean(backend.snapshotBill) || offers.some((offer) => offer?.price);
       try {
         const listed = (await backend.heldSnapshots()).filter((each) => each.where !== "held-copy");
-        held.set(id, { count: listed.length, words: providerSnapshotWords(listed, (snapshot) => snapshotStore.record(snapshot)) });
+        held.set(id, { count: listed.length, words: providerSnapshotWords(listed, (snapshot) => snapshotStore.record(snapshot)), charges });
       } catch (error) {
-        held.set(id, { unread: error instanceof Error ? error.message : String(error) });
+        held.set(id, { unread: error instanceof Error ? error.message : String(error), charges });
       }
     }
     return held;

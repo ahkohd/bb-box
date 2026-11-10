@@ -900,6 +900,7 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
       ["docker.sizes", "ok"],
       ["docker.snapshots", "skipped"],
       ["docker.snapshot-leftovers", "ok"],
+      ["docker.kept-snapshots", "ok"],
       ["docker.snapshot-layers", "ok"],
     ],
   );
