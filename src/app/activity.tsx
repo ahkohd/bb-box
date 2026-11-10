@@ -10,7 +10,7 @@ import type { BoxView } from "../plugin/views.ts";
 import { PRODUCT } from "./product.ts";
 import { countsAsThisBox } from "../plugin/gpu-page.ts";
 import { STALL_LIMITS } from "../monitor/health.ts";
-import { takenOrder, useMonitorSnapshot } from "./monitor/use-snapshot.ts";
+import { useMonitorSnapshot } from "./monitor/use-snapshot.ts";
 import { useRevealOnLoad } from "./monitor/use-reveal-on-load.ts";
 import { HISTORY_RANGES, historyWindow } from "../monitor/history-view.ts";
 import { LoadingText, Pill } from "./monitor/metric-parts.tsx";
@@ -839,27 +839,6 @@ function liveWhyNot(page: BoxPageState, box: BoxView): string | null {
 
 const chosenRanges = new Map<string, ActivityRange>();
 
-const SHOWN_READINGS_KEPT = 8;
-
-const shownReadings = new Map<string, MonitorSnapshot>();
-
-function shownReading(boxId: string, incoming: MonitorSnapshot | null): MonitorSnapshot | null {
-  const shown = shownReadings.get(boxId) ?? null;
-  if (!incoming) return shown;
-
-  const incomingOrder = takenOrder(incoming);
-  const shownOrder = shown === null ? null : takenOrder(shown);
-  if (shown && incomingOrder !== null && shownOrder !== null && incomingOrder < shownOrder) return shown;
-
-  shownReadings.delete(boxId);
-  shownReadings.set(boxId, incoming);
-  for (const oldest of shownReadings.keys()) {
-    if (shownReadings.size <= SHOWN_READINGS_KEPT) break;
-    shownReadings.delete(oldest);
-  }
-  return incoming;
-}
-
 function useChosenRange(boxId: string): [ActivityRange | null, (range: ActivityRange) => void] {
   const [chosen, setChosen] = useState<ActivityRange | null>(() => chosenRanges.get(boxId) ?? null);
   const choose = (range: ActivityRange) => {
@@ -872,7 +851,6 @@ function useChosenRange(boxId: string): [ActivityRange | null, (range: ActivityR
 export function forgetActivity(): void {
   chosenRanges.clear();
   keptHistory.clear();
-  shownReadings.clear();
 }
 
 export function expectedCardsOf(box: Pick<BoxView, "id" | "gpu" | "shared">): number {
@@ -888,7 +866,7 @@ export function Activity({ page, box, now }: { page: BoxPageState; box: BoxView;
   const group = <RangeGroup value={range} onChange={setChosen} liveWhy={liveWhy} />;
   const liveLines = useHidden<LineKey>(["host", ...GPU_MEMORY_HIDDEN]);
   const expectedCards = expectedCardsOf(box);
-  if (reach.is === "read" && reach.machineId) return <LiveActivity key={reach.machineId} machineId={reach.machineId} box={box} range={range} group={group} lines={liveLines} expectedCards={expectedCards} />;
+  if (reach.is === "read" && reach.machineId) return <LiveActivity machineId={reach.machineId} box={box} range={range} group={group} lines={liveLines} expectedCards={expectedCards} />;
   return (
     <div className="space-y-5" data-activity-frame>
       <ActivityCard status={reach.is === "off" ? "Not read" : null} group={group}>
@@ -909,8 +887,7 @@ function readStatus(snapshot: MonitorSnapshot | null, error: string | null, acti
 
 function LiveActivity({ machineId, box, range, group, lines, expectedCards }: { machineId: string; box: BoxView; range: ActivityRange; group: ReactNode; lines: LiveLines; expectedCards: number }) {
   const monitor = useMonitorSnapshot(machineId);
-  const { container, active, error } = monitor;
-  const snapshot = shownReading(box.id, monitor.snapshot);
+  const { container, active, error, snapshot } = monitor;
   const readCards = snapshot ? gpuCardCount(snapshot) : 0;
   const [seenCards, setSeenCards] = useState(expectedCards);
   const cards = Math.max(seenCards, readCards);

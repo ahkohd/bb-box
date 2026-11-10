@@ -326,6 +326,7 @@ test("a box BB Box cannot read says the Monitor's words in Activity's frame, whi
 
 test("a reading that started earlier never replaces the one the card shows, and the next reading does even when its clock is behind", async () => {
   forgetMonitorReadings();
+  const cardId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
   const early = "host-early-1428";
   const later = "host-later-1428";
   const earlierAt = "2026-11-10T08:32:10.000Z";
@@ -333,10 +334,25 @@ test("a reading that started earlier never replaces the one the card shows, and 
   const behindAt = "2026-11-10T08:32:08.000Z";
   const readAt = (iso: string) => `Read at ${clockWithSeconds(Date.parse(iso))}`;
   const cpu = () => within(screen.getByRole("region", { name: "Activity" })).getByRole("region", { name: "CPU" }).textContent ?? "";
+  const cardUse = () => screen.getByRole("region", { name: "GPU card" }).textContent ?? "";
   const at = (iso: string, usage: number) => {
     const base = snapshot({ timestamp: iso, refreshIntervalMs: 2000 });
-    return { ...base, cpu: { ...base.cpu, usagePercent: usage } };
+    return {
+      ...base,
+      cpu: { ...base.cpu, usagePercent: usage },
+      gpus: {
+        cards: [{ index: 0, uuid: cardId, name: "NVIDIA RTX 4090", usagePercent: usage, memoryUsedBytes: 2 * 1024 ** 3, memoryTotalBytes: 8 * 1024 ** 3, temperatureC: 40, powerWatts: 100, powerLimitWatts: 200, shared: true, ownMemoryBytes: 1024 ** 3, ownProcesses: 1 }],
+        processes: [],
+      },
+    };
   };
+  const gpuBox = () => boxView({
+    id: "bxgpuorder1428",
+    gpu: true,
+    gpuPart: "shared",
+    claim: { card: cardId, part: "shared", generation: 1, answer: "granted" },
+    facts: [{ label: "GPU", value: "card 0, shared, NVIDIA RTX 4090, 24 GiB" }],
+  });
 
   let machineId = early;
   let earlyCalls = 0;
@@ -345,7 +361,7 @@ test("a reading that started earlier never replaces the one the card shows, and 
     releaseEarly = resolve;
   });
   const slot = open(handlers({
-    page: () => page(boxView(), { is: "read", machineId, why: null }),
+    page: () => page(gpuBox(), { is: "read", machineId, why: null }),
     reading: () => snapshot(),
     machine: (id) => {
       if (id === early) {
@@ -361,6 +377,7 @@ test("a reading that started earlier never replaces the one the card shows, and 
   machineId = later;
   await slot.behavior.emitRealtime("changed", { threadId: THREAD });
   await waitFor(() => expect(cpu()).toContain("81"));
+  await waitFor(() => expect(cardUse()).toContain("81%"));
   expect(screen.getByRole("region", { name: "Activity" }).textContent).toContain(readAt(shownAt));
 
   releaseEarly(at(earlierAt, 17));
@@ -372,12 +389,16 @@ test("a reading that started earlier never replaces the one the card shows, and 
   while (Date.now() - started < 1000) {
     expect(cpu()).toContain("81");
     expect(cpu()).not.toContain("17");
+    expect(cardUse()).toContain("81%");
+    expect(cardUse()).not.toContain("17%");
     expect(screen.getByRole("region", { name: "Activity" }).textContent).toContain(readAt(shownAt));
     expect(screen.getByRole("region", { name: "Activity" }).textContent).not.toContain(readAt(earlierAt));
     await pause(50);
   }
 
   await vi.waitFor(() => expect(cpu()).toContain("53"), { timeout: 12_000, interval: 100 });
+  await waitFor(() => expect(cardUse()).toContain("53%"));
+  expect(cardUse()).not.toContain("81%");
   expect(screen.getByRole("region", { name: "Activity" }).textContent).toContain(readAt(behindAt));
   expect(screen.getByRole("region", { name: "Activity" }).textContent).not.toContain(readAt(shownAt));
 }, 20_000);

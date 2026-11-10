@@ -4,20 +4,63 @@ import type { Contract, MonitorSnapshot } from "../../plugin/contract.ts";
 import { createSnapshotSource } from "./snapshot-source.ts";
 import { createVisiblePoller } from "./visible-poller.ts";
 
-export type OrderedSnapshot = MonitorSnapshot & { readonly takenOrder: number };
+type PublishedReading = {
+  snapshot: MonitorSnapshot;
+  startedOrder: number;
+  late: boolean;
+};
 
-let nextTakenOrder = 1;
+type ShownReading = {
+  machineId: string;
+  snapshot: MonitorSnapshot | null;
+  startedOrder: number;
+};
 
-export function takenOrder(snapshot: MonitorSnapshot): number | null {
-  const order = (snapshot as { takenOrder?: unknown }).takenOrder;
-  return typeof order === "number" && Number.isSafeInteger(order) ? order : null;
+const publishedReadings = new Map<string, PublishedReading>();
+
+let nextStartedOrder = 1;
+let highestPublishedOrder = 0;
+let readingsEpoch = 0;
+
+function takeStartedOrder(): number {
+  const startedOrder = nextStartedOrder;
+  nextStartedOrder += 1;
+  return startedOrder;
 }
 
-function startOrderedReading(load: () => Promise<MonitorSnapshot>): Promise<OrderedSnapshot> {
-  const takenOrder = nextTakenOrder;
-  nextTakenOrder += 1;
+function publishReading(epoch: number, machineId: string, startedOrder: number, snapshot: MonitorSnapshot): MonitorSnapshot {
+  if (epoch !== readingsEpoch) return snapshot;
 
-  return load().then((snapshot) => ({ ...snapshot, takenOrder }));
+  const current = publishedReadings.get(machineId);
+  if (current && startedOrder < current.startedOrder) return current.snapshot;
+
+  const late = startedOrder < highestPublishedOrder;
+  publishedReadings.set(machineId, { snapshot, startedOrder, late });
+  if (startedOrder > highestPublishedOrder) highestPublishedOrder = startedOrder;
+  return snapshot;
+}
+
+function emptyReading(machineId: string): ShownReading {
+  return { machineId, snapshot: null, startedOrder: 0 };
+}
+
+function chooseShown(shown: ShownReading, machineId: string, published: PublishedReading | null): ShownReading {
+  if (!published) return shown.machineId === machineId ? shown : emptyReading(machineId);
+
+  const aheadOfShown = !shown.snapshot || published.startedOrder >= shown.startedOrder;
+  if (!published.late && (aheadOfShown || shown.machineId !== machineId)) {
+    return { machineId, snapshot: published.snapshot, startedOrder: published.startedOrder };
+  }
+
+  if (shown.snapshot && published.startedOrder < shown.startedOrder) return { ...shown, machineId };
+
+  return { machineId, snapshot: published.snapshot, startedOrder: published.startedOrder };
+}
+
+function settleReading(current: ShownReading, machineId: string): ShownReading {
+  const next = chooseShown(current, machineId, publishedReadings.get(machineId) ?? null);
+  if (next.machineId === current.machineId && next.snapshot === current.snapshot && next.startedOrder === current.startedOrder) return current;
+  return next;
 }
 
 type SnapshotSource = ReturnType<typeof createSnapshotSource<MonitorSnapshot>>;
@@ -33,12 +76,15 @@ function sourceFor(machineKey: string): SnapshotSource {
   for (const oldest of sources.keys()) {
     if (sources.size <= MAX_REMEMBERED_MACHINES) break;
     sources.delete(oldest);
+    publishedReadings.delete(oldest);
   }
   return source;
 }
 
 export function forgetMonitorReadings(): void {
+  readingsEpoch += 1;
   sources.clear();
+  publishedReadings.clear();
 }
 
 export const SERVER_MACHINE = "server";
@@ -49,20 +95,16 @@ export function useMonitorSnapshot(machineId: string) {
   const pollerRef = useRef<ReturnType<typeof createVisiblePoller<MonitorSnapshot>> | null>(null);
   const forceRefresh = useRef(false);
   const [active, setActive] = useState(false);
-  const [reading, setReading] = useState<{ machineId: string; snapshot: MonitorSnapshot | null }>(() => ({
-    machineId,
-    snapshot: sourceFor(machineId).snapshot(),
-  }));
-  const snapshot = reading.machineId === machineId ? reading.snapshot : sourceFor(machineId).snapshot();
+  const [reading, setReading] = useState<ShownReading>(() => settleReading(emptyReading(machineId), machineId));
+  const snapshot = chooseShown(reading, machineId, publishedReadings.get(machineId) ?? null).snapshot;
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
 
   useEffect(() => {
     const source = sourceFor(machineId);
-    const current = source.snapshot();
-    if (current) setReading({ machineId, snapshot: current });
-    return source.subscribe((next) => {
-      setReading({ machineId, snapshot: next });
+    setReading((current) => settleReading(current, machineId));
+    return source.subscribe(() => {
+      setReading((current) => settleReading(current, machineId));
       setError(null);
       setReloading(false);
     });
@@ -72,7 +114,8 @@ export function useMonitorSnapshot(machineId: string) {
     const element = container.current;
     if (!element) return;
     const source = sourceFor(machineId);
-    setReading({ machineId, snapshot: source.snapshot() });
+    const epoch = readingsEpoch;
+    setReading((current) => settleReading(current, machineId));
     setError(null);
     setReloading(false);
     let intersecting = false;
@@ -81,17 +124,15 @@ export function useMonitorSnapshot(machineId: string) {
       load: () => {
         const force = forceRefresh.current;
         forceRefresh.current = false;
-        return source.load(
-          () =>
-            startOrderedReading(() =>
-              machineId === SERVER_MACHINE
-                ? rpc.call("monitor.server", { force })
-                : rpc.call("monitor.machine", { machineId, force }),
-            ),
-          force,
-        );
+        return source.load(async () => {
+          const startedOrder = takeStartedOrder();
+          const fetched = machineId === SERVER_MACHINE
+            ? await rpc.call("monitor.server", { force })
+            : await rpc.call("monitor.machine", { machineId, force });
+          return publishReading(epoch, machineId, startedOrder, fetched);
+        }, force);
       },
-      receive(next) { setReading({ machineId, snapshot: next }); setError(null); setReloading(false); },
+      receive() { setReading((current) => settleReading(current, machineId)); setError(null); setReloading(false); },
       error(cause) { setError(cause instanceof Error ? cause.message : String(cause)); setReloading(false); },
       intervalMs: (next) => next.refreshIntervalMs,
     });

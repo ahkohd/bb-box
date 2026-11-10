@@ -63,7 +63,7 @@ This records a rehearsal, then a dark take and a light take, in `~/takes`, with 
 
 A restore can race bb-box's check that a box answers: when the check runs before the restored box has joined BB again, the box's page says it does not answer until the next check, a minute later. Look for 'does not answer' in each take's `page-text.json`, and record that theme again if it is there, giving the theme after the reset command, such as `light`.
 
-About a second after a restore, the box's Activity card can show the old guest's last reading for about half a second, its "Read at" time earlier than the one before it, before the new guest's next reading. A new take shows it too. Read each frame's "Read at" time after the take's `restored` mark, as with `tesseract`, and remove the frames whose time goes back from the `frames` list in a copy of the take's `take.json`, beside a link to its `frames` folder. Encode that copy: the frame before stays on screen until the next fresh one.
+A monitor card keeps the reading whose fetch started later, so after a restore it does not show the previous guest's last reading in place of a newer one. A restored guest's clock can sit behind the previous guest's. Read at can then go backwards on the new guest's own readings, and those frames stay in the take.
 
 ### Encode
 
