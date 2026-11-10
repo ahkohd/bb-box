@@ -27,6 +27,7 @@
 // in memory until the VM resumes or goes. A claim resumes the VM, gives it
 // the box's tags, name and description, waits for SSH and sets the clock.
 
+import { ANDROID_NO_FORK, ANDROID_SNAPSHOTS, androidSnapshotPlan } from "./android-snapshots.ts";
 import { SPARES } from "../../core/boxes.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { withDesktopForkSafety } from "../../core/identity.ts";
@@ -531,16 +532,21 @@ export class ProxmoxQemuBackend implements Backend {
   snapshotting(kind: string): Snapshotting | null {
     if (!this.kinds().some((offered) => offered.id === kind)) return null;
     if (kind === KIND.id) return WINDOWS_DESKTOP_SNAPSHOTS;
+    if (kind === ANDROID_IMAGE_KIND.id) return ANDROID_SNAPSHOTS;
     return isLinuxVmKind(kind) ? withDesktopForkSafety(kind, this.#snapshots.offer()) : null;
   }
 
   async planSnapshots(guest: Guest, kind: string, snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
     if (!this.snapshotting(kind)) throw new BackendError("unsupported", `${this.label} takes no snapshots of its ${kind} boxes.`);
     const plan = await this.#snapshots.plan(guest, signal, snapshot);
+    if (kind === ANDROID_IMAGE_KIND.id) return androidSnapshotPlan(plan);
     return kind === KIND.id ? windowsDesktopSnapshotPlan(plan) : plan;
   }
 
   async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
+    if (take.memory && this.#fromAndroidTemplate(guest)) {
+      throw new BackendError("unsupported", "An Android box snapshot holds its disk only. Leave memory out.");
+    }
     if (take.memory && this.#fromWindowsTemplate(guest)) {
       throw new BackendError("unsupported", `${this.label} takes snapshots of a windows-desktop box's disk only, so a snapshot of it cannot hold its memory. Leave memory out.`);
     }
@@ -666,6 +672,9 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   async copySnapshot(ref: SnapshotRef, label: HeldCopyLabel, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
+    if (this.#fromAndroidTemplate(ref.guest)) {
+      throw new BackendError("unsupported", `${this.label} keeps no Android snapshot past release: ${ANDROID_NO_FORK}.`);
+    }
     if (this.#fromWindowsTemplate(ref.guest)) {
       throw new BackendError("unsupported", `${this.label} keeps no snapshot of a windows-desktop box past its release: ${WINDOWS_DESKTOP_NO_FORK}.`);
     }
@@ -981,6 +990,11 @@ export class ProxmoxQemuBackend implements Backend {
         `${detail} A refresh's build and trial boxes and an Android box in use need about ${ANDROID_ROOM_GIB} GiB, so a refresh may wait for room or fail.`,
         `Free space on ${storage}, release boxes, or lower the disk kept free in ${PRODUCT}'s settings.`,
       );
+  }
+
+  #fromAndroidTemplate(guest: Guest): boolean {
+    const template = guest.data?.template;
+    return typeof template === "number" && this.#kindOf(template).id === ANDROID_IMAGE_KIND.id;
   }
 
   #fromWindowsTemplate(guest: Guest): boolean {

@@ -32,6 +32,8 @@ device. [049](049-a-project-image-is-a-script-on-the-standard-image-and-images-a
 and [054](054-windows-images-are-refreshed-in-a-box-of-the-current-build.md):
 device images are built, checked and refreshed as other images are.
 
+Android first starts after a host restart follow [083](083-android-devices-boot-cold-after-the-host-restarts.md).
+
 ## Context
 
 The owner wants a thread's phone or tablet in the panel, as Xcode's Device

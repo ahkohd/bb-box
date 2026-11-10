@@ -252,6 +252,13 @@ memory snapshot. Fork and Keep refuse, because a Windows box has no identity
 reset BB Box has checked. On ZFS, take and delete work, and restore refuses
 for that reason.
 
+An Android box on Proxmox QEMU snapshots its whole VM disk while running,
+including Android data and Linux host files. Restore uses a snapshot undo
+on LVM-thin, Ceph RBD, BTRFS and qcow2; ZFS refuses restore. Memory, fork
+and Keep are refused because memory restore and identity reset are unproved.
+
+BB Box starts an Android model cold when its unsaved marker is present. A snapshot taken while that model runs keeps the marker, as does an undo taken after a hard stop. A clean emulator save removes the marker, so a matching quick-boot save can still load after a host restart. New boxes can use the image's quick-boot saves. Wait for Android to finish booting before running adb commands.
+
 - Take one with `box_snapshot` before a change you cannot undo: a
   migration, an upgrade, a deletion, or a change to the system. Take one
   when the person asks. Never take them on a schedule of your own.

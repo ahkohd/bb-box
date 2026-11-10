@@ -99,3 +99,12 @@ Then look at the takes side by side with the last demo, as with `sh scripts/demo
 The guide's screenshots, `new-box-form.png`, `box-panel.png`, `desktop-box.png`, `terminal-box.png`, `monitor.png` and `monitor-threads-2x.png` in [docs/media](media), are taken on the same fresh BB, after a rehearsal and [reset.sh](../scripts/demo/reset.sh). With [chrome.sh](../scripts/demo/web-demo/chrome.sh) running, [screenshots.mjs](../scripts/demo/screenshots.mjs), copied into `~/.web-demo` and run there, beside Playwright, asks the agent for a desktop box, maximises the Box panel, and saves each at 2560 by 1600: the New box form, the Box panel with a server box and the desktop box, the desktop, and the server box's terminal after `uname -sm && nproc`. It then loads the desktop box with `stress-ng` from its own terminal and saves the Monitor open on it, with its Open menu, as `monitor.png`. Last, it makes a project on BB's server with seven threads of generic titles, two of them working, as the agent holds a turn whose prompt says WORK and ends any other at once, and saves the server's Threads menu, cropped to the Monitor, as `monitor-threads-2x.png`. An image whose name ends in `-2x` shows at half its pixels on the site, so it is sharp at the size of a 1x crop. They are in [making a box](guide/making-a-box.md), [desktops](guide/desktops.md), [the terminal](guide/terminal.md) and [the Monitor](guide/monitor.md). Read their text for names before committing, as for the video.
 
 Take them twice, as for the video: once in dark, the default, and once with `DEMO_THEME=light`, with [reset.sh](../scripts/demo/reset.sh) and a new `chrome.sh` between them. The light take saves each with `-light` before its `.png`, or before its `-2x`, as `monitor-light.png` and `monitor-threads-light-2x.png`. The guide's Markdown names only the dark one, which GitHub shows. The site follows each image that has a light twin in the same folder with that twin, and shows only the one that matches the page's theme, so a reader's browser loads only that one.
+
+## Android snapshots
+
+In a separate BB instance, write matching markers on an Android device and
+its Linux host. Take a snapshot, change both markers, restore and undo.
+Wait for Android to boot after each restore and show both markers. Use the
+Box panel to switch to another device and back, then tap an app on the
+screen. Capture the screen before and after the tap. A model whose unsaved
+marker is present boots cold. Models with clean saves can quick-boot.
