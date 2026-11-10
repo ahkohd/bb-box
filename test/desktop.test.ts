@@ -753,6 +753,47 @@ function updateRequest(incremental: boolean): Uint8Array {
   return Uint8Array.of(3, incremental ? 1 : 0, 0, 0, 0, 0, 0x05, 0x00, 0x03, 0x20);
 }
 
+/** A FramebufferUpdateRequest for a rectangle, full or incremental. */
+function frameRequest(incremental: boolean, x: number, y: number, width: number, height: number): Uint8Array {
+  const bytes = new Uint8Array(10);
+  const view = new DataView(bytes.buffer);
+  view.setUint8(0, 3);
+  view.setUint8(1, incremental ? 1 : 0);
+  view.setUint16(2, x);
+  view.setUint16(4, y);
+  view.setUint16(6, width);
+  view.setUint16(8, height);
+  return bytes;
+}
+
+/**
+ * One FramebufferUpdate: a 1x1 Tight fill, then an ExtendedDesktopSize
+ * rectangle of `width` by `height`. The fill is there so the size is only
+ * visible to a reader that can step past Tight.
+ */
+function tightThenExtendedSize(width: number, height: number): Uint8Array {
+  const bytes = new Uint8Array(4 + 12 + 4 + 12 + 4 + 16);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(2, 2);
+
+  view.setUint16(8, 1);
+  view.setUint16(10, 1);
+  view.setInt32(12, 7);
+  bytes[16] = 0x80;
+  bytes[17] = 1;
+  bytes[18] = 2;
+  bytes[19] = 3;
+
+  const at = 20;
+  view.setUint16(at + 4, width);
+  view.setUint16(at + 6, height);
+  view.setInt32(at + 8, -308);
+  view.setUint8(at + 12, 1);
+  view.setUint16(at + 12 + 4 + 8, width);
+  view.setUint16(at + 12 + 4 + 10, height);
+  return bytes;
+}
+
 test("a server that sends no picture for a full update request is restarted, and the viewer connects again, but not one that answers, nor one that cannot restart (wayvnc 0.7.2)", async () => {
   const server = new FakeRfb();
   server.silent = true;
@@ -786,6 +827,54 @@ test("a server that sends no picture for a full update request is restarted, and
   await plain.relay.receive(updateRequest(false));
   await new Promise((resolve) => setTimeout(resolve, 120));
   assert.equal(plain.viewer.closed, null);
+});
+
+test("a frame request past the framebuffer is clipped to it, and one that misses it is answered and not sent (neatvnc 0.9.1, #904)", async () => {
+  const server = new FakeRfb({ width: 1920, height: 1080 });
+  const relay = relayTo(server);
+  await relay.init();
+  const box = server.connections[0]!;
+
+  const clipped = async (sent: Uint8Array, expected: Uint8Array) => {
+    const before = box.received.byteLength;
+    await relay.relay.receive(sent);
+    await until("the request to reach the server", () => box.received.byteLength >= before + expected.byteLength);
+    assert.equal(hex(box.received.subarray(before, before + expected.byteLength)), hex(expected));
+  };
+
+  await clipped(frameRequest(false, 0, 0, 1928, 1088), frameRequest(false, 0, 0, 1920, 1080));
+  await clipped(frameRequest(false, 0, 0, 4096, 4096), frameRequest(false, 0, 0, 1920, 1080));
+  await clipped(frameRequest(true, 0, 0, 32767, 32767), frameRequest(true, 0, 0, 1920, 1080));
+  await clipped(frameRequest(false, 1900, 1000, 100, 100), frameRequest(false, 1900, 1000, 20, 80));
+  await clipped(frameRequest(false, 10, 20, 30, 40), frameRequest(false, 10, 20, 30, 40));
+
+  const quiet = new FakeRfb({ width: 1920, height: 1080 });
+  const alone = relayTo(quiet);
+  await alone.init();
+  const aloneBox = quiet.connections[0]!;
+
+  await alone.relay.receive(frameRequest(false, 2000, 0, 16, 16));
+  assert.equal(aloneBox.received.byteLength, 0, "a request that misses the framebuffer is not forwarded");
+  assert.equal(hex(await alone.viewer.reader.read(4)), "00000000", "the viewer is answered so it does not wait");
+});
+
+test("the relay learns a new framebuffer from the server's stream, tight bytes and all, and clips to that (neatvnc 0.9.1, #904)", async () => {
+  const server = new FakeRfb({ width: 1920, height: 1080 });
+  const relay = relayTo(server);
+  await relay.init();
+  const box = server.connections[0]!;
+  const resize = tightThenExtendedSize(1600, 900);
+
+  await box.send(resize);
+  assert.equal(hex(await relay.viewer.reader.read(resize.byteLength)), hex(resize), "the server's bytes still reach the viewer unchanged");
+
+  await relay.relay.receive(frameRequest(false, 0, 0, 1600, 900));
+  await until("the new full request", () => box.received.byteLength >= 10);
+  assert.equal(hex(box.received.subarray(0, 10)), hex(frameRequest(false, 0, 0, 1600, 900)), "a request for the new framebuffer is sent whole");
+
+  await relay.relay.receive(frameRequest(false, 0, 0, 4000, 4000));
+  await until("the clipped request", () => box.received.byteLength >= 20);
+  assert.equal(hex(box.received.subarray(10, 20)), hex(frameRequest(false, 0, 0, 1600, 900)));
 });
 
 test("a server that says it lost the desktop is restarted at once or within a check, with the viewer connected or new, and one that has it is asked again, never restarted (wayvnc 0.9.1)", async () => {
