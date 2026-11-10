@@ -29,7 +29,8 @@ cannot speak while it runs.
   backend cannot measure. BB Box keeps it with the snapshot's record.
 - `bb box snapshot take --check` and `box_snapshot` with `check` say the plan
   and take nothing. The Take snapshot dialog shows it before the take. The
-  take's answer, and its row on the box's page, say the pause measured.
+  take's answer, and its row on the box's page, say the pause measured, or
+  that it was not measured.
 - A backend may give a size with each snapshot it lists. A record rebuilt
   from that listing keeps it.
 - A measured pause covers only the time the box was paused, never work
@@ -41,8 +42,8 @@ What each backend says of a take of a running box:
 | Backend | Plan | Measured pause |
 | --- | --- | --- |
 | Docker | pauses, with an estimate from the changed disk and the Docker data | from `docker pause` to `docker unpause` |
-| microsandbox, disk | pauses, with no estimate: `msb` 0.7.7 pauses the microVM, captures its disk and resumes it | `pause_us` from the `capture_disk` line of `msb`'s runtime log, or null when the log has no single such line |
-| microsandbox, memory | pauses, about 1.5 seconds, from the box's memory | `vm_pause_window_us` from the `capture` line of `msb`'s runtime log, or null when the log has no single such line |
+| microsandbox, disk | pauses, with no estimate: `msb` 0.7.7 pauses the microVM, captures its disk and resumes it | `pause_us` from the `capture_disk` line this take added to `msb`'s runtime log, or null |
+| microsandbox, memory | pauses, about 1.5 seconds, from the box's memory | `vm_pause_window_us` from the `capture` line this take added to `msb`'s runtime log, or null |
 | Tart, macOS | pauses, with an estimate from the VM's memory | from the suspend to when Tart runs the VM again, before BB Box's SSH, identity and clock checks; null when the VM does not resume |
 | Proxmox LXC | pauses, with no estimate: Proxmox freezes the container while it snapshots its volumes (`PVE::LXC::Config` `__snapshot_freeze`) | null: Proxmox does not report it |
 | Proxmox QEMU, disk | pauses, with no estimate: Proxmox calls `savevm-start` with no state file, which stops the VM until its disks are snapshotted | null: Proxmox does not report it |
@@ -50,6 +51,12 @@ What each backend says of a take of a running box:
 | boat.dev | does not pause | 0 |
 
 A stopped box is not paused, and its take's measured pause is 0.
+
+A microsandbox snapshot does not record which log line its take wrote, so
+BB Box reads the box's timing lines from `msb`'s log just before the take
+and again after it. It uses a line only when the take added exactly one
+capture line, of the kind the take made. Otherwise the pause is null, so a
+take never reports an earlier take's pause.
 
 ## Consequences
 
@@ -60,4 +67,8 @@ A stopped box is not paused, and its take's measured pause is 0.
 - microsandbox's measure depends on the line its runtime logs at info level.
   A release of `msb` that changes that line leaves the pause unknown, not
   wrong, until BB Box reads the new one.
+- A microsandbox take of a running box reads `msb`'s log twice. `msb` 0.7.7
+  reads the whole log to answer, whatever `--since` says, so these reads
+  grow slower as the log grows: about 0.5 seconds each for a 256 MiB log,
+  on an 8-vCPU VM on an AMD Ryzen Threadripper PRO 9975WX.
 - A new backend cannot leave its pause unsaid: the type does not allow it.

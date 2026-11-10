@@ -93,12 +93,12 @@ It adds up to 1.1 GB.
 Nothing was taken. Run it again without --check to take it.
 ```
 
-The Take snapshot dialog says the same before you take one. An agent's `box_snapshot` says it when called with `check`. After the take, its answer says how long the box was actually paused, such as "It paused build-1 for 4.1 s.", and the snapshot's row in the card says "paused 4.1 s". When a backend pauses a box for a time it cannot estimate or measure, it says so.
+The Take snapshot dialog says the same before you take one. An agent's `box_snapshot` says it when called with `check`. After the take, its answer says how long the box was actually paused, such as "It paused build-1 for 4.1 s.", and the snapshot's row in the card says "paused 4.1 s". When a backend pauses a box for a time it cannot estimate or measure, it says so, and the row says "pause not measured".
 
 | Backend | Pauses the box | Estimate based on | Measured |
 | --- | --- | --- | --- |
 | Docker | while it copies the box's changed disk and Docker data, when the box runs | the changed bytes and the Docker data's size, about 25 to 30 seconds a GiB for the disk and 15 for the Docker data, plus 4 seconds | from `docker pause` to `docker unpause` |
-| microsandbox | while `msb` captures the box's disk, or its disk and memory, when the box runs | for a take with memory, the box's memory: about 1.5 seconds. No estimate for a disk-only take | the pause `msb`'s runtime logs, from pausing the microVM to resuming it. Unknown when its log does not have it |
+| microsandbox | while `msb` captures the box's disk, or its disk and memory, when the box runs | for a take with memory, the box's memory: about 1.5 seconds. No estimate for a disk-only take | the pause `msb`'s runtime logs, from pausing the microVM to resuming it. Unknown when the take added no such line to its log, or more than one |
 | Tart, macOS | while it suspends the VM, copies it and resumes it, when the box runs | the VM's memory, which a suspend saves | from the suspend to when the VM runs again, before BB Box checks that it answers. Unknown when the VM does not resume |
 | Proxmox LXC | while Proxmox freezes the container and snapshots its disk, when it runs | no estimate: Proxmox does not say | not measured |
 | Proxmox QEMU | while Proxmox stops the VM to snapshot its disks, with or without memory, when it runs. With memory, it stops it at the end of saving its memory | no estimate: Proxmox does not say, and with memory it depends on how fast the VM changes its memory | not measured: Proxmox does not report how long the VM was stopped |
@@ -114,7 +114,7 @@ bb box snapshot list [<box>] [--all] [--kept] [--json]
 
 Without a box, it lists the snapshots of the thread's boxes. `--all` lists every snapshot BB Box records, of every thread's boxes and of boxes that are gone.
 
-Each row says the snapshot's name and ID, its state, when it was taken and by whom, what it holds, and its size where the backend says. On a box's page, a row also says how long its take paused the box, where it did.
+Each row says the snapshot's name and ID, its state, when it was taken and by whom, what it holds, and its size where the backend says. On a box's page, a row also says how long its take paused the box, where it did, or "pause not measured" where its backend could not measure it.
 
 | State | Means |
 | --- | --- |
