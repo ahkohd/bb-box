@@ -86,7 +86,7 @@ import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 import { dockerImageBuilding } from "./building.ts";
 import { backendsOn, daemonKey, daemonShare, engineKey, joinDaemon, leaveDaemon, underDaemonLock, type DaemonShare } from "./daemons.ts";
-import { wholeCardsOff, wholeCardsOffForResize } from "../../core/gpu.ts";
+import { gpuPartWords, wholeCardsOff, wholeCardsOffForResize } from "../../core/gpu.ts";
 import type { CardCheck } from "../card-check.ts";
 import {
   ALL_CARDS_DEVICE,
@@ -270,8 +270,10 @@ interface WrongCard {
 
 type CheckedFacts = { readonly is: "facts"; readonly facts: readonly GuestFact[] } | WrongCard;
 
+const NO_GPU: MadeGpu = { gpu: null, card: null, part: "none" };
+
 function madeOnCard(card: DockerCard | null, part: GpuPart): MadeGpu {
-  if (!card) return { gpu: null, card: null, part: "none" };
+  if (!card) return NO_GPU;
   return { gpu: card.device, card: card.uuidKnown ? card.uuid : null, part };
 }
 
@@ -1505,7 +1507,7 @@ export class DockerBackend implements Backend {
     await hooks.claimed({ ref: name, host: this.#host, address: null, size: null, data: { box: box.boxId } });
     await hooks.submitting();
 
-    const made = await this.#placementOf(ref.guest, box.boxId, signal);
+    const made = await this.#placementOfCurrent(box, name, signal);
     const restored: BoxIdentity = { ...box, size: snapshot.size ? { ...box.size, cores: snapshot.size.cores, memoryMiB: snapshot.size.memoryMiB } : box.size };
     const cpus = await this.#reserveRestored(restored, name, made, signal);
     const stops = signal ?? new AbortController().signal;
@@ -1523,12 +1525,30 @@ export class DockerBackend implements Backend {
     return guest;
   }
 
-  async #placementOf(earlier: Guest, boxId: string, signal?: AbortSignal): Promise<MadeGpu> {
-    const found = await this.#owned(earlier.ref, boxId, signal);
-    const gpu = found?.labels[LABELS.gpu] || null;
-    if (!found || !gpu) return { gpu: null, card: null, part: "none" };
-    const card = found.labels[LABELS.gpuCard] || deviceCard(gpu);
-    return { gpu, card, part: card ? (await this.#partOf(found)).part : "none" };
+  async #placementOfCurrent(box: BoxIdentity, making: string, signal?: AbortSignal): Promise<MadeGpu> {
+    const current = await this.#currentContainers(box.boxId, making, signal);
+    const placements = await Promise.all(current.map((container) => this.#placementOn(container)));
+    const [made = NO_GPU, ...others] = placements;
+    if (others.some((other) => other.gpu !== made.gpu || other.card !== made.card)) {
+      throw new Error(`Box ${box.name} has ${current.length} containers on ${this.#host} with different GPUs (${current.map((each) => each.name).join(", ")}), so ${PRODUCT} cannot tell which GPU to restore it with. It left the box as it was. Remove the one its box status does not name, with docker rm, then try again.`);
+    }
+    if (!made.gpu && box.size.gpu !== "none") {
+      const where = current.length ? `its container ${current[0]!.name} has no GPU` : `${PRODUCT} cannot find its container on ${this.#host}`;
+      throw new Error(`Box ${box.name} has ${gpuPartWords(box.size.gpu)}, but ${where}, so ${PRODUCT} did not restore it without one. It left the box as it was. To have a GPU again, release the box and make a new one.`);
+    }
+    return made;
+  }
+
+  async #currentContainers(boxId: string, making: string, signal?: AbortSignal): Promise<ContainerInfo[]> {
+    const listed = await this.#cli.list({ [LABELS.backend]: "docker", [LABELS.install]: this.#context.installId, [LABELS.box]: boxId }, signal);
+    return listed.filter((container) => container.name !== making && !container.labels[LABELS.imageBox]);
+  }
+
+  async #placementOn(container: ContainerInfo): Promise<MadeGpu> {
+    const gpu = container.labels[LABELS.gpu] || null;
+    if (!gpu) return NO_GPU;
+    const card = container.labels[LABELS.gpuCard] || deviceCard(gpu);
+    return { gpu, card, part: card ? (await this.#partOf(container)).part : "none" };
   }
 
   #reserveRestored(box: BoxIdentity, name: string, made: MadeGpu, signal?: AbortSignal): Promise<CpuList | null> {
