@@ -9,11 +9,14 @@ const wordAspect = 3.4;
   <div class="wordmark">
     <CipherText text="" duration={1400} decorative />
     <span class="wordmark-dense"></span>
+    <canvas class="wordmark-ripple"></canvas>
   </div>
 </div>
 
 <script>
   import { watchCiphers } from "../../effects/cipher.ts";
+  import { cssValue, deviceScale } from "../../effects/gl.ts";
+  import { pausedByPerson, reducedMotion } from "../../motion.ts";
 
   const ramp = " .:-=+*#%@";
   const sparseCells = new RegExp(`[^${ramp.slice(ramp.indexOf("#"))}]`, "g");
@@ -67,10 +70,94 @@ const wordAspect = 3.4;
     mark.querySelector<HTMLElement>(".wordmark-dense")!.dataset.text = lines.map((line) => line.replace(sparseCells, " ")).join("\n");
   }
 
+  interface Ring {
+    x: number;
+    y: number;
+    bornAt: number;
+  }
+
+  const ring = { pxPerSecond: 300, lifeSeconds: 1.1, bandPx: 16, mostBoost: 4, spawnEveryPx: 28 };
+
+  function rippleOnHover(holder: HTMLElement): void {
+    const mark = holder.querySelector<HTMLElement>(".wordmark")!;
+    const real = holder.querySelector<HTMLElement>(".cipher-real");
+    const canvas = holder.querySelector<HTMLCanvasElement>(".wordmark-ripple");
+    const pen = canvas?.getContext("2d");
+    if (!real || !canvas || !pen) return;
+    const rings: Ring[] = [];
+    let frame = 0;
+    let lastSpawn: { x: number; y: number } | undefined;
+    let grid = { width: 0, height: 0, cellWidth: 0, lineHeight: 0, fontSize: "", fontFamily: "" };
+
+    const measure = () => {
+      const box = mark.getBoundingClientRect();
+      const style = getComputedStyle(mark);
+      pen.font = `${style.fontSize} ${style.fontFamily}`;
+      grid = { width: box.width, height: box.height, cellWidth: pen.measureText("0").width, lineHeight: parseFloat(style.lineHeight), fontSize: style.fontSize, fontFamily: style.fontFamily };
+      const scale = deviceScale();
+      canvas.width = Math.round(box.width * scale);
+      canvas.height = Math.round(box.height * scale);
+      pen.setTransform(scale, 0, 0, scale, 0, 0);
+    };
+
+    const draw = (now: number) => {
+      frame = 0;
+      const alive = rings.filter((one) => (now - one.bornAt) / 1000 < ring.lifeSeconds);
+      rings.splice(0, rings.length, ...alive);
+      pen.clearRect(0, 0, grid.width, grid.height);
+      if (!rings.length) return;
+      const lines = (real.dataset.text ?? "").split("\n");
+      const background = cssValue(mark, "--background");
+      const ink = cssValue(mark, "--accent");
+      pen.font = `${grid.fontSize} ${grid.fontFamily}`;
+      pen.textBaseline = "middle";
+      const rows = Math.floor(grid.height / grid.lineHeight);
+      const columns = Math.floor(grid.width / grid.cellWidth);
+      for (let row = 0; row < rows; row++) {
+        const line = lines[row] ?? "";
+        const centreY = row * grid.lineHeight + grid.lineHeight / 2;
+        for (let column = 0; column < columns; column++) {
+          const centreX = column * grid.cellWidth + grid.cellWidth / 2;
+          let strength = 0;
+          for (const one of rings) {
+            const age = (now - one.bornAt) / 1000;
+            const off = Math.abs(Math.hypot(centreX - one.x, centreY - one.y) - age * ring.pxPerSecond);
+            if (off < ring.bandPx) strength = Math.max(strength, (1 - off / ring.bandPx) * (1 - age / ring.lifeSeconds));
+          }
+          if (strength < 0.08) continue;
+          const glyph = line[column] ?? " ";
+          const level = Math.max(0, ramp.indexOf(glyph));
+          const lifted = ramp[Math.min(ramp.length - 1, level + Math.max(1, Math.round(strength * ring.mostBoost)))]!;
+          pen.globalAlpha = 1;
+          pen.fillStyle = background;
+          pen.fillRect(column * grid.cellWidth, row * grid.lineHeight, grid.cellWidth, grid.lineHeight);
+          pen.globalAlpha = 0.35 + strength * 0.65;
+          pen.fillStyle = ink;
+          pen.fillText(lifted, column * grid.cellWidth, centreY);
+        }
+      }
+      pen.globalAlpha = 1;
+      frame = requestAnimationFrame(draw);
+    };
+
+    mark.addEventListener("pointermove", (event) => {
+      if (reducedMotion() || pausedByPerson()) return;
+      const box = mark.getBoundingClientRect();
+      const at = { x: event.clientX - box.left, y: event.clientY - box.top };
+      if (lastSpawn && Math.hypot(at.x - lastSpawn.x, at.y - lastSpawn.y) < ring.spawnEveryPx) return;
+      lastSpawn = at;
+      if (Math.abs(box.width - grid.width) > 0.5 || Math.abs(box.height - grid.height) > 0.5) measure();
+      rings.push({ ...at, bornAt: performance.now() });
+      if (!frame) frame = requestAnimationFrame(draw);
+    });
+    mark.addEventListener("pointerleave", () => (lastSpawn = undefined));
+  }
+
   document.fonts.ready.then(() => {
     for (const holder of document.querySelectorAll<HTMLElement>(".wordmark-holder")) {
       drawWordmark(holder);
       watchCiphers(holder);
+      rippleOnHover(holder);
     }
   });
 </script>
@@ -108,6 +195,14 @@ const wordAspect = 3.4;
 
   .wordmark-dense::before {
     content: attr(data-text) / "";
+  }
+
+  .wordmark-ripple {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
   }
 
   .wordmark:has(:global([data-running])) .wordmark-dense {
