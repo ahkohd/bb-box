@@ -210,7 +210,7 @@ export function ResizeDialog({ box, threadId, at = "size", monitorId = null, onC
   const [step, setStep] = useState<Step>({ at: "pick" });
   const [gpu, setGpu] = useState<GpuPart>(box?.gpuPart ?? (box?.gpu ? "shared" : "none"));
   const nav = useBoxesNav();
-  const monitor = useMonitorSnapshot(monitorId || box?.enrol.hostId || "resize-gpu");
+  const monitor = useMonitorSnapshot(monitorId || box?.enrol.hostId || "resize-gpu", monitorId || box?.enrol.hostId ? box?.id : undefined);
   const asked = useRef(0);
   const firstAnswered = useRef(false);
   const options = useRef<(HTMLButtonElement | null)[]>([]);

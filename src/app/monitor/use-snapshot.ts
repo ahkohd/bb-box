@@ -1,4 +1,4 @@
-import { createContext, useContext, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { Contract, MonitorSnapshot } from "../../plugin/contract.ts";
 import { createSnapshotSource } from "./snapshot-source.ts";
@@ -10,49 +10,52 @@ type PublishedReading = {
 };
 
 const publishedReadings = new Map<string, PublishedReading>();
-const listeners = new Map<string, Set<() => void>>();
+const listeners = new Set<() => void>();
 let nextStartedOrder = 1;
-let readingsEpoch = 0;
 
 function takeStartedOrder(): number {
   return nextStartedOrder++;
 }
 
-function publishReading(epoch: number, stream: string, startedOrder: number, snapshot: MonitorSnapshot): MonitorSnapshot {
-  if (epoch !== readingsEpoch) return snapshot;
-
+function publishReading(stream: string, startedOrder: number, snapshot: MonitorSnapshot): MonitorSnapshot {
   const current = publishedReadings.get(stream);
   if (current && startedOrder < current.startedOrder) return current.snapshot;
 
   publishedReadings.set(stream, { snapshot, startedOrder });
-  for (const notify of listeners.get(stream) ?? []) notify();
+  for (const notify of listeners) notify();
   return snapshot;
 }
 
 type SnapshotSource = ReturnType<typeof createSnapshotSource<MonitorSnapshot>>;
 
-const sources = new Map<string, SnapshotSource>();
+const sources = new Map<string, { source: SnapshotSource; stream: string }>();
 
 const MAX_REMEMBERED_MACHINES = 8;
 
-function sourceFor(machineKey: string): SnapshotSource {
-  const source = sources.get(machineKey) ?? createSnapshotSource<MonitorSnapshot>((value) => value.refreshIntervalMs);
+function sourceFor(machineKey: string, stream: string): SnapshotSource {
+  const entry = sources.get(machineKey) ?? { source: createSnapshotSource<MonitorSnapshot>((value) => value.refreshIntervalMs), stream };
   sources.delete(machineKey);
-  sources.set(machineKey, source);
+  sources.set(machineKey, entry);
   for (const oldest of sources.keys()) {
     if (sources.size <= MAX_REMEMBERED_MACHINES) break;
+    const removed = sources.get(oldest);
     sources.delete(oldest);
+    if (removed && !Array.from(sources.values()).some((entry) => entry.stream === removed.stream)) {
+      publishedReadings.delete(removed.stream);
+    }
   }
-  return source;
+  return entry.source;
 }
 
 export function forgetMonitorReadings(): void {
-  readingsEpoch += 1;
   sources.clear();
   publishedReadings.clear();
 }
 
-export const MonitorBox = createContext<string | undefined>(undefined);
+function subscribe(notify: () => void) {
+  listeners.add(notify);
+  return () => { listeners.delete(notify); };
+}
 
 export const SERVER_MACHINE = "server";
 
@@ -62,32 +65,16 @@ export function useMonitorSnapshot(machineId: string, boxId?: string) {
   const pollerRef = useRef<ReturnType<typeof createVisiblePoller<MonitorSnapshot>> | null>(null);
   const forceRefresh = useRef(false);
   const [active, setActive] = useState(false);
-  const pageBoxId = useContext(MonitorBox);
-  boxId ??= pageBoxId;
   const stream = boxId === undefined ? JSON.stringify(["machine", machineId]) : JSON.stringify(["box", boxId]);
-  const [, setVersion] = useState(0);
-  const refreshReading = () => setVersion((version) => version + 1);
-  const snapshot = publishedReadings.get(stream)?.snapshot ?? null;
+  const getSnapshot = useCallback(() => publishedReadings.get(stream)?.snapshot ?? null, [stream]);
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot);
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
 
   useEffect(() => {
-    const subscribers = listeners.get(stream) ?? new Set<() => void>();
-    listeners.set(stream, subscribers);
-    subscribers.add(refreshReading);
-    refreshReading();
-    return () => {
-      subscribers.delete(refreshReading);
-      if (subscribers.size === 0) listeners.delete(stream);
-    };
-  }, [stream]);
-
-  useEffect(() => {
     const element = container.current;
-    if (!element) return;
-    const source = sourceFor(JSON.stringify([stream, machineId]));
-    const epoch = readingsEpoch;
-    refreshReading();
+    if (!element || !machineId) return;
+    const source = sourceFor(JSON.stringify([stream, machineId]), stream);
     setError(null);
     setReloading(false);
     let intersecting = false;
@@ -101,10 +88,10 @@ export function useMonitorSnapshot(machineId: string, boxId?: string) {
           const fetched = machineId === SERVER_MACHINE
             ? await rpc.call("monitor.server", { force })
             : await rpc.call("monitor.machine", { machineId, force });
-          return publishReading(epoch, stream, startedOrder, fetched);
+          return publishReading(stream, startedOrder, fetched);
         }, force);
       },
-      receive() { refreshReading(); setError(null); setReloading(false); },
+      receive() { setError(null); setReloading(false); },
       error(cause) { setError(cause instanceof Error ? cause.message : String(cause)); setReloading(false); },
       intervalMs: (next) => next.refreshIntervalMs,
     });

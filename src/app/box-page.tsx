@@ -1,4 +1,3 @@
-import { MonitorBox } from "./monitor/use-snapshot.ts";
 import { experimental_Icon as Icon, experimental_usePluginId, UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
@@ -830,7 +829,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
   const failed = box.state === "failed";
   const problem = yours ? machineActions.problem : threadActions.problem;
   return (
-    <MonitorBox.Provider value={box.id}><PageFrame dimmed={box.state === "releasing" && !releaseUnfinished(box)}>
+    <PageFrame dimmed={box.state === "releasing" && !releaseUnfinished(box)}>
       <Trail back={back} here={box.name} />
       <Header page={page} box={box} route={route} now={now} titles={titles} actions={actions} menu={menu} />
       <ProblemLine problem={problem} onDismiss={() => (yours ? machineActions.setProblem(null) : threadActions.setProblem(null))} />
@@ -866,7 +865,7 @@ export function BoxPage({ route }: { route: BoxPageRoute }) {
       )}
       {yours ? machineActions.dialogs : threadActions.dialogs}
       {takingSnapshot && snapshots?.offer ? <TakeSnapshotDialog box={box} view={snapshots} now={now} returnTo={menuTrigger} onClose={() => setTakingSnapshot(false)} onChanged={refreshAll} /> : null}
-    </PageFrame></MonitorBox.Provider>
+    </PageFrame>
   );
 }
 

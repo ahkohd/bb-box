@@ -912,3 +912,26 @@ test("over 1 h and 24 h each GPU is a line from box history, with its busiest mi
   await waitFor(() => expect(chart.textContent).toContain("GPU was shared with other boxes, so its lines are the whole card's."));
   expect(within(card).getByRole("button", { name: "GPU" }).getAttribute("aria-pressed")).toBe("true");
 });
+
+test("the box page and Monitor share each scheduled fetch", async () => {
+  vi.useFakeTimers();
+  const reading = vi.fn(() => snapshot({ refreshIntervalMs: 2000 }));
+  const rpc = {
+    ...handlers({ page: () => page(boxView(), { is: "read", machineId: "host_calm", why: null }), reading }),
+    "monitor.machines": () => ({ machines: [{ id: "host_calm", name: "calm-otter", connected: true, isServer: false, isBox: true, boxId: BOX_ID }] }),
+  };
+  localStorage.setItem("bb-box:monitor:machine", "host_calm");
+  open(rpc);
+  await vi.waitFor(() => expect(reading).toHaveBeenCalledTimes(1));
+
+  const footer = app.experimentalSidebarFooterItems.find((item) => item.id === "status");
+  if (!footer || !("component" in footer)) throw new Error("Monitor disclosure is missing");
+  renderSlot<{ dismiss: () => void }, Contract>(footer, { dismiss: vi.fn() }, { rpc, pluginId: "bb-box" });
+  try {
+    await vi.advanceTimersByTimeAsync(7000);
+  } finally {
+    vi.useRealTimers();
+  }
+
+  expect(reading).toHaveBeenCalledTimes(4);
+});

@@ -699,7 +699,7 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
   const { machines, selected, setSelected, refresh: refreshMachines } = useMachines();
   const opensOf = useOpensOf();
   const lookOf = useBoxLookOf();
-  const { container, active, snapshot, error, reload, reloading } = useMonitorSnapshot(selected);
+  const { container, active, snapshot, error, reload, reloading } = useMonitorSnapshot(machines ? selected : "", machines?.find((machine) => machineKey(machine) === selected)?.boxId ?? undefined);
   const machineName = selectedMachine(machines, selected).name;
   const isBox = machines?.find((machine) => machineKey(machine) === selected)?.isBox ?? false;
   const errorMessage = error ? loadErrorCopy(error, machineName) : "";
