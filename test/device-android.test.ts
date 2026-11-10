@@ -1009,6 +1009,9 @@ describe("the emulator's service", () => {
     assert.match(readFileSync(join(home, ".config", "systemd", "user", "bb-box-emulator@.service"), "utf8"), /emulator-unsaved-%i/);
     assert.equal(statSync(join(home, ".emulator_console_auth_token")).mode & 0o777, 0o600);
     assert.deepEqual(await emulator.start("pixel_8", { cold: false, signal: AbortSignal.timeout(1000) }), { cold: true, unsaved: true });
+
+    rmSync(emulator.unsavedMarker("pixel_8"));
+    assert.deepEqual(await emulator.start("pixel_8", { cold: false, signal: AbortSignal.timeout(1000) }), { cold: false, unsaved: false });
   });
 
   test("without systemd, a stop the emulator answered marks its snapshot saved, and one it did not leaves the mark", async () => {

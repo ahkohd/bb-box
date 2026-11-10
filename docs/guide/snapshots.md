@@ -2,7 +2,7 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools. Where the backend allows it, you [fork](#forking-a-snapshot) a snapshot into a new box and [keep](#keeping-a-snapshot) one past the box's release. This works on Proxmox LXC boxes, Proxmox QEMU Linux boxes, Proxmox QEMU Windows desktops, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
+You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools. Where the backend allows it, you [fork](#forking-a-snapshot) a snapshot into a new box and [keep](#keeping-a-snapshot) one past the box's release. This works on Proxmox LXC boxes, Proxmox QEMU Linux boxes, Proxmox QEMU Windows desktops and Android boxes, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
 
 ## What each backend offers
 
@@ -16,7 +16,7 @@ You take, restore, rename and delete snapshots on a box's page, in its [Snapshot
 | microsandbox | the disk, with the box's Docker data, or the disk and memory | the disk live, in under a second; with memory the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
 | Tart, macOS | the disk and memory, always: every snapshot is a copy of the suspended VM | suspends the VM, copies it and resumes it: 11 s for a 16 GiB VM | in place: it suspends the box, takes the undo, puts the snapshot's copy in the VM's place and resumes it, running as it was | by a copy of the snapshot's disk, without its memory, from a snapshot taken with macOS's identity reset | as it is: the copy stays beside the VMs |
 | Tart, Linux | the disk | only while the box is stopped, as Tart cannot suspend a Linux VM | in place, after a shutdown | by a copy of the snapshot's disk, from a snapshot taken with reset version 8 for Linux servers, or version 9 for Linux desktops | as it is: the copy stays beside the VMs |
-| Docker, Hetzner and Namespace boxes, the SSH host pool's machines, Windows boxes on Tart, iOS boxes, and Android devices on Proxmox QEMU | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
+| Docker, Hetzner and Namespace boxes, the SSH host pool's machines, Windows boxes on Tart, iOS boxes | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
 
 Linux desktops need an image built with identity reset version 9 or later. Older images refuse forks and Keep, saying why. Refresh the image and make the box again; an image rebuild does not update existing boxes or snapshots.
 
@@ -36,6 +36,10 @@ A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS
 
 A Windows desktop's snapshot holds its disk and its EFI and TPM state volumes. It restores in place, and the undo is another snapshot, on storage that rolls back past a newer snapshot. On ZFS it takes and deletes snapshots, and restore is refused, because the undo would be a held copy and a Windows box has no identity reset BB Box has checked. It does not fork, and Keep is refused for the same reason. It takes no snapshot of its memory.
 
+An Android box on Proxmox QEMU snapshots the whole VM disk, including the Linux host files and Android device data, while it runs. It restores in place with a snapshot undo on LVM-thin, Ceph RBD, BTRFS and qcow2. On ZFS, take and delete work but restore is refused. Memory snapshots, forks and Keep are refused. The Android device and its host have no identity reset BB Box has checked. Device-only snapshots are separate and remain unbuilt.
+
+BB Box starts an Android model cold when its unsaved marker is present. A snapshot taken while that model runs keeps the marker, as does an undo taken after a hard stop. A clean emulator save removes the marker, so a matching quick-boot save can still load after a host restart. New boxes can use the image's quick-boot saves. Wait for Android to finish booting before running adb commands.
+
 ### What is not built yet
 
 - **Restores of a box threads run on stay off.** BB cannot yet hold every turn on a box: its "Send now" can start a turn while BB Box stops the box to restore it. Until BB can, move the threads off the box, or archive them, before you restore it. You and agents can restore every other box. See [restores of a box threads run on stay off](#restores-of-a-box-threads-run-on-stay-off).
@@ -43,7 +47,7 @@ A Windows desktop's snapshot holds its disk and its EFI and TPM state volumes. I
 - **The identity reset across a Proxmox node's restart is unproved.** Held copies and earlier guests were checked not to start by themselves, and an earlier guest started by hand reset before its network. But no node was restarted in the checks, so it is not known what they do when one is. Restart a node with a held copy on it, and check that the copy stays stopped, before you rely on Keep there.
 - **ZFS restores stay off** until they are checked on a ZFS node. Snapshots on ZFS are taken and deleted as elsewhere.
 - **Docker, Hetzner and Namespace boxes take no snapshots yet.** They are planned for later, as a copy of the paused container with the box's Docker data, restored as a new container. A Docker box made now keeps that data on a named volume labelled as the box's, so a later snapshot can copy it. A box made before keeps its anonymous volume, and a release still removes it. If removing a named volume fails after its container has gone, maintenance retries the removal. It checks ownership before mounting or removing a volume. [082](../decisions/082-docker-snapshots.md) records the design.
-- **An Android device's own snapshots are planned for later**: the emulator's snapshot of the device alone. Until then, an Android box on boat.dev takes snapshots of its whole VM, and one on Proxmox QEMU takes none.
+- **An Android device's own snapshots are planned for later**: the emulator's snapshot of the device alone. Until then, Android boxes on boat.dev and Proxmox QEMU take snapshots of the whole VM.
 - **A Windows desktop on Proxmox QEMU takes no snapshot of its memory yet**, and it does not fork or Keep until a Windows identity reset is checked. A restore on ZFS stays off for that reason.
 - **Windows boxes on Tart, iOS boxes, and the SSH host pool's machines take no snapshots**, and none are planned yet.
 
