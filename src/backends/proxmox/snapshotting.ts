@@ -105,7 +105,9 @@ export interface SnapshotGuests {
 }
 
 const MiB = 1024 * 1024;
-const LXC_FREEZES: TakePause = { pauses: true, aboutMs: null, basis: null };
+const PAUSES_FOR_AN_UNKNOWN_TIME: TakePause = { pauses: true, aboutMs: null, basis: null };
+const PAUSE_UNMEASURED = null;
+const DID_NOT_PAUSE_MS = 0;
 
 function mayRun(status: { readonly status: string } | null): boolean {
   return status?.status !== "stopped";
@@ -337,7 +339,7 @@ export class ProxmoxSnapshotting {
         aboutMs: TAKES_ABOUT_MS,
         memoryAboutMs: this.#holds.includes("disk-and-memory") ? TAKES_ABOUT_MS + Math.round((memoryMiB * MiB * MEMORY_ABOUT_MS_PER_GIB) / GiB) : null,
         addsBytes: SHARES_BLOCKS.has(type) ? 0 : null,
-        pause: this.#guests.type === "lxc" && mayRun(status) ? LXC_FREEZES : NO_PAUSE,
+        pause: mayRun(status) ? PAUSES_FOR_AN_UNKNOWN_TIME : NO_PAUSE,
         memory,
         memoryWhy,
       },
@@ -503,12 +505,7 @@ export class ProxmoxSnapshotting {
     if (!found) throw new SnapshotFailed(failure ?? `Proxmox's task ended, but guest ${vmid} has no snapshot ${name}.`);
     if (found.snapstate) throw new SnapshotIncomplete(`${snapstateWords(found.snapstate)}${failure ? `: ${failure}` : ""}.`);
     if (failure) throw new SnapshotIncomplete(`Proxmox's task failed (${failure}), though it left the snapshot with no part-made state, so ${PRODUCT} does not count it as taken.`);
-    return { ref: name, holds: found.vmstate ? "disk-and-memory" : "disk", capturedAt: found.snaptime !== null ? found.snaptime * 1000 : this.#now(), size: null, pausedMs: this.#pauseMeasured(ran, take.memory) };
-  }
-
-  #pauseMeasured(ran: boolean, memory: boolean): number | null {
-    const paused = ran && (this.#guests.type === "lxc" || memory);
-    return paused ? null : 0;
+    return { ref: name, holds: found.vmstate ? "disk-and-memory" : "disk", capturedAt: found.snaptime !== null ? found.snaptime * 1000 : this.#now(), size: null, pausedMs: ran ? PAUSE_UNMEASURED : DID_NOT_PAUSE_MS };
   }
 
   async delete(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {

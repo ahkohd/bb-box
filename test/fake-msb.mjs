@@ -206,6 +206,28 @@ const findSnapshot = (selector) => {
   return list.find((each) => each.id === selector || (member !== undefined && each.group === group && each.name === member)) ?? null;
 };
 
+function systemLog(name) {
+  return join(dir(name), "system-log.jsonl");
+}
+
+function logCheckpointTiming(name, full) {
+  const said = full
+    ? `INFO microsandbox_checkpoint_timing: checkpoint capture timing operation="capture" source_already_paused=false checkpoint_id="checkpoint_${randomBytes(4).toString("hex")}" memory_paused_prepare_us=0 paused_capture_us=289174 resume_us=229 thaw_us=310 vm_pause_window_us=${host.fullPauseUs ?? 289_747} workload_unavailable_us=291002\n`
+    : `INFO microsandbox_checkpoint_timing: disk-only checkpoint timing operation="capture_disk" checkpoint_id="disk_${randomBytes(4).toString("hex")}" source_already_paused=false pause_us=${host.diskPauseUs ?? 24_272} total_us=39252\n`;
+  appendFileSync(systemLog(name), `${JSON.stringify({ d: said, e: null, id: null, s: "system", t: new Date().toISOString() })}\n`);
+}
+
+function systemLogJson(rest) {
+  const { values } = flags(rest.slice(0, -1), ["--source", "--since", "--grep"]);
+  const name = found(rest.at(-1)).name;
+  const since = values["--since"] ? Date.parse(values["--since"]) : 0;
+  const lines = existsSync(systemLog(name)) ? readFileSync(systemLog(name), "utf8").split("\n").filter(Boolean) : [];
+  for (const line of lines) {
+    const entry = JSON.parse(line);
+    if (Date.parse(entry.t) >= since && (!values["--grep"] || new RegExp(values["--grep"]).test(entry.d))) console.log(line);
+  }
+}
+
 function snapshot(rest) {
   const [sub, ...more] = rest;
   if (sub === "list" || sub === "ls") {
@@ -231,6 +253,7 @@ function snapshot(rest) {
     for (const part of ["home", "var-lib", ...(values["--full"] ? ["run"] : [])]) if (existsSync(join(dir(sandbox.name), part))) cpSync(join(dir(sandbox.name), part), join(snapshotDir(id), part), { recursive: true });
     const labels = Object.fromEntries(many["--label"].map((label) => [label.split("=")[0], label.split("=").slice(1).join("=")]));
     const parent = sandbox.lastSnapshot ?? sandbox.config.snapshot_parent ?? null;
+    if (sandbox.status === "Running" && host.pauseLogged !== false) logCheckpointTiming(sandbox.name, Boolean(values["--full"]));
     const at = new Date(Date.now() + list.length).toISOString();
     list.unshift({
       id,
@@ -418,6 +441,10 @@ switch (command) {
     exec(rest);
     break;
   case "logs":
+    if (rest.includes("--json")) {
+      systemLogJson(rest);
+      break;
+    }
     // Its runtime's system log, as a builder that died mid-build would leave.
     found(rest.at(-1));
     console.log("INFO microsandbox_runtime::runner::relay: agent relay: client disconnected slot=0 error=agent relay: unexpected EOF");

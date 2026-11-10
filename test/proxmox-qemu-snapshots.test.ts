@@ -107,7 +107,7 @@ test("the plan reads the VM's boot disk's storage and scales a memory snapshot's
   assert.equal(windows.keep.way, "no");
 });
 
-test("a VM's disk take does not pause it; one with memory pauses it for a time Proxmox cannot say or measure, while it saves the VM's memory", async () => {
+test("a running VM's take pauses it, with or without memory, for a time Proxmox cannot say or measure; a stopped VM's does not pause", async () => {
   const state = world();
   const { guest, box } = await linuxBox(state);
   const memoryMiB = Number(state.proxmox.guests.get(Number(guest.ref))!.config.memory);
@@ -115,11 +115,16 @@ test("a VM's disk take does not pause it; one with memory pauses it for a time P
   const plan = await state.backend.planSnapshots(guest, "linux", null);
   const withMemory = await state.backend.snapshot(guest, { id: SNAPSHOT, box, memory: true }, tasks().hooks);
   const diskOnly = await state.backend.snapshot(guest, { id: "snbbbbbbbbbbbb", box, memory: false }, tasks().hooks);
+  state.proxmox.guests.get(Number(guest.ref))!.status = "stopped";
+  const stoppedPlan = await state.backend.planSnapshots(guest, "linux", null);
+  const stopped = await state.backend.snapshot(guest, { id: "sncccccccccccc", box, memory: false }, tasks().hooks);
 
-  assert.deepEqual(plan.take.pause, { pauses: false });
+  assert.deepEqual(plan.take.pause, { pauses: true, aboutMs: null, basis: null }, "Proxmox stops a running VM for a disk-only snapshot too");
   assert.deepEqual(plan.take.memory?.pause, { pauses: true, aboutMs: null, basis: { bytes: memoryMiB * 2 ** 20, of: "memory" } });
   assert.equal(withMemory.pausedMs, null);
-  assert.equal(diskOnly.pausedMs, 0);
+  assert.equal(diskOnly.pausedMs, null, "unknown, never 0, as the VM was stopped while Proxmox snapshotted its disks");
+  assert.deepEqual(stoppedPlan.take.pause, { pauses: false });
+  assert.equal(stopped.pausedMs, 0);
 });
 
 test("a take with memory asks Proxmox for the VM's state and holds disk and memory; one without holds the disk; both delete", async () => {

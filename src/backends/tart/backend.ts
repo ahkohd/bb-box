@@ -366,6 +366,27 @@ export interface TartBackendOptions {
   readonly now?: () => number;
 }
 
+interface LaunchedBox {
+  readonly host: TartHost;
+  readonly os: GuestOs;
+  readonly deadline: number;
+  readonly bootedAfresh: () => void;
+}
+
+interface TakeResumed {
+  readonly resumedAt: number | null;
+  readonly notResumed: string | null;
+}
+
+const NOTHING_TO_RESUME: TakeResumed = { resumedAt: null, notResumed: null };
+const PAUSE_UNMEASURED = null;
+const DID_NOT_PAUSE_MS = 0;
+
+function pauseBetween(suspendedAt: number | null, resumedAt: number | null): number | null {
+  if (suspendedAt === null) return DID_NOT_PAUSE_MS;
+  return resumedAt === null ? PAUSE_UNMEASURED : resumedAt - suspendedAt;
+}
+
 interface SshKeys {
   readonly ssh: Ssh;
   readonly publicKey: string | null;
@@ -1854,6 +1875,11 @@ export class TartBackend implements Backend {
 
   async start(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<Started | void> {
     if (slotRefOf(guest)) return this.#slots(guest).start(guest, signal);
+    const launched = await this.#launchBox(guest, signal, timing);
+    return this.#readyAfterLaunch(guest, launched, signal);
+  }
+
+  async #launchBox(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void): Promise<LaunchedBox> {
     const host = this.#hostOf(guest);
     const os = this.#osOf(guest);
     const deadline = Date.now() + (this.#options.readyTimeoutMs ?? (os === "windows" ? WINDOWS_READY_TIMEOUT_MS : READY_TIMEOUT_MS));
@@ -1864,6 +1890,10 @@ export class TartBackend implements Backend {
     const bootedAfresh = () => {
       if (!restored) timing?.("boot", Date.now() - began);
     };
+    return { host, os, deadline, bootedAfresh };
+  }
+
+  async #readyAfterLaunch(guest: Guest, { host, os, deadline, bootedAfresh }: LaunchedBox, signal?: AbortSignal): Promise<Started | void> {
     if (os === "windows") {
       // A restore leaves Windows' clock at the time it stopped (046).
       const { ssh } = await this.#keys();
@@ -2180,19 +2210,20 @@ export class TartBackend implements Backend {
         await this.#run(host, stopScript(guest.ref, this.#context.installId, this.#boxOf(guest), "suspend"), { timeoutMs: 240_000, signal });
       } catch (error) {
         if (signal?.aborted) throw error;
-        const notResumed = await this.#resumeAfterTake(guest, signal);
+        const { notResumed } = await this.#resumeAfterTake(guest, now, signal);
         throw new SnapshotFailed(`${PRODUCT} could not suspend ${guest.ref} on ${host.name} to copy it, so it copied nothing: ${message(error)}`, notResumed);
       }
     }
     const capturedAt = Date.now();
     let result: RunResult;
-    let notResumed: string | null = null;
+    let resumed: TakeResumed = NOTHING_TO_RESUME;
     try {
       result = await this.#runSnapshot(host, takeScript({ vm: guest.ref, install: this.#context.installId, box: take.box, snapshot: take.id, kind: this.#kindOfGuest(guest), reset: take.forkSafe ?? null, takenAt: capturedAt, minFreeGiB: this.#copyFloorGiB() }), 10 * 60_000, signal);
     } finally {
-      if (suspends) notResumed = await this.#resumeAfterTake(guest, signal);
+      if (suspends) resumed = await this.#resumeAfterTake(guest, now, signal);
     }
-    const pausedMs = suspendedAt !== null ? now() - suspendedAt : 0;
+    const { notResumed } = resumed;
+    const pausedMs = pauseBetween(suspendedAt, resumed.resumedAt);
     if (result.exitCode !== 0) throw new SnapshotFailed(this.#said(result), notResumed);
     const taken = parseTaken(result.stdout);
     if (taken === "gone") throw new SnapshotFailed(`The VM ${guest.ref} on ${host.name} is not box ${take.box}'s any more.`, notResumed);
@@ -2208,13 +2239,16 @@ export class TartBackend implements Backend {
     return this.#osOf(guest) === "linux" ? "linux" : "macos";
   }
 
-  async #resumeAfterTake(guest: Guest, signal?: AbortSignal): Promise<string | null> {
+  async #resumeAfterTake(guest: Guest, now: () => number, signal?: AbortSignal): Promise<TakeResumed> {
+    let resumedAt: number | null = null;
     try {
-      await this.start(guest, signal);
-      return null;
+      const launched = await this.#launchBox(guest, signal);
+      resumedAt = now();
+      await this.#readyAfterLaunch(guest, launched, signal);
+      return { resumedAt, notResumed: null };
     } catch (error) {
       if (signal?.aborted) throw error;
-      return message(error);
+      return { resumedAt, notResumed: message(error) };
     }
   }
 

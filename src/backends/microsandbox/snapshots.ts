@@ -86,6 +86,47 @@ export function parseSnapshotList(stdout: string): MsbSnapshot[] {
   });
 }
 
+const CHECKPOINT_TIMING_LOG = "microsandbox_checkpoint_timing";
+const PAUSE_LOG_SLACK_MS = 1_000;
+const MICROSECONDS_PER_MS = 1_000;
+
+const PAUSE_LOGGED: Readonly<Record<Holds, { readonly operation: string; readonly pausedFor: RegExp }>> = {
+  disk: { operation: 'operation="capture_disk"', pausedFor: /\bpause_us=(\d+)\b/ },
+  "disk-and-memory": { operation: 'operation="capture"', pausedFor: /\bvm_pause_window_us=(\d+)\b/ },
+};
+
+interface SystemLogEntry {
+  readonly said: string;
+  readonly at: number;
+}
+
+export function pauseLogArgs(sandbox: string, createdAt: number, commandMs: number): string[] {
+  const since = new Date(createdAt - commandMs - PAUSE_LOG_SLACK_MS).toISOString();
+  return ["logs", "--source", "system", "--json", "--since", since, "--grep", CHECKPOINT_TIMING_LOG, sandbox];
+}
+
+export function loggedPauseMs(stdout: string, holds: Holds, createdAt: number): number | null {
+  const { operation, pausedFor } = PAUSE_LOGGED[holds];
+  const pauses = stdout.split("\n").flatMap((line) => {
+    const entry = systemLogEntry(line);
+    if (!entry || entry.at > createdAt || !entry.said.includes(operation)) return [];
+    const microseconds = pausedFor.exec(entry.said)?.[1];
+    return microseconds ? [Number(microseconds)] : [];
+  });
+  return pauses.length === 1 ? Math.ceil(pauses[0]! / MICROSECONDS_PER_MS) : null;
+}
+
+function systemLogEntry(line: string): SystemLogEntry | null {
+  if (!line.trim()) return null;
+  try {
+    const entry = JSON.parse(line) as { readonly d?: unknown; readonly s?: unknown; readonly t?: unknown };
+    const at = typeof entry.t === "string" ? Date.parse(entry.t) : Number.NaN;
+    return entry.s === "system" && typeof entry.d === "string" && Number.isFinite(at) ? { said: entry.d, at } : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface SnapshotExtras {
   readonly sizes: ReadonlyMap<string, number>;
   readonly kept: ReadonlyMap<string, number>;

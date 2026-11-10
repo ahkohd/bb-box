@@ -30,14 +30,14 @@ const OTHER = "snbbbbbbbbbbbb";
 const releasing: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 const signal = () => AbortSignal.timeout(30_000);
 
-function setup(values: Record<string, unknown> = {}, now?: () => number) {
+function setup(values: Record<string, unknown> = {}, options: Partial<TartBackendOptions> = {}) {
   const ssh = fakeSsh();
   const mac = ssh.home(MAC);
   fakeMacTools(mac);
   addImage(mac);
   if (values["tart-linux-image"]) addImage(mac, "bb-box-linux", "linux");
   const make = (install = "test") => {
-    const backend = new TartBackend(tartConfig(values), testContext(new MemoryStorage(), install), { ...FAKES, ...(now ? { now } : {}) });
+    const backend = new TartBackend(tartConfig(values), testContext(new MemoryStorage(), install), { ...FAKES, ...options });
     made.push(backend);
     return backend;
   };
@@ -123,7 +123,7 @@ test("a take of a running macOS box suspends it, copies its folder with its save
 
 test("a Tart take of a running macOS box says it pauses the box while it suspends and saves its memory, and measures the pause from suspend to resume; a stopped box does not pause", async () => {
   let clock = 1_000_000;
-  const { backend } = setup({}, () => (clock += 9_000));
+  const { backend } = setup({}, { now: () => (clock += 9_000) });
   const box = identity();
   const guest = await backend.acquire(box, null, acquiring, signal());
 
@@ -148,6 +148,34 @@ test("a take whose suspend fails copies nothing, says so, and leaves the box run
   await assert.rejects(backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true }, recorder().hooks, signal()), (error: unknown) => error instanceof SnapshotFailed && /could not suspend bb-box-\S+ on mac1 to copy it, so it copied nothing/.test(error.message));
   assert.ok(!existsSync(join(snaps, SNAP)) && !existsSync(join(snaps, `${SNAP}.part`)));
   assert.equal(await backend.power(guest), "running");
+  await backend.release(guest, releasing);
+});
+
+test("a Tart take's measured pause ends when the VM resumes, not after the SSH, identity and clock checks that follow", async () => {
+  let clock = 1_000_000;
+  const { backend, ssh } = setup({}, { now: () => (clock += 9_000), sleep: async () => void (clock += 60_000) });
+  const box = identity();
+  const guest = await backend.acquire(box, null, acquiring, signal());
+
+  ssh.upAfter(guest.address!, 3);
+  const taken = await backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true }, recorder().hooks, signal());
+
+  assert.equal(taken.notResumed, null);
+  assert.equal(taken.pausedMs, 9_000, "the three minutes of SSH retries after the resume are not part of the pause");
+  await backend.release(guest, releasing);
+});
+
+test("a Tart take whose box does not resume reports no completed pause", async () => {
+  let clock = 1_000_000;
+  const { backend, mac } = setup({}, { now: () => (clock += 9_000) });
+  const box = identity();
+  const guest = await backend.acquire(box, null, acquiring, signal());
+
+  writeFileSync(join(mac, ".fake-tart-run-fails"), "2");
+  const taken = await backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true }, recorder().hooks, signal());
+
+  assert.match(taken.notResumed ?? "", /could not start bb-box-\S+ on mac1/);
+  assert.equal(taken.pausedMs, null);
   await backend.release(guest, releasing);
 });
 

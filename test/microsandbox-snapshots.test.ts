@@ -108,8 +108,9 @@ test("070 unit 10 review (Astra 2): msb changed under a running backend is read 
   assert.equal(fake.snapshots().length, 1);
 });
 
-test("a microsandbox take of the disk does not pause the box; one with memory pauses it about a second for its memory, measured around msb's snapshot command", async () => {
+test("a microsandbox take of a running box pauses it, disk or memory, for the time msb's runtime logs, not the time its command takes", async () => {
   const fake = fakeMsbHost();
+  fake.set({ diskPauseUs: 24_272, fullPauseUs: 289_747 });
   let clock = 1_000_000;
   const backend = new MsbBackend(msbConfig(), testContext(), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000, now: () => (clock += 1_300) });
   const box = identity();
@@ -119,13 +120,30 @@ test("a microsandbox take of the disk does not pause the box; one with memory pa
   const disk = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal());
   const memory = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: true, forkSafe: 7 }, QUIET, signal());
 
-  assert.deepEqual(plan.take.pause, { pauses: false });
+  assert.deepEqual(plan.take.pause, { pauses: true, aboutMs: null, basis: null }, "msb pauses the VM while it captures its disk");
   assert.deepEqual(plan.take.memory?.pause, { pauses: true, aboutMs: 1_500, basis: { bytes: SMALL.memoryMiB * 2 ** 20, of: "memory" } });
-  assert.equal(disk.pausedMs, 0);
-  assert.equal(memory.pausedMs, 1_300);
+  assert.equal(disk.pausedMs, 25, "msb's pause_us, 24,272 us, not its command's 1,300 ms");
+  assert.equal(memory.pausedMs, 290, "msb's vm_pause_window_us, 289,747 us, not its command's 1,300 ms");
   const listed = await backend.heldSnapshots(signal());
   assert.deepEqual(disk.size, { bytes: 2048 * 1024, means: "whole" });
   assert.deepEqual(listed.map((held) => held.size), [disk.size, memory.size], "its listing gives each snapshot's size, as its take did");
+});
+
+test("a microsandbox take whose pause msb does not log says the pause is unknown, never 0; a stopped box's take does not pause", async () => {
+  const fake = fakeMsbHost();
+  fake.set({ pauseLogged: false });
+  const backend = new MsbBackend(msbConfig(), testContext(), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
+  const box = identity();
+  const guest = await backend.acquire(box, null, acquiring(), signal());
+
+  const unlogged = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal());
+  await backend.stop(guest, signal());
+  const stoppedPlan = await backend.planSnapshots(guest, "linux", null, signal());
+  const stopped = await backend.snapshot(guest, { id: snapshotId(), box: box.boxId, memory: false, forkSafe: 7 }, QUIET, signal());
+
+  assert.equal(unlogged.pausedMs, null);
+  assert.deepEqual(stoppedPlan.take.pause, { pauses: false });
+  assert.equal(stopped.pausedMs, 0);
 });
 
 test("070 close-out: a Mac host's microsandbox boxes take and delete snapshots, as the probe on a Mac measured, and the doctor says so; another msb is still refused", async () => {
