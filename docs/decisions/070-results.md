@@ -16,7 +16,7 @@ for a production step, said on its line.
 | Backend | Live |
 | --- | --- |
 | Proxmox LXC | Take and delete; restore in place with its undo, checked on LVM-thin, and on ZFS in ZFS's order since [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md); forks by a full copy; Keep by a held copy. Unit 8 made G16's node reboot a condition before production's Keep is turned on |
-| Proxmox QEMU, Linux | As Proxmox LXC, with or without memory; forks and Keep from the disk only |
+| Proxmox QEMU, Linux | As Proxmox LXC, with or without memory, but restores nothing on ZFS; forks and Keep from the disk only |
 | boat.dev, a paid plan | Saved snapshots within the paid ceiling, with the price on each; restore as a swap to a new sandbox; forks and Keep from version 8 of the reset. Arming boat.dev's reset stays off in production until the owner arms it |
 | boat.dev, the free trial | No snapshots: the trial has no saved snapshots |
 | microsandbox | Take with or without memory; restore as a swap; forks from the disk; Keep as it is; chains, deleted with `--force`. On Linux hosts and, since the close-out, Macs, with `msb` 0.7.7 only. The lead smoke-tests it on production's Mac after merge |
