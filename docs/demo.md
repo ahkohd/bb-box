@@ -108,3 +108,9 @@ Wait for Android to boot after each restore and show both markers. Use the
 Box panel to switch to another device and back, then tap an app on the
 screen. Capture the screen before and after the tap. A model whose unsaved
 marker is present boots cold. Models with clean saves can quick-boot.
+
+For a Docker snapshot demonstration, use a separate BB with LXCFS installed
+on its Docker engine's host. Acquire a Linux box through BB Box, then take,
+list and delete a snapshot. Take another and release the box to show that
+release removes its snapshots too. Check the saved image's last layer for
+LXCFS file contents; those mounted files must not become part of the image.
