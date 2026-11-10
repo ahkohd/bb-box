@@ -30,6 +30,7 @@ test("Docker snapshots retain disk and Docker data, and can be deleted", async (
 
   const taken = await engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks);
   assert.equal(taken.holds, "disk");
+  assert.equal(taken.size?.means, "whole");
   assert.deepEqual(fake.volumeFiles("bbbox-snapshot-sn123-docker"), { value: "A" });
   const images = JSON.parse(await cli.ok(["image", "inspect", taken.ref]));
   assert.equal(images[0].Config.Labels["bbbox.box"], "");
@@ -275,4 +276,27 @@ test("Docker snapshot changes preserve image metadata", () => {
   const changes = commitChanges({ "bbbox.box": "source", "bbbox.image-version": "1", "bbbox.bb-app": "digest", "bbbox.image-record": "record", "bbbox.gpu-bus-id": "slot" }, {});
 
   assert.deepEqual(changes.filter((value) => value.startsWith("LABEL")), ['LABEL bbbox.box=""']);
+});
+
+
+test("Docker space probes leave no volume behind and doctor does not scan box data", async () => {
+  const { engine, cli, guest, fake } = await setup();
+
+  await engine.plan(guest);
+  const before = fake.calls().filter((args) => args.includes("du -sk /from")).length;
+  await engine.doctor();
+
+  assert.equal(fake.calls().filter((args) => args.includes("du -sk /from")).length, before);
+  assert.doesNotMatch(await cli.ok(["volume", "ls", "--format", "{{.Name}}"]), /snapshot-space/);
+});
+
+test("Docker cleans an orphan snapshot volume without unpausing its box", async () => {
+  const { engine, cli, guest } = await setup();
+  await cli.ok(["volume", "create", "--label", "bbbox.snapshot=sn123", "--label", "bbbox.snapshot.box=bx123", "--label", "bbbox.snapshot.install=test", "--label", `bbbox.snapshot.container=${guest.ref}`, "--label", "bbbox.snapshot.started=0", "--label", "bbbox.snapshot.estimate-ms=1000", "bbbox-snapshot-sn123-docker"]);
+  await cli.ok(["pause", guest.ref]);
+
+  await engine.maintain();
+
+  assert.equal((await cli.inspect([guest.ref]))[0]?.status, "paused");
+  assert.notEqual((await cli.run(["volume", "inspect", "bbbox-snapshot-sn123-docker"])).exitCode, 0);
 });

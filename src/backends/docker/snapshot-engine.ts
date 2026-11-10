@@ -133,7 +133,7 @@ export class DockerSnapshotEngine {
       }
       await this.#cli.ok(["container", "commit", "--pause=false", ...commitChanges(facts.container.Config.Labels, labels).flatMap((change) => ["--change", change]), guest.ref, image], { signal, timeoutMs: 15 * 60_000 });
       committed = true;
-      return { ref: image, holds: "disk", capturedAt: state.startedAt, size: { bytes: facts.estimate.addsBytes, means: "own" } };
+      return { ref: image, holds: "disk", capturedAt: state.startedAt, size: { bytes: facts.estimate.addsBytes, means: "whole" } };
     } catch (error) {
       await this.#context.storage.set(this.#key(take.id), { ...state, phase: "failed" });
       await this.#discard(state);

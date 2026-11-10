@@ -412,7 +412,8 @@ Snapshots stay on the box's Docker engine. Their images use
 `bbbox-snapshot-<snapshot>-docker`. Labels identify the install, box and snapshot.
 A restart finds them again. A release deletes them. If another container uses a
 snapshot image, deleting the snapshot removes its tag and volume; Docker keeps
-the shared image layers until that container goes. Restore, fork and Keep are
+the shared image layers until that container goes. The listed size is an estimate
+with shared layers, not a promise of space freed by deleting it. Restore, fork and Keep are
 not available yet.
 
 An older box's anonymous Docker volume can be copied too. Other writable mounts
