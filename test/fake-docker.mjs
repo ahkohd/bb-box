@@ -22,7 +22,7 @@
 // only this (#320). Every call is logged to log, one JSON array per line.
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { constants } from "node:os";
 import { join } from "node:path";
 
@@ -142,9 +142,12 @@ function run(rest) {
     const source = rest.find((arg) => arg.endsWith(":/from:ro"))?.split(":")[0];
     const target = rest.find((arg) => arg.endsWith(":/to"))?.split(":")[0];
     const volumes = read("volumes.json", {});
-    if (!volumes[source] || !volumes[target]) fail("Snapshot copy has a missing volume");
-    volumes[target].Files = structuredClone(volumes[source].Files ?? {});
-    write("volumes.json", volumes);
+    if (host.holdRestoreCopy && source.startsWith("bbbox-snapshot-")) waitFor(host.holdRestoreCopy);
+    if (host.failRestoreCopy && source.startsWith("bbbox-snapshot-")) fail("Restore copy failed");
+    if (!volumes[source] || !read("volumes.json", {})[target]) fail("Snapshot copy has a missing volume");
+    const now = read("volumes.json", {});
+    now[target].Files = structuredClone(volumes[source].Files ?? {});
+    write("volumes.json", now);
     return;
   }
   appendFileSync(join(root, "probes"), `${JSON.stringify(rest)}\n`);
@@ -245,6 +248,7 @@ function create(rest) {
   mounts.push(...volumeSpecs.map(volumeMount));
   mkdirSync(join(dir(name), "home"));
   mkdirSync(join(dir(name), "etc"));
+  if (existsSync(imageHome(image))) cpSync(imageHome(image), join(dir(name), "home"), { recursive: true });
   const count = names().length + 1;
   save({
     Id: id,
@@ -252,7 +256,7 @@ function create(rest) {
     // The ID of the image it was made from, as docker gives it: a tag moved later names another.
     Image: read("image-ids.json", {})[image] ?? `sha256:${createHash("sha256").update(image).digest("hex")}`,
     State: { Status: "created", ExitCode: 0 },
-    Config: { Hostname: options["--hostname"], Image: image, Labels: labels, Env: env, Cmd: command },
+    Config: { Hostname: options["--hostname"], Image: image, Labels: { ...(images[image] ?? {}), ...labels }, Env: inheritedEnv(read("image-env.json", {})[image] ?? [], env), Cmd: command },
     HostConfig: {
       NanoCpus: Math.round(Number(options["--cpus"]) * 1e9),
       CpusetCpus: options["--cpuset-cpus"] ?? "",
@@ -270,6 +274,21 @@ function create(rest) {
     FakeAddress: `172.30.0.${count + 1}`,
   });
   console.log(id);
+}
+
+function waitFor(file) {
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  while (!existsSync(file)) Atomics.wait(pause, 0, 0, 20);
+}
+
+function imageHome(image) {
+  return join(root, "image-homes", createHash("sha256").update(image).digest("hex"));
+}
+
+function inheritedEnv(fromImage, given) {
+  const keyOf = (entry) => entry.slice(0, entry.indexOf("="));
+  const givenKeys = new Set(given.map(keyOf));
+  return [...fromImage.filter((entry) => !givenKeys.has(keyOf(entry))), ...given];
 }
 
 function container(command, rest) {
@@ -302,7 +321,7 @@ function container(command, rest) {
       const found = find(rest.at(-1)) ?? fail(`Error response from daemon: No such container: ${rest.at(-1)}`);
       const name = found.Name.slice(1);
       mkdirSync(join(dir(name), "run", "bb-box"), { recursive: true });
-      if (host.failStart) {
+      if (host.failStart || (host.failStartMatching && new RegExp(host.failStartMatching).test(name))) {
         writeFileSync(join(dir(name), "logs"), "bb-box-start: something went wrong\n");
         found.State = { Status: "exited", ExitCode: 1 };
       } else {
@@ -336,8 +355,10 @@ function container(command, rest) {
       save(found);
       return console.log(ref);
     }
+    case "kill":
     case "stop": {
       const found = find(rest.at(-1)) ?? fail(`Error response from daemon: No such container: ${rest.at(-1)}`);
+      if (command === "kill" && found.State.Status !== "running") fail(`Error response from daemon: cannot kill container: ${rest.at(-1)}: container ${found.Id} is not running`);
       rmSync(join(dir(found.Name.slice(1)), "run"), { recursive: true, force: true });
       found.State = { Status: "exited", ExitCode: 0 };
       for (const network of Object.values(found.NetworkSettings.Networks)) network.IPAddress = "";
@@ -378,6 +399,7 @@ function container(command, rest) {
         const match = rest[i] === "--change" && /^ENV ([^=]+)=(.*)$/s.exec(rest[++i]);
         if (match) env.set(match[1], match[2]);
       }
+      cpSync(join(dir(found.Name.slice(1)), "home"), imageHome(tag), { recursive: true });
       write("image-env.json", { ...read("image-env.json", {}), [tag]: [...env].map(([key, value]) => `${key}=${value}`) });
       write("images.json", { ...images, [tag]: labels });
       write("image-ids.json", { ...read("image-ids.json", {}), [tag]: `sha256:${randomBytes(32).toString("hex")}` });

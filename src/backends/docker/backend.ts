@@ -17,9 +17,9 @@
 // - Every call that acts on a container inspects it first and acts only on
 //   one whose labels name this install and the box (018).
 
-import { DockerSnapshotEngine } from "./snapshot-engine.ts";
-import { dockerOffer } from "./snapshots.ts";
-import type { SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
+import { DockerSnapshotEngine, type RestorableSnapshot } from "./snapshot-engine.ts";
+import { dockerOffer, isBoxContainerName, restoredName } from "./snapshots.ts";
+import type { CopyHooks, GuestIdentity, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
 import { timedSpawn } from "../../transports/spawns.ts";
@@ -1282,8 +1282,8 @@ export class DockerBackend implements Backend {
     }, signal);
   }
 
-  #placingOf(box: BoxIdentity, gpu: string | null, card: string | null, part: GpuPart, cpus: CpuList | null): Placing {
-    return { backendId: this.id, name: containerName(box.boxId), memoryMiB: box.size.memoryMiB, gpu, cpus, card, part: card ? part : "none", needMiB: card ? neededMiB(box.kind, this.#config.gpuMemoryMiB) : 0, boxName: box.name, threadId: box.threadId };
+  #placingOf(box: BoxIdentity, gpu: string | null, card: string | null, part: GpuPart, cpus: CpuList | null, name = containerName(box.boxId)): Placing {
+    return { backendId: this.id, name, memoryMiB: box.size.memoryMiB, gpu, cpus, card, part: card ? part : "none", needMiB: card ? neededMiB(box.kind, this.#config.gpuMemoryMiB) : 0, boxName: box.name, threadId: box.threadId };
   }
 
   #resumePlacement(box: BoxIdentity, gpu: string | null, card: string | null, part: GpuPart, signal: AbortSignal, again = false): Promise<CpuList | null> {
@@ -1467,8 +1467,8 @@ export class DockerBackend implements Backend {
     return this.kinds().some((offer) => offer.id === kind) ? dockerOffer() : null;
   }
 
-  planSnapshots(guest: Guest, _kind: string, _target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
-    return this.#snapshots.plan(guest, signal);
+  planSnapshots(guest: Guest, _kind: string, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+    return this.#snapshots.plan(guest, target, signal);
   }
 
   snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
@@ -1489,6 +1489,81 @@ export class DockerBackend implements Backend {
 
   providerTask(task: TaskRef): Promise<TaskOutcome> {
     return this.#snapshots.settle(task);
+  }
+
+  async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) throw this.#gone(guest);
+    if (found.status === "paused") throw new Error(`The container ${guest.ref} is paused, so ${PRODUCT} left it running. Unpause it, or wait for its snapshot to finish, then try again.`);
+    if (!ACTIVE.has(found.status)) return;
+    await this.#cli.ok(["container", "kill", found.id], { timeoutMs: 60_000, signal });
+  }
+
+  async adoptSnapshot(ref: SnapshotRef, box: BoxIdentity, _identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
+    const snapshot = await this.#snapshots.restorable(ref, signal);
+    const name = restoredName(containerName(box.boxId), randomBytes(4).toString("hex"));
+    await hooks.claimed({ ref: name, host: this.#host, address: null, size: null, data: { box: box.boxId } });
+    await hooks.submitting();
+
+    const made = await this.#placementOf(ref.guest, box.boxId, signal);
+    const restored: BoxIdentity = { ...box, size: snapshot.size ? { ...box.size, cores: snapshot.size.cores, memoryMiB: snapshot.size.memoryMiB } : box.size };
+    const cpus = await this.#reserveRestored(restored, name, made, signal);
+    const stops = signal ?? new AbortController().signal;
+    try {
+      await this.#network(stops);
+      await this.#createRestored(restored, name, snapshot, made, cpus, stops);
+    } finally {
+      this.#unreserve(name);
+    }
+
+    const [container] = await this.#cli.inspect([name], signal);
+    if (!container) throw new Error(`The container ${name} went from ${this.#host} as ${PRODUCT} made it.`);
+    const guest: Guest = { ref: name, host: this.#host, address: null, size: sizeOf(container), data: dataOf(container, made.card, made.part) };
+    await hooks.claimed(guest);
+    return guest;
+  }
+
+  async #placementOf(earlier: Guest, boxId: string, signal?: AbortSignal): Promise<MadeGpu> {
+    const found = await this.#owned(earlier.ref, boxId, signal);
+    const gpu = found?.labels[LABELS.gpu] || null;
+    if (!found || !gpu) return { gpu: null, card: null, part: "none" };
+    const card = found.labels[LABELS.gpuCard] || deviceCard(gpu);
+    return { gpu, card, part: card ? (await this.#partOf(found)).part : "none" };
+  }
+
+  #reserveRestored(box: BoxIdentity, name: string, made: MadeGpu, signal?: AbortSignal): Promise<CpuList | null> {
+    return this.#underPlacement(async () => {
+      const cpus = await this.#allot(await this.#state(signal), name, box.size.cores, signal);
+      this.#reserve(name, this.#placingOf(box, made.gpu, made.card, made.part, cpus, name));
+      return cpus;
+    }, signal);
+  }
+
+  async #createRestored(box: BoxIdentity, name: string, snapshot: RestorableSnapshot, made: MadeGpu, cpus: CpuList | null, signal: AbortSignal): Promise<void> {
+    if (box.kind === "linux-desktop" && made.gpu) await this.#readGpuBusId(signal);
+    const privileged = this.#privileged(box.kind);
+    const dockerVolume = privileged ? boxVolumeName(name) : null;
+    if (dockerVolume) {
+      await this.#ensureDockerVolume(name, dockerVolume, signal);
+      await this.#snapshots.copyDockerData(snapshot, dockerVolume, signal);
+    }
+
+    await this.#cli.ok(
+      createArgs({
+        box,
+        installId: this.#context.installId,
+        name,
+        image: snapshot.image,
+        dockerVolume,
+        placement: { gpu: made.gpu, card: made.card, part: made.part, cpus },
+        lxcfs: await this.#lxcfsOnHost(signal),
+        privileged,
+        network: this.#config.network,
+        restart: "unless-stopped",
+        fromSnapshot: snapshot.id,
+      }),
+      { timeoutMs: 120_000, signal },
+    );
   }
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
@@ -2289,7 +2364,7 @@ export class DockerBackend implements Backend {
     const labels = found.labels;
     if (labels[LABELS.backend] !== "docker" || labels[LABELS.install] !== this.#context.installId) return null;
     const box = labels[LABELS.box];
-    if (!box || (boxId !== null ? box !== boxId : containerName(box) !== found.name)) return null;
+    if (!box || (boxId !== null ? box !== boxId : !isBoxContainerName(containerName(box), found.name))) return null;
     return found;
   }
 

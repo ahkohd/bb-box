@@ -309,7 +309,9 @@ test("acquires a box as a container labelled from its first write, claimed befor
   assert.deepEqual(Object.keys(seen.timings), ["place", "network", "create", "start", "ready"]);
 
   const container = fake.inspect(name);
-  assert.deepEqual(container.Config.Labels, {
+  const imageLabels = new Set(["bbbox.image-version", "bbbox.image-record"]);
+  const setByBbBox = Object.fromEntries(Object.entries(container.Config.Labels).filter(([key]) => !imageLabels.has(key)));
+  assert.deepEqual(setByBbBox, {
     "bbbox.backend": "docker",
     "bbbox.install": "test",
     "bbbox.box": box.boxId,

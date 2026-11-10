@@ -25,7 +25,7 @@ async function setup(anonymous = false) {
 test("Docker snapshots retain disk and Docker data, and can be deleted", async () => {
   const { engine, cli, guest, hooks, fake } = await setup();
   fake.writeVolumeFiles("box-docker", { value: "A" });
-  const plan = await engine.plan(guest);
+  const plan = await engine.plan(guest, null);
   assert.equal(plan.take.ok, true);
 
   const taken = await engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks);
@@ -84,7 +84,7 @@ test("Docker refuses images at the layer limit before pausing", async () => {
   const { engine, guest, hooks, fake } = await setup();
   fake.set({ snapshotLayers: 120 });
 
-  assert.equal((await engine.plan(guest)).take.ok, false);
+  assert.equal((await engine.plan(guest, null)).take.ok, false);
   await assert.rejects(engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks), /120 or more layers/);
   assert.equal(fake.calls().some((args) => args[0] === "pause"), false);
 });
@@ -179,7 +179,7 @@ test("Docker reports the engine's space for the core's room check", async () => 
   const { engine, guest, fake } = await setup();
   fake.set({ snapshotUsedKiB: 860000 });
 
-  const plan = await engine.plan(guest);
+  const plan = await engine.plan(guest, null);
   assert.equal(plan.storage.percentFull, 86);
   assert.equal(plan.storage.totalBytes, 1000000 * 1024);
   assert.equal(plan.take.addsBytes, 4096 + 1024 * 1024);
@@ -282,7 +282,7 @@ test("Docker snapshot changes preserve image metadata", () => {
 test("Docker space probes leave no volume behind and doctor does not scan box data", async () => {
   const { engine, cli, guest, fake } = await setup();
 
-  await engine.plan(guest);
+  await engine.plan(guest, null);
   const before = fake.calls().filter((args) => args.includes("du -sk /from")).length;
   await engine.doctor();
 
