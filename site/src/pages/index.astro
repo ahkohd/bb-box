@@ -342,21 +342,11 @@ import appIcon from "../assets/app-icon.png";
     opacity: 0;
     transition: opacity 200ms ease;
     mask-image:
-      linear-gradient(90deg, #000, rgb(0 0 0 / 0.7) 30%, #000 55%, rgb(0 0 0 / 0.78) 80%, #000),
-      linear-gradient(to bottom, #000 55%, transparent);
+      linear-gradient(90deg, rgb(0 0 0 / var(--dither-edge)), rgb(0 0 0 / var(--dither-dip-a)) 30%, rgb(0 0 0 / var(--dither-middle)) 55%, rgb(0 0 0 / var(--dither-dip-b)) 80%, rgb(0 0 0 / var(--dither-edge))),
+      linear-gradient(to bottom, rgb(0 0 0 / 1.000) 55.0%, rgb(0 0 0 / 0.957) 60.6%, rgb(0 0 0 / 0.844) 66.3%, rgb(0 0 0 / 0.684) 71.9%, rgb(0 0 0 / 0.500) 77.5%, rgb(0 0 0 / 0.316) 83.1%, rgb(0 0 0 / 0.156) 88.8%, rgb(0 0 0 / 0.043) 94.4%, rgb(0 0 0 / 0.000) 100.0%);
     mask-size: 50% 100%, 100% 100%;
     mask-repeat: repeat-x, no-repeat;
     mask-composite: intersect;
-    animation-name: dither-drift-fading;
-  }
-
-  @keyframes dither-drift-fading {
-    from {
-      mask-position: 0% 0, 0 0;
-    }
-    to {
-      mask-position: 200% 0, 0 0;
-    }
   }
 
   .bar[data-scrolled]::before {
@@ -375,18 +365,61 @@ import appIcon from "../assets/app-icon.png";
     background-color: color-mix(in srgb, var(--background) 72%, transparent);
     background-image: repeating-conic-gradient(var(--background) 0 25%, transparent 0 50%);
     background-size: 2px 2px;
-    mask-image: linear-gradient(90deg, #000, rgb(0 0 0 / 0.7) 30%, #000 55%, rgb(0 0 0 / 0.78) 80%, #000);
+    mask-image: linear-gradient(90deg, rgb(0 0 0 / var(--dither-edge)), rgb(0 0 0 / var(--dither-dip-a)) 30%, rgb(0 0 0 / var(--dither-middle)) 55%, rgb(0 0 0 / var(--dither-dip-b)) 80%, rgb(0 0 0 / var(--dither-edge)));
     mask-size: 50% 100%;
     mask-repeat: repeat-x;
-    animation: dither-drift 14s linear infinite;
+    animation:
+      dither-dissolve-dip-a 7s ease-in-out infinite alternate,
+      dither-dissolve-dip-b 11s ease-in-out -4s infinite alternate,
+      dither-dissolve-middle 9s ease-in-out -2s infinite alternate,
+      dither-dissolve-edge 13s ease-in-out -6s infinite alternate;
   }
 
-  @keyframes dither-drift {
-    from {
-      mask-position: 0% 0;
-    }
+  @property --dither-dip-a {
+    syntax: "<number>";
+    inherits: false;
+    initial-value: 0.7;
+  }
+
+  @property --dither-dip-b {
+    syntax: "<number>";
+    inherits: false;
+    initial-value: 0.78;
+  }
+
+  @property --dither-middle {
+    syntax: "<number>";
+    inherits: false;
+    initial-value: 1;
+  }
+
+  @property --dither-edge {
+    syntax: "<number>";
+    inherits: false;
+    initial-value: 1;
+  }
+
+  @keyframes dither-dissolve-dip-a {
     to {
-      mask-position: 200% 0;
+      --dither-dip-a: 1;
+    }
+  }
+
+  @keyframes dither-dissolve-dip-b {
+    to {
+      --dither-dip-b: 1;
+    }
+  }
+
+  @keyframes dither-dissolve-middle {
+    to {
+      --dither-middle: 0.72;
+    }
+  }
+
+  @keyframes dither-dissolve-edge {
+    to {
+      --dither-edge: 0.76;
     }
   }
 
