@@ -125,8 +125,8 @@ function Reading({ colour, label, value }: { colour: string; label: string; valu
   );
 }
 
-export function BarNumbers({ machineId, name, page, everyWidth = false }: { machineId: string; name: string; page: PageLink; everyWidth?: boolean }) {
-  const { container, snapshot, error } = useMonitorSnapshot(machineId);
+export function BarNumbers({ machineId, boxId, name, page, everyWidth = false }: { machineId: string; boxId?: string; name: string; page: PageLink; everyWidth?: boolean }) {
+  const { container, snapshot, error } = useMonitorSnapshot(machineId, boxId);
   return (
     <div ref={container} data-bar-numbers className={cn("flex items-center", !everyWidth && "max-sm:hidden", CHART_TONES)}>
       <BarReading snapshot={snapshot} error={error} name={name} page={page} />

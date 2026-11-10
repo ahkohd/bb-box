@@ -28,7 +28,7 @@ import { PRODUCT } from "./product.ts";
 
 export function GpuNotices({ box, monitor, threadId = null }: { box: BoxView; monitor: MonitorReach; threadId?: string | null }) {
   const machineId = monitor.is === "read" ? monitor.machineId : null;
-  const reading = useMonitorSnapshot(machineId ?? "gpu-unread");
+  const reading = useMonitorSnapshot(machineId ?? "gpu-unread", machineId ? box.id : undefined);
   const seen = reading.snapshot?.gpus?.cards ?? [];
   const wrong = wrongCardNotice(box, seen);
   const userspace = userspaceNotice(box);
@@ -188,7 +188,7 @@ function readingOf(reach: MonitorReach, snapshot: { readonly gpus?: GpuReading |
 
 export function GpuCard({ box, mates, monitor, busy, onChange }: { box: BoxView; mates: readonly GpuMate[]; monitor: MonitorReach; busy: boolean; onChange: () => void }) {
   const machineId = monitor.is === "read" ? monitor.machineId : null;
-  const container = useMonitorSnapshot(machineId ?? "gpu-unread");
+  const container = useMonitorSnapshot(machineId ?? "gpu-unread", machineId ? box.id : undefined);
   const part = partOf(box);
   const shown = readingOf(monitor, container.snapshot, box);
   const reach = everyCardLine(box);

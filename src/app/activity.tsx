@@ -866,7 +866,7 @@ export function Activity({ page, box, now }: { page: BoxPageState; box: BoxView;
   const group = <RangeGroup value={range} onChange={setChosen} liveWhy={liveWhy} />;
   const liveLines = useHidden<LineKey>(["host", ...GPU_MEMORY_HIDDEN]);
   const expectedCards = expectedCardsOf(box);
-  if (reach.is === "read" && reach.machineId) return <LiveActivity key={reach.machineId} machineId={reach.machineId} box={box} range={range} group={group} lines={liveLines} expectedCards={expectedCards} />;
+  if (reach.is === "read" && reach.machineId) return <LiveActivity machineId={reach.machineId} box={box} range={range} group={group} lines={liveLines} expectedCards={expectedCards} />;
   return (
     <div className="space-y-5" data-activity-frame>
       <ActivityCard status={reach.is === "off" ? "Not read" : null} group={group}>
@@ -886,7 +886,8 @@ function readStatus(snapshot: MonitorSnapshot | null, error: string | null, acti
 }
 
 function LiveActivity({ machineId, box, range, group, lines, expectedCards }: { machineId: string; box: BoxView; range: ActivityRange; group: ReactNode; lines: LiveLines; expectedCards: number }) {
-  const { container, active, snapshot, error } = useMonitorSnapshot(machineId);
+  const monitor = useMonitorSnapshot(machineId, box.id);
+  const { container, active, error, snapshot } = monitor;
   const readCards = snapshot ? gpuCardCount(snapshot) : 0;
   const [seenCards, setSeenCards] = useState(expectedCards);
   const cards = Math.max(seenCards, readCards);

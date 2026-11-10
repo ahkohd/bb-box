@@ -7,6 +7,8 @@ import { HISTORY_RANGES } from "../src/monitor/history-view.ts";
 import type { BoxView } from "../src/plugin/views.ts";
 import { forgetLive } from "../src/app/common.tsx";
 import { forgetActivity } from "../src/app/activity.tsx";
+import { clockWithSeconds } from "../src/app/activity-words.ts";
+import { forgetMonitorReadings } from "../src/app/monitor/use-snapshot.ts";
 import { upWords } from "../src/app/monitor/status.tsx";
 import { sidebarTitle, threadGroupHeading } from "../src/app/desktop.tsx";
 import { threadInSentence } from "../src/app/thread-chips.tsx";
@@ -113,11 +115,11 @@ function historyView(range: HistoryRange, patch: Partial<BoxHistoryView> = {}, m
   };
 }
 
-function handlers(state: { page: () => BoxPageState; reading: () => MonitorSnapshot; history?: (range: HistoryRange) => BoxHistoryView | null }): PluginRpcTestHandlers<Contract> {
+function handlers(state: { page: () => BoxPageState; reading: () => MonitorSnapshot | Promise<MonitorSnapshot>; machine?: (machineId: string) => MonitorSnapshot | Promise<MonitorSnapshot>; history?: (range: HistoryRange) => BoxHistoryView | null }): PluginRpcTestHandlers<Contract> {
   return {
     boxPage: () => state.page(),
     "monitor.history": ({ range }: { range: HistoryRange }) => (state.history ?? ((asked: HistoryRange) => historyView(asked)))(range),
-    "monitor.machine": () => state.reading(),
+    "monitor.machine": ({ machineId }: { machineId: string }) => (state.machine ? state.machine(machineId) : state.reading()),
     "monitor.state": () => ({ enabled: true, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true, historyFull: null }),
     "monitor.machines": () => ({ machines: [] }),
     "monitor.alerts": () => ({ enabled: false, notifications: true, cursor: 0, active: [], recent: [] }),
@@ -159,6 +161,7 @@ vi.spyOn(Element.prototype, "getClientRects").mockReturnValue([{}] as unknown as
 const app = await loadPluginApp(() => import("../app.tsx"));
 
 beforeEach(() => {
+  forgetMonitorReadings();
   reach = read();
 });
 
@@ -320,6 +323,119 @@ test("a box BB Box cannot read says the Monitor's words in Activity's frame, whi
   open(handlers({ page: () => page(boxView({ os: "windows" }), unreadable), reading: () => snapshot() }));
   const kept = await within(await activity()).findByRole("application", { name: /^CPU and memory, the last 24 hours/ });
   await waitFor(() => expect(document.getElementById(kept.getAttribute("aria-describedby")!)!.textContent).toMatch(/CPU averaged 30%/));
+});
+
+test.each(["cached", "late"])("a %s reading never replaces a later fetch, even when the next guest clock is behind", async (arrival) => {
+  forgetMonitorReadings();
+  const cardId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const early = "host-early-1428";
+  const later = "host-later-1428";
+  const earlierAt = "2026-11-10T08:32:10.000Z";
+  const shownAt = "2026-11-10T08:32:13.000Z";
+  const behindAt = "2026-11-10T08:32:08.000Z";
+  const readAt = (iso: string) => `Read at ${clockWithSeconds(Date.parse(iso))}`;
+  const cpu = () => within(screen.getByRole("region", { name: "Activity" })).getByRole("region", { name: "CPU" }).textContent ?? "";
+  const cardUse = () => screen.getByRole("region", { name: "GPU card" }).textContent ?? "";
+  const at = (iso: string, usage: number) => {
+    const base = snapshot({ timestamp: iso, refreshIntervalMs: 2000 });
+    return {
+      ...base,
+      cpu: { ...base.cpu, usagePercent: usage },
+      gpus: {
+        cards: [{ index: 0, uuid: cardId, name: "NVIDIA RTX 4090", usagePercent: usage, memoryUsedBytes: 2 * 1024 ** 3, memoryTotalBytes: 8 * 1024 ** 3, temperatureC: 40, powerWatts: 100, powerLimitWatts: 200, shared: true, ownMemoryBytes: 1024 ** 3, ownProcesses: 1 }],
+        processes: [],
+      },
+    };
+  };
+  const gpuBox = () => boxView({
+    id: "bxgpuorder1428",
+    gpu: true,
+    gpuPart: "shared",
+    claim: { card: cardId, part: "shared", generation: 1, answer: "granted" },
+    facts: [{ label: "GPU", value: "card 0, shared, NVIDIA RTX 4090, 24 GiB" }],
+  });
+
+  let machineId = early;
+  let earlyCalls = 0;
+  let releaseEarly: (reading: MonitorSnapshot) => void = () => {};
+  const earlyReading = new Promise<MonitorSnapshot>((resolve) => {
+    releaseEarly = resolve;
+  });
+  const slot = open(handlers({
+    page: () => page(gpuBox(), { is: "read", machineId, why: null }),
+    reading: () => snapshot(),
+    machine: (id) => {
+      if (id === early) {
+        earlyCalls += 1;
+        return earlyCalls === 1 ? earlyReading : at(behindAt, 53);
+      }
+      return at(shownAt, 81);
+    },
+  }));
+
+  await vi.waitFor(() => expect(earlyCalls).toBe(1));
+
+  if (arrival === "cached") {
+    releaseEarly(at(earlierAt, 17));
+    await waitFor(() => expect(cpu()).toContain("17"));
+  }
+
+  machineId = later;
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+  await waitFor(() => expect(cpu()).toContain("81"));
+  await waitFor(() => expect(cardUse()).toContain("81%"));
+  expect(screen.getByRole("region", { name: "Activity" }).textContent).toContain(readAt(shownAt));
+
+  releaseEarly(at(earlierAt, 17));
+  await earlyReading;
+  machineId = early;
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+
+  const started = Date.now();
+  while (Date.now() - started < 1000) {
+    expect(cpu()).toContain("81");
+    expect(cpu()).not.toContain("17");
+    expect(cardUse()).toContain("81%");
+    expect(cardUse()).not.toContain("17%");
+    expect(screen.getByRole("region", { name: "Activity" }).textContent).toContain(readAt(shownAt));
+    expect(screen.getByRole("region", { name: "Activity" }).textContent).not.toContain(readAt(earlierAt));
+    await pause(50);
+  }
+
+  await vi.waitFor(() => expect(cpu()).toContain("53"), { timeout: 12_000, interval: 100 });
+  await waitFor(() => expect(cardUse()).toContain("53%"));
+  expect(cardUse()).not.toContain("81%");
+  expect(screen.getByRole("region", { name: "Activity" }).textContent).toContain(readAt(behindAt));
+  expect(screen.getByRole("region", { name: "Activity" }).textContent).not.toContain(readAt(shownAt));
+}, 20_000);
+
+test("selecting another box never carries the previous box's numbers", async () => {
+  forgetMonitorReadings();
+  let selected = "first";
+  let resolveFirst: (value: MonitorSnapshot) => void = () => {};
+  const pending = new Promise<MonitorSnapshot>((resolve) => { resolveFirst = resolve; });
+  const at = (usage: number) => {
+    const base = snapshot();
+    return { ...base, cpu: { ...base.cpu, usagePercent: usage } };
+  };
+  const slot = open(handlers({
+    page: () => page(boxView({ id: selected }), { is: "read", machineId: selected, why: null }),
+    reading: () => snapshot(),
+    machine: (id) => id === "first" ? pending : at(81),
+  }));
+  await pause(100);
+
+  selected = "second";
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+  const cpu = () => within(screen.getByRole("region", { name: "Activity" })).getByRole("region", { name: "CPU" }).textContent ?? "";
+  await waitFor(() => expect(cpu()).toContain("81"));
+
+  resolveFirst(at(17));
+  await pending;
+  selected = "first";
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+  await waitFor(() => expect(cpu()).toContain("17"));
+  expect(cpu()).not.toContain("81");
 });
 
 test("a reading that fails after one worked keeps the last numbers under the Monitor's notice", async () => {
@@ -796,3 +912,67 @@ test("over 1 h and 24 h each GPU is a line from box history, with its busiest mi
   await waitFor(() => expect(chart.textContent).toContain("GPU was shared with other boxes, so its lines are the whole card's."));
   expect(within(card).getByRole("button", { name: "GPU" }).getAttribute("aria-pressed")).toBe("true");
 });
+
+test("the box page and Monitor share each scheduled fetch", async () => {
+  vi.useFakeTimers();
+  const reading = vi.fn(() => snapshot({ refreshIntervalMs: 2000 }));
+  const rpc = {
+    ...handlers({ page: () => page(boxView(), { is: "read", machineId: "host_calm", why: null }), reading }),
+    "monitor.machines": () => ({ machines: [{ id: "host_calm", name: "calm-otter", connected: true, isServer: false, isBox: true, boxId: BOX_ID }] }),
+  };
+  localStorage.setItem("bb-box:monitor:machine", "host_calm");
+  open(rpc);
+  await vi.waitFor(() => expect(reading).toHaveBeenCalledTimes(1));
+
+  const footer = app.experimentalSidebarFooterItems.find((item) => item.id === "status");
+  if (!footer || !("component" in footer)) throw new Error("Monitor disclosure is missing");
+  renderSlot<{ dismiss: () => void }, Contract>(footer, { dismiss: vi.fn() }, { rpc, pluginId: "bb-box" });
+  try {
+    await vi.advanceTimersByTimeAsync(7000);
+  } finally {
+    vi.useRealTimers();
+  }
+
+  expect(reading).toHaveBeenCalledTimes(4);
+});
+
+function probe2At(usage: number, refreshIntervalMs = 60_000): MonitorSnapshot {
+  const base = snapshot({ refreshIntervalMs });
+  return { ...base, cpu: { ...base.cpu, usagePercent: usage } };
+}
+
+function probe2Cpu(): string {
+  return within(screen.getByRole("region", { name: "Activity" })).getByRole("region", { name: "CPU" }).textContent ?? "";
+}
+
+async function probe2Select(name: string): Promise<void> {
+  const header = () => within(document.querySelector<HTMLElement>("[data-bb-box-monitor-header]")!).getByRole("button", { name: "Machine" });
+  fireEvent.click(header());
+  const list = await screen.findByRole("listbox", { name: "Machines" });
+  fireEvent.click(within(list).getAllByRole("option").find((option) => option.textContent?.includes(name))!);
+  await waitFor(() => expect(header().textContent).toContain(name));
+}
+
+test("probe H: the Monitor visiting nine other machines does not blank the mounted box page's reading", async () => {
+  forgetMonitorReadings();
+  const boxMachine = "host-probe-h";
+  const others = Array.from({ length: 9 }, (_, index) => ({ id: `host-other-${index}`, name: `other-${index}`, connected: true, isServer: false, isBox: false, boxId: null }));
+  const calls: string[] = [];
+  const rpc = {
+    ...handlers({ page: () => page(boxView(), { is: "read", machineId: boxMachine, why: null }), reading: () => snapshot() }),
+    "monitor.machines": () => ({ machines: [{ id: boxMachine, name: "calm-otter", connected: true, isServer: false, isBox: true, boxId: BOX_ID }, ...others] }),
+    "monitor.machine": ({ machineId: id }: { machineId: string }) => { calls.push(id); return id === boxMachine ? probe2At(40) : probe2At(81); },
+  } as PluginRpcTestHandlers<Contract>;
+  localStorage.setItem("bb-box:monitor:machine", "host-other-0");
+  open(rpc);
+  await waitFor(() => expect(probe2Cpu()).toContain("40"));
+  const footer = app.experimentalSidebarFooterItems.find((item) => item.id === "status")!;
+  if (!("component" in footer)) throw new Error("Monitor disclosure is missing");
+  renderSlot(footer, { dismiss: vi.fn() }, { rpc, pluginId: "bb-box" });
+
+  for (const other of others) {
+    await probe2Select(other.name);
+    await waitFor(() => expect(calls).toContain(other.id));
+  }
+  expect(probe2Cpu()).toContain("40");
+}, 30_000);
