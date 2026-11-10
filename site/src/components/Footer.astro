@@ -1,6 +1,8 @@
 ---
 import StarlightFooter from "@astrojs/starlight/components/Footer.astro";
+import { asciiCursorCss } from "../cursor-art.ts";
 import { repository, repositoryRef } from "../repo.ts";
+import ScrollRail from "./home/ScrollRail.astro";
 
 const fileUrl = (path: string) => `${repository}/blob/${repositoryRef}/${path}`;
 ---
@@ -10,6 +12,8 @@ const fileUrl = (path: string) => `${repository}/blob/${repositoryRef}/${path}`;
   <a href={fileUrl("LICENSE")}>MIT licence</a>
   <a href={fileUrl("THIRD-PARTY.md")}>Third-party software</a>
 </p>
+<ScrollRail />
+<Fragment set:html={`<style>${asciiCursorCss}</style>`} />
 
 <style>
   .site-footer {
