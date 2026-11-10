@@ -160,3 +160,44 @@ every run, and its inner Docker still ran containers. A Docker box's start
 script never starts BB's daemon: BB Box starts it with BB's bootstrap once the
 box is handed over, so no refused copy ran as its source's BB machine. After
 the releases, Docker listed no BB Box containers, volumes or snapshot images.
+
+## A fork held until its check
+
+Measured on 10 November 2026 on a Proxmox QEMU VM with 8 vCPU, 16 GiB of
+memory and a 100 GiB disk: Docker 29.1.3 with the containerd image store,
+and the Linux image built from this change, labelled `bbbox.fork-hold="1"`
+and holding `/usr/local/libexec/bb-box/fork-hold`. A separate BB ran there,
+a fresh `npx bb-app@0.49.0` with no account, its ports dropped from outside
+the VM, with BB Box installed from the branch and markers on for its Docker
+backend. A `docker` wrapper first on BB's PATH logged each call and, while a
+gate file was there, held BB Box's check of a fork before it ran, so the
+fork could be read as BB Box's check would find it.
+
+The source was one of the person's machines, `linux` with 2 cores and 2 GiB.
+It wrote `A` to `~/work.txt`, and in its Docker to an inner container's
+writable layer and named volume. A second inner container, with restart
+policy `always`, ran the box's own `sshd` on port 2222 through `chroot`, as
+the review that found the gap did, with the box's SSH host keys made by
+`ssh-keygen -A`. The source also held a stand-in Tailscale state file. Two
+snapshots were taken: one as it was, and one with `bb-box-identity boot`
+changed to exit 0 without resetting.
+
+| Run | What happened |
+| --- | --- |
+| Fork of the faulted snapshot, held at BB Box's check | The fork still held the source's marker, machine ID, SSH host keys, BB machine credentials, access file and Tailscale state, as its reset had not run. It ran `docker-init`, `bb-box-start`, `fork-hold` and `sleep` alone. No TCP port from 1 to 65535 answered on its address, `ssh-keyscan` on port 2222 had no answer, there was no Docker socket, and no inner container ran. When the gate opened, the check refused it: "its boot's identity check says "none", not that it reset". BB Box set its policy to `no`, killed it and deleted its container and Docker data. It never wrote the release |
+| Fork of the snapshot as it was, held at BB Box's check | Its own identity value, a marker with its own value and no box, a new machine ID and new SSH host keys, no BB credentials, access file or Tailscale state of the source's. It ran the same four processes, no port answered and no inner container ran. When the gate opened, the check passed. BB Box changed the policy to `unless-stopped` 67 ms after the gate opened, and wrote the release 22 ms after that. Its inner containers started 560 ms after the release. Port 2222 then served the fork's own new ED25519 key, not the source's. Its start took 668 ms and the check 703 ms, the gate's wait included |
+| BB's server killed with `kill -9` while a fork was held at its check | BB's own supervisor started the server again at once, before the VM's BB machine had reconnected, so the fork failed and BB Box could not yet delete it. The fork stayed held for 3 minutes, its four processes and no port, through a `docker restart` too. The next sweep set its policy to `no`, killed it and deleted it and its Docker data. It never wrote the release |
+| An ordinary stop and start of the source | Not held: its inner containers started 520 ms after `docker start` |
+| A restore of the source to the snapshot as it was | Not held: the new container had `BBBOX_FORK_HOLD` blank, from the snapshot's image, and restart policy `unless-stopped`. Its inner containers started 470 ms after `docker start`, with `A` back |
+
+The fork joined BB as a BB machine of its own, with credentials of its own.
+A write of `B` in the fork, in all three places, left the source with `A`,
+and with its own marker, machine ID, SSH host keys and BB credentials.
+
+The fork's first enrolment, and the source's reconnection after its
+restore, could not reach BB at the VM's `docker0` address: each box's own
+Docker had taken the same range, `172.16.0.0/24`, from the VM's Docker
+address pools, so the address was the box's own. With BB's machine URL set
+to the box network's gateway, the fork joined BB. This comes from the VM's
+address pools, not from the hold. After the releases, Docker listed no
+containers, volumes or snapshot images of the test install.
