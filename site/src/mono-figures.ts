@@ -9,7 +9,7 @@ function figureSpans(text: string): ElementContent[] | undefined {
   for (const match of text.matchAll(figure)) {
     const at = match.index ?? 0;
     if (at > from) pieces.push({ type: "text", value: text.slice(from, at) });
-    pieces.push({ type: "element", tagName: "span", properties: { className: ["figure"] }, children: [{ type: "text", value: match[0] }] });
+    pieces.push({ type: "element", tagName: "span", properties: { className: ["figure"] }, children: [{ type: "text", value: match[0].replace(/\s+/g, "") }] });
     from = at + match[0].length;
   }
   if (!pieces.length) return undefined;
