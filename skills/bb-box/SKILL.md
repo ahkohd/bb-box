@@ -242,6 +242,14 @@ Beyond those:
 
 ## Snapshots
 
+After an Android host restarts, including a snapshot restore or undo, BB Box
+starts its selected device cold. Each other model also starts cold the first
+time you switch to it in that host boot. This keeps an older quick-boot save
+from replacing the restored disk data. Later switches in the same host boot
+can use quick boot. Wait for Android to finish booting before running adb
+commands.
+
+
 Where a box's backend takes them (`box_status` and `box_list` say), a
 snapshot keeps a box's disk, or with `memory` its running apps too, so you
 can put the box back to it. A Windows desktop on Proxmox QEMU snapshots its

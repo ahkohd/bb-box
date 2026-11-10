@@ -38,6 +38,14 @@ A Windows desktop's snapshot holds its disk and its EFI and TPM state volumes. I
 
 An Android box on Proxmox QEMU snapshots the whole VM disk, including the Linux host files and Android device data, while it runs. It restores in place with a snapshot undo on LVM-thin, Ceph RBD, BTRFS and qcow2. On ZFS, take and delete work but restore is refused. Memory snapshots, forks and Keep are refused. The Android device and its host have no identity reset BB Box has checked. Device-only snapshots are separate and remain unbuilt.
 
+After an Android host restarts, including a snapshot restore or undo, BB Box
+starts its selected device cold. Each other model also starts cold the first
+time you switch to it in that host boot. This keeps an older quick-boot save
+from replacing the restored disk data. Later switches in the same host boot
+can use quick boot. Wait for Android to finish booting before running adb
+commands.
+
+
 ### What is not built yet
 
 - **Restores of a box threads run on stay off.** BB cannot yet hold every turn on a box: its "Send now" can start a turn while BB Box stops the box to restore it. Until BB can, move the threads off the box, or archive them, before you restore it. You and agents can restore every other box. See [restores of a box threads run on stay off](#restores-of-a-box-threads-run-on-stay-off).

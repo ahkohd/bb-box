@@ -45,6 +45,7 @@ export interface EmulatorOptions {
   readonly run?: Runner;
   readonly alive?: (pid: number) => boolean;
   readonly manager?: () => Promise<EmulatorManager>;
+  readonly bootId?: () => Promise<string>;
   readonly processes?: () => Promise<readonly HostProcess[]>;
   readonly log: (line: string) => void;
 }
@@ -296,8 +297,14 @@ export class Emulator {
     const refused = await this.firewallInPlace();
     if (refused) throw new EmulatorRefused("firewall-missing", `The device's firewall is not in place, so the emulator does not start: ${refused}. Run sudo systemctl restart bb-box-device-firewall in the box, or acquire another box.`);
     await mkdir(this.#options.dir, { recursive: true, mode: 0o700 });
+
     const unsaved = await this.endedUnsaved(avd);
-    const cold = options.cold || unsaved;
+    const bootId = await (this.#options.bootId?.() ?? readFile("/proc/sys/kernel/random/boot_id", "utf8"));
+    const bootFile = join(this.#options.dir, `emulator-host-boot-${avd}`);
+    const previousBoot = await readFile(bootFile, "utf8").catch(() => null);
+    const cold = options.cold || unsaved || previousBoot !== bootId;
+
+    await writeFile(bootFile, bootId, { mode: 0o600 });
     await writeFile(this.unsavedMarker(avd), "", { mode: 0o600 });
     await this.#freshConsoleToken();
     await this.#run(this.adb, ["start-server"], { timeoutMs: COMMAND_MS });

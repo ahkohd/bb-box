@@ -1000,15 +1000,46 @@ describe("the emulator's service", () => {
     const dir = join(home, ".bb-box", "device");
     const seen: string[] = [];
     let firewall: Partial<Ran> = { code: 1, stderr: "bb-box-device-firewall: the table inet bb_box_device is not loaded" };
-    const emulator = new Emulator({ dir, home, alive: () => true, log: () => {}, manager: async () => "systemd", run: async (program, args, options) => (program.endsWith("firewall") ? { code: 0, stdout: "", stderr: "", ...firewall } : runner({}, seen)(program, args, options)) });
+    const emulator = new Emulator({ dir, home, bootId: async () => "test-boot", alive: () => true, log: () => {}, manager: async () => "systemd", run: async (program, args, options) => (program.endsWith("firewall") ? { code: 0, stdout: "", stderr: "", ...firewall } : runner({}, seen)(program, args, options)) });
     await assert.rejects(emulator.start("pixel_8", { cold: false, signal: AbortSignal.timeout(1000) }), (error: unknown) => error instanceof EmulatorRefused && error.failure === "firewall-missing" && /not loaded/.test(error.message));
     firewall = { code: 0 };
-    assert.deepEqual(await emulator.start("pixel_8", { cold: false, signal: AbortSignal.timeout(1000) }), { cold: false, unsaved: false });
+    assert.deepEqual(await emulator.start("pixel_8", { cold: false, signal: AbortSignal.timeout(1000) }), { cold: true, unsaved: false });
     assert.ok(existsSync(join(dir, "emulator-unsaved-pixel_8")));
     assert.ok(seen.includes("systemctl --user start bb-box-emulator@pixel_8.service"));
     assert.match(readFileSync(join(home, ".config", "systemd", "user", "bb-box-emulator@.service"), "utf8"), /emulator-unsaved-%i/);
     assert.equal(statSync(join(home, ".emulator_console_auth_token")).mode & 0o777, 0o600);
     assert.deepEqual(await emulator.start("pixel_8", { cold: false, signal: AbortSignal.timeout(1000) }), { cold: true, unsaved: true });
+  });
+
+  test("a restored host boots every model cold before allowing quick boot in that host boot", async () => {
+    const home = tempDir("android-restored-host");
+    const dir = join(home, ".bb-box", "device");
+    let bootId = "before-restore";
+    const flags: string[] = [];
+    const emulator = new Emulator({
+      dir,
+      home,
+      bootId: async () => bootId,
+      log: () => {},
+      manager: async () => "systemd",
+      run: async (program, args) => {
+        const bootFlags = join(dir, "emulator-boot.env");
+        if (program === "systemctl" && args.includes("start")) flags.push(existsSync(bootFlags) ? readFileSync(bootFlags, "utf8") : "");
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    await emulator.start("pixel_8", { cold: false, signal: AbortSignal.timeout(1000) });
+    rmSync(emulator.unsavedMarker("pixel_8"));
+    bootId = "after-restore";
+
+    await emulator.start("pixel_8", { cold: false, signal: AbortSignal.timeout(1000) });
+    await emulator.start("pixel_fold", { cold: false, signal: AbortSignal.timeout(1000) });
+
+    rmSync(emulator.unsavedMarker("pixel_8"));
+    await emulator.start("pixel_8", { cold: false, signal: AbortSignal.timeout(1000) });
+
+    assert.deepEqual(flags, Array(3).fill("BB_BOX_EMULATOR_BOOT=-no-snapshot-load\n").concat(""));
   });
 
   test("without systemd, a stop the emulator answered marks its snapshot saved, and one it did not leaves the mark", async () => {
