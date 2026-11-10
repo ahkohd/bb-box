@@ -15,7 +15,7 @@ for a production step, said on its line.
 
 | Backend | Live |
 | --- | --- |
-| Proxmox LXC | Take and delete; restore in place with its undo, checked on LVM-thin; forks by a full copy; Keep by a held copy. Unit 8 made G16's node reboot a condition before production's Keep is turned on |
+| Proxmox LXC | Take and delete; restore in place with its undo, checked on LVM-thin, and on ZFS in ZFS's order since [085](085-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md); forks by a full copy; Keep by a held copy. Unit 8 made G16's node reboot a condition before production's Keep is turned on |
 | Proxmox QEMU, Linux | As Proxmox LXC, with or without memory; forks and Keep from the disk only |
 | boat.dev, a paid plan | Saved snapshots within the paid ceiling, with the price on each; restore as a swap to a new sandbox; forks and Keep from version 8 of the reset. Arming boat.dev's reset stays off in production until the owner arms it |
 | boat.dev, the free trial | No snapshots: the trial has no saved snapshots |
@@ -52,8 +52,9 @@ Known gaps, in plain words:
   But no node was rebooted for the checks, so it is not known what they do
   when one is. Unit 8 made it a condition before production's Keep on
   Proxmox is turned on.
-- **ZFS restores stay off** until gate G4 runs on a ZFS node; there was
-  none.
+- **ZFS restores of Linux VMs stay off.** Proxmox LXC boxes restore on ZFS
+  since [085](085-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md), with
+  G4 run on a test ZFS pool; see [ZFS restores on Proxmox LXC](#zfs-restores-on-proxmox-lxc).
 - **A snapshot of a stopped Tart box forks only if bb-box stopped it** and
   it has not run since.
 - **The identity reset is off on a backend until it is armed** in
@@ -4520,3 +4521,75 @@ resumes with: the check refuses that fork. Not run live here.
 - The fork's DHCP request names its source's hostname, as the fork is
   renamed after its first boot: bootpd's entry for the fork says
   `name=tl-src`. bb-box reads nothing of it.
+
+## ZFS restores on Proxmox LXC
+
+Built on 10 November 2026, as [085](085-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md)
+decides: a Proxmox LXC box on ZFS restores in ZFS's order by its plan, not
+by the live-check switch.
+
+### What changed
+
+- Core routes a restore whose plan is `rollback-newest-only` to the held
+  copy order. It refuses a target with newer snapshots before the box
+  stops, and a backend without the whole copy interface. The identity
+  reset check before a held copy is unchanged.
+- Restoring a held copy, a swap, no longer needs the switch.
+- Proxmox QEMU's Linux plan turns `rollback-newest-only` into no restore,
+  with its reason, as no VM on ZFS was checked.
+- Found by the live check: a restart while a swap's new guest was being
+  cloned from the held copy left the restore unconfirmed. The clone carries
+  the held copy's tags until it is relabelled, and the release that should
+  delete it refused it as no longer the box's. The release now also accepts
+  a guest that is not a template, carries a held copy's tags and has the
+  box's own description, which no held copy or earlier guest has.
+
+### Tests that failed first
+
+On main, 7 failed: G4 and G6/G16 in ZFS's order on ZFS storage (refused:
+"restores on ZFS stay off"), Opus 2 and Opus 8 on ZFS storage, the check
+and the restore without an undo on ZFS, a held copy restored with the
+switch off, and a Linux VM on ZFS refusing restore. The half-made swap
+guest's release failed with the live run's own words: "CT 7002 is no
+longer box bxsnapshotbox1 of this install: its config names box
+bxsnapshotbox1 of install test." Each passes with the change.
+
+### The live run
+
+On a separate BB with no account, bb-box from this branch, started with
+`BB_BOX_LIVE_CHECKS=1`, its identity reset armed for a Proxmox LXC backend
+of its own install. The backend used a copy of the Linux template on a
+test ZFS pool (40 GB, `zfspool`) on one Proxmox VE node, and 5 VMIDs.
+
+| Step | Result |
+| --- | --- |
+| A Linux box of 16 GiB | its root disk on the ZFS pool (`findmnt`: `zfs`), identity reset armed |
+| Take A, write B, take C, write "after C" | both ready in 0.1 to 0.2 s |
+| Restore A, with and without `--check` | "pve1's storage tank is ZFS, which restores only the newest snapshot, and "A" has 1 newer one. Fork "A" instead, or delete the newer one yourself first. BB Box never deletes newer snapshots to make a restore possible, and changed nothing." The box kept running, from the same boot, the file read "after C", and A and C were both listed |
+| `--check` of C | "copy it in full, stopped, as its undo ...: a held copy that cannot start, about 38 s, up to 17 GB on tank" |
+| Restore C, held after the copy's clone and before it was a template, then BB restarted | recovery deleted the copy ("bb-box restarted before it was a template, so it is not trusted"), made it again in 7.7 s, rolled back in 0.4 s and started the box in 1.9 s. The file read B |
+| Undo it, held after the new guest was made, then BB restarted | finished 7 s after the restart: the box on a new guest, the file "after C", A and C listed "on its earlier guest: fork only" |
+| The box joined BB, then take D and restore it, held once the copy's clone task had begun, then BB restarted | recovery deleted that copy, made it again in 8.1 s, rolled back in 0.6 s and started in 2.0 s. The file read D; the BB machine was the same, and connected |
+| Undo it, held once the new guest's clone task had begun, then BB restarted | before the fix: unconfirmed, as above, the box stopped and pinned. With the fix installed, the next sweep deleted the half-made guest, made it again and finished: the file "after D" |
+| The same undo again with the fix from the start, held once the clone task had begun, then BB restarted | finished 18 s after the restart (swap 7.5 s, start 2.6 s): the half-made guest deleted and made again, the old guest, which held no snapshot, deleted. 0 operations unsettled |
+| Identity after each swap | the same box ID, name, BB machine and host ID, connected; the same MAC address and SSH host keys (their SHA-256 as the snapshots recorded them); `bb-box-identity: kept: the identity marker of box ... matches`, so no reset ran |
+| Release | the box's guest went at once; its earlier guest and both held copies at the next tidy, 2 min 20 s later, each with its event. No boxes or snapshots left, and the sweep found no leftovers |
+
+Found, not changed:
+
+- **A swap gives the box a new machine ID.** Proxmox clears a clone's
+  `/etc/machine-id`, so the new guest writes one at its first boot. The
+  box's SSH host keys, BB machine and host ID stay, and its identity reset
+  does not run. This is so on every storage, as every swap is a clone.
+- **The box's address follows its VMID** on a backend that gives each VMID
+  its own address, so it changes at each swap.
+
+### Not proved
+
+- **G16's node reboot.** No node was rebooted: held copies were checked to
+  be templates and the copies cut short to be remade, but not what a node's
+  boot does to them. Arming the identity reset, which a held copy needs,
+  stays the owner's call.
+- **Expiry and Keep on ZFS** were not run live. The tests run G4's expiry
+  and release in both orders.
+- **Linux VMs on ZFS**, which stay refused.

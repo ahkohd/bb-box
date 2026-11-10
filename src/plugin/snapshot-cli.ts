@@ -159,7 +159,7 @@ export function snapshotCommands(app: BbBox) {
     }),
     "snapshot restore": cliCommand({
       summary:
-        `Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. ${PRODUCT} takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force. It refuses a box threads run on, as restores of such boxes stay off until ${PRODUCT} can hold every turn on them. Asks for --replace.`,
+        `Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. ${PRODUCT} takes an undo first, a snapshot of the box once stopped, or on ZFS a full copy of it, unless --no-undo. On ZFS only the newest snapshot restores. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force. It refuses a box threads run on, as restores of such boxes stay off until ${PRODUCT} can hold every turn on them. Asks for --replace.`,
       positionals: [
         { name: "box", description: "The box's name or ID.", required: true },
         { name: "snapshot", description: "The snapshot's name or ID.", required: true },
