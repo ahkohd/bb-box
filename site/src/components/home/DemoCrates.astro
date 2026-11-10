@@ -55,21 +55,57 @@
   }
 
   .crate {
+    --crate-edge: color-mix(in oklab, var(--foreground) 30%, var(--background));
+    --crate-grain: color-mix(in oklab, var(--foreground) 16%, transparent);
+    --crate-light: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --crate-shade: color-mix(in oklab, var(--background) 55%, black);
     position: absolute;
     top: 0;
     left: 0;
-    margin: 0;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
-    font-size: 0.8125rem;
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    height: 1.625rem;
+    border: 1px solid var(--crate-edge);
+    background-color: var(--background);
+    background-image: radial-gradient(var(--crate-grain) 0.6px, transparent 0.9px);
+    background-size: 3px 3px;
+    box-shadow:
+      inset 0 1px 0 var(--crate-light),
+      inset 0 -2px 0 var(--crate-shade);
+    color: var(--muted-foreground);
+    font-family: var(--sl-font-mono);
+    font-size: 0.625rem;
+    font-weight: 500;
     line-height: 1;
-    color: var(--frame-ink);
-    background: linear-gradient(var(--background), var(--background)) center / calc(100% - 1ch) calc(100% - 1em) no-repeat;
+    letter-spacing: 0.04em;
     transform-origin: center;
     will-change: transform;
     user-select: none;
   }
 
+  .crate-small {
+    width: 2.25rem;
+  }
+
+  .crate-medium {
+    width: 3.25rem;
+  }
+
+  .crate-large {
+    width: 4.5rem;
+  }
+
+  .crate-label {
+    padding: 0.125rem 0.25rem;
+    background-color: var(--background);
+    white-space: nowrap;
+  }
+
   .crate-accent {
+    --crate-edge: var(--accent);
+    --crate-grain: color-mix(in oklab, var(--accent) 40%, transparent);
+    --crate-light: color-mix(in oklab, var(--accent) 30%, transparent);
     color: var(--accent);
   }
 </style>

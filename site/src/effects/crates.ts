@@ -28,11 +28,12 @@ interface Sized {
   height: number;
 }
 
-const artRows = 3;
+type CrateSize = "small" | "medium" | "large";
 
 interface CrateLook {
-  columns: number;
+  size: CrateSize;
   label?: string;
+  accent?: boolean;
 }
 
 interface Pile {
@@ -40,19 +41,28 @@ interface Pile {
   rows: CrateLook[][];
 }
 
+const small = (label?: string): CrateLook => ({ size: "small", label });
+const medium = (label?: string): CrateLook => ({ size: "medium", label });
+const large = (label?: string): CrateLook => ({ size: "large", label });
+
 const piles: Pile[] = [
   {
-    across: 0.74,
+    across: 0.72,
     rows: [
-      [{ columns: 9 }, { columns: 5 }, { columns: 7 }, { columns: 5 }],
-      [{ columns: 7 }, { columns: 5 }, { columns: 7, label: "box" }],
-      [{ columns: 5 }, { columns: 9 }],
-      [{ columns: 5 }],
+      [large("linux"), medium(), large("windows"), small(), medium("mac")],
+      [medium(), large("android"), small(), medium("vm")],
+      [medium("ios"), { size: "medium", label: "box", accent: true }, small()],
+      [large("docker"), small()],
+      [medium("gpu")],
     ],
   },
   {
-    across: 0.44,
-    rows: [[{ columns: 7 }, { columns: 5 }], [{ columns: 5 }]],
+    across: 0.42,
+    rows: [[medium("lxc"), small(), medium()], [medium(), small("vm")], [small()]],
+  },
+  {
+    across: 0.95,
+    rows: [[small(), medium("tart")], [small()]],
   },
 ];
 
@@ -64,6 +74,7 @@ const bashCooldownMs = 180;
 const settleSteps = 90;
 const shelfThickness = 4;
 const crateGap = 2;
+const pileGap = 12;
 
 const category = { crate: 0x1, shelf: 0x2, ground: 0x4 };
 const onTheShelf = category.crate | category.shelf | category.ground;
@@ -71,16 +82,16 @@ const knockedOff = category.crate | category.ground;
 
 const clamp = (least: number, value: number, greatest: number) => Math.min(greatest, Math.max(least, value));
 
-function crateArt({ columns, label }: CrateLook): string {
-  const inside = columns - 2;
-  const middle = label ? label.padStart(Math.ceil((inside + label.length) / 2)).padEnd(inside) : "░".repeat(inside);
-  const edge = "─".repeat(inside);
-  return [`┌${edge}┐`, `│${middle}│`, `└${edge}┘`].join("\n");
-}
-
-function drawnSize(element: HTMLElement, columns: number): Sized {
-  const cell = { width: element.offsetWidth / columns, height: element.offsetHeight / artRows };
-  return { element, width: element.offsetWidth - cell.width, height: element.offsetHeight - cell.height };
+function crateElement(look: CrateLook): HTMLElement {
+  const element = document.createElement("div");
+  element.className = ["crate", `crate-${look.size}`, look.accent ? "crate-accent" : ""].filter(Boolean).join(" ");
+  if (look.label) {
+    const label = document.createElement("span");
+    label.className = "crate-label";
+    label.textContent = look.label;
+    element.append(label);
+  }
+  return element;
 }
 
 function measureStage(shelf: Element, floor: Element): Stage {
@@ -128,19 +139,23 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
   let owed = 0;
   let lastPointer: { x: number; y: number; time: number } | undefined;
 
-  function stack(pile: Pile): Crate[] {
+  function stack(pile: Pile, taken: Array<[number, number]>): Crate[] {
     const looks = pile.rows.map((row) =>
       row.map((look) => {
-        const element = document.createElement("pre");
-        element.className = look.label ? "crate crate-accent" : "crate";
-        element.textContent = crateArt(look);
+        const element = crateElement(look);
         layer.append(element);
-        return drawnSize(element, look.columns);
+        return { element, width: element.offsetWidth, height: element.offsetHeight };
       }),
     );
     const rowWidth = (row: Sized[]) => row.reduce((sum, crate) => sum + crate.width, 0) + crateGap * (row.length - 1);
     const widest = Math.max(...looks.map(rowWidth));
     const centre = Math.min(stage.shelfLeft + (stage.shelfRight - stage.shelfLeft) * pile.across, stage.shelfRight - widest / 2 - 16);
+    const span: [number, number] = [centre - widest / 2 - pileGap, centre + widest / 2 + pileGap];
+    if (taken.some(([from, to]) => span[0] < to && span[1] > from)) {
+      looks.flat().forEach(({ element }) => element.remove());
+      return [];
+    }
+    taken.push(span);
     let rowBottom = stage.shelfY;
     return looks.flatMap((row) => {
       let left = centre - rowWidth(row) / 2;
@@ -160,7 +175,8 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
     layer.replaceChildren();
     layer.style.height = `${stage.floorY + 2}px`;
     Composite.add(engine.world, staticBodies(stage));
-    crates = piles.flatMap((pile) => stack(pile));
+    const taken: Array<[number, number]> = [];
+    crates = piles.flatMap((pile) => stack(pile, taken));
     Composite.add(engine.world, crates.map((crate) => crate.body));
     for (let step = 0; step < settleSteps; step++) Engine.update(engine, stepMs);
     draw();
