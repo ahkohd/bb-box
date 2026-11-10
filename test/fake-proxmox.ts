@@ -98,7 +98,7 @@ export class FakeProxmox {
   killNextSnapshot = false;
   templateLag = 0;
   readonly #templating = new Map<number, number>();
-  #snapshotsTaken = 0;
+  snapshotSeconds: () => number = () => Math.floor(Date.now() / 1000);
   snapshotTaskFailsWhole = false;
   readonly storageConfigs = new Map<string, Record<string, unknown>>([["local-lvm", { storage: "local-lvm", type: "lvmthin", vgname: "pve", thinpool: "data", content: "rootdir,images" }]]);
   readonly thinPools: { lv: string; vg: string; metadata_size: number; metadata_used: number }[] = [{ lv: "data", vg: "pve", metadata_size: 1024 ** 3, metadata_used: 100 * 1024 ** 2 }];
@@ -333,14 +333,14 @@ export class FakeProxmox {
       const snapshots = (guest.snapshots ??= []);
       if (method === "GET" && !name) {
         return ok([
-          ...snapshots.map((snapshot) => ({ name: snapshot.name, description: snapshot.description, snaptime: snapshot.snaptime, ...(snapshot.snapstate ? { snapstate: snapshot.snapstate } : {}), ...(type === "qemu" ? { vmstate: snapshot.vmstate ? 1 : 0 } : {}) })),
-          { name: "current", digest: "d1", running: guest.status === "running" ? 1 : 0 },
+          ...snapshots.map((snapshot) => ({ name: snapshot.name, description: snapshot.description, snaptime: snapshot.snaptime, ...parentOf(snapshot.config), ...(snapshot.snapstate ? { snapstate: snapshot.snapstate } : {}), ...(type === "qemu" ? { vmstate: snapshot.vmstate ? 1 : 0 } : {}) })),
+          { name: "current", digest: "d1", running: guest.status === "running" ? 1 : 0, ...parentOf(guest.config) },
         ]);
       }
       if (method === "POST" && !name) {
         if (guest.config.lock) return ok(this.#task(`${prefix}snapshot`, vmid, `${what} is locked (${guest.config.lock})`));
         if (snapshots.some((snapshot) => snapshot.name === params.snapname)) return ok(this.#task(`${prefix}snapshot`, vmid, `snapshot name '${params.snapname}' already used`));
-        const taken: FakeSnapshot = { name: params.snapname!, description: asProxmoxStoresDescription(params.description ?? ""), snaptime: Math.floor(Date.now() / 1000) + this.#snapshotsTaken++, config: { ...guest.config }, ...(params.vmstate === "1" ? { vmstate: true } : {}) };
+        const taken: FakeSnapshot = { name: params.snapname!, description: asProxmoxStoresDescription(params.description ?? ""), snaptime: this.snapshotSeconds(), config: { ...guest.config }, ...(params.vmstate === "1" ? { vmstate: true } : {}) };
         if (this.snapshotTaskFailsWhole) {
           this.snapshotTaskFailsWhole = false;
           snapshots.push(taken);
@@ -352,7 +352,10 @@ export class FakeProxmox {
           guest.config.lock = "snapshot";
           return ok(this.#task(`${prefix}snapshot`, vmid, "received interrupt"));
         }
-        if (!this.nextTaskExit.has(`${prefix}snapshot`)) snapshots.push(taken);
+        if (!this.nextTaskExit.has(`${prefix}snapshot`)) {
+          snapshots.push(taken);
+          guest.config.parent = taken.name;
+        }
         return ok(this.#task(`${prefix}snapshot`, vmid));
       }
       if (method === "DELETE" && name) {
@@ -360,7 +363,7 @@ export class FakeProxmox {
         if (index < 0) return respond(500, `snapshot '${name}' does not exist`, { data: null });
         if (guest.config.lock) return ok(this.#task(`${prefix}delsnapshot`, vmid, `${what} is locked (${guest.config.lock})`));
         if (this.nextTaskExit.has(`${prefix}delsnapshot`)) snapshots[index]!.snapstate = "delete";
-        else snapshots.splice(index, 1);
+        else reparentChildren(guest, snapshots.splice(index, 1)[0]!);
         return ok(this.#task(`${prefix}delsnapshot`, vmid));
       }
     }
@@ -610,4 +613,18 @@ function respond(status: number, statusText: string, body: unknown): FetchRespon
 
 export function configDigest(config: Readonly<Record<string, string>>): string {
   return createHash("sha1").update(JSON.stringify(Object.entries(config).sort(([a], [b]) => a.localeCompare(b)))).digest("hex");
+}
+
+function parentOf(config: Record<string, string> | undefined): { parent?: string } {
+  return config?.parent ? { parent: config.parent } : {};
+}
+
+function reparentChildren(guest: FakeGuest, deleted: FakeSnapshot): void {
+  const grandparent = deleted.config?.parent;
+  const children = [guest.config, ...(guest.snapshots ?? []).map((snapshot) => snapshot.config)];
+  for (const child of children) {
+    if (child?.parent !== deleted.name) continue;
+    if (grandparent) child.parent = grandparent;
+    else delete child.parent;
+  }
 }

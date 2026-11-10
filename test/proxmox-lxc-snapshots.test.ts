@@ -310,6 +310,60 @@ test("a restore's plan: rollback to any snapshot on LVM-thin, the size it goes b
   assert.match(noRight.restore.why!, /^The Proxmox token lacks VM\.Snapshot\.Rollback on \/pool\/bbbox, so BB Box cannot restore snapshots there\./);
 });
 
+const SAME_SECOND = 1_790_000_000;
+const OLDER = "snaaaaaaaaaaaa";
+const LATER = "snbbbbbbbbbbbb";
+const LATEST = "sncccccccccccc";
+
+async function newerOn(state: ReturnType<typeof world>, guest: Guest, snapshot: string): Promise<number> {
+  const plan = await state.backend.planSnapshots(guest, "linux", { id: snapshot, ref: snapshotName(snapshot), guest });
+  return plan.restore.newer;
+}
+
+test("on ZFS, of two snapshots taken in the same second, the plan counts the later one as newer by Proxmox's parent chain, and the later one has none newer", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  const { hooks } = tasks();
+  state.proxmox.storageTypes.set("local-lvm", "zfspool");
+  state.proxmox.snapshotSeconds = () => SAME_SECOND;
+
+  await state.backend.snapshot(guest, { id: OLDER, box: id.boxId, memory: false }, hooks);
+  await state.backend.snapshot(guest, { id: LATER, box: id.boxId, memory: false }, hooks);
+
+  assert.equal(await newerOn(state, guest, OLDER), 1, "the older one is refused before the box stops");
+  assert.equal(await newerOn(state, guest, LATER), 0, "the newest one still restores");
+});
+
+test("on ZFS, a deleted snapshot's place in the chain passes to its parent, so the same-second order holds", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  const { hooks } = tasks();
+  state.proxmox.storageTypes.set("local-lvm", "zfspool");
+  state.proxmox.snapshotSeconds = () => SAME_SECOND;
+  for (const snapshot of [OLDER, LATER, LATEST]) await state.backend.snapshot(guest, { id: snapshot, box: id.boxId, memory: false }, hooks);
+
+  await state.backend.deleteSnapshot({ id: LATER, ref: snapshotName(LATER), guest }, hooks);
+
+  assert.equal(await newerOn(state, guest, OLDER), 1);
+  assert.equal(await newerOn(state, guest, LATEST), 0);
+});
+
+test("a same-second snapshot on another branch of the chain counts as newer, as its order cannot be told", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks } = tasks();
+  state.proxmox.snapshotSeconds = () => SAME_SECOND;
+  await state.backend.snapshot(guest, { id: OLDER, box: id.boxId, memory: false }, hooks);
+  await state.backend.snapshot(guest, { id: LATER, box: id.boxId, memory: false }, hooks);
+  state.proxmox.guests.get(vmid)!.config.parent = snapshotName(OLDER);
+
+  await state.backend.snapshot(guest, { id: LATEST, box: id.boxId, memory: false }, hooks);
+
+  assert.equal(await newerOn(state, guest, OLDER), 2);
+  assert.equal(await newerOn(state, guest, LATER), 1);
+  assert.equal(await newerOn(state, guest, LATEST), 1);
+});
+
 test("a rollback refuses a running guest, records its task before it waits, puts the snapshot's config back, and says when its task failed part way", async () => {
   const state = world();
   const { guest, vmid, id } = await box(state);
