@@ -61,7 +61,7 @@ where it is built ahead, which its boxes claim at once (#440). The
 - Ask for `linux-docker` when you need Docker for sure: it skips offers
   without it. A box in Docker runs no systemd, so `systemctl` does not work
   there.
-- Docker snapshots pause the box while copying its disk and Docker data. They hold no memory or running programs. Take, list, delete and restore are available; fork and Keep are not. A restore makes a new container with the box's ID and name, after an undo, and deletes the old one once the new one runs. Release deletes the snapshots. Other writable mounts are refused before pausing.
+- Docker snapshots pause the box while copying its disk and Docker data, for about as long as `box_snapshot` with `check` says. They hold no memory or running programs. Take, list, delete and restore are available; fork and Keep are not. A restore makes a new container with the box's ID and name, after an undo, and deletes the old one once the new one runs. Release deletes the snapshots. Other writable mounts are refused before pausing.
 - Docker boxes keep their Docker data in a volume labelled for the box and install. A failed removal is reported. Maintenance retries removal after the container has gone, leaving live boxes and boxes being made alone.
   A held volume does not stop other maintenance.
 - Ask for `linux-vm` when you need a kernel of your own: to load kernel
@@ -262,6 +262,11 @@ BB Box starts an Android model cold when its unsaved marker is present. A snapsh
 - Take one with `box_snapshot` before a change you cannot undo: a
   migration, an upgrade, a deletion, or a change to the system. Take one
   when the person asks. Never take them on a schedule of your own.
+- A take can pause the box: nothing in it runs until the take is done.
+  Call `box_snapshot` with `check` first to see whether it pauses the box
+  and for about how long. Tell the person before a pause of more than a few
+  seconds, such as a large Docker box's. The take's answer says how long
+  it paused the box.
 - When an attempt went wrong, restore with `box_restore` rather than
   undoing it by hand. BB Box always takes an undo first, named "before the
   restore at 11:02": restore that to undo the restore.

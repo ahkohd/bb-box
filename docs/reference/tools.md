@@ -231,7 +231,7 @@ Run a shell script in a box, as its user, and wait for it. You get the exit code
 
 ## box_snapshot
 
-Take a snapshot of a box: its disk, or with memory its disk and running apps where its backend can, so you can restore it if a change goes wrong. Take one before a change you cannot undo, such as a migration, an upgrade, a deletion or a change to the system, and when the person asks; never on a schedule of your own.
+Take a snapshot of a box: its disk, or with memory its disk and running apps where its backend can, so you can restore it if a change goes wrong. Take one before a change you cannot undo, such as a migration, an upgrade, a deletion or a change to the system, and when the person asks; never on a schedule of your own. A take can pause the box: call it with check first to see for how long, and tell the person before a pause of more than a few seconds. Its answer says how long it paused the box.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -239,6 +239,7 @@ Take a snapshot of a box: its disk, or with memory its disk and running apps whe
 | `name` | string | no | Its name, at most 60 characters, unique on the box, such as "before the migration". The time, such as Thu 10:42, when left out. |
 | `note` | string | no | A note, at most 1 KB: what the box held, or why you took it. |
 | `memory` | boolean | no | Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower. Defaults to false where its backend can leave it out, and to true where every snapshot holds it, as on a macOS box on Tart, where false is refused. |
+| `check` | boolean | no | Say how long the take would take and pause the box, and refuse what it would refuse, taking nothing. |
 
 ## box_snapshot_delete
 

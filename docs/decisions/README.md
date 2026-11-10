@@ -89,3 +89,4 @@ which records still stand as written. The current design as a whole is in
 | [081](081-a-recording-is-cut-to-its-actions-and-its-captions-keep-clear.md) | A recording is cut to its actions, and its captions keep clear | Accepted |
 | [082](082-docker-snapshots.md) | A Docker snapshot is a paused commit of the box and a copy of its Docker volume, kept on its engine | Accepted; take, list, delete and restore are built; fork and Keep are not |
 | [083](083-android-devices-boot-cold-after-the-host-restarts.md) | Android snapshots use the existing unsaved marker | Accepted; preserves 063; boot-ID rule withdrawn |
+| [084](084-a-take-says-how-long-it-pauses-the-box-before-and-after.md) | A take says how long it pauses the box, before and after | Accepted |
