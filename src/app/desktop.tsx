@@ -2238,7 +2238,7 @@ function BoxViewPage({ route }: { route: BoxViewRoute }) {
   const otherScreens = (shown: Screen) => (box ? <OtherViews box={box} shown={shown} without="terminal" onSwitch={switchTo} /> : null);
   const reach = page?.monitor ?? null;
   const machineId = box && reach?.is === "read" ? reach.machineId : null;
-  const numbers = (everyWidth: boolean) => (box && machineId ? <BarNumbers machineId={machineId} name={box.name} page={pageLink} everyWidth={everyWidth} /> : null);
+  const numbers = (everyWidth: boolean) => (box && machineId ? <BarNumbers boxId={box.id} machineId={machineId} name={box.name} page={pageLink} everyWidth={everyWidth} /> : null);
   if (route.view === "terminal") return <BoxTerminal threadId={threadId} boxId={route.boxId} onBack={back} page={pageLink} otherViews={otherViews} numbers={numbers(false)} />;
   if (route.view === "files") return <BoxFiles threadId={threadId} boxId={route.boxId} onBack={back} page={pageLink} otherViews={otherViews} />;
   const legacyDesktop = route.threadId !== null && route.view === "desktop";

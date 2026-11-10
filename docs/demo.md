@@ -63,7 +63,7 @@ This records a rehearsal, then a dark take and a light take, in `~/takes`, with 
 
 A restore can race bb-box's check that a box answers: when the check runs before the restored box has joined BB again, the box's page says it does not answer until the next check, a minute later. Look for 'does not answer' in each take's `page-text.json`, and record that theme again if it is there, giving the theme after the reset command, such as `light`.
 
-A monitor card keeps the reading whose fetch started later, so after a restore it does not show the previous guest's last reading in place of a newer one. A restored guest's clock can sit behind the previous guest's. Read at can then go backwards on the new guest's own readings, and those frames stay in the take.
+A box's two monitor routes share the reading whose fetch started later. Selecting another box or machine shows its own reading, or waits for one. Each monitor card keeps that ordering, so after a restore it does not show the previous guest's last reading in place of a newer one. A restored guest's clock can sit behind the previous guest's. Read at can then go backwards on the new guest's own readings, and those frames stay in the take.
 
 ### Encode
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useCallback, useEffect, useRef, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { Contract, MonitorSnapshot } from "../../plugin/contract.ts";
 import { createSnapshotSource } from "./snapshot-source.ts";
@@ -7,60 +7,26 @@ import { createVisiblePoller } from "./visible-poller.ts";
 type PublishedReading = {
   snapshot: MonitorSnapshot;
   startedOrder: number;
-  late: boolean;
-};
-
-type ShownReading = {
-  machineId: string;
-  snapshot: MonitorSnapshot | null;
-  startedOrder: number;
 };
 
 const publishedReadings = new Map<string, PublishedReading>();
-
+const listeners = new Map<string, Set<() => void>>();
 let nextStartedOrder = 1;
-let highestPublishedOrder = 0;
 let readingsEpoch = 0;
 
 function takeStartedOrder(): number {
-  const startedOrder = nextStartedOrder;
-  nextStartedOrder += 1;
-  return startedOrder;
+  return nextStartedOrder++;
 }
 
-function publishReading(epoch: number, machineId: string, startedOrder: number, snapshot: MonitorSnapshot): MonitorSnapshot {
+function publishReading(epoch: number, stream: string, startedOrder: number, snapshot: MonitorSnapshot): MonitorSnapshot {
   if (epoch !== readingsEpoch) return snapshot;
 
-  const current = publishedReadings.get(machineId);
+  const current = publishedReadings.get(stream);
   if (current && startedOrder < current.startedOrder) return current.snapshot;
 
-  const late = startedOrder < highestPublishedOrder;
-  publishedReadings.set(machineId, { snapshot, startedOrder, late });
-  if (startedOrder > highestPublishedOrder) highestPublishedOrder = startedOrder;
+  publishedReadings.set(stream, { snapshot, startedOrder });
+  for (const notify of listeners.get(stream) ?? []) notify();
   return snapshot;
-}
-
-function emptyReading(machineId: string): ShownReading {
-  return { machineId, snapshot: null, startedOrder: 0 };
-}
-
-function chooseShown(shown: ShownReading, machineId: string, published: PublishedReading | null): ShownReading {
-  if (!published) return shown.machineId === machineId ? shown : emptyReading(machineId);
-
-  const aheadOfShown = !shown.snapshot || published.startedOrder >= shown.startedOrder;
-  if (!published.late && (aheadOfShown || shown.machineId !== machineId)) {
-    return { machineId, snapshot: published.snapshot, startedOrder: published.startedOrder };
-  }
-
-  if (shown.snapshot && published.startedOrder < shown.startedOrder) return { ...shown, machineId };
-
-  return { machineId, snapshot: published.snapshot, startedOrder: published.startedOrder };
-}
-
-function settleReading(current: ShownReading, machineId: string): ShownReading {
-  const next = chooseShown(current, machineId, publishedReadings.get(machineId) ?? null);
-  if (next.machineId === current.machineId && next.snapshot === current.snapshot && next.startedOrder === current.startedOrder) return current;
-  return next;
 }
 
 type SnapshotSource = ReturnType<typeof createSnapshotSource<MonitorSnapshot>>;
@@ -76,7 +42,6 @@ function sourceFor(machineKey: string): SnapshotSource {
   for (const oldest of sources.keys()) {
     if (sources.size <= MAX_REMEMBERED_MACHINES) break;
     sources.delete(oldest);
-    publishedReadings.delete(oldest);
   }
   return source;
 }
@@ -87,35 +52,42 @@ export function forgetMonitorReadings(): void {
   publishedReadings.clear();
 }
 
+export const MonitorBox = createContext<string | undefined>(undefined);
+
 export const SERVER_MACHINE = "server";
 
-export function useMonitorSnapshot(machineId: string) {
+export function useMonitorSnapshot(machineId: string, boxId?: string) {
   const rpc = useRpc<Contract>();
   const container = useRef<HTMLDivElement>(null);
   const pollerRef = useRef<ReturnType<typeof createVisiblePoller<MonitorSnapshot>> | null>(null);
   const forceRefresh = useRef(false);
   const [active, setActive] = useState(false);
-  const [reading, setReading] = useState<ShownReading>(() => settleReading(emptyReading(machineId), machineId));
-  const snapshot = chooseShown(reading, machineId, publishedReadings.get(machineId) ?? null).snapshot;
+  const pageBoxId = useContext(MonitorBox);
+  boxId ??= pageBoxId;
+  const stream = boxId === undefined ? JSON.stringify(["machine", machineId]) : JSON.stringify(["box", boxId]);
+  const [, setVersion] = useState(0);
+  const refreshReading = () => setVersion((version) => version + 1);
+  const snapshot = publishedReadings.get(stream)?.snapshot ?? null;
   const [error, setError] = useState<string | null>(null);
   const [reloading, setReloading] = useState(false);
 
   useEffect(() => {
-    const source = sourceFor(machineId);
-    setReading((current) => settleReading(current, machineId));
-    return source.subscribe(() => {
-      setReading((current) => settleReading(current, machineId));
-      setError(null);
-      setReloading(false);
-    });
-  }, [machineId]);
+    const subscribers = listeners.get(stream) ?? new Set<() => void>();
+    listeners.set(stream, subscribers);
+    subscribers.add(refreshReading);
+    refreshReading();
+    return () => {
+      subscribers.delete(refreshReading);
+      if (subscribers.size === 0) listeners.delete(stream);
+    };
+  }, [stream]);
 
   useEffect(() => {
     const element = container.current;
     if (!element) return;
-    const source = sourceFor(machineId);
+    const source = sourceFor(JSON.stringify([stream, machineId]));
     const epoch = readingsEpoch;
-    setReading((current) => settleReading(current, machineId));
+    refreshReading();
     setError(null);
     setReloading(false);
     let intersecting = false;
@@ -129,10 +101,10 @@ export function useMonitorSnapshot(machineId: string) {
           const fetched = machineId === SERVER_MACHINE
             ? await rpc.call("monitor.server", { force })
             : await rpc.call("monitor.machine", { machineId, force });
-          return publishReading(epoch, machineId, startedOrder, fetched);
+          return publishReading(epoch, stream, startedOrder, fetched);
         }, force);
       },
-      receive() { setReading((current) => settleReading(current, machineId)); setError(null); setReloading(false); },
+      receive() { refreshReading(); setError(null); setReloading(false); },
       error(cause) { setError(cause instanceof Error ? cause.message : String(cause)); setReloading(false); },
       intervalMs: (next) => next.refreshIntervalMs,
     });
@@ -160,7 +132,7 @@ export function useMonitorSnapshot(machineId: string) {
       poller.dispose();
       pollerRef.current = null;
     };
-  }, [rpc, machineId]);
+  }, [rpc, machineId, stream]);
 
   const reload = useCallback(() => {
     forceRefresh.current = true;

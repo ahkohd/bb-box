@@ -886,7 +886,7 @@ function readStatus(snapshot: MonitorSnapshot | null, error: string | null, acti
 }
 
 function LiveActivity({ machineId, box, range, group, lines, expectedCards }: { machineId: string; box: BoxView; range: ActivityRange; group: ReactNode; lines: LiveLines; expectedCards: number }) {
-  const monitor = useMonitorSnapshot(machineId);
+  const monitor = useMonitorSnapshot(machineId, box.id);
   const { container, active, error, snapshot } = monitor;
   const readCards = snapshot ? gpuCardCount(snapshot) : 0;
   const [seenCards, setSeenCards] = useState(expectedCards);
