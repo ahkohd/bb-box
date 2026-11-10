@@ -28,6 +28,7 @@ interface Crate {
   look: CrateLook;
   homeX: number;
   burning: boolean;
+  rain: boolean;
 }
 
 export interface Burning {
@@ -90,6 +91,11 @@ const settleSteps = 90;
 const shelfThickness = 4;
 const crateGap = 2;
 const floorLabel = "floor";
+const rain = {
+  everyMs: 1100,
+  most: 10,
+  looks: [small(), medium(), large(), medium("vm"), small("vm"), medium("mac"), large("linux"), large("windows"), medium("ios"), large("android"), medium("gpu"), large("docker"), medium("lxc"), medium("qemu"), small("msb"), medium("tart"), { size: "medium", label: "box", accent: true } as CrateLook],
+};
 const burn = { catchMs: 700, seconds: 2.6, respawnMs: 3500, respawnDropPx: 420, respawnScatterPx: 24 };
 const landingSpeed = 2.5;
 const pileGap = 12;
@@ -179,7 +185,7 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
     Composite.remove(engine.world, crate.body);
     crate.element.remove();
     crates = crates.filter((one) => one !== crate);
-    setTimeout(() => respawn(crate, lit), burn.respawnMs);
+    if (!crate.rain) setTimeout(() => respawn(crate, lit), burn.respawnMs);
   }
 
   function respawn(burnt: Crate, lit: number): void {
@@ -191,7 +197,7 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
     const homeX = burnt.homeX + (Math.random() - 0.5) * burn.respawnScatterPx;
     const body = crateBody(homeX, stage.shelfY - burn.respawnDropPx, width, height);
     Body.setAngle(body, (Math.random() - 0.5) * 0.6);
-    const fresh: Crate = { body, element, width, height, bashedAt: 0, look: burnt.look, homeX: burnt.homeX, burning: false };
+    const fresh: Crate = { body, element, width, height, bashedAt: 0, look: burnt.look, homeX: burnt.homeX, burning: false, rain: false };
     crates.push(fresh);
     Composite.add(engine.world, body);
     draw();
@@ -229,7 +235,7 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
         const homeX = left + width / 2;
         const body = crateBody(homeX, rowBottom - height / 2, width, height);
         left += width + crateGap;
-        return { body, element, width, height, bashedAt: 0, look, homeX, burning: false };
+        return { body, element, width, height, bashedAt: 0, look, homeX, burning: false, rain: false };
       });
       rowBottom -= height;
       return placed;
@@ -350,7 +356,42 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
     wake();
   }
 
+  let floorInView = false;
+  let rainTimer = 0;
+
+  function rainOne(): void {
+    rainTimer = 0;
+    if (!active || !floorInView) return;
+    if (crates.filter((crate) => crate.rain).length < rain.most) {
+      const look = rain.looks[Math.floor(Math.random() * rain.looks.length)]!;
+      const element = crateElement(look);
+      layer.append(element);
+      const width = element.offsetWidth;
+      const height = element.offsetHeight;
+      const x = clamp(width, stage.width * (0.04 + Math.random() * 0.92), stage.width - width);
+      const body = crateBody(x, scrollY - height, width, height);
+      body.collisionFilter.mask = knockedOff;
+      Body.setAngle(body, (Math.random() - 0.5) * Math.PI);
+      Body.setVelocity(body, { x: (Math.random() - 0.5) * 3, y: 2 + Math.random() * 3 });
+      Body.setAngularVelocity(body, (Math.random() - 0.5) * 0.2);
+      crates.push({ body, element, width, height, bashedAt: 0, look, homeX: x, burning: false, rain: true });
+      Composite.add(engine.world, body);
+      draw();
+      wake();
+    }
+    keepRaining();
+  }
+
+  function keepRaining(): void {
+    if (rainTimer || !active || !floorInView) return;
+    rainTimer = window.setTimeout(rainOne, rain.everyMs * (0.6 + Math.random() * 0.8));
+  }
+
   build();
+  new IntersectionObserver(([entry]) => {
+    floorInView = entry!.isIntersecting;
+    keepRaining();
+  }).observe(floor);
   addEventListener("pointermove", onPointerMove, { passive: true });
   new ResizeObserver(followLayout).observe(document.body);
 
@@ -364,6 +405,7 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
         previous = undefined;
       }
       wake();
+      keepRaining();
     },
   };
 }
