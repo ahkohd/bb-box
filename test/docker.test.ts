@@ -1802,3 +1802,16 @@ test("maintenance preserves a volume while its box is being made and other owner
   assert.deepEqual(volumeNames(fake.binary), [volume, foreign].sort());
   assert.equal(await backend.power(guest, signal()), "running");
 });
+
+test("maintenance reports a held orphan and still removes other orphans", async () => {
+  const { fake, backend } = setup();
+  execFileSync(fake.binary, ["network", "create", "bbbox"]);
+  for (const name of ["a-held", "z-free"]) {
+    execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=test", "--label", "bbbox.volume-of=bbbox-gone", name]);
+  }
+  execFileSync(fake.binary, ["container", "create", "--name", "holder", "--network", "bbbox", "--volume", "a-held:/data", "bbbox/linux:1"]);
+
+  await assert.rejects(backend.maintain(signal()), /volume is in use/);
+
+  assert.deepEqual(volumeNames(fake.binary), ["a-held"]);
+});
