@@ -9874,6 +9874,8 @@ test("a reading that fails after one worked keeps the bar's numbers, says which 
   cleanup();
   unstubTheMonitor(done);
 
+  forgetMonitorReadings();
+
   const silent = readByTheMonitor("host_silent", () => {
     throw new Error("connect ECONNREFUSED 10.0.0.31:7777");
   });
