@@ -1,4 +1,4 @@
-# 082: The relay clips a frame request to the framebuffer
+# 083: The relay clips a frame request to the framebuffer
 
 Status: accepted, 10 November 2026.
 Extends [007](007-desktop-stream-is-a-typed-transport.md).
@@ -22,7 +22,7 @@ unchanged.
 ## Decision
 
 The desktop relay clips each framebuffer update request to the framebuffer
-it last learned.
+it can still track.
 
 - The size starts as the server's first description of the desktop.
 - The relay then follows DesktopSize and ExtendedDesktopSize rectangles in
@@ -31,14 +31,15 @@ it last learned.
   and whose status is not success.
 - The relay reads the server's message boundaries so it can find those
   rectangles. It does not decode pixels. When an encoding arrives whose
-  length it cannot measure, it keeps the last known size.
-- A request that misses the framebuffer is not sent. The viewer is given
-  an empty update, so it does not wait, and the relay does not treat the
-  silence as a lost desktop.
+  length it cannot measure, it stops clipping for that connection. A client
+  SetPixelFormat message also stops tracking.
+- A request that misses the framebuffer becomes a 1 by 1 request at 0,0,
+  with its incremental flag kept. Only the server sends replies.
 
 ## Consequences
 
-- A ZRLE or raw request larger than the screen no longer reaches wayvnc.
+- ZRLE and raw sessions are protected while tracking remains active.
+- Sessions the relay cannot follow are forwarded unchanged.
 - After the server announces a new size, a request for that whole screen
   is sent whole. A larger one is clipped to the new size.
 - A noVNC session whose request already fits is unchanged.

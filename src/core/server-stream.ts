@@ -95,16 +95,23 @@ export class ServerParser {
   #size: FrameSize;
   #bytesPerPixel: number;
   #lost = false;
+  #tightPixelsKnown: boolean;
   #pending = new PendingBytes();
   #discard = 0;
   #phase: Phase = "message";
   #left = 0;
   #tight: Tight | null = null;
 
-  constructor(frame: FrameSize & { readonly bitsPerPixel: number }) {
+  constructor(frame: FrameSize & { readonly bitsPerPixel: number; readonly tightPixelsKnown?: boolean }) {
     this.#size = { width: frame.width, height: frame.height };
+    this.#tightPixelsKnown = frame.tightPixelsKnown === true;
     const bytes = frame.bitsPerPixel / 8;
     this.#bytesPerPixel = bytes === 1 || bytes === 2 || bytes === 4 ? bytes : 0;
+    this.#lost = this.#bytesPerPixel === 0;
+  }
+
+  stop(): void {
+    this.#lose();
   }
 
   get size(): FrameSize {
@@ -260,6 +267,10 @@ export class ServerParser {
       return this.#finishAfter(pixels + mask);
     }
     if (encoding === TIGHT) {
+      if (!this.#tightPixelsKnown) {
+        this.#lose();
+        return false;
+      }
       this.#tight = { width, height, step: "control", high: 0, filter: 0, colors: 0, compact: 0, compactBytes: 0 };
       this.#phase = "tight";
       return true;

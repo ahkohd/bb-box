@@ -3,14 +3,14 @@ import { test } from "node:test";
 import { ServerParser } from "../src/core/server-stream.ts";
 
 function parser(width = 1920, height = 1080): ServerParser {
-  return new ServerParser({ width, height, bitsPerPixel: 32 });
+  return new ServerParser({ width, height, bitsPerPixel: 32, tightPixelsKnown: true });
 }
 
 function sizeOf(stream: ServerParser): string {
   return `${stream.size.width}x${stream.size.height}`;
 }
 
-/** Feeds `bytes` one byte at a time, then as a whole to a fresh parser. */
+
 function bothWays(bytes: Uint8Array, check: (stream: ServerParser) => void): void {
   const whole = parser();
   whole.read(bytes);

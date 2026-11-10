@@ -1,8 +1,8 @@
 // The RFB (VNC) protocol, as much as the desktop relay needs: the box's
 // security handshake, answered with its VNC password or as its user with
 // Apple's authentication (047), and the client's messages, parsed so the
-// relay can drop input from viewers without control. The relay learns the
-// framebuffer's size from the server's messages and never decodes pixels (082).
+// relay can drop input from viewers without control. The relay never decodes
+// the server's messages or pixels (011).
 
 import { createCipheriv, createDiffieHellman, createHash, randomBytes } from "node:crypto";
 import type { DisplayAuth } from "../transports/types.ts";
@@ -239,7 +239,7 @@ export async function readServerInit(reader: StreamReader): Promise<ServerInit> 
 
 /** What the relay does with a client message. */
 export type MessageClass =
-  /** Passes from every viewer: formats, encodings and fences. */
+
   | "pass"
   /** Keys, pointer, clipboard writes, desktop power and the QEMU messages: only from the viewer with control. */
   | "input"
@@ -429,12 +429,12 @@ export function clipFramebufferRequest(
   const top = Math.min(request.y, frame.height);
   const right = Math.min(request.x + request.width, frame.width);
   const bottom = Math.min(request.y + request.height, frame.height);
-  if (frame.width <= 0 || frame.height <= 0 || right <= left || bottom <= top) return null;
+  if (frame.width <= 0 || frame.height <= 0) return request.bytes;
+  if (right <= left || bottom <= top) return framebufferUpdateRequest(request.incremental, 0, 0, 1, 1);
   if (left === request.x && top === request.y && right - left === request.width && bottom - top === request.height) return request.bytes;
   return framebufferUpdateRequest(request.incremental, left, top, right - left, bottom - top);
 }
 
-export const EMPTY_FRAMEBUFFER_UPDATE = Uint8Array.of(0, 0, 0, 0);
 
 export function setEncodings(encodings: readonly number[]): Uint8Array {
   const bytes = new Uint8Array(4 + 4 * encodings.length);

@@ -7,7 +7,7 @@ rather than a port, the relay answers the box's RFB authentication, and
 Windows starts with RFB through Proxmox's console rather than RDP. Partly
 superseded by [056](056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md): Selkies comes to X11 desktops on the CPU first,
 capturing their own X server, and its GPU experiment gates only GPU
-desktops. Extended by [082](082-the-relay-clips-a-frame-request-to-the-framebuffer.md):
+desktops. Extended by [083](083-the-relay-clips-a-frame-request-to-the-framebuffer.md):
 the relay clips a frame request to the framebuffer.
 
 ## Context

@@ -139,6 +139,10 @@ export class FakeRfb {
     const view = new DataView(init.buffer);
     view.setUint16(0, this.width);
     view.setUint16(2, this.height);
+    view.setUint8(4, 32);
+    view.setUint8(5, 24);
+    view.setUint8(7, 1);
+    for (const at of [8, 10, 12]) view.setUint16(at, 255);
     view.setUint32(20, name.byteLength);
     init.set(name, 24);
     await writer.write(init);

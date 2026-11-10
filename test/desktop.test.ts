@@ -753,7 +753,6 @@ function updateRequest(incremental: boolean): Uint8Array {
   return Uint8Array.of(3, incremental ? 1 : 0, 0, 0, 0, 0, 0x05, 0x00, 0x03, 0x20);
 }
 
-/** A FramebufferUpdateRequest for a rectangle, full or incremental. */
 function frameRequest(incremental: boolean, x: number, y: number, width: number, height: number): Uint8Array {
   const bytes = new Uint8Array(10);
   const view = new DataView(bytes.buffer);
@@ -766,11 +765,6 @@ function frameRequest(incremental: boolean, x: number, y: number, width: number,
   return bytes;
 }
 
-/**
- * One FramebufferUpdate: a 1x1 Tight fill, then an ExtendedDesktopSize
- * rectangle of `width` by `height`. The fill is there so the size is only
- * visible to a reader that can step past Tight.
- */
 function tightThenExtendedSize(width: number, height: number): Uint8Array {
   const bytes = new Uint8Array(4 + 12 + 4 + 12 + 4 + 16);
   const view = new DataView(bytes.buffer);
@@ -829,7 +823,7 @@ test("a server that sends no picture for a full update request is restarted, and
   assert.equal(plain.viewer.closed, null);
 });
 
-test("a frame request past the framebuffer is clipped to it, and one that misses it is answered and not sent (neatvnc 0.9.1, #904)", async () => {
+test("a frame request past the framebuffer is clipped to it, and one that misses it is forwarded inside it (neatvnc 0.9.1, #904)", async () => {
   const server = new FakeRfb({ width: 1920, height: 1080 });
   const relay = relayTo(server);
   await relay.init();
@@ -854,8 +848,8 @@ test("a frame request past the framebuffer is clipped to it, and one that misses
   const aloneBox = quiet.connections[0]!;
 
   await alone.relay.receive(frameRequest(false, 2000, 0, 16, 16));
-  assert.equal(aloneBox.received.byteLength, 0, "a request that misses the framebuffer is not forwarded");
-  assert.equal(hex(await alone.viewer.reader.read(4)), "00000000", "the viewer is answered so it does not wait");
+  await until("the small request", () => aloneBox.received.byteLength >= 10);
+  assert.equal(hex(aloneBox.received), hex(frameRequest(false, 0, 0, 1, 1)));
 });
 
 test("the relay learns a new framebuffer from the server's stream, tight bytes and all, and clips to that (neatvnc 0.9.1, #904)", async () => {
@@ -1284,4 +1278,61 @@ test("a recording forgets the keys a viewer held when the relay lets them go, an
     ["ctrl+A", "typing", "typing", "typing"],
   );
   await third.relay.close();
+});
+
+for (const encoding of [0x574d5664, 21]) {
+  test(`an unmeasurable encoding ${encoding} ends request clipping`, async () => {
+    const server = new FakeRfb({ width: 1920, height: 1080 });
+    const relay = relayTo(server);
+    await relay.init();
+    const box = server.connections[0]!;
+    const update = new Uint8Array(16);
+    update[3] = 1;
+    new DataView(update.buffer).setInt32(12, encoding);
+
+    await box.send(update);
+    await relay.viewer.reader.read(update.length);
+    const request = frameRequest(false, 0, 0, 2560, 1440);
+    await relay.relay.receive(request);
+
+    await until("the unchanged request", () => box.received.byteLength >= 10);
+    assert.equal(hex(box.received), hex(request));
+  });
+}
+
+test("SetPixelFormat ends request clipping", async () => {
+  const server = new FakeRfb({ width: 1920, height: 1080 });
+  const relay = relayTo(server);
+  await relay.init();
+  const box = server.connections[0]!;
+  const format = new Uint8Array(20);
+  format[4] = 16;
+  const request = frameRequest(false, 0, 0, 2560, 1440);
+
+  await relay.relay.receive(concat(format, request));
+
+  await until("the format and request", () => box.received.byteLength >= 30);
+  assert.equal(hex(box.received), hex(concat(format, request)));
+});
+
+test("an outside request cannot inject bytes into a half delivered raw rectangle", async () => {
+  const server = new FakeRfb({ width: 1920, height: 1080 });
+  server.silent = true;
+  const relay = relayTo(server);
+  await relay.init();
+  const box = server.connections[0]!;
+  const update = new Uint8Array(24);
+  update[3] = 1;
+  new DataView(update.buffer).setUint16(8, 2);
+  new DataView(update.buffer).setUint16(10, 1);
+  update.fill(123, 16);
+
+  await box.send(update.subarray(0, 20));
+  assert.equal(hex(await relay.viewer.reader.read(20)), hex(update.subarray(0, 20)));
+  await relay.relay.receive(frameRequest(true, 2000, 0, 16, 16));
+  await box.send(update.subarray(20));
+
+  assert.equal(hex(await relay.viewer.reader.read(4)), hex(update.subarray(20)));
+  await until("the in-screen request", () => box.received.byteLength >= 10);
+  assert.equal(hex(box.received), hex(frameRequest(true, 0, 0, 1, 1)));
 });
