@@ -61,6 +61,7 @@ export const LABELS = {
   imageBox: "bbbox.image-box",
   /** On an image bb-box captured from an image box (049): the image's name. */
   image: "bbbox.image",
+  fromSnapshot: "bbbox.from-snapshot",
 } as const;
 
 export interface DockerInfo {
@@ -322,7 +323,7 @@ export class DockerCli {
     const result = await this.run(args, options);
     if (result.exitCode === 0) return result.stdout;
     // A management command, such as `docker container ls`, by its first two words.
-    throw this.error(`docker ${args.slice(0, ["container", "image", "network"].includes(args[0]!) ? 2 : 1).join(" ")}`, result);
+    throw this.error(`docker ${args.slice(0, ["container", "image", "network", "volume"].includes(args[0]!) ? 2 : 1).join(" ")}`, result);
   }
 
   error(action: string, result: DockerResult): DockerError {

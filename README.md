@@ -99,6 +99,9 @@ Boxes join BB by reaching BB's server. If BB is signed in to your bb account, bb
 | [Namespace](docs/guide/namespace.md) | macOS, with or without a desktop; Linux, with KVM; Linux desktop on the CPU; Wayland desktop on the CPU; iOS Simulator devices, in slots on a shared Mac | a Namespace machine for each box, a Mac or a Linux machine, rented by the minute in your Namespace workspace, within its plan's limits | none yet |
 | [boat.dev](docs/guide/boat.md) | Linux, with KVM; Linux desktop on the CPU; Android emulator devices | a boat.dev sandbox for each box, a Linux VM forked from BB Box's template in seconds and billed by the second | on a paid plan, the disk, as a saved snapshot on your account: free up to your plan's included ones, then $0.056 a day each; restore with an undo; fork and Keep for Linux boxes. None on the free trial |
 
+Docker boxes keep Docker data in labelled volumes. Maintenance retries failed
+removals after other upkeep; a held volume does not stop the remaining cleanup.
+
 Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.md). Phones and tablets are in [device boxes](docs/guide/devices.md).
 
 ## Documentation

@@ -172,11 +172,32 @@ function run(rest) {
   fail(`fake docker: no run for ${command.join(" ")}`, 2);
 }
 
+function volumeMount(spec) {
+  const colon = spec.indexOf(":");
+  if (colon === -1) {
+    const id = randomBytes(32).toString("hex");
+    const volumes = read("volumes.json", {});
+    volumes[id] = { Name: id, Labels: null, Anonymous: true };
+    write("volumes.json", volumes);
+    return { Type: "volume", Name: id, Source: id, Target: spec, ReadOnly: false, Anonymous: true };
+  }
+  const name = spec.slice(0, colon);
+  const [target, mode] = spec.slice(colon + 1).split(":");
+  if (name.startsWith("/")) return { Type: "bind", Name: "", Source: name, Target: target, ReadOnly: mode === "ro", Anonymous: false };
+  const volumes = read("volumes.json", {});
+  if (!(name in volumes)) {
+    volumes[name] = { Name: name, Labels: null, Anonymous: false };
+    write("volumes.json", volumes);
+  }
+  return { Type: "volume", Name: name, Source: name, Target: target, ReadOnly: mode === "ro", Anonymous: false };
+}
+
 function create(rest) {
   const labels = {};
   const env = [];
   const devices = [];
   const mounts = [];
+  const volumeSpecs = [];
   const options = {};
   let i = 0;
   const value = () => rest[++i];
@@ -188,6 +209,7 @@ function create(rest) {
     } else if (flag === "--env") env.push(value());
     else if (flag === "--device") devices.push(value());
     else if (flag === "--mount") mounts.push(mountOf(value()));
+    else if (flag === "--volume" || flag === "-v") volumeSpecs.push(value());
     else if (["--init", "--privileged"].includes(flag)) options[flag] = true;
     else options[flag] = value();
   }
@@ -208,6 +230,7 @@ function create(rest) {
   } catch {
     fail(`Error response from daemon: Conflict. The container name "/${name}" is already in use by container "${find(name)?.Id ?? "?"}". You have to remove (or rename) that container to be able to reuse that name.`);
   }
+  mounts.push(...volumeSpecs.map(volumeMount));
   mkdirSync(join(dir(name), "home"));
   mkdirSync(join(dir(name), "etc"));
   const count = names().length + 1;
@@ -310,9 +333,21 @@ function container(command, rest) {
       return console.log(rest.at(-1));
     }
     case "rm": {
-      const found = find(rest.at(-1)) ?? fail(`Error response from daemon: No such container: ${rest.at(-1)}`);
+      const ref = rest.filter((arg) => !arg.startsWith("-")).at(-1);
+      const found = find(ref) ?? fail(`Error response from daemon: No such container: ${ref}`);
+      if (rest.includes("--volumes")) {
+        const volumes = read("volumes.json", {});
+        let changed = false;
+        for (const mount of found.HostConfig.Mounts ?? []) {
+          if (mount.Anonymous && volumes[mount.Name]) {
+            delete volumes[mount.Name];
+            changed = true;
+          }
+        }
+        if (changed) write("volumes.json", volumes);
+      }
       rmSync(dir(found.Name.slice(1)), { recursive: true, force: true });
-      return console.log(rest.at(-1));
+      return console.log(ref);
     }
     case "commit": {
       // The image of a container: its image's labels, the container's, then each --change LABEL.
@@ -420,6 +455,74 @@ switch (command) {
       write("networks.json", { ...networks, [network]: labels });
       console.log(randomBytes(32).toString("hex"));
     } else fail(`fake docker: unknown command network ${sub}`, 2);
+    break;
+  }
+  case "volume": {
+    const volumes = () => read("volumes.json", {});
+    const [sub, ...more] = rest;
+    const inUse = (name) => names().map(load).some((container) => (container.HostConfig.Mounts ?? []).some((mount) => mount.Name === name));
+    if (sub === "create") {
+      const labels = {};
+      let name = null;
+      for (let i = 0; i < more.length; i++) {
+        if (more[i] === "--label") {
+          const [key, ...parts] = more[++i].split("=");
+          labels[key] = parts.join("=");
+        } else if (!more[i].startsWith("--")) name = more[i];
+        else fail(`fake docker: unknown volume create flag ${more[i]}`, 2);
+      }
+      if (!name) fail("docker: 'docker volume create' requires 1 argument");
+      const known = volumes();
+      if (host.volumeCreateLabels && !(name in known)) known[name] = { Name: name, Labels: host.volumeCreateLabels, Anonymous: false };
+      if (!(name in known)) known[name] = { Name: name, Labels: labels, Anonymous: false };
+      write("volumes.json", known);
+      console.log(name);
+    } else if (sub === "inspect") {
+      const formatAt = more.indexOf("--format");
+      const format = formatAt >= 0 ? more[formatAt + 1] : null;
+      const wanted = more.filter((arg, i) => !arg.startsWith("--") && more[i - 1] !== "--format");
+      const known = volumes();
+      for (const name of wanted) if (!(name in known)) fail(`Error response from daemon: get ${name}: no such volume`);
+      if (format === "{{json .Labels}}") {
+        for (const name of wanted) console.log(JSON.stringify(known[name].Labels));
+      } else if (format === "{{.Name}}") {
+        for (const name of wanted) console.log(known[name].Name);
+      } else console.log(JSON.stringify(wanted.map((name) => ({ Name: known[name].Name, Labels: known[name].Labels })), null, 2));
+    } else if (sub === "ls") {
+      const filters = [];
+      let format = null;
+      for (let i = 0; i < more.length; i++) {
+        if (more[i] === "--filter") filters.push(more[++i]);
+        else if (more[i] === "--format") format = more[++i];
+      }
+      if (format && format !== "{{.Name}}") fail(`fake docker: volume ls format ${format} is not {{.Name}}`, 2);
+      for (const [name, volume] of Object.entries(volumes())) {
+        const labels = volume.Labels ?? {};
+        const matches = filters.every((filter) => {
+          if (!filter.startsWith("label=")) return true;
+          const body = filter.slice("label=".length);
+          const [key, ...parts] = body.split("=");
+          return parts.length ? labels[key] === parts.join("=") : key in labels;
+        });
+        if (!matches) continue;
+        console.log(name);
+      }
+    } else if (sub === "rm") {
+      const wanted = more.filter((arg) => !arg.startsWith("-"));
+      const known = volumes();
+      const errors = [];
+      for (const name of wanted) {
+        if (host.volumeDisappearOnRemove === name) delete known[name];
+        if (!(name in known)) errors.push(`Error response from daemon: get ${name}: no such volume`);
+        else if (inUse(name)) errors.push(`Error response from daemon: remove ${name}: volume is in use`);
+        else {
+          delete known[name];
+          console.log(name);
+        }
+      }
+      write("volumes.json", known);
+      if (errors.length) fail(errors.join("\n"));
+    } else fail(`fake docker: unknown command volume ${sub}`, 2);
     break;
   }
   case "image": {

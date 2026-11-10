@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { toConfiguration } from "../scripts/smoke.ts";
 import { daemonOs, containerName, DockerBackend, dockerKinds, hostnameOf } from "../src/backends/docker/backend.ts";
+import { boxVolumeName, createArgs, ENV_A_BOX_IS_GIVEN, type BoxContainerSettings } from "../src/backends/docker/box-container.ts";
 import { gpusOf, parseContainers, parseInfo, sshReuse } from "../src/backends/docker/cli.ts";
 import { parseDockerPart } from "../src/backends/docker/config.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
@@ -68,6 +69,22 @@ const signal = () => AbortSignal.timeout(30_000);
 function after(args: readonly string[], flag: string): string | undefined {
   const at = args.indexOf(flag);
   return at < 0 ? undefined : args[at + 1];
+}
+
+function volumeNames(binary: string): string[] {
+  const listed = execFileSync(binary, ["volume", "ls", "--format", "{{.Name}}"], { encoding: "utf8" });
+  return listed.split("\n").map((line) => line.trim()).filter(Boolean).sort();
+}
+
+function volumeLabels(binary: string, name: string): Record<string, string> {
+  const listed = execFileSync(binary, ["volume", "inspect", "--format", "{{json .Labels}}", name], { encoding: "utf8" });
+  const parsed = JSON.parse(listed) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`volume ${name} has no labels`);
+  return parsed as Record<string, string>;
+}
+
+function fileMounts(mounts: readonly { Type: string; Source: string; Target: string }[]) {
+  return mounts.filter((mount) => mount.Type !== "volume");
 }
 
 test("parses the fields, with the setup guide's defaults", () => {
@@ -338,9 +355,8 @@ test("gives each box its own Docker daemon, privileged, unless the setting is of
   const made = fake.inspect(docker.ref);
   assert.equal(made.HostConfig.Privileged, true);
   assert.ok(made.Config.Env.includes("BBBOX_DOCKERD=1"));
-  // Its Docker data is an anonymous volume, removed with the container.
-  const created = fake.calls().find((args) => args[1] === "create" && after(args, "--name") === docker.ref)!;
-  assert.equal(after(created, "--volume"), "/var/lib/docker");
+  const created = fake.calls().find((args) => args[0] === "container" && args[1] === "create" && after(args, "--name") === docker.ref)!;
+  assert.equal(after(created, "--volume"), `${docker.ref}-docker:/var/lib/docker`);
   const gpu = await backend.acquire(identity("linux-desktop", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, hooks().hooks, signal());
   assert.equal(gpu.data?.gpu, GPU_A);
   assert.deepEqual(fake.inspect(gpu.ref).HostConfig.Devices, [GPU_A]);
@@ -363,6 +379,155 @@ test("gives each box its own Docker daemon, privileged, unless the setting is of
   const second = await indexed.backend.acquire(identity("linux-desktop", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, hooks().hooks, signal());
   assert.ok(indexed.fake.inspect(second.ref).Config.Env.includes("BBBOX_GPU_ID=1"));
 });
+
+test("keeps a new box's Docker data on a named volume labelled as that box, and a release removes only that volume", async () => {
+  const { fake, make, backend } = setup();
+  const box = identity();
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  const volume = `${guest.ref}-docker`;
+
+  const calls = fake.calls();
+  const volumeAt = calls.findIndex((args) => args[0] === "volume" && args[1] === "create" && args.at(-1) === volume);
+  const containerAt = calls.findIndex((args) => args[0] === "container" && args[1] === "create" && after(args, "--name") === guest.ref);
+  assert.ok(volumeAt >= 0 && volumeAt < containerAt);
+  assert.equal(after(calls[containerAt]!, "--volume"), `${volume}:/var/lib/docker`);
+  assert.deepEqual(volumeLabels(fake.binary, volume), { "bbbox.volume-of": guest.ref, "bbbox.install": "test" });
+  const mounted = fake.inspect(guest.ref).HostConfig.Mounts.find((mount) => mount.Target === "/var/lib/docker");
+  assert.equal(mounted?.Source, volume);
+
+  await backend.stop(guest, signal());
+  await backend.start(guest, signal());
+  assert.deepEqual(volumeLabels(fake.binary, volume), { "bbbox.volume-of": guest.ref, "bbbox.install": "test" });
+
+  const other = await backend.acquire(identity(), null, hooks().hooks, signal());
+  await make("other").release(guest, releasing, signal());
+  assert.deepEqual(volumeLabels(fake.binary, volume), { "bbbox.volume-of": guest.ref, "bbbox.install": "test" });
+
+  const stranger = "bbbox-stranger-docker";
+  execFileSync(fake.binary, ["volume", "create", "--label", `bbbox.volume-of=${guest.ref}`, "--label", "bbbox.install=other", stranger]);
+  await backend.release(guest, releasing, signal());
+  assert.throws(() => volumeLabels(fake.binary, volume));
+  assert.equal(volumeLabels(fake.binary, `${other.ref}-docker`)["bbbox.volume-of"], other.ref);
+  assert.deepEqual(volumeLabels(fake.binary, stranger), { "bbbox.volume-of": guest.ref, "bbbox.install": "other" });
+
+  const plain = setup({ privileged: false });
+  const unprivileged = await plain.backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(plain.fake.calls().some((args) => args[0] === "volume"), false);
+  assert.equal(plain.fake.inspect(unprivileged.ref).HostConfig.Mounts.some((mount) => mount.Target === "/var/lib/docker"), false);
+});
+
+test("a box made with an anonymous Docker volume keeps it, and a release still removes it", async () => {
+  const { fake, backend } = setup();
+  const box = identity();
+  const name = containerName(box.boxId);
+  execFileSync(fake.binary, ["network", "create", "bbbox"]);
+  execFileSync(fake.binary, [
+    "container", "create",
+    "--name", name,
+    "--label", "bbbox.backend=docker",
+    "--label", "bbbox.install=test",
+    "--label", `bbbox.box=${box.boxId}`,
+    "--cpus", "2",
+    "--memory", "4096m",
+    "--network", "bbbox",
+    "--volume", "/var/lib/docker",
+    "bbbox/linux:1",
+  ]);
+  const before = volumeNames(fake.binary);
+  assert.equal(before.some((entry) => entry === `${name}-docker`), false);
+  assert.equal(before.length, 1);
+
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  assert.equal(guest.ref, name);
+  assert.deepEqual(volumeNames(fake.binary), before);
+  assert.equal(fake.inspect(name).HostConfig.Mounts.find((mount) => mount.Target === "/var/lib/docker")?.Source, before[0]);
+
+  const neighbour = "bbbox-neighbour-docker";
+  execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.volume-of=bbbox-neighbour", "--label", "bbbox.install=test", neighbour]);
+  await backend.release(guest, releasing, signal());
+  assert.deepEqual(fake.containers(), []);
+  assert.deepEqual(volumeNames(fake.binary), [neighbour]);
+});
+
+test("Docker over SSH and on a BB machine labels the same volume", async () => {
+  const ssh = setup({ host: "ssh://builder@192.0.2.10" });
+  const guest = await ssh.backend.acquire(identity(), null, hooks().hooks, signal());
+  const volume = `${guest.ref}-docker`;
+  const raw = readFileSync(join(ssh.fake.root, "log"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]);
+  assert.ok(raw.some((args) => args[0] === "-H" && args[1] === "ssh://builder@192.0.2.10" && args[2] === "volume" && args[3] === "create"));
+  assert.deepEqual(volumeLabels(ssh.fake.binary, volume), { "bbbox.volume-of": guest.ref, "bbbox.install": "test" });
+  await ssh.backend.release(guest, releasing, signal());
+  assert.throws(() => volumeLabels(ssh.fake.binary, volume));
+
+  const fake = fakeDockerHost();
+  const context = {
+    ...testContext(),
+    machines: {
+      dockerHost: () => "unix:///tmp/bb-box-relay/host_m1.sock",
+      ready: async () => {},
+      name: () => "build-1",
+      connected: async () => true,
+    },
+  };
+  const backend = new DockerBackend(dockerConfig({ host: "bb:host_m1" }), context, { binary: fake.binary, readyTimeoutMs: 2_000 });
+  const made = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const machineLog = readFileSync(join(fake.root, "log"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as string[]);
+  assert.ok(machineLog.some((args) => args[0] === "-H" && args[1] === "unix:///tmp/bb-box-relay/host_m1.sock" && args[2] === "volume" && args[3] === "create"));
+  assert.deepEqual(volumeLabels(fake.binary, `${made.ref}-docker`), { "bbbox.volume-of": made.ref, "bbbox.install": "test" });
+  await backend.release(made, releasing, signal());
+  assert.throws(() => volumeLabels(fake.binary, `${made.ref}-docker`));
+});
+
+test("names a box's Docker volume from its container, including one restored under a new name", () => {
+  assert.equal(boxVolumeName("bbbox-bx000000000001"), "bbbox-bx000000000001-docker");
+  assert.equal(boxVolumeName("bbbox-bx000000000001-a1b2c3d4"), "bbbox-bx000000000001-a1b2c3d4-docker");
+
+  const box = identity("linux-desktop", { cores: 4, memoryMiB: 8192, diskGiB: null });
+  const plain = createArgs(containerSettings(box, { placement: { gpu: null, card: null, part: "none", cpus: null } }));
+  const withGpu = createArgs(containerSettings(box, {
+    placement: { gpu: GPU_A, card: "0b1c2d3e-0000-0000-0000-000000000001", part: "shared", cpus: [0, 1] },
+  }));
+  const keys = new Set<string>();
+  for (const args of [plain, withGpu]) {
+    for (let i = 0; i < args.length; i++) if (args[i] === "--env") keys.add(args[i + 1]!.slice(0, args[i + 1]!.indexOf("=")));
+  }
+  const expected = [
+    "BBBOX_IDENTITY",
+    "BBBOX_DOCKERD",
+    "NVIDIA_DRIVER_CAPABILITIES",
+    "CUDA_VISIBLE_DEVICES",
+    "NVIDIA_VISIBLE_DEVICES",
+    "BBBOX_GPU_CARD",
+    "BBBOX_GPU",
+    "BBBOX_GPU_ID",
+    "OMP_NUM_THREADS",
+  ];
+  assert.deepEqual([...keys].sort(), [...expected].sort());
+  assert.deepEqual([...ENV_A_BOX_IS_GIVEN].sort(), [...expected].sort());
+
+  const restored = "bbbox-amber-a1b2c3d4";
+  const fromSnapshot = createArgs(containerSettings(box, { name: restored, dockerVolume: boxVolumeName(restored), fromSnapshot: "sn3k2abc" }));
+  assert.equal(after(fromSnapshot, "--volume"), "bbbox-amber-a1b2c3d4-docker:/var/lib/docker");
+  assert.ok(fromSnapshot.includes("bbbox.from-snapshot=sn3k2abc"));
+  assert.equal(createArgs(containerSettings(box)).some((arg) => arg.startsWith("bbbox.from-snapshot=")), false);
+});
+
+function containerSettings(box: ReturnType<typeof identity>, over: Partial<BoxContainerSettings> = {}): BoxContainerSettings {
+  return {
+    box,
+    installId: "test",
+    name: containerName(box.boxId),
+    image: "bbbox/linux:1",
+    dockerVolume: `${containerName(box.boxId)}-docker`,
+    placement: { gpu: null, card: null, part: "none", cpus: [0, 1] },
+    lxcfs: null,
+    privileged: true,
+    network: "bbbox",
+    restart: "unless-stopped",
+    fromSnapshot: null,
+    ...over,
+  };
+}
 
 test("a GPU desktop on a desktop image built before gpu-bus-id stays unprivileged, without Docker, until the image is built again (#283)", async () => {
   const { fake, backend } = setup({ "gpu-desktops": true }, { gpus: [GPU_A] });
@@ -466,6 +631,8 @@ test("on rootless Docker, offers no Docker once the daemon has said so, and make
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
   assert.equal(fake.inspect(guest.ref).HostConfig.Privileged, false);
   assert.ok(!fake.inspect(guest.ref).Config.Env.includes("BBBOX_DOCKERD=1"));
+  assert.equal(fake.calls().some((args) => args[0] === "volume"), false);
+  assert.equal(fake.inspect(guest.ref).HostConfig.Mounts.some((mount) => mount.Target === "/var/lib/docker"), false);
 });
 
 test("gives the address only where BB's server reaches the bridge", async () => {
@@ -511,11 +678,13 @@ test("checks the container before each act, and acts only on its own (018)", asy
   await assert.rejects(other.stop(guest, signal()), (error: unknown) => error instanceof BackendError && error.code === "gone");
   await other.release(guest, releasing, signal());
   assert.equal(await backend.power(guest, signal()), "running");
+  assert.deepEqual(volumeLabels(fake.binary, `${guest.ref}-docker`), { "bbbox.volume-of": guest.ref, "bbbox.install": "test" });
   // Nor does a guest that names another box.
   assert.equal(await backend.power({ ...guest, data: { box: "bxsomeoneelse0" } }, signal()), null);
 
   await backend.release(guest, releasing, signal());
   assert.deepEqual(fake.containers(), []);
+  assert.throws(() => volumeLabels(fake.binary, `${guest.ref}-docker`));
   await backend.release(guest, releasing, signal());
   assert.equal(await backend.power(guest, signal()), null);
   await assert.rejects(backend.start(guest, signal()), (error: unknown) => error instanceof BackendError && error.code === "gone");
@@ -534,14 +703,17 @@ test("removes the container when a box does not come up, and says why", async ()
   fake.set({ failStart: true });
   await assert.rejects(backend.acquire(identity(), null, hooks().hooks, signal()), /stopped as it started \(exited, exit code 1\)\. Its last output: bb-box-start: something went wrong/);
   assert.deepEqual(fake.containers(), []);
+  assert.deepEqual(volumeNames(fake.binary), []);
   fake.set({ failStart: false, neverReady: true });
   await assert.rejects(backend.acquire(identity(), null, hooks().hooks, signal()), /was not ready within \d s/);
   assert.deepEqual(fake.containers(), []);
+  assert.deepEqual(volumeNames(fake.binary), []);
 });
 
 test("refuses a missing image without pulling it", async () => {
-  const { backend } = setup({ "linux-image": "example/missing:1" });
+  const { fake, backend } = setup({ "linux-image": "example/missing:1" });
   await assert.rejects(backend.acquire(identity(), null, hooks().hooks, signal()), /has no image example\/missing:1, and BB Box never pulls one/);
+  assert.deepEqual(volumeNames(fake.binary), []);
 });
 
 test("leaves alone a container of the box's name that another box has, and goes on with its own", async () => {
@@ -552,6 +724,7 @@ test("leaves alone a container of the box's name that another box has, and goes 
   execFileSync(fake.binary, ["container", "create", "--name", name, "--label", "bbbox.backend=docker", "--label", "bbbox.install=test", "--label", "bbbox.box=bxanother00000", "--cpus", "1", "--memory", "512m", "--network", "bbbox", "bbbox/linux:1"]);
   await assert.rejects(backend.acquire(box, null, hooks().hooks, signal()), /belongs to another box, so BB Box left it alone/);
   assert.equal(fake.inspect(name).Config.Labels["bbbox.box"], "bxanother00000");
+  assert.throws(() => volumeLabels(fake.binary, `${name}-docker`));
 
   // An acquire that resumes after a restart finds its own container and goes on.
   const mine = identity();
@@ -560,6 +733,18 @@ test("leaves alone a container of the box's name that another box has, and goes 
   const again = await backend.acquire(mine, first.claimed[0]!, hooks().hooks, signal());
   assert.deepEqual(again, guest);
   assert.equal(fake.calls().filter((args) => args[1] === "create" && args.includes(guest.ref)).length, 2);
+  assert.deepEqual(volumeNames(fake.binary), [`${guest.ref}-docker`]);
+});
+
+test("refuses a Docker volume of the box's name when it is not labelled as that box", async () => {
+  const { fake, backend } = setup();
+  const box = identity();
+  const volume = `${containerName(box.boxId)}-docker`;
+  execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.volume-of=bbbox-someone", "--label", "bbbox.install=test", volume]);
+
+  await assert.rejects(backend.acquire(box, null, hooks().hooks, signal()), /not labelled as/);
+  assert.deepEqual(fake.containers(), []);
+  assert.deepEqual(volumeLabels(fake.binary, volume), { "bbbox.volume-of": "bbbox-someone", "bbbox.install": "test" });
 });
 
 test("counts every install's containers and the memory limits of running ones", async () => {
@@ -1460,7 +1645,7 @@ test("on a Docker host that is a container whose own AppArmor profile for unix_c
 test("on a host with LXCFS, each box mounts its files over /proc and the CPUs online, so free and /proc/cpuinfo say the box's own, and the doctor says so (062)", async () => {
   const { fake, backend } = setup({}, { lxcfs: true, cpus: 8 });
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
-  const mounts = fake.inspect(guest.ref).HostConfig.Mounts.map((mount) => `${mount.Source} ${mount.Target}`);
+  const mounts = fileMounts(fake.inspect(guest.ref).HostConfig.Mounts).map((mount) => `${mount.Source} ${mount.Target}`);
   assert.deepEqual(mounts, [
     ...["cpuinfo", "meminfo", "stat", "uptime", "swaps", "loadavg", "diskstats"].map((file) => `/var/lib/lxcfs/proc/${file} /proc/${file}`),
     "/var/lib/lxcfs/sys/devices/system/cpu/online /sys/devices/system/cpu/online",
@@ -1478,7 +1663,7 @@ test("on a host with LXCFS, each box mounts its files over /proc and the CPUs on
 test("on a host without LXCFS, boxes are made without its files and the doctor says what they see and how to add it; Docker Desktop cannot have it (062)", async () => {
   const { fake, backend } = setup({}, { cpus: 8 });
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
-  assert.deepEqual(fake.inspect(guest.ref).HostConfig.Mounts, []);
+  assert.deepEqual(fileMounts(fake.inspect(guest.ref).HostConfig.Mounts), []);
   const check = (await backend.doctor(signal())).checks.find((each) => each.id === "docker.lxcfs")!;
   assert.equal(check.status, "warn");
   assert.match(check.detail, /^fake-docker has no LXCFS, so in a box free, \/proc\/meminfo and \/proc\/cpuinfo say the host's memory and CPUs/);
@@ -1494,18 +1679,19 @@ test("a box is made without LXCFS's files when LXCFS went from the host after BB
   await backend.acquire(identity(), null, hooks().hooks, signal());
   fake.set({ lxcfs: false });
   const after = await backend.acquire(identity(), null, hooks().hooks, signal());
-  assert.deepEqual(fake.inspect(after.ref).HostConfig.Mounts, [], "the refused create looked again, and made the box without them");
+  assert.deepEqual(fileMounts(fake.inspect(after.ref).HostConfig.Mounts), [], "the refused create looked again, and made the box without them");
 
   const older = setup({}, { lxcfs: true, lxcfsCpuOnline: false, cpus: 8 });
   const guest = await older.backend.acquire(identity(), null, hooks().hooks, signal());
-  assert.equal(older.fake.inspect(guest.ref).HostConfig.Mounts.some((mount) => mount.Target === "/sys/devices/system/cpu/online"), false);
-  assert.equal(older.fake.inspect(guest.ref).HostConfig.Mounts.length, 7);
+  const olderMounts = fileMounts(older.fake.inspect(guest.ref).HostConfig.Mounts);
+  assert.equal(olderMounts.some((mount) => mount.Target === "/sys/devices/system/cpu/online"), false);
+  assert.equal(olderMounts.length, 7);
 });
 
 test("on a Docker host that is itself an LXC container, as on Proxmox VE, boxes mount the files the LXCFS outside gives the container, as it answers for each box's own cgroup (062)", async () => {
   const { fake, backend } = setup({}, { containerLxcfs: true, cpus: 8 });
   const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
-  const mounts = fake.inspect(guest.ref).HostConfig.Mounts.map((mount) => `${mount.Source} ${mount.Target}`);
+  const mounts = fileMounts(fake.inspect(guest.ref).HostConfig.Mounts).map((mount) => `${mount.Source} ${mount.Target}`);
   assert.deepEqual(mounts, [
     ...["cpuinfo", "meminfo", "stat", "uptime", "swaps", "loadavg", "diskstats"].map((file) => `/proc/${file} /proc/${file}`),
     "/sys/devices/system/cpu/online /sys/devices/system/cpu/online",
@@ -1518,7 +1704,7 @@ test("on a Docker host that is itself an LXC container, as on Proxmox VE, boxes 
 
   const plain = setup({}, { cpus: 8 });
   const unserved = await plain.backend.acquire(identity(), null, hooks().hooks, signal());
-  assert.deepEqual(plain.fake.inspect(unserved.ref).HostConfig.Mounts, [], "a host's own /proc files are not LXCFS's, so no box mounts them");
+  assert.deepEqual(fileMounts(plain.fake.inspect(unserved.ref).HostConfig.Mounts), [], "a host's own /proc files are not LXCFS's, so no box mounts them");
   assert.match((await plain.backend.doctor(signal())).checks.find((each) => each.id === "docker.lxcfs")!.fix!, /If fake-docker is itself a container, LXCFS cannot run in it/);
 });
 
@@ -1538,6 +1724,9 @@ test("the sweep probes a host with boxes again before its probes are 10 minutes 
   await backend.maintain(signal());
   assert.equal(probes(), 1, "probes under 6 minutes old stand");
 
+  execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=test", "--label", "bbbox.volume-of=bbbox-gone", "held-orphan"]);
+  execFileSync(fake.binary, ["container", "create", "--name", "holder", "--network", "bbbox", "--volume", "held-orphan:/data", "bbbox/linux:1"]);
+
   fake.set({ cpuList: "3,61" });
   now += 7 * 60_000;
   await backend.maintain(signal());
@@ -1548,4 +1737,85 @@ test("the sweep probes a host with boxes again before its probes are 10 minutes 
   const b = await backend.acquire(identity("linux", one), null, hooks().hooks, signal());
   assert.equal(probes(), 2, "a create 11 minutes after the first probe did not wait on one");
   assert.equal(fake.inspect(b.ref).HostConfig.CpusetCpus, "61");
+});
+
+test("a volume creation collision never mounts or deletes another install's data", async () => {
+  for (const image of ["bbbox/linux:1", "example/missing:1"]) {
+    const { fake, backend } = setup({ "linux-image": image }, { volumeCreateLabels: { "bbbox.install": "other", "bbbox.volume-of": "foreign" } });
+    const box = identity();
+    const volume = boxVolumeName(containerName(box.boxId));
+
+    await assert.rejects(backend.acquire(box, null, hooks().hooks, signal()), /not labelled as/);
+
+    assert.deepEqual(fake.containers(), []);
+    assert.deepEqual(volumeLabels(fake.binary, volume), { "bbbox.install": "other", "bbbox.volume-of": "foreign" });
+  }
+});
+
+test("maintenance retries an orphan volume after a failed release", async () => {
+  const { fake, backend, make } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const volume = boxVolumeName(guest.ref);
+  execFileSync(fake.binary, ["container", "create", "--name", "holder", "--network", "bbbox", "--volume", volume + ":/data", "bbbox/linux:1"]);
+
+  await assert.rejects(backend.release(guest, releasing, signal()), /volume is in use/);
+  execFileSync(fake.binary, ["container", "rm", "--force", "holder"]);
+  await make().maintain(signal());
+
+  assert.deepEqual(volumeNames(fake.binary), []);
+});
+
+test("a missing volume does not hide another volume's removal failure", async () => {
+  const { fake, backend } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const first = boxVolumeName(guest.ref);
+  const held = first + "-held";
+  execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=test", "--label", "bbbox.volume-of=" + guest.ref, held]);
+  execFileSync(fake.binary, ["container", "create", "--name", "holder", "--network", "bbbox", "--volume", held + ":/data", "bbbox/linux:1"]);
+  fake.set({ volumeDisappearOnRemove: first });
+
+  await assert.rejects(backend.release(guest, releasing, signal()), /volume is in use/);
+
+  assert.deepEqual(volumeNames(fake.binary), [held]);
+});
+
+test("maintenance preserves a volume while its box is being made and other owners' volumes", async () => {
+  const { fake, backend, make } = setup();
+  const box = identity();
+  const name = containerName(box.boxId);
+  const volume = boxVolumeName(name);
+  const foreign = "foreign-data";
+  execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=other", "--label", "bbbox.volume-of=bbbox-foreign", foreign]);
+  const acquiring = hooks();
+  const claim = acquiring.hooks.claim;
+  const guarded: AcquireHooks = {
+    ...acquiring.hooks,
+    claim: async (guest) => {
+      await claim(guest);
+      if (guest.address) return;
+      execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=test", "--label", "bbbox.volume-of=" + name, volume]);
+      await make().maintain(signal());
+      assert.ok(volumeNames(fake.binary).includes(volume));
+    },
+  };
+
+  const guest = await backend.acquire(box, null, guarded, signal());
+  await make().maintain(signal());
+
+  assert.deepEqual(volumeNames(fake.binary), [volume, foreign].sort());
+  assert.equal(await backend.power(guest, signal()), "running");
+});
+
+test("maintenance reports a held orphan and still removes other orphans", async () => {
+  const { fake, backend, context } = setup();
+  execFileSync(fake.binary, ["network", "create", "bbbox"]);
+  for (const name of ["a-held", "z-free"]) {
+    execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=test", "--label", "bbbox.volume-of=bbbox-gone", name]);
+  }
+  execFileSync(fake.binary, ["container", "create", "--name", "holder", "--network", "bbbox", "--volume", "a-held:/data", "bbbox/linux:1"]);
+
+  await backend.maintain(signal());
+
+  assert.deepEqual(volumeNames(fake.binary), ["a-held"]);
+  assert.match(context.errors.join("\n"), /removing orphan Docker volume a-held.*volume is in use/);
 });

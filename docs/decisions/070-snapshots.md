@@ -398,6 +398,11 @@ boat's new-guest restores keep the box the same machine.
 Never on a shared host to act on one slot: no snapshot or restore of a
 whole Mac or Hetzner host stands in for one box's.
 
+[082](082-docker-snapshots.md) refines the Docker pause in that row.
+Measured cold, a commit takes about 30 s a GiB on the containerd image
+store and about 25 s a GiB on overlay2, and the box's Docker data copies
+at about 15 s a GiB. The 15 s in the row is a warm commit, and it is low.
+
 ### 3. Who may do what
 
 One permission check, `mayAct(caller, operation, snapshot or box)`, serves
