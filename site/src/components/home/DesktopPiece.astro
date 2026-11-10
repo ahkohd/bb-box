@@ -42,7 +42,7 @@ const boxName = "proud-crane";
     <span class="agent-pointer" aria-hidden="true"><PieceIcon name="pointer" /><span class="agent-label">agent</span></span>
     <span class="your-click" aria-hidden="true" hidden></span>
   </div>
-  <p class="piece-note" aria-live="polite">The agent is using the desktop. Take control to use it yourself.</p>
+  <p class="piece-note" aria-live="polite">The agent is using the desktop. Take control to use it.</p>
 </div>
 
 <script>
@@ -50,7 +50,7 @@ const boxName = "proud-crane";
 
   const menuSays: Record<string, string> = {
     terminal: "In BB, this opens the box's terminal beside its desktop.",
-    paste: "In BB, this types text from your computer into the box while you have control.",
+    paste: "In BB, this types your text into the box.",
     full: "In BB, this fills the screen with the desktop.",
   };
 
@@ -69,7 +69,7 @@ const boxName = "proud-crane";
       piece.dataset.owner = yours ? "you" : "agent";
       take.textContent = yours ? "Hand back to the agent" : "Take control";
       words.textContent = yours ? "You have control." : "The agent has control.";
-      say(yours ? "The agent waits while you have control. Select the desktop to use it." : "The agent carries on where it left off.");
+      say(yours ? "The agent waits. Select the desktop to use it." : "The agent carries on where it left off.");
     });
 
     screen.addEventListener("click", (event) => {
@@ -84,7 +84,7 @@ const boxName = "proud-crane";
       click.classList.remove("ping");
       void click.offsetWidth;
       click.classList.add("ping");
-      say("In BB, your clicks and keys go to the box. Here they stay on this page.");
+      say("In BB, your clicks and keys go to the box.");
     });
 
     const menu = pieceMenu<null>(piece.querySelector<HTMLElement>(".desktop-menu")!, (choice) => say(menuSays[choice]!));
@@ -155,7 +155,7 @@ const boxName = "proud-crane";
   }
 
   [data-owner="you"] .screen {
-    box-shadow: inset 0 0 0 1px var(--accent);
+    border-color: var(--accent);
   }
 
   .taskbar {
