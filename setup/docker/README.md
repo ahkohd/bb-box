@@ -32,6 +32,7 @@ shared connection. How bb-box drives a box is in the
 | `Dockerfile` | The images, made by the Proxmox LXC template's guest scripts |
 | `customize.sh` | Runs those scripts inside the image as it is built |
 | `start` | A box's main process: starts its services, then waits |
+| `fork-hold` | Holds a fork's services, at its first start, until BB Box has checked its identity |
 
 ## What you need
 
@@ -377,7 +378,9 @@ npm run conformance -- --backend docker --settings docker.json
 Snapshots share Docker's disk. Allow the changed disk bytes once on overlay2 or
 twice on the containerd image store, plus a copy of the box's Docker volume.
 BB Box checks room before taking one. A restore or a fork copies the snapshot's
-Docker data again, for the new container. A take pauses the box; see
+Docker data again, for the new container. A fork needs its box made from
+images built with `fork-hold`: build them again, then make the box again. A
+take pauses the box; see
 [Snapshots](../../docs/guide/snapshots.md#docker).
 
 ### Snapshots with LXCFS

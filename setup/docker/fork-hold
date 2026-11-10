@@ -1,0 +1,19 @@
+#!/bin/bash
+set -u
+readonly HELD=/run/bb-box/held
+readonly RELEASED=/var/lib/bb-box/fork-released
+readonly LOOK_EVERY_SECONDS=0.2
+
+started_as_a_held_fork() { [ "${BBBOX_FORK_HOLD:-}" = 1 ]; }
+
+released_as_this_box() {
+  [ -n "${BBBOX_IDENTITY:-}" ] && [ "$(cat "$RELEASED" 2>/dev/null)" = "$BBBOX_IDENTITY" ]
+}
+
+started_as_a_held_fork || exit 0
+released_as_this_box && exit 0
+install -d -m 0755 "${HELD%/*}"
+touch "$HELD"
+echo "bb-box-start: a fork, so every service waits until BB Box has checked its identity and released it" >&2
+until released_as_this_box; do sleep "$LOOK_EVERY_SECONDS"; done
+rm -f "$HELD"

@@ -73,7 +73,8 @@ RUN --mount=type=bind,source=proxmox-lxc/template/guest/install-bb-app.sh,target
       bash /mnt/install-bb-app.sh box "$BB_URL" /mnt/app && rm -rf /home/box/.npm /home/box/.cache /tmp/*; \
     fi
 COPY --chmod=0755 docker/start /usr/local/sbin/bb-box-start
-LABEL bbbox.image-version="1" bbbox.bb-app="$BB_APP_SHA256"
+COPY --chmod=0755 docker/fork-hold /usr/local/libexec/bb-box/fork-hold
+LABEL bbbox.image-version="1" bbbox.fork-hold="1" bbbox.bb-app="$BB_APP_SHA256"
 CMD ["/usr/local/sbin/bb-box-start"]
 
 FROM ${UBUNTU} AS desktop
@@ -91,10 +92,11 @@ RUN --mount=type=bind,source=proxmox-lxc/template/guest/install-bb-app.sh,target
       bash /mnt/install-bb-app.sh box "$BB_URL" /mnt/app && rm -rf /home/box/.npm /home/box/.cache /tmp/*; \
     fi
 COPY --chmod=0755 docker/start /usr/local/sbin/bb-box-start
+COPY --chmod=0755 docker/fork-hold /usr/local/libexec/bb-box/fork-hold
 COPY --chmod=0755 docker/gpu-bus-id /usr/local/libexec/bb-box/gpu-bus-id
 # bbbox.gpu-bus-id: start points Xorg at the GPU placed, so the plugin may
 # give a GPU desktop Docker (#283).
-LABEL bbbox.image-version="1" bbbox.gpu-bus-id="1" bbbox.bb-app="$BB_APP_SHA256"
+LABEL bbbox.image-version="1" bbbox.gpu-bus-id="1" bbbox.fork-hold="1" bbbox.bb-app="$BB_APP_SHA256"
 CMD ["/usr/local/sbin/bb-box-start"]
 
 # The Wayland desktop (048): Sway on the CPU, streamed by wayvnc, with no GPU.
@@ -113,5 +115,6 @@ RUN --mount=type=bind,source=proxmox-lxc/template/guest/install-bb-app.sh,target
       bash /mnt/install-bb-app.sh box "$BB_URL" /mnt/app && rm -rf /home/box/.npm /home/box/.cache /tmp/*; \
     fi
 COPY --chmod=0755 docker/start /usr/local/sbin/bb-box-start
-LABEL bbbox.image-version="1" bbbox.bb-app="$BB_APP_SHA256"
+COPY --chmod=0755 docker/fork-hold /usr/local/libexec/bb-box/fork-hold
+LABEL bbbox.image-version="1" bbbox.fork-hold="1" bbbox.bb-app="$BB_APP_SHA256"
 CMD ["/usr/local/sbin/bb-box-start"]

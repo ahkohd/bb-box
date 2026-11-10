@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { DockerBackend } from "../src/backends/docker/backend.ts";
-import type { AcquireHooks, BoxIdentity, SnapshotHooks } from "../src/backends/types.ts";
-import { snapshotImage } from "../src/backends/docker/snapshots.ts";
+import type { AcquireHooks, BoxIdentity, CopyHooks, Guest, SnapshotHooks } from "../src/backends/types.ts";
+import { FORK_HOLD_MISSING, snapshotImage } from "../src/backends/docker/snapshots.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import { fakeDockerHost, dockerConfig, type FakeDockerHost } from "./fake-docker.ts";
@@ -24,6 +24,7 @@ const DEVICE = `nvidia.com/gpu=GPU-${CARD}`;
 const ONE_CARD = { gpus: [DEVICE], cards: [{ index: 0, uuid: CARD, name: "NVIDIA GeForce RTX 5090", totalMiB: 32_607, freeMiB: 30_000, device: DEVICE }] };
 const QUIET: SnapshotHooks = { submitting: async () => {}, task: async () => {} };
 const ACQUIRING: AcquireHooks = { claim: async () => {}, starting: async () => {}, timing: () => {} };
+const COPYING: CopyHooks = { claimed: async () => {}, submitting: async () => {}, task: async () => {} };
 const IMAGE_OF: Readonly<Record<string, string>> = { linux: "bbbox/linux:1", "linux-desktop-cpu": "bbbox/linux-desktop:1" };
 
 function forkingWorld(fake: FakeDockerHost): World {
@@ -99,6 +100,27 @@ function createOf(fake: FakeDockerHost, container: string): string[] {
   const create = fake.calls().find((args) => args[0] === "container" && args[1] === "create" && args[args.indexOf("--name") + 1] === container);
   assert.ok(create, `${container} was made with docker container create`);
   return create;
+}
+
+function heldFile(fake: FakeDockerHost, container: string): string {
+  return join(fake.root, "containers", container, "run", "bb-box", "held");
+}
+
+function readyFile(fake: FakeDockerHost, container: string): string {
+  return join(fake.root, "containers", container, "run", "bb-box", "ready");
+}
+
+function callIndex(fake: FakeDockerHost, container: string, says: string): number {
+  return fake.calls().findIndex((args) => args[0] === "exec" && args.includes(container) && args.some((arg) => arg.includes(says)));
+}
+
+async function until<T>(look: () => T | undefined | null | false, what: string): Promise<T> {
+  for (let i = 0; i < 1000; i++) {
+    const seen = look();
+    if (seen) return seen;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`gave up waiting for ${what}`);
 }
 
 function restartUpdates(fake: FakeDockerHost, container: string): string[] {
@@ -213,6 +235,9 @@ test("Docker releases a fork whose boot reset did not run, says why, and never l
   const name = made[made.indexOf("--name") + 1]!;
   assert.equal(made[made.indexOf("--restart") + 1], "no");
   assert.ok(!restartUpdates(fake, name).includes("unless-stopped"), "its restart policy never let Docker start it again");
+  assert.ok(createOf(fake, name).includes("BBBOX_FORK_HOLD=1"), "it was made held");
+  assert.deepEqual(fake.servicesStarted(name), [], "nothing copied from the source ran in it: no inner Docker, SSH, BB daemon, Tailscale or desktop");
+  assert.equal(callIndex(fake, name, "fork-released"), -1, "BB Box never released it");
   assert.equal(fake.inspect(source.guest!.ref).State.Status, "running");
   assert.deepEqual(present(fake.identityRoot(source.guest!.ref), SOURCE_CREDENTIALS), Object.keys(SOURCE_CREDENTIALS));
 });
@@ -304,7 +329,7 @@ test("Docker disarms a fork before it goes: no restart policy, and stopped", asy
   const source = await backend.acquire(boxOf("bxsource00002", "none"), null, ACQUIRING, AbortSignal.timeout(30_000));
   const taken = await backend.snapshot(source, { id: "snarm", box: "bxsource00002", memory: false, forkSafe: 9 }, QUIET);
   const fork = await backend.forkSnapshot({ id: "snarm", ref: taken.ref, guest: source }, boxOf("bxfork0000002", "none"), null, ACQUIRING, AbortSignal.timeout(30_000));
-  await backend.start!(fork);
+  await backend.startForForkCheck!(fork, AbortSignal.timeout(30_000));
   await backend.armFork!(fork, "boot");
   assert.equal(fake.inspect(fork.ref).HostConfig.RestartPolicy.Name, "unless-stopped");
 
@@ -314,4 +339,128 @@ test("Docker disarms a fork before it goes: no restart policy, and stopped", asy
   assert.equal(fake.inspect(fork.ref).State.Status, "exited");
   assert.equal(fake.inspect(source.ref).State.Status, "running");
   assert.deepEqual(await backend.guestIdentity!(fork), { macs: {}, smbios: null, value: "bxfork0000002" });
+});
+
+test("Docker holds every service of a fork until BB Box's check has passed, then releases it as the fork's own box", async () => {
+  const fake = fakeDockerHost();
+  const { state, source, target } = await sourceWithSnapshotOfA(fake);
+
+  const fork = await forkOf(state, source, target.id);
+
+  assert.equal(fork.state, "ready", fork.error ?? "");
+  const container = fork.guest!.ref;
+  assert.ok(createOf(fake, container).includes("BBBOX_FORK_HOLD=1"));
+  const checked = callIndex(fake, container, "tailnet_node");
+  const released = callIndex(fake, container, "fork-released");
+  assert.ok(checked >= 0 && released > checked, "BB Box released the fork only after its check");
+  const [servicesAfterCalls, ...again] = fake.servicesStarted(container);
+  assert.deepEqual(again, [], "its services started once");
+  assert.ok(servicesAfterCalls !== undefined && servicesAfterCalls > released, "its services started only after the release");
+  assert.equal(readFileSync(join(fake.root, "containers", container, "var-lib", "bb-box", "fork-released"), "utf8"), fork.id);
+  assert.equal(existsSync(heldFile(fake, container)), false);
+});
+
+test("Docker leaves a fork held when BB Box stops before its check, and removes it without ever releasing it", async () => {
+  const fake = fakeDockerHost();
+  const { state, source, target } = await sourceWithSnapshotOfA(fake);
+  const release = join(tempDir("docker-fork"), "check-may-run");
+  fake.set({ holdExecMatching: `${HALF_MADE_FORK.slice(0, -1)} .*tailnet_node`, holdExecUntil: release });
+
+  const answer = await state.snapshots.fork(COMMAND, source, standing(source), target.id, { name: "the-fork" });
+  const halfMade = await until(() => fake.containers().find((name) => forkName(answer.box!.id).test(name) && existsSync(heldFile(fake, name))), "the fork to be held");
+  await until(() => callIndex(fake, halfMade, "tailnet_node") >= 0, "BB Box's check to start");
+  await state.restart();
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  assert.equal(fake.inspect(halfMade).State.Status, "running");
+  assert.equal(existsSync(heldFile(fake, halfMade)), true, "it is still held");
+  assert.equal(existsSync(readyFile(fake, halfMade)), false);
+  assert.deepEqual(fake.servicesStarted(halfMade), []);
+
+  writeFileSync(release, "");
+  await state.boxes.sweep();
+  const fork = (await state.boxes.settled((await state.boxes.find(answer.box!.id))!))!;
+
+  assert.equal(fork.state, "ready", fork.error ?? "");
+  assert.ok(!fake.containers().includes(halfMade), "the held fork is gone");
+  assert.deepEqual(fake.servicesStarted(halfMade), [], "it was never released, so nothing copied ran in it");
+  assert.equal(callIndex(fake, halfMade, "fork-released"), -1);
+  assert.equal(fake.inspect(source.guest!.ref).State.Status, "running");
+});
+
+test("Docker refuses to fork a snapshot of a box made from an image that cannot hold a fork, saying why, before anything is copied", async () => {
+  const fake = fakeDockerHost();
+  fake.withoutForkHold("bbbox/linux:1");
+  const { state, source, target } = await sourceWithSnapshotOfA(fake);
+  const containers = fake.containers();
+  const volumesBefore = volumes(fake);
+
+  const refused = await rejection(state.snapshots.fork(COMMAND, source, standing(source), target.id));
+
+  assert.equal(refused.code, "unsupported");
+  assert.ok(refused.message.includes(FORK_HOLD_MISSING), refused.message);
+  assert.deepEqual(fake.containers(), containers);
+  assert.deepEqual(volumes(fake), volumesBefore);
+});
+
+test("Docker refuses such a fork itself too, before it removes, places or copies anything", async () => {
+  const { fake, backend } = gpuBackend();
+  fake.withoutForkHold("bbbox/linux:1");
+  const source = await backend.acquire(boxOf("bxsource00003", "none"), null, ACQUIRING, AbortSignal.timeout(30_000));
+  const taken = await backend.snapshot(source, { id: "snold", box: "bxsource00003", memory: false, forkSafe: 9 }, QUIET);
+  const containers = fake.containers();
+
+  await assert.rejects(backend.forkSnapshot({ id: "snold", ref: taken.ref, guest: source }, boxOf("bxfork0000003", "none"), null, ACQUIRING, AbortSignal.timeout(30_000)), { message: FORK_HOLD_MISSING });
+
+  assert.deepEqual(fake.containers(), containers);
+});
+
+async function releasedFork(backend: DockerBackend, from: Guest, snapshot: string, boxId: string): Promise<Guest> {
+  const taken = await backend.snapshot(from, { id: snapshot, box: from.data!.box as string, memory: false, forkSafe: 9 }, QUIET);
+  const fork = await backend.forkSnapshot({ id: snapshot, ref: taken.ref, guest: from }, boxOf(boxId, "none"), null, ACQUIRING, AbortSignal.timeout(30_000));
+  await backend.startForForkCheck!(fork, AbortSignal.timeout(30_000));
+  await backend.armFork!(fork, "boot");
+  return fork;
+}
+
+test("Docker starts a new box, an ordinary start and a restore at once, with no hold", async () => {
+  const { fake, backend } = gpuBackend();
+  const box = boxOf("bxsource00004", "none");
+
+  const made = await backend.acquire(box, null, ACQUIRING, AbortSignal.timeout(30_000));
+  assert.equal(fake.servicesStarted(made.ref).length, 1, "a new box's services start with it");
+  await backend.stop!(made);
+  await backend.start!(made);
+  assert.equal(fake.servicesStarted(made.ref).length, 2, "and at an ordinary start");
+  const taken = await backend.snapshot(made, { id: "snback", box: box.boxId, memory: false, forkSafe: 9 }, QUIET);
+  await backend.powerOff!(made);
+  const restored = await backend.adoptSnapshot!({ id: "snback", ref: taken.ref, guest: made }, box, { macs: {}, smbios: null, value: box.boxId }, COPYING);
+  await backend.start!(restored);
+
+  assert.equal(fake.servicesStarted(restored.ref).length, 1, "a restore's services start with it");
+  for (const each of [made.ref, restored.ref]) {
+    assert.ok(!createOf(fake, each).includes("BBBOX_FORK_HOLD=1"), `${each} was made with no hold`);
+    assert.equal(createOf(fake, each)[createOf(fake, each).indexOf("--restart") + 1], "unless-stopped");
+  }
+});
+
+test("Docker holds a fork of a fork, though its copy carries the first fork's release, and restores a fork's snapshot with no hold", async () => {
+  const { fake, backend } = gpuBackend();
+  const source = await backend.acquire(boxOf("bxsource00005", "none"), null, ACQUIRING, AbortSignal.timeout(30_000));
+  const first = await releasedFork(backend, source, "snfirst", "bxfork0000005");
+  const taken = await backend.snapshot(first, { id: "snsecond", box: "bxfork0000005", memory: false, forkSafe: 9 }, QUIET);
+
+  const second = await backend.forkSnapshot({ id: "snsecond", ref: taken.ref, guest: first }, boxOf("bxfork0000006", "none"), null, ACQUIRING, AbortSignal.timeout(30_000));
+  await backend.startForForkCheck!(second, AbortSignal.timeout(30_000));
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  assert.equal(readFileSync(join(fake.root, "containers", second.ref, "var-lib", "bb-box", "fork-released"), "utf8"), "bxfork0000005", "the copy carries the first fork's release");
+  assert.equal(existsSync(heldFile(fake, second.ref)), true, "the second fork is held all the same");
+  assert.deepEqual(fake.servicesStarted(second.ref), []);
+
+  await backend.powerOff!(first);
+  const restored = await backend.adoptSnapshot!({ id: "snsecond", ref: taken.ref, guest: first }, boxOf("bxfork0000005", "none"), { macs: {}, smbios: null, value: "bxfork0000005" }, COPYING);
+  await backend.start!(restored);
+  assert.equal(fake.servicesStarted(restored.ref).length, 1, "a restore of the first fork's snapshot starts at once");
+  assert.ok(fake.inspect(restored.ref).Config.Env.includes("BBBOX_FORK_HOLD="), "the snapshot holds no fork's hold");
 });

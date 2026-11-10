@@ -18,7 +18,7 @@
 //   one whose labels name this install and the box (018).
 
 import { DockerSnapshotEngine, type RestorableSnapshot } from "./snapshot-engine.ts";
-import { dockerOffer, isBoxContainerName, restoredName } from "./snapshots.ts";
+import { dockerOffer, FORK_HOLD_MISSING, isBoxContainerName, restoredName } from "./snapshots.ts";
 import type { CopyHooks, ForkArming, GuestIdentity, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
@@ -76,7 +76,7 @@ import { sizesCheck } from "../fit.ts";
 import { endpointOf } from "../../host/relay.ts";
 import { ATTACH_PING, forwarderReason, isLocalhost, readAfterHalfClose } from "./attach.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
-import { BOX_START, boxVolumeName, createArgs, dockerVolumeCreateArgs, dockerVolumesOfArgs, hostnameOf, VOLUME_OF } from "./box-container.ts";
+import { BOX_START, boxVolumeName, createArgs, dockerVolumeCreateArgs, dockerVolumesOfArgs, hostnameOf, VOLUME_OF, type FirstStart } from "./box-container.ts";
 import { containerLxcfsProbeArgs, lxcfsFromContainerProbe, lxcfsFromProbe, lxcfsProbeArgs, type LxcfsOnHost } from "./lxcfs.ts";
 import { allotCpus, cpusBothAllow, cpusToPinTo, daemonCpusFromRefusal, formatCpuList, hostCpusFromProbe, movesOntoFreeCpus, resizeCpus, type CpuList } from "./cpus.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
@@ -138,6 +138,9 @@ import { withDesktopForkSafety } from "../../core/identity.ts";
 const READY_TIMEOUT_MS = 60_000;
 /** setup/docker/start writes it once the box is up. /run is a tmpfs, so it is new at each start. */
 const READY_FILE = "/run/bb-box/ready";
+const HELD_FILE = "/run/bb-box/held";
+const FORK_RELEASES = "/var/lib/bb-box/";
+const RELEASE_FORK = `install -d -m 0755 ${FORK_RELEASES} && printf '%s' "$1" >${FORK_RELEASES}fork-released`;
 const MACHINE_ATTACH_FIX = "Set machine-docker-host to wsl://<distro> on this backend. The host stays bb:<machine ID>. dockerd stays on its unix socket.";
 const VNC_PORT = 5900;
 /** The desktop image writes a fresh VNC password here at each start, readable by the box user. */
@@ -1513,7 +1516,7 @@ export class DockerBackend implements Backend {
     const stops = signal ?? new AbortController().signal;
     try {
       await this.#network(stops);
-      await this.#createFromSnapshot(restored, name, snapshot, made, cpus, "unless-stopped", stops);
+      await this.#createFromSnapshot(restored, name, snapshot, made, cpus, "runs-its-services", stops);
     } finally {
       this.#unreserve(name);
     }
@@ -1561,6 +1564,7 @@ export class DockerBackend implements Backend {
 
   async forkSnapshot(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
     const snapshot = await this.#snapshots.restorable(ref, signal);
+    if (!snapshot.holdsForks) throw new BackendError("unsupported", FORK_HOLD_MISSING);
     if (previous) await this.#remove(previous.ref, box.boxId, signal);
 
     const name = restoredName(containerName(box.boxId), randomBytes(4).toString("hex"));
@@ -1569,7 +1573,7 @@ export class DockerBackend implements Backend {
     try {
       await hooks.claim({ ref: name, host: placed.host, address: null, size: null, data: { box: box.boxId } });
       await this.#network(signal);
-      await this.#createFromSnapshot(box, name, snapshot, made, placed.cpus, "no", signal);
+      await this.#createFromSnapshot(box, name, snapshot, made, placed.cpus, "holds-them-for-the-fork-check", signal);
     } finally {
       this.#unreserve(box.boxId);
     }
@@ -1581,10 +1585,27 @@ export class DockerBackend implements Backend {
     return guest;
   }
 
-  async armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
+  async startForForkCheck(guest: Guest, signal: AbortSignal): Promise<void> {
+    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     if (!found) throw this.#gone(guest);
-    if (arming === "boot") await this.#restartPolicy(found.name, "unless-stopped", signal);
+    await this.#cli.ok(["container", "start", found.id], { timeoutMs: 120_000, signal });
+    await this.#ready(found.id, deadline, signal, HELD_FILE);
+  }
+
+  async armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
+    if (arming !== "boot") return;
+    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
+    const box = this.#boxOf(guest);
+    const found = box ? await this.#owned(guest.ref, box, signal) : null;
+    if (!box || !found) throw this.#gone(guest);
+    await this.#restartPolicy(found.name, "unless-stopped", signal);
+    await this.#releaseFork(found.name, box, signal);
+    await this.#ready(found.id, deadline, signal);
+  }
+
+  async #releaseFork(container: string, box: string, signal?: AbortSignal): Promise<void> {
+    await this.#cli.ok(["exec", "--user", "root", container, "/bin/sh", "-c", RELEASE_FORK, "sh", box], { timeoutMs: 60_000, signal });
   }
 
   async disarmFork(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -1602,7 +1623,7 @@ export class DockerBackend implements Backend {
     await this.#cli.ok(["container", "update", "--restart", policy, container], { timeoutMs: 60_000, signal });
   }
 
-  async #createFromSnapshot(box: BoxIdentity, name: string, snapshot: RestorableSnapshot, made: MadeGpu, cpus: CpuList | null, restart: "unless-stopped" | "no", signal: AbortSignal): Promise<void> {
+  async #createFromSnapshot(box: BoxIdentity, name: string, snapshot: RestorableSnapshot, made: MadeGpu, cpus: CpuList | null, firstStart: FirstStart, signal: AbortSignal): Promise<void> {
     if (box.kind === "linux-desktop" && made.gpu) await this.#readGpuBusId(signal);
     const privileged = this.#privileged(box.kind);
     const dockerVolume = privileged ? boxVolumeName(name) : null;
@@ -1622,7 +1643,7 @@ export class DockerBackend implements Backend {
         lxcfs: await this.#lxcfsOnHost(signal),
         privileged,
         network: this.#config.network,
-        restart,
+        firstStart,
         fromSnapshot: snapshot.id,
       }),
       { timeoutMs: 120_000, signal },
@@ -2568,7 +2589,7 @@ export class DockerBackend implements Backend {
         lxcfs,
         privileged,
         network: this.#config.network,
-        restart: "unless-stopped",
+        firstStart: "runs-its-services",
         fromSnapshot: null,
       }),
       { timeoutMs: 120_000, signal },
@@ -2795,9 +2816,9 @@ export class DockerBackend implements Backend {
   }
 
   /** Waits for the box's main process to say the box is up, in one `docker exec`. */
-  async #ready(ref: string, deadline: number, signal?: AbortSignal): Promise<void> {
+  async #ready(ref: string, deadline: number, signal?: AbortSignal, file = READY_FILE): Promise<void> {
     const seconds = Math.max(1, Math.ceil((deadline - Date.now()) / 1000));
-    const script = `i=0; while [ ! -e ${READY_FILE} ]; do i=$((i+1)); [ "$i" -le ${seconds * 10} ] || exit 3; sleep 0.1; done; echo bb-box-ready`;
+    const script = `i=0; while [ ! -e ${file} ]; do i=$((i+1)); [ "$i" -le ${seconds * 10} ] || exit 3; sleep 0.1; done; echo bb-box-ready`;
     const result = await this.#cli.run(["exec", "--user", BOX_USER, ref, "/bin/sh", "-c", script], { timeoutMs: (seconds + 30) * 1000, signal });
     if (result.exitCode === 0 && result.stdout.includes("bb-box-ready")) return;
     if (result.exitCode === 0) throw new Error(`docker exec ended without an exit status: ${ref} printed nothing, so exit 0 is not the command's status.`);

@@ -1,6 +1,6 @@
 import type { MachineSize, Snapshotting } from "../types.ts";
 import { LXCFS_TARGETS } from "./lxcfs.ts";
-import { ENV_A_BOX_IS_GIVEN, labelsOf } from "./box-container.ts";
+import { ENV_A_BOX_IS_GIVEN, IMAGE_HOLDS_FORKS, labelsOf } from "./box-container.ts";
 
 export const SNAPSHOT_LABEL = "bbbox.snapshot";
 export const SNAPSHOT_INSTALL = "bbbox.snapshot.install";
@@ -9,6 +9,8 @@ export const LAYERS_REFUSED_FROM = 120;
 export const RESTORE_START_ABOUT_MS = 5_000;
 export const KILL_ABOUT_MS = 1_000;
 export const DOCKER_FORK_SAFE_FROM = 7;
+
+export const FORK_HOLD_MISSING = "Its box was made from a Docker image that cannot hold a fork's services until BB Box has checked the fork. Rebuild the Docker images with setup/docker/build.sh, make a new box, and take a snapshot of that box.";
 
 const RESTORED_SUFFIX = /^-[0-9a-f]{8}$/;
 const VOLUME_COPY_MS_PER_GIB = 15_000;
@@ -48,6 +50,10 @@ export function sizeTakenAt(labels: Readonly<Record<string, string>>): MachineSi
   const cores = Number(labels["bbbox.snapshot.cores"]);
   const memoryMiB = Number(labels["bbbox.snapshot.memory-mib"]);
   return cores > 0 && memoryMiB > 0 ? { cores, memoryMiB, diskGiB: null } : null;
+}
+
+export function holdsForks(labels: Readonly<Record<string, string>>): boolean {
+  return labels[IMAGE_HOLDS_FORKS] === "1";
 }
 
 export function restoreAboutMs(volumeBytes: number): number {

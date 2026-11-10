@@ -48,10 +48,10 @@ export interface FakeDockerHost {
   volumeFiles(name: string): Readonly<Record<string, string>>;
   /** The box user's home in a container. */
   home(name: string): string;
-  /** Gives an image the identity reset, turned on as the image's build does, at the version given. */
   withIdentityReset(image: string, version?: number): void;
-  /** The root a container's identity reset reads and writes, as BBBOX_IDENTITY_ROOT. */
   identityRoot(name: string): string;
+  servicesStarted(name: string): readonly number[];
+  withoutForkHold(image: string): void;
 }
 
 const IDENTITY_SCRIPT = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/bb-box-identity.sh", import.meta.url));
@@ -93,7 +93,7 @@ export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHo
   fakeIdentityTools(join(root, "identity-bin"));
   // As setup/docker/build.sh labels its images: the layout, and a fresh record (049).
   const record = (kind: string) => JSON.stringify({ contract: 1, image: "standard", kind, arch: "x86_64", build: "build.fake", built: new Date().toISOString(), os: "Ubuntu 24.04.5 LTS", tools: { node: "24.21.0" } });
-  const label = (kind: string) => ({ "bbbox.image-version": "1", "bbbox.image-record": record(kind) });
+  const label = (kind: string) => ({ "bbbox.image-version": "1", "bbbox.fork-hold": "1", "bbbox.image-record": record(kind) });
   writeFileSync(
     join(root, "images.json"),
     JSON.stringify({
@@ -133,7 +133,20 @@ export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHo
     home: (name) => join(containers, name, "home"),
     withIdentityReset: (image, version = 9) => imageWithIdentityReset(join(root, "image-identities", createHash("sha256").update(image).digest("hex")), version),
     identityRoot: (name) => join(containers, name, "identity"),
+    servicesStarted: (name) => servicesLog(root).filter(([started]) => started === name).map(([, calls]) => calls),
+    withoutForkHold: (image) => {
+      const path = join(root, "images.json");
+      const images = JSON.parse(readFileSync(path, "utf8"));
+      delete images[image]["bbbox.fork-hold"];
+      writeFileSync(path, JSON.stringify(images));
+    },
   };
+}
+
+function servicesLog(root: string): readonly (readonly [string, number])[] {
+  const path = join(root, "services.log");
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as [string, number]);
 }
 
 function fakeGpuTools(bin: string): void {

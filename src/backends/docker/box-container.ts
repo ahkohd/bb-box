@@ -12,8 +12,15 @@ export const BOX_START = "/usr/local/sbin/bb-box-start";
 
 export const VOLUME_OF = "bbbox.volume-of";
 
+export const IMAGE_HOLDS_FORKS = "bbbox.fork-hold";
+
+export const FORK_HOLD_VARIABLE = "BBBOX_FORK_HOLD";
+
+export type FirstStart = "runs-its-services" | "holds-them-for-the-fork-check";
+
 export const ENV_A_BOX_IS_GIVEN = [
   IDENTITY_VARIABLE,
+  FORK_HOLD_VARIABLE,
   "BBBOX_DOCKERD",
   "NVIDIA_DRIVER_CAPABILITIES",
   "CUDA_VISIBLE_DEVICES",
@@ -41,7 +48,7 @@ export interface BoxContainerSettings {
   readonly lxcfs: LxcfsOnHost | null;
   readonly privileged: boolean;
   readonly network: string;
-  readonly restart: "unless-stopped" | "no";
+  readonly firstStart: FirstStart;
   readonly fromSnapshot: string | null;
 }
 
@@ -96,6 +103,12 @@ export function labelsOf(settings?: BoxContainerSettings): Record<string, string
     [LABELS.gpuPart]: placement?.gpu && placement.card ? placement.part : "",
     [LABELS.fromSnapshot]: settings?.fromSnapshot ?? "",
   };
+}
+
+function firstStartArgs(firstStart: FirstStart): readonly string[] {
+  return firstStart === "holds-them-for-the-fork-check"
+    ? ["--restart", "no", ...given(FORK_HOLD_VARIABLE, "1")]
+    : ["--restart", "unless-stopped"];
 }
 
 function dockerArgs(settings: BoxContainerSettings): readonly string[] {
@@ -180,7 +193,7 @@ export function createArgs(settings: BoxContainerSettings | ImageContainerSettin
     ...given(IDENTITY_VARIABLE, box.boxId),
     ...(placement.cpus ? ["--cpuset-cpus", formatCpuList(placement.cpus)] : given("OMP_NUM_THREADS", String(Math.ceil(cores)))),
     ...(settings.lxcfs ? lxcfsMountArgs(settings.lxcfs) : []),
-    "--restart", settings.restart,
+    ...firstStartArgs(settings.firstStart),
     "--network", settings.network,
     ...dockerArgs(settings),
     ...gpuArgs(settings),

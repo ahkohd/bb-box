@@ -42,6 +42,12 @@ if [ -x /usr/local/sbin/bb-box-identity ] && ! /usr/local/sbin/bb-box-identity b
   exit 1
 fi
 
+/usr/local/libexec/bb-box/fork-hold &
+if ! wait $!; then
+  log "the fork's hold failed, so the box starts nothing and never says it is ready"
+  exit 1
+fi
+
 rm -f "$home"/.bb-machines/*/daemon.lock.lock "$home"/.bb-machines/*/install-daemon.pid
 rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 install -d -m 0755 -o "$user" -g "$user" "$run"
