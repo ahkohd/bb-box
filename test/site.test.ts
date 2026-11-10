@@ -254,6 +254,17 @@ const onSite = { base: "/" };
 
 const markdownLinks = (text: string) => [...blankedCode(text).replace(/`[^`\n]*`/g, "").matchAll(/\]\(<?([^)\s>]+)>?(?:\s+"[^"]*")?\)/g)].map((match) => match[1]!);
 
+test("the common questions are under Start here, and nowhere else in the sidebar or llms.txt", () => {
+  const groupsListing = sidebar(pages)
+    .filter((group) => group.items.some((item) => item.slug === "guide/faq"))
+    .map((group) => group.label);
+  assert.deepEqual(groupsListing, ["Start here"]);
+
+  const startHere = llmsTxt(pages, onSite).split("\n## ")[1]!;
+  assert.match(startHere, /^Start here\n/);
+  assert.ok(startHere.includes(markdownPath("/", "guide/faq")), "llms.txt lists the common questions under Start here");
+});
+
 test("llms.txt is as llmstxt.org lays it out, and lists every page of the site once, with what it is, as Markdown", () => {
   const text = llmsTxt(pages, onSite);
   const blocks = text.split("\n\n");

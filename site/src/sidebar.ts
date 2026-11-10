@@ -45,18 +45,23 @@ function existing(pages: Page[], items: SidebarLink[]): SidebarLink[] {
 export function sidebar(pages: Page[]): SidebarGroup[] {
   const backendIndexes = [linksOf("setup/README.md", { section: "Choose a backend", tablesOnly: true }), linksOf("README.md", { section: "Backends and boxes", tablesOnly: true })];
   const isBackendGuide = (page: Page) => under("setup")(page) || backendIndexes.some((index) => index.links.some((link) => idOfLink(index.file, link, pages) === page.id));
+  const startHere = existing(pages, [
+    { slug: "start", label: "Introduction" },
+    { slug: "start/quick-start", label: "Quick start" },
+    { slug: "setup", label: "Setting up BB Box" },
+    { slug: "guide/faq", label: "Common questions" },
+  ]);
+  const isInStartHere = (page: Page) => startHere.some((item) => item.slug === page.id);
+  const isUserGuide = (page: Page) => under("guide")(page) && !isInStartHere(page);
+
   const groups: SidebarGroup[] = [
     {
       label: "Start here",
-      items: existing(pages, [
-        { slug: "start", label: "Introduction" },
-        { slug: "start/quick-start", label: "Quick start" },
-        { slug: "setup", label: "Setting up BB Box" },
-      ]),
+      items: startHere,
     },
     {
       label: "User guide",
-      items: [...existing(pages, [{ slug: "guide", label: "Overview" }]), ...orderedPages(pages, [linksOf("docs/guide/README.md")], under("guide"))],
+      items: [...existing(pages, [{ slug: "guide", label: "Overview" }]), ...orderedPages(pages, [linksOf("docs/guide/README.md")], isUserGuide)],
     },
     {
       label: "Backends",
