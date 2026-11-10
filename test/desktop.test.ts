@@ -76,7 +76,7 @@ test("the parser splits the viewer's messages however they arrive, and sorts the
   const messages = [...stream].flatMap((byte) => parser.push(bytes(byte)));
   assert.deepEqual(
     messages.map((message) => (message.type === "other" ? `other:${message.class}` : message.type)),
-    ["other:pass", "other:pass", "key", "pointer", "other:input", "other:pass", "other:input", "resize", "qemu-key", "other:pass"],
+    ["other:pass", "update", "key", "pointer", "other:input", "other:pass", "other:input", "resize", "qemu-key", "other:pass"],
   );
   assert.equal(hex(messages[0]!.bytes), hex(setEncodings([0, -308])), "ExtendedMouseButtons is removed, so a pointer event stays 6 bytes");
   const resize = messages[7]!;

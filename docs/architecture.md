@@ -511,7 +511,11 @@ handshake itself, VNC authentication with the box's password or Apple's
 (type 30) as a user, then offers the viewer RFB 3.8 with security type None
 only, as BB has authenticated the viewer. Passwords and tickets never reach
 the browser. It copies bytes both ways without decoding pixels, and always
-joins as a shared client. The viewer is noVNC.
+joins as a shared client. It clips each request for a region of the screen
+to the framebuffer it last learned, from the server's first description and
+from later size rectangles, so a request past the screen never reaches the
+server. A request that misses the screen is not sent, and the viewer gets
+an empty update instead. The viewer is noVNC.
 
 **The Selkies relay.** An X11 CPU desktop also has a Selkies display, H.264
 over WebSockets from `127.0.0.1:5980` in the box

@@ -1,8 +1,8 @@
 // The RFB (VNC) protocol, as much as the desktop relay needs: the box's
 // security handshake, answered with its VNC password or as its user with
 // Apple's authentication (047), and the client's messages, parsed so the
-// relay can drop input from viewers without control. The relay never decodes
-// the server's messages or pixels (011).
+// relay can drop input from viewers without control. The relay learns the
+// framebuffer's size from the server's messages and never decodes pixels (082).
 
 import { createCipheriv, createDiffieHellman, createHash, randomBytes } from "node:crypto";
 import type { DisplayAuth } from "../transports/types.ts";
@@ -223,6 +223,7 @@ export async function boxHandshake(reader: StreamReader, write: (bytes: Uint8Arr
 export interface ServerInit {
   readonly width: number;
   readonly height: number;
+  readonly bitsPerPixel: number;
   /** The whole message, to pass to the viewer. */
   readonly bytes: Uint8Array;
 }
@@ -233,12 +234,12 @@ export async function readServerInit(reader: StreamReader): Promise<ServerInit> 
   const nameLength = view.getUint32(20);
   if (nameLength > MAX_TEXT_BYTES) throw new RfbError(`The box sent a desktop name of ${nameLength} bytes, more than the relay reads.`);
   const name = await reader.read(nameLength);
-  return { width: view.getUint16(0), height: view.getUint16(2), bytes: concat(head, name) };
+  return { width: view.getUint16(0), height: view.getUint16(2), bitsPerPixel: view.getUint8(4), bytes: concat(head, name) };
 }
 
 /** What the relay does with a client message. */
 export type MessageClass =
-  /** Passes from every viewer: formats, encodings, update requests, fences. */
+  /** Passes from every viewer: formats, encodings and fences. */
   | "pass"
   /** Keys, pointer, clipboard writes, desktop power and the QEMU messages: only from the viewer with control. */
   | "input"
@@ -250,6 +251,7 @@ export type ClientMessage =
   | { readonly type: "qemu-key"; readonly bytes: Uint8Array; readonly down: boolean; readonly keysym: number; readonly keycode: number }
   | { readonly type: "pointer"; readonly bytes: Uint8Array; readonly mask: number; readonly x: number; readonly y: number }
   | { readonly type: "resize"; readonly bytes: Uint8Array; readonly width: number; readonly height: number; readonly screen: Screen | null }
+  | { readonly type: "update"; readonly bytes: Uint8Array; readonly incremental: boolean; readonly x: number; readonly y: number; readonly width: number; readonly height: number }
   | { readonly type: "other"; readonly bytes: Uint8Array; readonly class: MessageClass };
 
 /** The first screen of a SetDesktopSize, whose ID a later resize must use. */
@@ -313,8 +315,20 @@ export class ClientParser {
         }
         return { type: "other", bytes: count === kept.length ? bytes : setEncodings(kept), class: "pass" };
       }
-      case 3: // FramebufferUpdateRequest
-        return this.#other(10, "pass");
+      case 3: {
+        const bytes = this.#take(10);
+        if (!bytes) return null;
+        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        return {
+          type: "update",
+          bytes,
+          incremental: view.getUint8(1) !== 0,
+          x: view.getUint16(2),
+          y: view.getUint16(4),
+          width: view.getUint16(6),
+          height: view.getUint16(8),
+        };
+      }
       case 4: {
         const bytes = this.#take(8);
         if (!bytes) return null;
@@ -394,6 +408,33 @@ export class ClientParser {
     return bytes ? { type: "other", bytes, class: kind } : null;
   }
 }
+
+export function framebufferUpdateRequest(incremental: boolean, x: number, y: number, width: number, height: number): Uint8Array {
+  const bytes = new Uint8Array(10);
+  const view = new DataView(bytes.buffer);
+  view.setUint8(0, 3);
+  view.setUint8(1, incremental ? 1 : 0);
+  view.setUint16(2, x);
+  view.setUint16(4, y);
+  view.setUint16(6, width);
+  view.setUint16(8, height);
+  return bytes;
+}
+
+export function clipFramebufferRequest(
+  request: { readonly bytes: Uint8Array; readonly incremental: boolean; readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  frame: { readonly width: number; readonly height: number },
+): Uint8Array | null {
+  const left = Math.min(request.x, frame.width);
+  const top = Math.min(request.y, frame.height);
+  const right = Math.min(request.x + request.width, frame.width);
+  const bottom = Math.min(request.y + request.height, frame.height);
+  if (frame.width <= 0 || frame.height <= 0 || right <= left || bottom <= top) return null;
+  if (left === request.x && top === request.y && right - left === request.width && bottom - top === request.height) return request.bytes;
+  return framebufferUpdateRequest(request.incremental, left, top, right - left, bottom - top);
+}
+
+export const EMPTY_FRAMEBUFFER_UPDATE = Uint8Array.of(0, 0, 0, 0);
 
 export function setEncodings(encodings: readonly number[]): Uint8Array {
   const bytes = new Uint8Array(4 + 4 * encodings.length);

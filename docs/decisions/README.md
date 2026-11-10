@@ -14,7 +14,7 @@ which records still stand as written. The current design as a whole is in
 | [004](004-acquire-and-release.md) | Acquire and release, for virtual and real machines | Current |
 | [005](005-linux-boxes-on-proxmox-lxc.md) | The first backend runs Linux boxes as unprivileged LXC containers on Proxmox VE | Current |
 | [006](006-gpu-desktop-on-xorg.md) | The Linux GPU desktop runs Xorg with NVIDIA's driver, streamed by x0vncserver | Partly superseded by 021 |
-| [007](007-desktop-stream-is-a-typed-transport.md) | The desktop stream is a typed transport, relayed through the plugin | Partly superseded by 011 and 056 |
+| [007](007-desktop-stream-is-a-typed-transport.md) | The desktop stream is a typed transport, relayed through the plugin | Partly superseded by 011 and 056; extended by 082 |
 | [008](008-shared-control.md) | You and the agent share one desktop, with one controller at a time | Partly superseded by 015, 038 and 045 |
 | [009](009-conformance-suite-and-doctor.md) | A conformance suite and a doctor check for every backend | Partly superseded by 016 |
 | [010](010-publishable-by-default.md) | The repository is publishable at all times | Current |
@@ -87,3 +87,4 @@ which records still stand as written. The current design as a whole is in
 | [079](079-a-click-ring-fades-and-a-large-field-zooms-on-its-line.md) | A click ring fades, and a large field zooms on its line | Accepted |
 | [080](080-a-window-is-zoomed-once-it-has-painted-and-a-result-fades.md) | A window is zoomed once it has painted, and a result fades | Accepted; a result that fades after 2.5 seconds, and a flat window after a click in its field, are superseded by 081 |
 | [081](081-a-recording-is-cut-to-its-actions-and-its-captions-keep-clear.md) | A recording is cut to its actions, and its captions keep clear | Accepted |
+| [082](082-the-relay-clips-a-frame-request-to-the-framebuffer.md) | The relay clips a frame request to the framebuffer | Accepted |

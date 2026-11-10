@@ -2,7 +2,8 @@
 // security with the password from the box's backend, offers the viewer
 // security type None, and then copies bytes both ways. The viewer's messages
 // are parsed so input from a viewer without control never reaches the box
-// (008, 011), and a resize below the display's smallest size is raised to it.
+// (008, 011), a frame request is clipped to the framebuffer (082), and a
+// resize below the display's smallest size is raised to it.
 // A raised size asked for again goes with no screens, so that Xvnc refuses it
 // and noVNC stops asking. Pixels pass through undecoded. A display whose
 // stream server ignores a viewer's input, as macOS Screen Sharing does
@@ -15,8 +16,10 @@ import type { ByteChannel, Display, DisplayAuth, DisplayInput, DisplayOpened } f
 import {
   ClientParser,
   DESKTOP_SIZE,
+  EMPTY_FRAMEBUFFER_UPDATE,
   EXTENDED_DESKTOP_SIZE,
   RfbError,
+  clipFramebufferRequest,
   SECURITY_OK,
   StreamReader,
   VERSION_3_8,
@@ -36,6 +39,7 @@ import {
   type Screen,
   type ServerInit,
 } from "./rfb.ts";
+import { ServerParser } from "./server-stream.ts";
 
 /** How long opening the box's display and its handshake may take. */
 import { PRODUCT } from "../brand.ts";
@@ -217,8 +221,10 @@ export class RfbRelay {
   /** The size this viewer's last resize was raised to, until it is asked for again. */
   #raised: Size | null = null;
   #ended = false;
-  /** The desktop's size from ServerInit, which a display's own input scales positions from. */
+  /** The desktop's size from ServerInit, then from the server's size rectangles. A display's own input scales positions from it. */
   #size: Size = { width: 0, height: 0 };
+  /** Reads the server's stream for a new framebuffer size. Null until ServerInit. */
+  #server: ServerParser | null = null;
   /** The display's own input, once this viewer's first input opens it (#406). */
   #input: Promise<DisplayInput | null> | null = null;
   #inputWanted = false;
@@ -305,6 +311,7 @@ export class RfbRelay {
       if (this.#ended) return;
       this.#options.viewer.send(init.bytes);
       this.#size = { width: init.width, height: init.height };
+      this.#server = new ServerParser({ width: init.width, height: init.height, bitsPerPixel: init.bitsPerPixel });
       this.#options.onServerInit?.({ width: init.width, height: init.height });
       this.#phase = "messages";
       this.#heardAt = Date.now();
@@ -324,6 +331,9 @@ export class RfbRelay {
         if (chunk === null) break;
         if (this.#ended) return;
         this.#heardAt = Date.now();
+        this.#server?.read(chunk);
+        const size = this.#server?.size ?? this.#size;
+        if (size.width !== this.#size.width || size.height !== this.#size.height) this.#size = { width: size.width, height: size.height };
         this.#options.viewer.send(chunk);
       }
       await this.#end("box", null);
@@ -340,7 +350,7 @@ export class RfbRelay {
     const passing: Uint8Array[] = [];
     for (const message of messages) {
       // A full FramebufferUpdateRequest always gets a frame: a server that sends nothing has lost the desktop (wayvnc 0.7.2).
-      if (!this.#askedFull && connection.restart && message.type === "other" && message.bytes[0] === 3 && message.bytes[1] === 0) {
+      if (!this.#askedFull && connection.restart && message.type === "update" && !message.incremental) {
         this.#askedFull = true;
         const asked = Date.now();
         this.#after(this.#options.frameWaitMs ?? FRAME_WAIT_MS, () => {
@@ -348,6 +358,11 @@ export class RfbRelay {
         });
       }
       const bytes = this.#passing(message, mayInput);
+      if (!bytes && message.type === "update") {
+        this.#options.viewer.send(EMPTY_FRAMEBUFFER_UPDATE);
+        this.#heardAt = Date.now();
+        continue;
+      }
       const key = message.type === "key" || message.type === "qemu-key" ? message : null;
       const logKey = (way: string) => key && this.#options.keyLog?.(`${way}: ${key.down ? "down" : "up"} 0x${key.keysym.toString(16)}${key.type === "qemu-key" ? ` scancode ${key.keycode}` : ""}, held [${[...this.#heldKeysyms()].map((held) => `0x${held.toString(16)}`).join(" ")}], at ${Date.now() % 100_000} ms`);
       if (!bytes) {
@@ -464,6 +479,7 @@ export class RfbRelay {
 
   /** What of a message goes to the box, if any, tracking what the viewer holds down. */
   #passing(message: ClientMessage, mayInput: boolean): Uint8Array | null {
+    if (message.type === "update") return clipFramebufferRequest(message, this.#size);
     if (message.type === "other" && message.class === "pass") return message.bytes;
     if (!mayInput) return null;
     switch (message.type) {
