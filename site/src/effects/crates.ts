@@ -88,7 +88,7 @@ const gravityScale = 0.0016;
 const knockOffSpeed = 0.35;
 const bashCooldownMs = 180;
 const settleSteps = 90;
-const shelfThickness = 4;
+const shelfThickness = 60;
 const crateGap = 2;
 const floorLabel = "floor";
 const rain = {
@@ -96,7 +96,7 @@ const rain = {
   most: 10,
   looks: [small(), medium(), large(), medium("vm"), small("vm"), medium("mac"), large("linux"), large("windows"), medium("ios"), large("android"), medium("gpu"), large("docker"), medium("lxc"), medium("qemu"), small("msb"), medium("tart"), { size: "medium", label: "box", accent: true } as CrateLook],
 };
-const burn = { catchMs: 700, seconds: 2.6, respawnMs: 3500, respawnDropPx: 420, respawnScatterPx: 24 };
+const burn = { catchMs: 700, seconds: 2.6, respawnMs: 3500, respawnRetryMs: 1000, respawnDropPx: 180, respawnMarginPx: 60, respawnScatterPx: 24 };
 const landingSpeed = 2.5;
 const pileGap = 12;
 
@@ -188,8 +188,18 @@ export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, 
     if (!crate.rain) setTimeout(() => respawn(crate, lit), burn.respawnMs);
   }
 
+  function dropZoneInView(): boolean {
+    const top = stage.shelfY - burn.respawnDropPx - burn.respawnMarginPx;
+    const bottom = stage.shelfY + burn.respawnMarginPx;
+    return bottom > scrollY && top < scrollY + innerHeight;
+  }
+
   function respawn(burnt: Crate, lit: number): void {
     if (lit !== generation) return;
+    if (dropZoneInView()) {
+      setTimeout(() => respawn(burnt, lit), burn.respawnRetryMs);
+      return;
+    }
     const element = crateElement(burnt.look);
     layer.append(element);
     const width = element.offsetWidth;
