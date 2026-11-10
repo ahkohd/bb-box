@@ -276,6 +276,19 @@ test("on ZFS, the check says the undo is a held copy; a box with no working iden
   assert.equal(readIn(state, box, "work.txt"), "target");
 });
 
+test("on ZFS, a backend that cannot copy a box in full restores nothing, as its undo would be such a copy", async () => {
+  const state = armedWorld();
+  state.provider.restoreWay = "rollback-newest-only";
+  const box = await targetBox(state);
+  Object.assign(state.backend, { copyGuest: undefined });
+  state.provider.order.length = 0;
+
+  const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "target"));
+
+  assert.match(refused.message, /restores only the newest snapshot, so the undo of a restore there is a full copy of the box, and Fake host cannot make one\. BB Box changed nothing\.$/);
+  assert.equal(state.provider.order.length, 0, "refused before the box stops");
+});
+
 test("review A7: a box that was a thread's own machine, with no thread on it now, may be restored", async () => {
   const state = world();
   const box = await targetBox(state);
