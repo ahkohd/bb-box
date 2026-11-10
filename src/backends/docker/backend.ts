@@ -17,9 +17,9 @@
 // - Every call that acts on a container inspects it first and acts only on
 //   one whose labels name this install and the box (018).
 
-import { DockerSnapshotEngine } from "./snapshot-engine.ts";
-import { dockerOffer } from "./snapshots.ts";
-import type { SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
+import { DockerSnapshotEngine, type RestorableSnapshot } from "./snapshot-engine.ts";
+import { dockerOffer, isBoxContainerName, restoredName } from "./snapshots.ts";
+import type { CopyHooks, GuestIdentity, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
 import { timedSpawn } from "../../transports/spawns.ts";
@@ -86,7 +86,7 @@ import { BOX_USER, DockerTransport } from "./transport.ts";
 import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 import { dockerImageBuilding } from "./building.ts";
 import { backendsOn, daemonKey, daemonShare, engineKey, joinDaemon, leaveDaemon, underDaemonLock, type DaemonShare } from "./daemons.ts";
-import { wholeCardsOff, wholeCardsOffForResize } from "../../core/gpu.ts";
+import { gpuPartWords, wholeCardsOff, wholeCardsOffForResize } from "../../core/gpu.ts";
 import type { CardCheck } from "../card-check.ts";
 import {
   ALL_CARDS_DEVICE,
@@ -270,8 +270,10 @@ interface WrongCard {
 
 type CheckedFacts = { readonly is: "facts"; readonly facts: readonly GuestFact[] } | WrongCard;
 
+const NO_GPU: MadeGpu = { gpu: null, card: null, part: "none" };
+
 function madeOnCard(card: DockerCard | null, part: GpuPart): MadeGpu {
-  if (!card) return { gpu: null, card: null, part: "none" };
+  if (!card) return NO_GPU;
   return { gpu: card.device, card: card.uuidKnown ? card.uuid : null, part };
 }
 
@@ -1282,8 +1284,8 @@ export class DockerBackend implements Backend {
     }, signal);
   }
 
-  #placingOf(box: BoxIdentity, gpu: string | null, card: string | null, part: GpuPart, cpus: CpuList | null): Placing {
-    return { backendId: this.id, name: containerName(box.boxId), memoryMiB: box.size.memoryMiB, gpu, cpus, card, part: card ? part : "none", needMiB: card ? neededMiB(box.kind, this.#config.gpuMemoryMiB) : 0, boxName: box.name, threadId: box.threadId };
+  #placingOf(box: BoxIdentity, gpu: string | null, card: string | null, part: GpuPart, cpus: CpuList | null, name = containerName(box.boxId)): Placing {
+    return { backendId: this.id, name, memoryMiB: box.size.memoryMiB, gpu, cpus, card, part: card ? part : "none", needMiB: card ? neededMiB(box.kind, this.#config.gpuMemoryMiB) : 0, boxName: box.name, threadId: box.threadId };
   }
 
   #resumePlacement(box: BoxIdentity, gpu: string | null, card: string | null, part: GpuPart, signal: AbortSignal, again = false): Promise<CpuList | null> {
@@ -1467,8 +1469,8 @@ export class DockerBackend implements Backend {
     return this.kinds().some((offer) => offer.id === kind) ? dockerOffer() : null;
   }
 
-  planSnapshots(guest: Guest, _kind: string, _target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
-    return this.#snapshots.plan(guest, signal);
+  planSnapshots(guest: Guest, _kind: string, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+    return this.#snapshots.plan(guest, target, signal);
   }
 
   snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
@@ -1489,6 +1491,99 @@ export class DockerBackend implements Backend {
 
   providerTask(task: TaskRef): Promise<TaskOutcome> {
     return this.#snapshots.settle(task);
+  }
+
+  async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) throw this.#gone(guest);
+    if (found.status === "paused") throw new Error(`The container ${guest.ref} is paused, so ${PRODUCT} left it running. Unpause it, or wait for its snapshot to finish, then try again.`);
+    if (!ACTIVE.has(found.status)) return;
+    await this.#cli.ok(["container", "kill", found.id], { timeoutMs: 60_000, signal });
+  }
+
+  async adoptSnapshot(ref: SnapshotRef, box: BoxIdentity, _identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
+    const snapshot = await this.#snapshots.restorable(ref, signal);
+    const name = restoredName(containerName(box.boxId), randomBytes(4).toString("hex"));
+    await hooks.claimed({ ref: name, host: this.#host, address: null, size: null, data: { box: box.boxId } });
+    await hooks.submitting();
+
+    const made = await this.#placementOfCurrent(box, name, signal);
+    const restored: BoxIdentity = { ...box, size: snapshot.size ? { ...box.size, cores: snapshot.size.cores, memoryMiB: snapshot.size.memoryMiB } : box.size };
+    const cpus = await this.#reserveRestored(restored, name, made, signal);
+    const stops = signal ?? new AbortController().signal;
+    try {
+      await this.#network(stops);
+      await this.#createRestored(restored, name, snapshot, made, cpus, stops);
+    } finally {
+      this.#unreserve(name);
+    }
+
+    const [container] = await this.#cli.inspect([name], signal);
+    if (!container) throw new Error(`The container ${name} went from ${this.#host} as ${PRODUCT} made it.`);
+    const guest: Guest = { ref: name, host: this.#host, address: null, size: sizeOf(container), data: dataOf(container, made.card, made.part) };
+    await hooks.claimed(guest);
+    return guest;
+  }
+
+  async #placementOfCurrent(box: BoxIdentity, making: string, signal?: AbortSignal): Promise<MadeGpu> {
+    const current = await this.#currentContainers(box.boxId, making, signal);
+    const placements = await Promise.all(current.map((container) => this.#placementOn(container)));
+    const [made = NO_GPU, ...others] = placements;
+    if (others.some((other) => other.gpu !== made.gpu || other.card !== made.card)) {
+      throw new Error(`Box ${box.name} has ${current.length} containers on ${this.#host} with different GPUs (${current.map((each) => each.name).join(", ")}), so ${PRODUCT} cannot tell which GPU to restore it with. It left the box as it was. Remove the one its box status does not name, with docker rm, then try again.`);
+    }
+    if (!made.gpu && box.size.gpu !== "none") {
+      const where = current.length ? `its container ${current[0]!.name} has no GPU` : `${PRODUCT} cannot find its container on ${this.#host}`;
+      throw new Error(`Box ${box.name} has ${gpuPartWords(box.size.gpu)}, but ${where}, so ${PRODUCT} did not restore it without one. It left the box as it was. To have a GPU again, release the box and make a new one.`);
+    }
+    return made;
+  }
+
+  async #currentContainers(boxId: string, making: string, signal?: AbortSignal): Promise<ContainerInfo[]> {
+    const listed = await this.#cli.list({ [LABELS.backend]: "docker", [LABELS.install]: this.#context.installId, [LABELS.box]: boxId }, signal);
+    return listed.filter((container) => container.name !== making && !container.labels[LABELS.imageBox]);
+  }
+
+  async #placementOn(container: ContainerInfo): Promise<MadeGpu> {
+    const gpu = container.labels[LABELS.gpu] || null;
+    if (!gpu) return NO_GPU;
+    const card = container.labels[LABELS.gpuCard] || deviceCard(gpu);
+    return { gpu, card, part: card ? (await this.#partOf(container)).part : "none" };
+  }
+
+  #reserveRestored(box: BoxIdentity, name: string, made: MadeGpu, signal?: AbortSignal): Promise<CpuList | null> {
+    return this.#underPlacement(async () => {
+      const cpus = await this.#allot(await this.#state(signal), name, box.size.cores, signal);
+      this.#reserve(name, this.#placingOf(box, made.gpu, made.card, made.part, cpus, name));
+      return cpus;
+    }, signal);
+  }
+
+  async #createRestored(box: BoxIdentity, name: string, snapshot: RestorableSnapshot, made: MadeGpu, cpus: CpuList | null, signal: AbortSignal): Promise<void> {
+    if (box.kind === "linux-desktop" && made.gpu) await this.#readGpuBusId(signal);
+    const privileged = this.#privileged(box.kind);
+    const dockerVolume = privileged ? boxVolumeName(name) : null;
+    if (dockerVolume) {
+      await this.#ensureDockerVolume(name, dockerVolume, signal);
+      await this.#snapshots.copyDockerData(snapshot, dockerVolume, signal);
+    }
+
+    await this.#cli.ok(
+      createArgs({
+        box,
+        installId: this.#context.installId,
+        name,
+        image: snapshot.image,
+        dockerVolume,
+        placement: { gpu: made.gpu, card: made.card, part: made.part, cpus },
+        lxcfs: await this.#lxcfsOnHost(signal),
+        privileged,
+        network: this.#config.network,
+        restart: "unless-stopped",
+        fromSnapshot: snapshot.id,
+      }),
+      { timeoutMs: 120_000, signal },
+    );
   }
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
@@ -2289,7 +2384,7 @@ export class DockerBackend implements Backend {
     const labels = found.labels;
     if (labels[LABELS.backend] !== "docker" || labels[LABELS.install] !== this.#context.installId) return null;
     const box = labels[LABELS.box];
-    if (!box || (boxId !== null ? box !== boxId : containerName(box) !== found.name)) return null;
+    if (!box || (boxId !== null ? box !== boxId : !isBoxContainerName(containerName(box), found.name))) return null;
     return found;
   }
 

@@ -1,12 +1,16 @@
-import type { Snapshotting } from "../types.ts";
+import type { MachineSize, Snapshotting } from "../types.ts";
 import { LXCFS_TARGETS } from "./lxcfs.ts";
-import { LABELS } from "./cli.ts";
-import { ENV_A_BOX_IS_GIVEN } from "./box-container.ts";
+import { ENV_A_BOX_IS_GIVEN, labelsOf } from "./box-container.ts";
 
 export const SNAPSHOT_LABEL = "bbbox.snapshot";
 export const SNAPSHOT_INSTALL = "bbbox.snapshot.install";
 export const SNAPSHOT_BOX = "bbbox.snapshot.box";
 export const LAYERS_REFUSED_FROM = 120;
+export const RESTORE_START_ABOUT_MS = 5_000;
+export const KILL_ABOUT_MS = 1_000;
+
+const RESTORED_SUFFIX = /^-[0-9a-f]{8}$/;
+const VOLUME_COPY_MS_PER_GIB = 15_000;
 
 export type ImageStore = "overlay2" | "containerd";
 
@@ -31,6 +35,24 @@ export function snapshotVolume(id: string): string {
   return `bbbox-snapshot-${id}-docker`;
 }
 
+export function restoredName(boxContainer: string, suffix: string): string {
+  return `${boxContainer}-${suffix}`;
+}
+
+export function isBoxContainerName(boxContainer: string, name: string): boolean {
+  return name === boxContainer || (name.startsWith(boxContainer) && RESTORED_SUFFIX.test(name.slice(boxContainer.length)));
+}
+
+export function sizeTakenAt(labels: Readonly<Record<string, string>>): MachineSize | null {
+  const cores = Number(labels["bbbox.snapshot.cores"]);
+  const memoryMiB = Number(labels["bbbox.snapshot.memory-mib"]);
+  return cores > 0 && memoryMiB > 0 ? { cores, memoryMiB, diskGiB: null } : null;
+}
+
+export function restoreAboutMs(volumeBytes: number): number {
+  return Math.ceil(RESTORE_START_ABOUT_MS + volumeBytes * VOLUME_COPY_MS_PER_GIB / 2 ** 30);
+}
+
 export function snapshotLabels(install: string, box: string, id: string): Record<string, string> {
   return { [SNAPSHOT_LABEL]: id, [SNAPSHOT_INSTALL]: install, [SNAPSHOT_BOX]: box };
 }
@@ -39,7 +61,7 @@ export function pauseEstimate(disk: SnapshotDisk): { readonly pauseMs: number; r
   const layerFactor = disk.store === "containerd" ? 2 : 1;
   const layerMsPerGiB = disk.store === "containerd" ? 30_000 : 25_000;
   return {
-    pauseMs: Math.ceil(4_000 + (disk.layerBytes * layerMsPerGiB + disk.volumeBytes * 15_000) / 2 ** 30),
+    pauseMs: Math.ceil(4_000 + (disk.layerBytes * layerMsPerGiB + disk.volumeBytes * VOLUME_COPY_MS_PER_GIB) / 2 ** 30),
     addsBytes: Math.ceil(disk.layerBytes * layerFactor + disk.volumeBytes),
   };
 }
@@ -66,7 +88,7 @@ export function mountRefusal(mounts: readonly SnapshotMount[]): string | null {
 
 export function commitChanges(inherited: Readonly<Record<string, string>>, labels: Readonly<Record<string, string>>): string[] {
   return [
-    ...Object.keys(inherited).filter((key) => [LABELS.backend, LABELS.install, LABELS.box, LABELS.thread, LABELS.name, LABELS.kind, LABELS.created, LABELS.gpu, LABELS.gpuCard, LABELS.gpuPart, LABELS.fromSnapshot].some((label) => label === key)).map((key) => `LABEL ${key}=""`),
+    ...Object.keys(labelsOf()).filter((key) => key in inherited).map((key) => `LABEL ${key}=""`),
     ...ENV_A_BOX_IS_GIVEN.map((key) => `ENV ${key}=`),
     ...Object.entries(labels).map(([key, value]) => `LABEL ${key}=${JSON.stringify(value)}`),
   ];
@@ -77,7 +99,7 @@ export function dockerOffer(): Snapshotting {
     scope: "box",
     holds: ["disk"],
     whileRunning: "pauses",
-    restore: "none",
+    restore: "new-guest",
     fork: "none",
     keepsPastRelease: "no",
     lives: "host",

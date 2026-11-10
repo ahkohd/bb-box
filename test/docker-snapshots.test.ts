@@ -25,7 +25,7 @@ async function setup(anonymous = false) {
 test("Docker snapshots retain disk and Docker data, and can be deleted", async () => {
   const { engine, cli, guest, hooks, fake } = await setup();
   fake.writeVolumeFiles("box-docker", { value: "A" });
-  const plan = await engine.plan(guest);
+  const plan = await engine.plan(guest, null);
   assert.equal(plan.take.ok, true);
 
   const taken = await engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks);
@@ -84,7 +84,7 @@ test("Docker refuses images at the layer limit before pausing", async () => {
   const { engine, guest, hooks, fake } = await setup();
   fake.set({ snapshotLayers: 120 });
 
-  assert.equal((await engine.plan(guest)).take.ok, false);
+  assert.equal((await engine.plan(guest, null)).take.ok, false);
   await assert.rejects(engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks), /120 or more layers/);
   assert.equal(fake.calls().some((args) => args[0] === "pause"), false);
 });
@@ -179,7 +179,7 @@ test("Docker reports the engine's space for the core's room check", async () => 
   const { engine, guest, fake } = await setup();
   fake.set({ snapshotUsedKiB: 860000 });
 
-  const plan = await engine.plan(guest);
+  const plan = await engine.plan(guest, null);
   assert.equal(plan.storage.percentFull, 86);
   assert.equal(plan.storage.totalBytes, 1000000 * 1024);
   assert.equal(plan.take.addsBytes, 4096 + 1024 * 1024);
@@ -282,7 +282,7 @@ test("Docker snapshot changes preserve image metadata", () => {
 test("Docker space probes leave no volume behind and doctor does not scan box data", async () => {
   const { engine, cli, guest, fake } = await setup();
 
-  await engine.plan(guest);
+  await engine.plan(guest, null);
   const before = fake.calls().filter((args) => args.includes("du -sk /from")).length;
   await engine.doctor();
 
@@ -299,4 +299,48 @@ test("Docker cleans an orphan snapshot volume without unpausing its box", async 
 
   assert.equal((await cli.inspect([guest.ref]))[0]?.status, "paused");
   assert.notEqual((await cli.run(["volume", "inspect", "bbbox-snapshot-sn123-docker"])).exitCode, 0);
+});
+
+test("Docker maintenance unpauses later takes when an earlier cleanup fails", async () => {
+  const { cli, guest, context } = await setup();
+  await context.storage.set("docker-snapshot-take:stuck", { id: "stuck", box: "bx123", container: guest.ref, startedAt: 0, estimateMs: 1000, phase: "failed-resumed" });
+  await cli.ok(["volume", "create", "--label", "bbbox.snapshot.install=other", "bbbox-snapshot-stuck-docker"]);
+  await context.storage.set("docker-snapshot-take:later", { id: "later", box: "bx123", container: guest.ref, startedAt: 0, estimateMs: 1000, phase: "taking" });
+  await cli.ok(["pause", guest.ref]);
+  const restarted = new DockerSnapshotEngine(cli, context, () => 100_000);
+
+  await restarted.maintain();
+
+  assert.equal((await cli.inspect([guest.ref]))[0]?.status, "running");
+  assert.equal((await cli.run(["volume", "inspect", "bbbox-snapshot-stuck-docker"])).exitCode, 0);
+});
+
+test("Docker recovery unpauses before a cleanup that fails", async () => {
+  const { cli, guest, context } = await setup();
+  await context.storage.set("docker-snapshot-take:stuck", { id: "stuck", box: "bx123", container: guest.ref, startedAt: 0, estimateMs: 1000, phase: "taking" });
+  await cli.ok(["volume", "create", "--label", "bbbox.snapshot.install=other", "bbbox-snapshot-stuck-docker"]);
+  await cli.ok(["pause", guest.ref]);
+  const restarted = new DockerSnapshotEngine(cli, context, () => 100_000);
+
+  await assert.rejects(restarted.settle({ ref: "take:stuck@0", host: null }), /another box or install/);
+
+  assert.equal((await cli.inspect([guest.ref]))[0]?.status, "running");
+});
+
+test("Docker reports the commit error when cleanup also fails", async () => {
+  const { engine, guest, hooks, fake } = await setup();
+  fake.set({ failSnapshotCommit: true, failVolumeRemove: "bbbox-snapshot-sn123-docker" });
+
+  await assert.rejects(engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks), /commit failed/);
+
+  assert.equal(fake.inspect(guest.ref).State.Status, "running");
+});
+
+test("Docker maintenance lists snapshot volumes once", async () => {
+  const { engine, fake } = await setup();
+  const before = fake.calls().length;
+
+  await engine.maintain();
+
+  assert.equal(fake.calls().slice(before).filter((args) => args[0] === "volume" && args[1] === "ls").length, 1);
 });

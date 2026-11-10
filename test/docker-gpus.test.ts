@@ -11,7 +11,7 @@ import { parseDockerPart, type DockerConfig } from "../src/backends/docker/confi
 import type { ConfigDocument, GeneralConfig } from "../src/core/document.ts";
 import { blockWords, cardsOnHost, environmentScript, judgeDockerCardCheck, parseProbe, placeCard, placementRefusal, reachWords, wrongCard, type CardHolder, type DockerCard } from "../src/backends/docker/gpus.ts";
 import { OPERATOR, SPARES } from "../src/core/boxes.ts";
-import { BackendError, type AcquireHooks, type BackendContext, type BoxIdentity, type MachineAccess, type FieldValue, type GpuPart, type Guest, type MachineSize } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type BackendContext, type CopyHooks, type ReleaseHooks, type SnapshotRef, type BoxIdentity, type MachineAccess, type FieldValue, type GpuPart, type Guest, type MachineSize } from "../src/backends/types.ts";
 import { cardReachText } from "../src/plugin/tools.ts";
 import type { KindView } from "../src/plugin/views.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
@@ -1053,4 +1053,78 @@ test("071 unit 15, live: a refusal on a card a lowered limit left over it says o
   const full = await setup({ "boxes-per-card": 1 }, one);
   await full.backend.acquire(identity("linux", "shared", "thr_abc123", "tidy-glade"), null, hooks(), signal());
   assert.match((await full.backend.capacity("linux", { ...SMALL, gpu: "shared" }, [], signal())).message ?? "", /card 0 has 1 box, the most a card may have/);
+});
+
+const restoring: CopyHooks = { claimed: async () => {}, submitting: async () => {}, task: async () => {} };
+const releasingOld: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
+const NO_IDENTITY = { macs: {}, smbios: null };
+
+function gpuLabels(fake: ReturnType<typeof fakeDockerHost>, ref: string): readonly [string, string, string, readonly string[]] {
+  const made = fake.inspect(ref);
+  const labels = made.Config.Labels;
+  return [labels["bbbox.gpu"] ?? "", labels["bbbox.gpu-card"] ?? "", labels["bbbox.gpu-part"] ?? "", made.HostConfig.Devices ?? []];
+}
+
+async function restoreReplacing(backend: DockerBackend, box: BoxIdentity, current: Guest, ref: SnapshotRef): Promise<Guest> {
+  await backend.powerOff(current, signal());
+  const fresh = await backend.adoptSnapshot(ref, box, NO_IDENTITY, restoring, signal());
+  await backend.release(current, releasingOld, signal());
+  return fresh;
+}
+
+test("Docker keeps a GPU box's card and part on a second restore, when the snapshot's own container went in the first", async () => {
+  const { fake, backend } = setup();
+  const box = identity("linux", "shared");
+  const original = await backend.acquire(box, null, hooks(), signal());
+  const taken = await backend.snapshot(original, { id: "sngpu1", box: box.boxId, memory: false }, restoring, signal());
+  const placed = gpuLabels(fake, original.ref);
+
+  const first = await restoreReplacing(backend, box, original, { id: "sngpu1", ref: taken.ref, guest: original });
+  const placedFirst = gpuLabels(fake, first.ref);
+  const rebuilt = (await backend.heldSnapshots(signal())).find((each) => each.id === "sngpu1")!;
+  const second = await restoreReplacing(backend, box, first, { id: rebuilt.id, ref: rebuilt.ref, guest: rebuilt.guest });
+
+  assert.deepEqual(placed, [DEVICE_A, CARD_A, "shared", [DEVICE_A]]);
+  assert.equal(rebuilt.guest.ref, original.ref, "the rebuilt record still names the container the snapshot was taken from");
+  assert.deepEqual(placedFirst, placed);
+  assert.deepEqual(gpuLabels(fake, second.ref), placed);
+  assert.deepEqual(fake.containers(), [second.ref]);
+});
+
+test("Docker refuses to restore a GPU box whose container has no GPU, says why, and leaves the box as it was", async () => {
+  const { fake, backend } = setup();
+  const made = identity("linux", "none");
+  const guest = await backend.acquire(made, null, hooks(), signal());
+  const taken = await backend.snapshot(guest, { id: "sngpu2", box: made.boxId, memory: false }, restoring, signal());
+  const box: BoxIdentity = { ...made, size: { ...made.size, gpu: "shared" } };
+  await backend.powerOff(guest, signal());
+
+  const refused = await backend.adoptSnapshot({ id: "sngpu2", ref: taken.ref, guest }, box, NO_IDENTITY, restoring, signal()).then(
+    () => null,
+    (error: unknown) => error,
+  );
+
+  assert.ok(refused instanceof Error);
+  assert.equal(refused.message, `Box ${box.name} has a shared GPU, but its container ${guest.ref} has no GPU, so BB Box did not restore it without one. It left the box as it was. To have a GPU again, release the box and make a new one.`);
+  assert.deepEqual(fake.containers(), [guest.ref]);
+});
+
+test("Docker refuses to restore a box that has two containers on different GPUs, and names them", async () => {
+  const { fake, backend } = setup();
+  const box = identity("linux", "shared");
+  const guest = await backend.acquire(box, null, hooks(), signal());
+  const taken = await backend.snapshot(guest, { id: "sngpu3", box: box.boxId, memory: false }, restoring, signal());
+  const labels = { ...fake.inspect(guest.ref).Config.Labels, "bbbox.gpu": DEVICE_B, "bbbox.gpu-card": CARD_B };
+  const stray = `${guest.ref}-stray`;
+  execFileSync(fake.binary, ["container", "create", "--name", stray, "--network", dockerConfig().network, ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]), "bbbox/linux:1"]);
+  await backend.powerOff(guest, signal());
+
+  const refused = await backend.adoptSnapshot({ id: "sngpu3", ref: taken.ref, guest }, box, NO_IDENTITY, restoring, signal()).then(
+    () => null,
+    (error: unknown) => error,
+  );
+
+  assert.ok(refused instanceof Error);
+  assert.match(refused.message, new RegExp(`^Box ${box.name} has 2 containers on fake-docker with different GPUs \\((${guest.ref}, ${stray}|${stray}, ${guest.ref})\\), so BB Box cannot tell which GPU to restore it with\\.`));
+  assert.deepEqual(fake.containers(), [guest.ref, stray].sort());
 });

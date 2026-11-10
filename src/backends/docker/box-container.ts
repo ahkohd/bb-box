@@ -80,20 +80,21 @@ function given(key: BoxEnv, value: string): readonly string[] {
   return ["--env", `${key}=${value}`];
 }
 
-function labelsOf(settings: BoxContainerSettings): Record<string, string> {
-  const { box, placement } = settings;
-  const { gpu, card, part } = placement;
+export function labelsOf(settings?: BoxContainerSettings): Record<string, string> {
+  const box = settings?.box;
+  const placement = settings?.placement;
   return {
-    [LABELS.backend]: "docker",
-    [LABELS.install]: settings.installId,
-    [LABELS.box]: box.boxId,
-    [LABELS.thread]: box.threadId,
-    [LABELS.name]: box.name,
-    [LABELS.kind]: box.kind,
-    [LABELS.created]: String(box.createdAt),
-    ...(gpu ? { [LABELS.gpu]: gpu } : {}),
-    ...(gpu && card ? { [LABELS.gpuCard]: card, [LABELS.gpuPart]: part } : {}),
-    ...(settings.fromSnapshot ? { [LABELS.fromSnapshot]: settings.fromSnapshot } : {}),
+    [LABELS.backend]: settings ? "docker" : "",
+    [LABELS.install]: settings?.installId ?? "",
+    [LABELS.box]: box?.boxId ?? "",
+    [LABELS.thread]: box?.threadId ?? "",
+    [LABELS.name]: box?.name ?? "",
+    [LABELS.kind]: box?.kind ?? "",
+    [LABELS.created]: box ? String(box.createdAt) : "",
+    [LABELS.gpu]: placement?.gpu ?? "",
+    [LABELS.gpuCard]: placement?.gpu ? placement.card ?? "" : "",
+    [LABELS.gpuPart]: placement?.gpu && placement.card ? placement.part : "",
+    [LABELS.fromSnapshot]: settings?.fromSnapshot ?? "",
   };
 }
 
@@ -167,7 +168,7 @@ export function createArgs(settings: BoxContainerSettings | ImageContainerSettin
   }
   const { box, placement } = settings;
   const { cores, memoryMiB } = box.size;
-  const labels = labelsOf(settings);
+  const labels = Object.fromEntries(Object.entries(labelsOf(settings)).filter(([, value]) => value !== ""));
 
   return [
     "container", "create",

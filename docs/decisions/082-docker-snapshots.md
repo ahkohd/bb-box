@@ -145,8 +145,8 @@ this install's labelled volumes without a container and removes them. It
 leaves volumes of boxes being made alone, using the engine's shared placement
 reservations. Restored and forked containers use names of the form
 `bbbox-<box>-<8 hex>` and make their volumes before their containers.
-Those units must reserve creation under the new container name, so cleanup
-cannot remove the volume in between. Cleanup runs after CPU and LXCFS
+A restore reserves creation under the new container's name until its
+container exists, so cleanup cannot remove the volume in between. Cleanup runs after CPU and LXCFS
 upkeep. Each removal failure is logged and retried on the next pass,
 without stopping cleanup of other volumes.
 
@@ -189,16 +189,26 @@ uses the box's own image, with `--pull never`.
 On a box with no Docker volume, the take is the commit alone, while paused.
 
 Only the take pauses a box. After a restart, a paused container is settled
-from the engine. An image means the take finished. No image, and still
+from its saved take record and the engine. An image means the take finished. No image, and still
 inside the time bound, means it is still running. Past the bound, the
 container is unpaused, the leftover volume is deleted, and the take has
-failed. The sweep uses the same bound.
+failed. The sweep uses the same bound. If BB Box's records are lost, it
+removes stale partial volumes but leaves the container paused: the engine
+alone cannot prove who owns the pause.
 
-A restore stops the box, takes an undo, makes a new container from the
-snapshot at the snapshot's size, with the box's identity and the old
-container's GPU placement, and deletes the old container once the new one
-starts. A failed start puts the old container back. The snapshot's volume
-is copied. The snapshot's own volume is never mounted by the new box.
+A restore stops the box with `docker kill`, takes an undo of the stopped
+box, makes a new container from the snapshot at the snapshot's size, with
+the box's identity and the old container's GPU placement, and deletes the
+old container once the new one starts. The old container is the box's own
+container now, found by its labels, not the container the snapshot was taken
+from, which an earlier restore may have deleted. If the box has a GPU and that
+container has none, or the box has two containers on different GPUs, the
+restore is refused and the box is left as it was. A failed start puts the old
+container back. The snapshot's volume is copied into the new container's
+own volume by the same kind of helper a take uses. The snapshot's own
+volume is never mounted by the new box. The new container's restart policy
+is `unless-stopped` from the start, as it is the box. Docker does not
+restart a container stopped by `docker kill`, so the old one stays stopped.
 
 A fork is a new container from the snapshot image, placed again, with its
 own box id in `BBBOX_IDENTITY` and restart policy `no` until the core's

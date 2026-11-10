@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { BackendContext, DoctorCheck, Guest, HeldSnapshot, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, TaskOutcome, TaskRef } from "../types.ts";
+import { SnapshotFailed, type BackendContext, type DoctorCheck, type Guest, type HeldSnapshot, type MachineSize, type SnapshotHooks, type SnapshotPlan, type SnapshotRef, type SnapshotTake, type SnapshotTaken, type TaskOutcome, type TaskRef } from "../types.ts";
 import type { z } from "zod";
 import { DockerCli, LABELS, snapshotContainersSchema, snapshotImagesSchema, snapshotVolumesSchema, snapshotStoreSchema } from "./cli.ts";
-import { commitChanges, layerRefusal, mountRefusal, pauseEstimate, pausedTooLong, snapshotImage, snapshotLabels, snapshotVolume, SNAPSHOT_INSTALL, type ImageStore } from "./snapshots.ts";
+import { commitChanges, KILL_ABOUT_MS, layerRefusal, mountRefusal, pauseEstimate, pausedTooLong, restoreAboutMs, sizeTakenAt, snapshotImage, snapshotLabels, snapshotVolume, SNAPSHOT_INSTALL, type ImageStore } from "./snapshots.ts";
 
 interface TakeState {
   readonly id: string;
@@ -14,6 +14,14 @@ interface TakeState {
 }
 
 type InspectedContainer = z.infer<typeof snapshotContainersSchema>[number];
+
+export interface RestorableSnapshot {
+  readonly id: string;
+  readonly image: string;
+  readonly volume: string | null;
+  readonly volumeBytes: number;
+  readonly size: MachineSize | null;
+}
 
 export class DockerSnapshotEngine {
   readonly #cli: DockerCli;
@@ -70,18 +78,59 @@ export class DockerSnapshotEngine {
     };
   }
 
-  async plan(guest: Guest, signal?: AbortSignal): Promise<SnapshotPlan> {
+  async plan(guest: Guest, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
     const facts = await this.#facts(guest, signal);
     const later = "This Docker backend does not offer this operation yet.";
+    const restoring = target ? await this.restorable(target, signal).catch((error: unknown) => error instanceof SnapshotFailed ? error.message : Promise.reject(error)) : null;
+    const restoreWhy = typeof restoring === "string" ? restoring : null;
+    const restorable = typeof restoring === "string" ? null : restoring;
     return {
       storage: facts.storage,
       take: { ok: !facts.refusal, why: facts.refusal, aboutMs: facts.estimate.pauseMs, memoryAboutMs: null, addsBytes: facts.estimate.addsBytes, memory: null, memoryWhy: "Docker snapshots hold the disk and Docker data only." },
-      restore: { way: "none", why: later, undo: "none", undoAboutMs: 0, undoBytes: null, sizeBack: null, leavesOnEarlierGuest: 0, newer: 0, copyAboutMs: null },
+      restore: {
+        way: restoreWhy ? "none" : "new-guest",
+        why: restoreWhy,
+        undo: restoreWhy ? "none" : "snapshot",
+        undoAboutMs: KILL_ABOUT_MS + facts.estimate.pauseMs + restoreAboutMs(restorable?.volumeBytes ?? 0),
+        undoBytes: facts.estimate.addsBytes,
+        sizeBack: restorable?.size ?? guest.size,
+        leavesOnEarlierGuest: 0,
+        newer: 0,
+        copyAboutMs: null,
+      },
       keep: { way: "no", why: later, aboutMs: null, bytes: null, price: null },
       fork: { ok: false, why: later, aboutMs: 0, bytes: null, size: null },
       locked: null,
-      busy: facts.container.State.Paused ? "The box is already paused. Unpause it before taking a snapshot." : null,
+      busy: facts.container.State.Paused ? "The box is paused. Unpause it, or wait for its snapshot to finish, then try again." : null,
     };
+  }
+
+  async restorable(ref: SnapshotRef, signal?: AbortSignal): Promise<RestorableSnapshot> {
+    const box = ref.guest.data?.box;
+    if (typeof box !== "string" || ref.ref !== snapshotImage(this.#context.installId, box, ref.id)) throw new SnapshotFailed("That snapshot does not belong to this box and install. Choose one of this box's snapshots.");
+    const held = (await this.listed(signal)).find((each) => each.id === ref.id && each.ref === ref.ref);
+    if (!held) throw new SnapshotFailed("Docker no longer has this snapshot. Choose another snapshot.");
+    if (held.state !== "complete") throw new SnapshotFailed(`Docker has only part of this snapshot. ${held.words ?? "It is not complete."} Choose another snapshot.`);
+    const [image] = snapshotImagesSchema.parse(JSON.parse(await this.#cli.ok(["image", "inspect", ref.ref], { signal })));
+    const labels = image?.Config.Labels ?? {};
+    return {
+      id: ref.id,
+      image: ref.ref,
+      volume: labels["bbbox.snapshot.volume"] || null,
+      volumeBytes: Number(labels["bbbox.snapshot.volume-bytes"]) || 0,
+      size: sizeTakenAt(labels),
+    };
+  }
+
+  async copyDockerData(snapshot: RestorableSnapshot, into: string, signal?: AbortSignal): Promise<void> {
+    if (!snapshot.volume) return;
+    await this.#cli.ok([
+      "run", "--rm", "--pull", "never", "--privileged", "--network", "none",
+      "--label", `${SNAPSHOT_INSTALL}=${this.#context.installId}`, "--label", `bbbox.snapshot=${snapshot.id}`,
+      "--entrypoint", "cp",
+      "--volume", `${snapshot.volume}:/from:ro`, "--volume", `${into}:/to`,
+      snapshot.image, "-a", "--reflink=auto", "/from/.", "/to/",
+    ], { signal, timeoutMs: 15 * 60_000 });
   }
 
   #key(id: string): string { return `docker-snapshot-take:${id}`; }
@@ -136,7 +185,6 @@ export class DockerSnapshotEngine {
       return { ref: image, holds: "disk", capturedAt: state.startedAt, size: { bytes: facts.estimate.addsBytes, means: "whole" } };
     } catch (error) {
       await this.#context.storage.set(this.#key(take.id), { ...state, phase: "failed" });
-      await this.#discard(state);
       throw error;
     } finally {
       this.#active.delete(take.id);
@@ -146,6 +194,7 @@ export class DockerSnapshotEngine {
         this.#context.log?.(`Docker snapshot ${take.id} paused box ${take.box} for ${this.#now() - pausedAt} ms.`);
       }
       await this.#context.storage.set(this.#key(take.id), { ...state, phase: committed ? "complete" : "failed-resumed" });
+      if (!committed) await this.#discard(state).catch((error) => this.#context.logError("cleaning a failed Docker snapshot", error));
     }
   }
 
@@ -178,10 +227,10 @@ export class DockerSnapshotEngine {
     }
     if (state.phase !== "failed" && !pausedTooLong(state, this.#now())) return { state: "running" };
     await this.#context.storage.set(this.#key(state.id), { ...state, phase: "failed" });
-    await this.#discard(state);
     const container = (await this.#cli.inspect([state.container]))[0];
     if (container?.status === "paused" && container.labels[LABELS.install] === this.#context.installId && container.labels[LABELS.box] === state.box) await this.#cli.ok(["unpause", state.container]);
     await this.#context.storage.set(this.#key(state.id), { ...state, phase: "failed-resumed" });
+    await this.#discard(state);
     return { state: "failed", words: "The snapshot was interrupted. Its partial copy was removed and the box was unpaused." };
   }
 
@@ -191,9 +240,12 @@ export class DockerSnapshotEngine {
   }
 
   async listed(signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    return this.#listed(await this.#volumes(signal), signal);
+  }
+
+  async #listed(volumes: readonly { Name: string; Labels: Record<string, string> }[], signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
     const ids = (await this.#cli.ok(["image", "ls", "--quiet", "--filter", `label=${SNAPSHOT_INSTALL}=${this.#context.installId}`], { signal })).trim().split(/\s+/).filter(Boolean);
     const images = ids.length ? snapshotImagesSchema.parse(JSON.parse(await this.#cli.ok(["image", "inspect", ...new Set(ids)], { signal }))) : [];
-    const volumes = await this.#volumes(signal);
     const volumesByName = new Map(volumes.map((volume) => [volume.Name, volume.Labels]));
     const result: HeldSnapshot[] = [];
 
@@ -271,8 +323,9 @@ export class DockerSnapshotEngine {
   }
 
   async maintain(): Promise<void> {
-    const complete = new Set((await this.listed()).filter((held) => held.state === "complete").map((held) => held.id));
-    for (const volume of await this.#volumes()) {
+    const volumes = await this.#volumes();
+    const complete = new Set((await this.#listed(volumes)).filter((held) => held.state === "complete").map((held) => held.id));
+    for (const volume of volumes) {
       const labels = volume.Labels;
       const id = labels["bbbox.snapshot"];
       const box = labels["bbbox.snapshot.box"];
@@ -284,7 +337,11 @@ export class DockerSnapshotEngine {
     }
     for (const key of await this.#context.storage.list("docker-snapshot-take:")) {
       const state = await this.#context.storage.get<TakeState>(key);
-      if (state && state.phase !== "complete") await this.settle({ ref: `take:${state.id}@${state.startedAt}`, host: null });
+      try {
+        if (state && state.phase !== "complete") await this.settle({ ref: `take:${state.id}@${state.startedAt}`, host: null });
+      } catch (error) {
+        this.#context.logError("recovering a Docker snapshot take", error);
+      }
     }
     await this.#cli.ok(["image", "prune", "--force", "--filter", `label=${SNAPSHOT_INSTALL}=${this.#context.installId}`]);
   }
