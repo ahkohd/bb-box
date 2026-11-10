@@ -78,18 +78,14 @@ test("a section rule is a line of the ramp's characters, the same for a seed eve
   assert.match(rule, /[+*=]{4}/, "a dense stretch");
 });
 
-test("the aim reticle frames a button outside its edges with corners sized to it, and marks an inline link below its line, so it never covers text", () => {
+test("the aim reticle frames a target outside its edges with corners sized to it, so it never covers text", () => {
   const button = { left: 100, top: 200, width: 180, height: 44 };
-  const frame = aimFor("frame", button);
+  const frame = aimFor(button);
   assert.ok(frame.left < button.left && frame.top < button.top);
   assert.ok(frame.left + frame.width > button.left + button.width && frame.top + frame.height > button.top + button.height);
   assert.ok(frame.corner >= 5 && frame.corner <= 12);
-  assert.ok(aimFor("frame", { left: 0, top: 0, width: 400, height: 400 }).corner <= 12, "corners stay short on large targets");
-  assert.ok(aimFor("frame", { left: 0, top: 0, width: 16, height: 16 }).corner >= 5, "corners stay visible on small targets");
-  const link = { left: 40, top: 300, width: 90, height: 18 };
-  const under = aimFor("underline", link);
-  assert.ok(under.top >= link.top + link.height, "the bracket starts below the link's line");
-  assert.ok(under.left <= link.left && under.left + under.width >= link.left + link.width);
+  assert.ok(aimFor({ left: 0, top: 0, width: 400, height: 400 }).corner <= 12, "corners stay short on large targets");
+  assert.ok(aimFor({ left: 0, top: 0, width: 16, height: 16 }).corner >= 5, "corners stay visible on small targets");
 });
 
 test("a sample box name is an adjective and a noun that no other sample box has", () => {

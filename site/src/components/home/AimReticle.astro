@@ -9,7 +9,7 @@
 </div>
 
 <script>
-  import { aimFor, type AimShape } from "../../effects/aim.ts";
+  import { aimFor } from "../../effects/aim.ts";
 
   const reticle = document.querySelector<HTMLElement>(".aim");
   const targets = "a[href], button:not([hidden]), label:has(> input[type=radio]), [data-aim]";
@@ -48,7 +48,7 @@
     return saturation > 0.55 && hue >= amberHues.from && hue <= amberHues.to;
   };
 
-  const shapeOf = (target: Element): AimShape => (target.matches("a") && getComputedStyle(target).display === "inline" ? "underline" : "frame");
+  const isInlineLink = (target: Element) => target.matches("a") && getComputedStyle(target).display === "inline";
 
   function lineBox(target: Element, y: number): DOMRect | undefined {
     const lines = [...target.getClientRects()].filter((rect) => rect.width > 0 && rect.height > 0);
@@ -90,10 +90,8 @@
     if (!reticle) return false;
     const line = lineBox(target, y);
     if (!line) return false;
-    const box = shapeOf(target) === "frame" ? visibleBox(target, line) : line;
-    const shape = shapeOf(target);
-    const aim = aimFor(shape, { left: box.left, top: box.top, width: box.width, height: box.height });
-    reticle.dataset.shape = shape;
+    const box = visibleBox(target, line);
+    const aim = aimFor({ left: box.left, top: box.top, width: box.width, height: box.height });
     reticle.toggleAttribute("data-on-accent", isAccentFilled(target));
     reticle.style.setProperty("--aim-x", `${aim.left}px`);
     reticle.style.setProperty("--aim-y", `${aim.top}px`);
@@ -125,7 +123,7 @@
     document.addEventListener("pointerover", (event) => {
       if (event.pointerType !== "mouse") return;
       const target = (event.target as Element).closest(targets);
-      if (target) lockOn(target, event.clientY);
+      if (target && !isInlineLink(target)) lockOn(target, event.clientY);
     });
     document.addEventListener("pointerout", (event) => {
       const from = (event.target as Element).closest(targets);
@@ -225,16 +223,6 @@
     border-bottom-width: var(--weight);
   }
 
-  .aim[data-shape="underline"] .top-left,
-  .aim[data-shape="underline"] .top-right {
-    display: none;
-  }
-
-  .aim[data-shape="underline"] .bottom-left,
-  .aim[data-shape="underline"] .bottom-right {
-    height: 100%;
-  }
-
   .tick {
     position: absolute;
     top: -6px;
@@ -245,7 +233,7 @@
     opacity: 0;
   }
 
-  .aim[data-locked][data-shape="frame"] .tick {
+  .aim[data-locked] .tick {
     animation: tick-in 120ms ease-out 150ms forwards;
   }
 
@@ -270,7 +258,7 @@
       animation: none;
     }
 
-    .aim[data-locked][data-shape="frame"] .tick {
+    .aim[data-locked] .tick {
       animation: none;
       opacity: 1;
     }
