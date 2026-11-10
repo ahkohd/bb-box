@@ -385,9 +385,15 @@ export function command(os: GuestOs, script: string, options: CommandOptions = {
   return `${LOADS_ENV}${write}${env}${desktop}${cd}${job(`if command -v timeout >/dev/null 2>&1; then exec ${timeout}; else exec ${shell}; fi`)}`;
 }
 
+function windowsAccessFileCheck(digest: string): string {
+  const file = ps(envFile("windows"));
+  return `if ((Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $HOME ${file})).Hash.ToLowerInvariant() -ne '${digest}') { exit 1 }`;
+}
+
 export function accessFileRewrite(os: GuestOs, env: string): string {
   const digest = createHash("sha256").update(env).digest("hex");
-  const check = os === "windows" ? ":" : `[ "$(sha256sum < "$HOME/${envFile(os)}" | cut -d' ' -f1)" = ${digest} ]`;
+
+  const check = os === "windows" ? windowsAccessFileCheck(digest) : `[ "$(sha256sum < "$HOME/${envFile(os)}" | cut -d' ' -f1)" = ${digest} ]`;
   return command(os, check, { env });
 }
 
