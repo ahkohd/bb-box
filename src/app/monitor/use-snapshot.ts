@@ -28,23 +28,35 @@ function publishReading(stream: string, startedOrder: number, snapshot: MonitorS
 
 type SnapshotSource = ReturnType<typeof createSnapshotSource<MonitorSnapshot>>;
 
-const sources = new Map<string, { source: SnapshotSource; stream: string }>();
+const sources = new Map<string, { source: SnapshotSource; stream: string; users: number }>();
 
 const MAX_REMEMBERED_MACHINES = 8;
 
-function sourceFor(machineKey: string, stream: string): SnapshotSource {
-  const entry = sources.get(machineKey) ?? { source: createSnapshotSource<MonitorSnapshot>((value) => value.refreshIntervalMs), stream };
-  sources.delete(machineKey);
-  sources.set(machineKey, entry);
-  for (const oldest of sources.keys()) {
-    if (sources.size <= MAX_REMEMBERED_MACHINES) break;
-    const removed = sources.get(oldest);
-    sources.delete(oldest);
-    if (removed && !Array.from(sources.values()).some((entry) => entry.stream === removed.stream)) {
-      publishedReadings.delete(removed.stream);
+function trimSources(): void {
+  let unused = Array.from(sources.values()).filter((entry) => entry.users === 0).length;
+  for (const [key, entry] of sources) {
+    if (unused <= MAX_REMEMBERED_MACHINES) break;
+    if (entry.users > 0) continue;
+
+    sources.delete(key);
+    unused--;
+    if (!Array.from(sources.values()).some((remaining) => remaining.stream === entry.stream)) {
+      publishedReadings.delete(entry.stream);
     }
   }
-  return entry.source;
+}
+
+function sourceFor(machineKey: string, stream: string) {
+  const entry = sources.get(machineKey) ?? {
+    source: createSnapshotSource<MonitorSnapshot>((value) => value.refreshIntervalMs),
+    stream,
+    users: 0,
+  };
+  sources.delete(machineKey);
+  sources.set(machineKey, entry);
+  entry.users++;
+  trimSources();
+  return entry;
 }
 
 export function forgetMonitorReadings(): void {
@@ -74,7 +86,7 @@ export function useMonitorSnapshot(machineId: string, boxId?: string) {
   useEffect(() => {
     const element = container.current;
     if (!element || !machineId) return;
-    const source = sourceFor(JSON.stringify([stream, machineId]), stream);
+    const entry = sourceFor(JSON.stringify([stream, machineId]), stream);
     setError(null);
     setReloading(false);
     let intersecting = false;
@@ -83,7 +95,7 @@ export function useMonitorSnapshot(machineId: string, boxId?: string) {
       load: () => {
         const force = forceRefresh.current;
         forceRefresh.current = false;
-        return source.load(async () => {
+        return entry.source.load(async () => {
           const startedOrder = takeStartedOrder();
           const fetched = machineId === SERVER_MACHINE
             ? await rpc.call("monitor.server", { force })
@@ -117,6 +129,8 @@ export function useMonitorSnapshot(machineId: string, boxId?: string) {
       window.removeEventListener("pagehide", hide);
       window.removeEventListener("pageshow", show);
       poller.dispose();
+      entry.users--;
+      trimSources();
       pollerRef.current = null;
     };
   }, [rpc, machineId, stream]);

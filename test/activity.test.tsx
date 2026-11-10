@@ -935,3 +935,44 @@ test("the box page and Monitor share each scheduled fetch", async () => {
 
   expect(reading).toHaveBeenCalledTimes(4);
 });
+
+function probe2At(usage: number, refreshIntervalMs = 60_000): MonitorSnapshot {
+  const base = snapshot({ refreshIntervalMs });
+  return { ...base, cpu: { ...base.cpu, usagePercent: usage } };
+}
+
+function probe2Cpu(): string {
+  return within(screen.getByRole("region", { name: "Activity" })).getByRole("region", { name: "CPU" }).textContent ?? "";
+}
+
+async function probe2Select(name: string): Promise<void> {
+  const header = () => within(document.querySelector<HTMLElement>("[data-bb-box-monitor-header]")!).getByRole("button", { name: "Machine" });
+  fireEvent.click(header());
+  const list = await screen.findByRole("listbox", { name: "Machines" });
+  fireEvent.click(within(list).getAllByRole("option").find((option) => option.textContent?.includes(name))!);
+  await waitFor(() => expect(header().textContent).toContain(name));
+}
+
+test("probe H: the Monitor visiting nine other machines does not blank the mounted box page's reading", async () => {
+  forgetMonitorReadings();
+  const boxMachine = "host-probe-h";
+  const others = Array.from({ length: 9 }, (_, index) => ({ id: `host-other-${index}`, name: `other-${index}`, connected: true, isServer: false, isBox: false, boxId: null }));
+  const calls: string[] = [];
+  const rpc = {
+    ...handlers({ page: () => page(boxView(), { is: "read", machineId: boxMachine, why: null }), reading: () => snapshot() }),
+    "monitor.machines": () => ({ machines: [{ id: boxMachine, name: "calm-otter", connected: true, isServer: false, isBox: true, boxId: BOX_ID }, ...others] }),
+    "monitor.machine": ({ machineId: id }: { machineId: string }) => { calls.push(id); return id === boxMachine ? probe2At(40) : probe2At(81); },
+  } as PluginRpcTestHandlers<Contract>;
+  localStorage.setItem("bb-box:monitor:machine", "host-other-0");
+  open(rpc);
+  await waitFor(() => expect(probe2Cpu()).toContain("40"));
+  const footer = app.experimentalSidebarFooterItems.find((item) => item.id === "status")!;
+  if (!("component" in footer)) throw new Error("Monitor disclosure is missing");
+  renderSlot(footer, { dismiss: vi.fn() }, { rpc, pluginId: "bb-box" });
+
+  for (const other of others) {
+    await probe2Select(other.name);
+    await waitFor(() => expect(calls).toContain(other.id));
+  }
+  expect(probe2Cpu()).toContain("40");
+}, 30_000);

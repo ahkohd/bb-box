@@ -699,9 +699,13 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
   const { machines, selected, setSelected, refresh: refreshMachines } = useMachines();
   const opensOf = useOpensOf();
   const lookOf = useBoxLookOf();
-  const { container, active, snapshot, error, reload, reloading } = useMonitorSnapshot(machines ? selected : "", machines?.find((machine) => machineKey(machine) === selected)?.boxId ?? undefined);
+  const machine = machines?.find((machine) => machineKey(machine) === selected);
+  const { container, active, snapshot, error, reload, reloading } = useMonitorSnapshot(
+    machines ? selected : "",
+    machine?.boxId ?? undefined,
+  );
   const machineName = selectedMachine(machines, selected).name;
-  const isBox = machines?.find((machine) => machineKey(machine) === selected)?.isBox ?? false;
+  const isBox = machine?.isBox ?? false;
   const errorMessage = error ? loadErrorCopy(error, machineName) : "";
   const slowLoad = useSlowLoad(selected, !snapshot && !error);
   useRevealOnLoad(container, selected, snapshot !== null);
@@ -727,7 +731,7 @@ function StatusDisclosure({ dismiss }: ExperimentalSidebarFooterDisclosureProps)
         selected={selected}
         onSelect={setSelected}
         onOpen={() => void refreshMachines()}
-        opens={opensOf(machines?.find((machine) => machineKey(machine) === selected))}
+        opens={opensOf(machine)}
         lookOf={lookOf}
         actions={<>
           <ReloadButton onReload={reload} reloading={reloading} loading={!snapshot && !error} updatedAt={snapshot?.timestamp ?? null} />
