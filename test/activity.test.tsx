@@ -161,6 +161,7 @@ vi.spyOn(Element.prototype, "getClientRects").mockReturnValue([{}] as unknown as
 const app = await loadPluginApp(() => import("../app.tsx"));
 
 beforeEach(() => {
+  forgetMonitorReadings();
   reach = read();
 });
 
@@ -324,7 +325,7 @@ test("a box BB Box cannot read says the Monitor's words in Activity's frame, whi
   await waitFor(() => expect(document.getElementById(kept.getAttribute("aria-describedby")!)!.textContent).toMatch(/CPU averaged 30%/));
 });
 
-test("a reading that started earlier never replaces the one the card shows, and the next reading does even when its clock is behind", async () => {
+test.each(["cached", "late"])("a %s reading never replaces a later fetch, even when the next guest clock is behind", async (arrival) => {
   forgetMonitorReadings();
   const cardId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
   const early = "host-early-1428";
@@ -374,6 +375,11 @@ test("a reading that started earlier never replaces the one the card shows, and 
 
   await vi.waitFor(() => expect(earlyCalls).toBe(1));
 
+  if (arrival === "cached") {
+    releaseEarly(at(earlierAt, 17));
+    await waitFor(() => expect(cpu()).toContain("17"));
+  }
+
   machineId = later;
   await slot.behavior.emitRealtime("changed", { threadId: THREAD });
   await waitFor(() => expect(cpu()).toContain("81"));
@@ -402,6 +408,35 @@ test("a reading that started earlier never replaces the one the card shows, and 
   expect(screen.getByRole("region", { name: "Activity" }).textContent).toContain(readAt(behindAt));
   expect(screen.getByRole("region", { name: "Activity" }).textContent).not.toContain(readAt(shownAt));
 }, 20_000);
+
+test("selecting another box never carries the previous box's numbers", async () => {
+  forgetMonitorReadings();
+  let selected = "first";
+  let resolveFirst: (value: MonitorSnapshot) => void = () => {};
+  const pending = new Promise<MonitorSnapshot>((resolve) => { resolveFirst = resolve; });
+  const at = (usage: number) => {
+    const base = snapshot();
+    return { ...base, cpu: { ...base.cpu, usagePercent: usage } };
+  };
+  const slot = open(handlers({
+    page: () => page(boxView({ id: selected }), { is: "read", machineId: selected, why: null }),
+    reading: () => snapshot(),
+    machine: (id) => id === "first" ? pending : at(81),
+  }));
+  await pause(100);
+
+  selected = "second";
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+  const cpu = () => within(screen.getByRole("region", { name: "Activity" })).getByRole("region", { name: "CPU" }).textContent ?? "";
+  await waitFor(() => expect(cpu()).toContain("81"));
+
+  resolveFirst(at(17));
+  await pending;
+  selected = "first";
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+  await waitFor(() => expect(cpu()).toContain("17"));
+  expect(cpu()).not.toContain("81");
+});
 
 test("a reading that fails after one worked keeps the last numbers under the Monitor's notice", async () => {
   let calls = 0;

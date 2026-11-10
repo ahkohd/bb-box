@@ -1,3 +1,4 @@
+import { forgetMonitorReadings } from "../src/app/monitor/use-snapshot.ts";
 // The panel, the desktop viewer and the settings section, rendered with the
 // SDK's slot harness against fake RPC handlers and a fake noVNC. Run with
 // vitest: npm run test:app.
@@ -361,6 +362,7 @@ const DESKTOP_PATH = "/api/v1/plugins/bb-box/http/desktop";
 const TERMINAL_PATH = "/api/v1/plugins/bb-box/http/terminal";
 const app = await loadPluginApp(() => import("../app.tsx"));
 afterEach(() => {
+  forgetMonitorReadings();
   cleanup();
   forgetMoves();
   forgetListPlace();
