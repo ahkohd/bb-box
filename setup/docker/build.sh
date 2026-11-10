@@ -69,7 +69,7 @@ image_sources_digest() {
   (
     cd "$here/.."
     while read -r entry; do
-      [ -z "$entry" ] || find "$entry" -type f ! -path '*/.*'
+      [ -z "$entry" ] || find "$entry" -type f ! -name .DS_Store ! -name '._*'
     done <"$here/image-sources" |
       grep -vxF -e proxmox-lxc/template/pins.json -e proxmox-lxc/template/apt-snapshot -e proxmox-lxc/template/desktop-pins.tsv |
       LC_ALL=C sort -u |

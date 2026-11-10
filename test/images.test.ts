@@ -4,6 +4,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileS
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { buildEnvFor, templateArchive } from "../src/backends/boat/templates.ts";
 import { IMAGE_CONTRACT, describeImage, judgeImage, parseImageRecord, pinLines, pinsDigest, programDigest, recordInDescription, identityResetFor, imageProgram, prepareDigest, type ImageRecord } from "../src/backends/images.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -141,7 +142,7 @@ test("a fresh build records the program digest the plugin computes for its image
   cpSync(TEMPLATE, build, { recursive: true });
   writeFileSync(join(out, "template-release"), "kind=linux\n");
 
-  for (const backend of ["docker", "microsandbox", "proxmox-lxc", "proxmox-qemu", "tart", "boat"]) {
+  for (const backend of ["docker", "microsandbox", "proxmox-lxc", "proxmox-qemu", "tart"]) {
     const prepare = (await prepareDigest(SETUP, backend))!;
     assert.equal(recordedProgram(build, out, prepare), await imageProgram(SETUP, "linux", backend), backend);
   }
@@ -153,6 +154,55 @@ test("a fresh build records the program digest the plugin computes for its image
 
   appendFileSync(join(build, "guest", "files", "cua-launch-probe.mjs"), "\n");
   assert.notEqual(recordedProgram(build, out, docker), await imageProgram(SETUP, "linux", "docker"), "a guest file that is not a script counts");
+});
+
+test("a hidden guest file that is not Mac metadata counts, in the record and in the plugin's digest alike", { skip: !jq || !existsSync("/etc/os-release") }, async () => {
+  const setup = join(tempDir("image-hidden"), "setup");
+  cpSync(SETUP, setup, { recursive: true });
+  const out = join(tempDir("image-hidden-out"));
+  writeFileSync(join(out, "template-release"), "kind=linux\n");
+  const build = join(setup, "proxmox-lxc", "template");
+  const before = await imageProgram(setup, "linux", "docker");
+
+  writeFileSync(join(build, "guest", ".guest-config"), "SETTING=1\n");
+  const after = await imageProgram(setup, "linux", "docker");
+
+  assert.notEqual(after, before, "the plugin counts it");
+  assert.equal(recordedProgram(build, out, (await prepareDigest(setup, "docker"))!), after, "image-record.sh counts it the same way");
+});
+
+async function boatRecordsProgram(setup: string, kind: "linux" | "linux-desktop-cpu" | "android"): Promise<string | undefined> {
+  const staged = tempDir("boat-staged");
+  const unpacked = spawnSync("tar", ["-xzf", "-", "-C", staged], { input: await templateArchive(setup) });
+  assert.equal(unpacked.status, 0, unpacked.stderr?.toString());
+  const build = join(staged, "proxmox-lxc", "template");
+  writeFileSync(join(build, "build.env"), buildEnvFor("build.20261003-021500-3f9c", kind));
+  if (kind === "android") {
+    cpSync(join(staged, "android", "pins.json"), join(build, "android-pins.json"));
+    writeFileSync(join(build, "android-devices.json"), "[]\n");
+  }
+  const out = tempDir("boat-record");
+  writeFileSync(join(out, "template-release"), `kind=${kind}\n`);
+
+  const step = { linux: "linux", "linux-desktop-cpu": "desktop", android: "android" }[kind];
+  const run = spawnSync("bash", [join(build, "guest", "image-record.sh"), build, step, out], { env: { PATH: process.env.PATH }, encoding: "utf8" });
+
+  assert.equal(run.status, 0, run.stderr);
+  return JSON.parse(readFileSync(join(out, "image.json"), "utf8")).program;
+}
+
+test("boat's template records the program digest the plugin computes for it, from the files boat stages and the settings it gives", { skip: !jq || !existsSync("/etc/os-release") }, async () => {
+  for (const kind of ["linux", "linux-desktop-cpu", "android"] as const) {
+    assert.equal(await boatRecordsProgram(SETUP, kind), await imageProgram(SETUP, kind, "boat"), kind);
+  }
+
+  const setup = join(tempDir("boat-setup"), "setup");
+  cpSync(SETUP, setup, { recursive: true });
+  const before = await imageProgram(setup, "linux", "boat");
+  appendFileSync(join(setup, "proxmox-lxc", "template", "guest", "files", "cua-probe.mjs"), "\n");
+
+  assert.notEqual(await imageProgram(setup, "linux", "boat"), before, "a guest file boat stages counts");
+  assert.equal(await boatRecordsProgram(setup, "linux"), await imageProgram(setup, "linux", "boat"));
 });
 
 async function withChanged(file: string, check: (setup: string) => Promise<void>): Promise<void> {
@@ -177,34 +227,92 @@ test("a change to any file the Docker images are built from makes them due, on D
 });
 
 test("a change to a guest file that is not a script makes every image that copies the guest folder due", async () => {
-  for (const backend of ["docker", "microsandbox", "proxmox-lxc", "proxmox-qemu", "tart", "boat"]) {
+  for (const backend of ["docker", "microsandbox", "proxmox-lxc", "proxmox-qemu", "tart"]) {
     const before = await imageProgram(SETUP, "linux-desktop", backend);
     await withChanged("proxmox-lxc/template/guest/files/cua-launch-probe.mjs", async (setup) => assert.notEqual(await imageProgram(setup, "linux-desktop", backend), before, backend));
   }
 });
 
+function instructionsOf(dockerfile: string): { readonly name: string; readonly words: string[] }[] {
+  return dockerfile
+    .replace(/\\\n/g, " ")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("#"))
+    .map((line) => {
+      const [name = "", ...words] = line.split(/\s+/);
+      return { name: name.toUpperCase(), words };
+    });
+}
+
+const isFlag = (word: string): boolean => word.startsWith("--");
+
+function flagValue(words: readonly string[], flag: string): string | undefined {
+  return words.find((word) => word.toLowerCase().startsWith(`--${flag}=`))?.slice(flag.length + 3);
+}
+
+function copiedFromContext(words: readonly string[]): string[] {
+  if (flagValue(words, "from") !== undefined) return [];
+  const paths = words.filter((word) => !isFlag(word));
+  if (paths[0]?.startsWith("[")) return (JSON.parse(paths.join(" ")) as string[]).slice(0, -1);
+  return paths.slice(0, -1);
+}
+
+function mountOptions(mount: string): Map<string, string> {
+  const pairs = mount.replace(/^"|"$/g, "").split(",").map((option) => option.split("=") as [string, string?]);
+  return new Map(pairs.map(([key, value]) => [key.toLowerCase(), value ?? "true"]));
+}
+
+function boundFromContext(words: readonly string[]): string[] {
+  return words
+    .filter((word) => word.toLowerCase().startsWith("--mount="))
+    .map((word) => mountOptions(word.slice("--mount=".length)))
+    .filter((options) => (options.get("type") ?? "bind").toLowerCase() === "bind" && !options.has("from"))
+    .map((options) => options.get("source") ?? options.get("src") ?? "");
+}
+
 function dockerfileSources(dockerfile: string): string[] {
-  const lines = dockerfile.replace(/\\\n/g, " ").split("\n");
-  const copied = lines
-    .filter((line) => /^COPY\s/.test(line) && !/--from=/.test(line))
-    .flatMap((line) => line.split(/\s+/).slice(1).filter((word) => !word.startsWith("--")).slice(0, -1));
-  const bound = [...dockerfile.matchAll(/--mount=type=bind,([^\s]+)/g)]
-    .map((match) => match[1]!)
-    .filter((options) => !/(^|,)from=/.test(options))
-    .map((options) => /(?:^|,)source=([^,]+)/.exec(options)![1]!);
-  return [...copied, ...bound];
+  return instructionsOf(dockerfile).flatMap(({ name, words }) => {
+    if (name === "COPY" || name === "ADD") return copiedFromContext(words);
+    if (name === "RUN") return boundFromContext(words);
+    return [];
+  });
+}
+
+const DOCKER_IMAGE_SOURCES = readFileSync(join(SETUP, "docker", "image-sources"), "utf8").split("\n").filter(Boolean);
+
+function sourcesNotListed(dockerfile: string): string[] {
+  const pinFiles = ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/desktop-pins.tsv", "proxmox-lxc/template/apt-snapshot"];
+  const covered = (source: string) => pinFiles.includes(source) || DOCKER_IMAGE_SOURCES.some((entry) => source === entry || source.startsWith(`${entry}/`));
+  return [...new Set(dockerfileSources(dockerfile).filter((source) => !covered(source)))];
 }
 
 test("the list of the Docker images' sources names every file the Dockerfile copies or binds", () => {
-  const listed = readFileSync(join(SETUP, "docker", "image-sources"), "utf8").split("\n").filter(Boolean);
-  const pinFiles = ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/desktop-pins.tsv", "proxmox-lxc/template/apt-snapshot"];
-  const covered = (source: string) => pinFiles.includes(source) || listed.some((entry) => source === entry || source.startsWith(`${entry}/`));
-  const sources = dockerfileSources(readFileSync(join(SETUP, "docker", "Dockerfile"), "utf8"));
+  const dockerfile = readFileSync(join(SETUP, "docker", "Dockerfile"), "utf8");
+  const sources = dockerfileSources(dockerfile);
 
-  assert.ok(listed.includes("docker/Dockerfile"));
+  assert.ok(DOCKER_IMAGE_SOURCES.includes("docker/Dockerfile"));
   assert.ok(sources.includes("docker/fork-hold") && sources.includes("proxmox-lxc/template"), "the Dockerfile's copies and binds are read");
-  assert.deepEqual(sources.filter((source) => !covered(source)), []);
-  for (const entry of listed) assert.ok(existsSync(join(SETUP, entry)), entry);
+  assert.deepEqual(sourcesNotListed(dockerfile), []);
+  for (const entry of DOCKER_IMAGE_SOURCES) assert.ok(existsSync(join(SETUP, entry)), entry);
+});
+
+test("a file the Dockerfile copies or binds that the list does not name is found, in any form Docker reads", () => {
+  const dockerfile = readFileSync(join(SETUP, "docker", "Dockerfile"), "utf8");
+  const added = (instruction: string) => sourcesNotListed(`${dockerfile}\n${instruction}\n`);
+
+  assert.deepEqual(added("COPY docker/new-file /new-file"), ["docker/new-file"], "a new copy");
+  assert.deepEqual(added("RUN --mount=type=bind,source=docker/new-file,target=/new-file true"), ["docker/new-file"], "a new bind");
+  assert.deepEqual(sourcesNotListed(dockerfile.replaceAll("docker/start ", "docker/boot ")), ["docker/boot"], "a renamed file");
+  assert.deepEqual(added("copy docker/new-file /new-file"), ["docker/new-file"], "an instruction in lower case");
+  assert.deepEqual(added("ADD --chmod=0755 docker/new-file /new-file"), ["docker/new-file"], "an add");
+  assert.deepEqual(added(`COPY ["docker/new-file", "/new-file"]`), ["docker/new-file"], "a copy in JSON form");
+  assert.deepEqual(added("RUN --mount=source=docker/new-file,type=bind,target=/new-file true"), ["docker/new-file"], "a bind with its source first");
+  assert.deepEqual(added("RUN --mount=type=bind,src=docker/new-file,target=/new-file true"), ["docker/new-file"], "a bind's source as src");
+  assert.deepEqual(added("RUN --mount=source=docker/new-file,target=/new-file true"), ["docker/new-file"], "a mount with no type, which binds");
+  assert.deepEqual(added("run --mount=Type=Bind,Source=docker/new-file,target=/new-file true"), ["docker/new-file"], "an instruction and options in mixed case");
+  assert.deepEqual(added("COPY --from=fetch /artifacts /mnt/artifacts"), [], "a copy from another stage");
+  assert.deepEqual(added("RUN --mount=type=cache,target=/var/cache/apt true"), [], "a cache mount");
 });
 
 test("each Docker image's build records the digest build.sh gives it", () => {

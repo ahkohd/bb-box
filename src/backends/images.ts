@@ -6,9 +6,10 @@
  */
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { companionWorksWith, IOS_PAIRINGS_WORDS, type OfferedDeviceOf, type OfferedDevices } from "../core/device.ts";
 import { parseOfferedDevices } from "../core/device-parse.ts";
+import { TEMPLATE_FILES as BOAT_TEMPLATE_FILES } from "./boat/templates.ts";
 
 /**
  * The entry a Windows image's record lists among its tools where its VirtIO
@@ -185,8 +186,13 @@ const PREPARE_SOURCES: Readonly<Record<string, PrepareSources>> = {
   microsandbox: DOCKER_IMAGE_SOURCES,
   "proxmox-lxc": { script: "proxmox-lxc/template/build.sh" },
   "proxmox-qemu": { script: "proxmox-qemu/build-linux.sh" },
-  boat: { script: "boat/template.sh" },
 };
+
+const GUEST_DIR = "proxmox-lxc/template/guest";
+
+const BOAT_STAGED_GUEST_FILES = BOAT_TEMPLATE_FILES.filter((file) => file.startsWith(`${GUEST_DIR}/`)).map((file) => file.slice(GUEST_DIR.length + 1));
+
+const BOAT_BUILDS_RECORD_NO_PREPARE = "";
 
 const PINS_DIGEST_COVERS: ReadonlySet<string> = new Set(LINUX_DESKTOP_PIN_FILES);
 
@@ -194,18 +200,22 @@ export function identityResetFor(kind: string): "on" | "off" {
   return kind === "linux" || kind.startsWith("linux-") ? "on" : "off";
 }
 
-function prepareSourcesOf(backendId: string): PrepareSources | null {
-  return PREPARE_SOURCES[backendId.split(":")[0] ?? ""] ?? null;
+function providerOf(backendId: string): string {
+  return backendId.split(":")[0] ?? "";
 }
 
-const isHidden = (name: string): boolean => name.startsWith(".");
+function prepareSourcesOf(backendId: string): PrepareSources | null {
+  return PREPARE_SOURCES[providerOf(backendId)] ?? null;
+}
 
-async function visibleFilesUnder(root: string, path: string): Promise<string[]> {
+const isMacMetadata = (name: string): boolean => name === ".DS_Store" || name.startsWith("._");
+
+async function buildFilesUnder(root: string, path: string): Promise<string[]> {
   const stats = await lstat(join(root, path));
-  if (stats.isFile()) return [path];
+  if (stats.isFile()) return isMacMetadata(basename(path)) ? [] : [path];
   if (!stats.isDirectory()) return [];
-  const names = (await readdir(join(root, path))).filter((name) => !isHidden(name));
-  const nested = await Promise.all(names.map((name) => visibleFilesUnder(root, path === "" ? name : `${path}/${name}`)));
+  const names = await readdir(join(root, path));
+  const nested = await Promise.all(names.map((name) => buildFilesUnder(root, path === "" ? name : `${path}/${name}`)));
   return nested.flat();
 }
 
@@ -229,7 +239,7 @@ function listedPaths(list: string): string[] {
 
 async function listedSourcesDigest(setup: string, listFile: string): Promise<string> {
   const listed = listedPaths(await readFile(join(setup, listFile), "utf8"));
-  const files = (await Promise.all(listed.map((path) => visibleFilesUnder(setup, path)))).flat();
+  const files = (await Promise.all(listed.map((path) => buildFilesUnder(setup, path)))).flat();
   const hash = createHash("sha256");
   await hashFiles(hash, setup, inByteOrder(files.filter((path) => !PINS_DIGEST_COVERS.has(path))));
   return hash.digest("hex");
@@ -247,30 +257,41 @@ export async function prepareDigest(setup: string, backendId: string): Promise<s
   }
 }
 
-/**
- * The SHA-256 image-record.sh writes as `program`: the identity reset, each
- * file in the guest directory, hidden ones left out, by path in byte order,
- * then the prepare digest. Null when the guest directory is not there.
- */
-export async function programDigest(guestDir: string, identityReset: string, prepare: string): Promise<string | null> {
-  let files: string[];
+async function programOf(guestDir: string, files: readonly string[], identityReset: string, prepare: string): Promise<string | null> {
+  const hash = createHash("sha256");
+  hash.update(`BOX_IDENTITY_RESET=${identityReset}\n`);
   try {
-    files = inByteOrder(await visibleFilesUnder(guestDir, ""));
+    await hashFiles(hash, guestDir, inByteOrder(files));
   } catch {
     return null;
   }
-  const hash = createHash("sha256");
-  hash.update(`BOX_IDENTITY_RESET=${identityReset}\n`);
-  await hashFiles(hash, guestDir, files);
   hash.update(`PREPARE=${prepare}\n`);
   return hash.digest("hex");
 }
 
+/**
+ * The SHA-256 image-record.sh writes as `program`: the identity reset, each
+ * file in the guest directory but .DS_Store and AppleDouble (._) files, by
+ * path in byte order, then the prepare digest. Null when the guest directory
+ * is not there.
+ */
+export async function programDigest(guestDir: string, identityReset: string, prepare: string): Promise<string | null> {
+  let files: string[];
+  try {
+    files = await buildFilesUnder(guestDir, "");
+  } catch {
+    return null;
+  }
+  return programOf(guestDir, files, identityReset, prepare);
+}
+
 /** The program digest a rebuild of `kind` on `backendId` would record, or null when the files are not there. */
 export async function imageProgram(setup: string, kind: string, backendId: string): Promise<string | null> {
+  const guestDir = join(setup, GUEST_DIR);
+  if (providerOf(backendId) === "boat") return programOf(guestDir, BOAT_STAGED_GUEST_FILES, identityResetFor(kind), BOAT_BUILDS_RECORD_NO_PREPARE);
   const prepare = await prepareDigest(setup, backendId);
   if (!prepare) return null;
-  return programDigest(join(setup, "proxmox-lxc/template/guest"), identityResetFor(kind), prepare);
+  return programDigest(guestDir, identityResetFor(kind), prepare);
 }
 
 /** Chrome's version in the desktop pins for an architecture, such as 156.0.8078.79, or null. */

@@ -732,8 +732,8 @@ rebuilt each night. A project can add a script on top.
   Chrome that publish checksums (`src/backends/versions.ts`). Linux images
   are due after 7 days and macOS images after 30. A Linux or Android
   image is also due when its record's program digest is not the one a
-  rebuild would record now: every file in the guest folder, and its
-  backend's prepare script or, for Docker and microsandbox, every file
+  rebuild would record now: every file in the guest folder but a Mac's
+  `.DS_Store` and `._` files, and its backend's prepare script or, for Docker and microsandbox, every file
   `setup/docker/image-sources` lists (085). A run starts no image after
   4 hours. A trial box of the new build must pass the kind's check,
   have BB's app and the record, answer no more than 5 s slower and have no

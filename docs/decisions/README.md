@@ -90,4 +90,4 @@ which records still stand as written. The current design as a whole is in
 | [082](082-docker-snapshots.md) | A Docker snapshot is a paused commit of the box and a copy of its Docker volume, kept on its engine | Accepted; take, list, delete, restore and fork are built, and a fork holds every service until its check passes; Keep is not |
 | [083](083-android-devices-boot-cold-after-the-host-restarts.md) | Android snapshots use the existing unsaved marker | Accepted; preserves 063; boot-ID rule withdrawn |
 | [084](084-a-take-says-how-long-it-pauses-the-box-before-and-after.md) | A take says how long it pauses the box, before and after | Accepted |
-| [085](085-an-image-is-due-when-any-file-it-is-built-from-changes.md) | An image is due when any file it is built from changes | Accepted; extends 049 |
+| [085](085-an-image-is-due-when-its-guest-folder-or-build-files-change.md) | An image is due when its guest folder or build files change | Accepted; extends 049 |

@@ -344,7 +344,14 @@ test("build.sh gives each build the digest of the files its image is built from,
 
   assert.equal(changed.status, 0, changed.stderr);
   assert.notEqual(changed.sourcesDigests[0], fresh.sourcesDigests[0], "a change to start");
-  assert.deepEqual(changed.sourcesDigests, [await prepareDigest(setup, "docker")], "less the pins and hidden files, as the plugin leaves them out");
+  assert.deepEqual(changed.sourcesDigests, [await prepareDigest(setup, "docker")], "less the pins and Mac metadata, as the plugin leaves them out");
+
+  writeFileSync(join(setup, "proxmox-lxc", "template", ".template-config"), "SETTING=1\n");
+  const hidden = buildWith(BUILD_FREE_GB, ["linux"], undefined, "none", undefined, { script });
+
+  assert.equal(hidden.status, 0, hidden.stderr);
+  assert.notEqual(hidden.sourcesDigests[0], changed.sourcesDigests[0], "a hidden file that is not Mac metadata counts");
+  assert.deepEqual(hidden.sourcesDigests, [await prepareDigest(setup, "docker")]);
 });
 
 test("build.sh reports Docker's own error when it cannot create a container to read an image, or start one to read the disk", () => {

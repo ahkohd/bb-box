@@ -65,7 +65,7 @@ program=$(
   {
     printf 'BOX_IDENTITY_RESET=%s\n' "$(settings BOX_IDENTITY_RESET)"
     if [ -d "$build/guest" ]; then
-      (cd "$build/guest" && find . -type f ! -path '*/.*' | sed 's|^\./||' | LC_ALL=C sort) |
+      (cd "$build/guest" && find . -type f ! -name .DS_Store ! -name '._*' | sed 's|^\./||' | LC_ALL=C sort) |
         while IFS= read -r f; do
           printf 'file %s\n' "$f"
           cat "$build/guest/$f"
