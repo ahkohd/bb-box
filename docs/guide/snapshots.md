@@ -2,7 +2,7 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools. Where the backend allows it, you [fork](#forking-a-snapshot) a snapshot into a new box and [keep](#keeping-a-snapshot) one past the box's release. Docker boxes take, list, restore and delete snapshots. This works on Docker boxes, Proxmox LXC boxes, Proxmox QEMU Linux boxes, Proxmox QEMU Windows desktops and Android boxes, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
+You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools. Where the backend allows it, you [fork](#forking-a-snapshot) a snapshot into a new box and [keep](#keeping-a-snapshot) one past the box's release. Docker boxes take, list, restore, fork and delete snapshots. This works on Docker boxes, Proxmox LXC boxes, Proxmox QEMU Linux boxes, Proxmox QEMU Windows desktops and Android boxes, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
 
 ## What each backend offers
 
@@ -16,7 +16,7 @@ You take, restore, rename and delete snapshots on a box's page, in its [Snapshot
 | microsandbox | the disk, with the box's Docker data, or the disk and memory | the disk live, in under a second; with memory the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
 | Tart, macOS | the disk and memory, always: every snapshot is a copy of the suspended VM | suspends the VM, copies it and resumes it: 11 s for a 16 GiB VM | in place: it suspends the box, takes the undo, puts the snapshot's copy in the VM's place and resumes it, running as it was | by a copy of the snapshot's disk, without its memory, from a snapshot taken with macOS's identity reset | as it is: the copy stays beside the VMs |
 | Tart, Linux | the disk | only while the box is stopped, as Tart cannot suspend a Linux VM | in place, after a shutdown | by a copy of the snapshot's disk, from a snapshot taken with reset version 8 for Linux servers, or version 9 for Linux desktops | as it is: the copy stays beside the VMs |
-| Docker | the disk and the box's Docker data | pauses the box; measured pauses range from 3.5 to 4.9 seconds on small overlay2 boxes to about 45 seconds for a 1.8 GB change on containerd | by a new container made from the snapshot, with a snapshot as the undo, which runs the box with its ID, name and labels; the old container is deleted once the new one runs | not yet | no |
+| Docker | the disk and the box's Docker data | pauses the box; measured pauses range from 3.5 to 4.9 seconds on small overlay2 boxes to about 45 seconds for a 1.8 GB change on containerd | by a new container made from the snapshot, with a snapshot as the undo, which runs the box with its ID, name and labels; the old container is deleted once the new one runs | by a new container made from the snapshot, with the fork's own ID as its identity value, from a snapshot taken with reset version 7 for Linux servers, or version 9 for Linux desktops | no |
 | Hetzner and Namespace boxes, the SSH host pool's machines, Windows boxes on Tart, iOS boxes | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
 
 Linux desktops need an image built with identity reset version 9 or later. Older images refuse forks and Keep, saying why. Refresh the image and make the box again; an image rebuild does not update existing boxes or snapshots.
@@ -174,7 +174,7 @@ Until then, no box has a marker, and no box resets. Turning a backend off again 
 
 ### Snapshots and forks
 
-Each snapshot records whether its box had a working reset when it was taken, and its version. A snapshot without one says "not fork-safe", and never forks. Each backend forks only from the version known to keep a copy from coming up as its source: version 7 on Proxmox LXC and microsandbox, 5 on Proxmox QEMU, 8 on boat.dev and Tart's Linux, 3 on Tart's macOS. A snapshot keeps the version it was taken under, so one taken before its image had that version never forks.
+Each snapshot records whether its box had a working reset when it was taken, and its version. A snapshot without one says "not fork-safe", and never forks. Each backend forks only from the version known to keep a copy from coming up as its source: version 7 on Proxmox LXC, microsandbox and Docker, 5 on Proxmox QEMU, 8 on boat.dev and Tart's Linux, 3 on Tart's macOS. A snapshot keeps the version it was taken under, so one taken before its image had that version never forks.
 
 ## Forking a snapshot
 
@@ -210,6 +210,8 @@ bb box snapshot fork <box> <snapshot> [--as-machine] [--name <name>] [--check]
 `--check` says what the fork would be and refuses what it would refuse, changing nothing. Like the other snapshot commands, `--thread` or `--machine` say where the source box is.
 
 On boat.dev a fork is a new sandbox made from the saved snapshot, with the fork's own ID as its identity value, so it resets at its first start. As boat.dev labels no sandbox made from a saved snapshot, BB Box makes one under a name of its own, stops it and copies it with the fork's labels, then deletes the first: 2 of boat.dev's starts, free within the plan's starts. A fork goes no further than its identity check until BB Box's check before it is handed over has passed: BB Box reads it as boat.dev's own user, and a fork whose boot says it has no marker is refused. Only then does the box user get in, does the fork join the tailnet, and get its access file. The check is the one above, with its marker naming its own value in place of MAC addresses; the address and the SSH host keys are boat.dev's. Its source's sandbox is not touched.
+
+On Docker a fork is a new container made from the snapshot's image, named `bbbox-<fork>-<8 hex>`, with the fork's own ID, name and labels, and the fork's own ID as its identity value, `BBBOX_IDENTITY`, from its container settings: a snapshot's image holds no value of its own. Its Docker data is a new volume copied from the snapshot's, made before the container. It is placed as a new box is, so it has no GPU of its source's: a Docker fork has none. Its restart policy is `no` until BB Box's check before it is handed over has passed, so Docker never starts it again by itself before then, and `unless-stopped` after. At its first start its identity reset runs and the check reads it, as above, with its marker naming its own value in place of MAC addresses. A fork that fails the check is released, its container and its Docker data with it. If BB Box stops while a fork is made, before its check has passed, its next start deletes the container it had begun and makes the fork again. Its source's container is not touched.
 
 ## Agents' snapshots
 
@@ -413,8 +415,8 @@ Snapshots stay on the box's Docker engine. Their images use
 A restart finds them again. A release deletes them. If another container uses a
 snapshot image, deleting the snapshot removes its tag and volume; Docker keeps
 the shared image layers until that container goes. The listed size is an estimate
-with shared layers, not a promise of space freed by deleting it. Fork and Keep are
-not available yet.
+with shared layers, not a promise of space freed by deleting it. A fork made from
+a snapshot shares its image's layers in the same way. Keep is not available yet.
 
 A restore flushes the box's writes, stops it at once, as a power cut would, and
 takes its undo from the stopped box: no pause, as nothing runs. It then makes a new container,

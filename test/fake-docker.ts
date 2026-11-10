@@ -3,8 +3,11 @@
 // setup/docker/build.sh makes.
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseDockerPart, type DockerConfig } from "../src/backends/docker/config.ts";
 import type { FieldValue } from "../src/backends/types.ts";
 import { fakeGroup, tempDir } from "./helpers.ts";
@@ -45,6 +48,38 @@ export interface FakeDockerHost {
   volumeFiles(name: string): Readonly<Record<string, string>>;
   /** The box user's home in a container. */
   home(name: string): string;
+  /** Gives an image the identity reset, turned on as the image's build does, at the version given. */
+  withIdentityReset(image: string, version?: number): void;
+  /** The root a container's identity reset reads and writes, as BBBOX_IDENTITY_ROOT. */
+  identityRoot(name: string): string;
+}
+
+const IDENTITY_SCRIPT = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/bb-box-identity.sh", import.meta.url));
+const IMAGE_MACHINE_ID = "0123456789abcdef0123456789abcdef";
+const IMAGE_HOST_KEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIimagekey image";
+
+function identityAtVersion(version: number): string {
+  return readFileSync(IDENTITY_SCRIPT, "utf8").replace(/^readonly VERSION=\d+$/m, `readonly VERSION=${version}`);
+}
+
+function writeIn(root: string, path: string, text: string, mode?: number): void {
+  mkdirSync(dirname(join(root, path)), { recursive: true });
+  writeFileSync(join(root, path), text, mode === undefined ? undefined : { mode });
+}
+
+function imageWithIdentityReset(root: string, version: number): void {
+  writeIn(root, "usr/local/sbin/bb-box-identity", identityAtVersion(version), 0o755);
+  writeIn(root, "etc/machine-id", `${IMAGE_MACHINE_ID}\n`);
+  writeIn(root, "etc/ssh/ssh_host_ed25519_key", "private\n");
+  writeIn(root, "etc/ssh/ssh_host_ed25519_key.pub", `${IMAGE_HOST_KEY}\n`);
+  const enabled = spawnSync("bash", [join(root, "usr/local/sbin/bb-box-identity"), "enable", "--no-unit"], { env: { ...process.env, BBBOX_IDENTITY_ROOT: root }, encoding: "utf8" });
+  assert.equal(enabled.status, 0, `the image's build turned the reset on: ${enabled.stderr}`);
+}
+
+function fakeIdentityTools(bin: string): void {
+  mkdirSync(bin, { recursive: true });
+  const ip = `#!/bin/sh\nif [ "$1" = -o ]; then [ -z "$FAKE_ADDRESS" ] || printf '2: eth0    inet %s/16 scope global eth0\\n' "$FAKE_ADDRESS"; exit 0; fi\necho '[]'\n`;
+  writeFileSync(join(bin, "ip"), ip, { mode: 0o755 });
 }
 
 export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHost {
@@ -55,6 +90,7 @@ export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHo
   writeFileSync(binary, `#!/bin/sh\nFAKE_DOCKER_ROOT='${root}' exec '${process.execPath}' '${script}' "$@"\n`);
   chmodSync(binary, 0o755);
   fakeGpuTools(join(root, "gpu-bin"));
+  fakeIdentityTools(join(root, "identity-bin"));
   // As setup/docker/build.sh labels its images: the layout, and a fresh record (049).
   const record = (kind: string) => JSON.stringify({ contract: 1, image: "standard", kind, arch: "x86_64", build: "build.fake", built: new Date().toISOString(), os: "Ubuntu 24.04.5 LTS", tools: { node: "24.21.0" } });
   const label = (kind: string) => ({ "bbbox.image-version": "1", "bbbox.image-record": record(kind) });
@@ -95,6 +131,8 @@ export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHo
     },
     volumeFiles: (name) => JSON.parse(readFileSync(join(root, "volumes.json"), "utf8"))[name]?.Files ?? {},
     home: (name) => join(containers, name, "home"),
+    withIdentityReset: (image, version = 9) => imageWithIdentityReset(join(root, "image-identities", createHash("sha256").update(image).digest("hex")), version),
+    identityRoot: (name) => join(containers, name, "identity"),
   };
 }
 

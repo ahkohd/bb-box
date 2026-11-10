@@ -23,6 +23,11 @@ export interface RestorableSnapshot {
   readonly size: MachineSize | null;
 }
 
+function forkPlan(refusal: string | null, volumeBytes: number, size: MachineSize | null): SnapshotPlan["fork"] {
+  const aboutMs = restoreAboutMs(volumeBytes);
+  return refusal ? { ok: false, why: refusal, aboutMs, bytes: null, size: null } : { ok: true, why: null, aboutMs, bytes: volumeBytes, size };
+}
+
 export class DockerSnapshotEngine {
   readonly #cli: DockerCli;
   readonly #context: BackendContext;
@@ -99,7 +104,7 @@ export class DockerSnapshotEngine {
         copyAboutMs: null,
       },
       keep: { way: "no", why: later, aboutMs: null, bytes: null, price: null },
-      fork: { ok: false, why: later, aboutMs: 0, bytes: null, size: null },
+      fork: forkPlan(restoreWhy, restorable?.volumeBytes ?? facts.volumeBytes, restorable?.size ?? guest.size),
       locked: null,
       busy: facts.container.State.Paused ? "The box is paused. Unpause it, or wait for its snapshot to finish, then try again." : null,
     };

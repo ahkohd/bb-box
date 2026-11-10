@@ -11,7 +11,10 @@
 //   networks.json: each network and its labels.
 // - containers/<name>/: a container. config.json is what `container inspect`
 //   prints; home/ is the box user's home, run/ is /run, var-lib/ is /var/lib
-//   and libexec/ is /usr/local/libexec.
+//   and libexec/ is /usr/local/libexec. identity/ is the root the identity
+//   reset reads and writes, as BBBOX_IDENTITY_ROOT, from an image that has one:
+//   `container start` runs its boot with the container's BBBOX_IDENTITY, as the
+//   image's start script does, and a commit carries it into the image, less run/.
 //
 // `docker exec` runs the command on the test machine as the real user, in the
 // container's home, with /home/box, /etc/environment, /run/bb-box/,
@@ -20,7 +23,7 @@
 // the test process's group of fakes, through the command line $FAKE_GROUP
 // holds, so what it starts ends with the test process, though a timeout kills
 // only this (#320). Every call is logged to log, one JSON array per line.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { constants } from "node:os";
@@ -55,6 +58,18 @@ const save = (container) => writeWhole(join(dir(container.Name.slice(1)), "confi
 /** A container by name, full ID or ID prefix of 12 or more. */
 const find = (ref) => names().map(load).find((container) => container.Name === `/${ref}` || (ref.length >= 12 && container.Id.startsWith(ref))) ?? null;
 const MiB = 1024 * 1024;
+const IDENTITY_TOOL = "/usr/local/sbin/bb-box-identity";
+const identityRoot = (name) => join(dir(name), "identity");
+const imageIdentityRoot = (image) => join(root, "image-identities", createHash("sha256").update(image).digest("hex"));
+const identityToolIn = (rootDir) => join(rootDir, IDENTITY_TOOL.slice(1));
+const identityEnv = (name, container) => ({
+  PATH: `${join(root, "identity-bin")}:${process.env.PATH}`,
+  BBBOX_IDENTITY_ROOT: identityRoot(name),
+  BBBOX_IDENTITY_NIC_WAIT_SECONDS: "0",
+  BBBOX_IDENTITY_SETTLE_SECONDS: "0",
+  FAKE_ADDRESS: container.FakeAddress ?? "",
+});
+const envValue = (container, key) => (container.Config.Env ?? []).find((entry) => entry.startsWith(`${key}=`))?.slice(key.length + 1) ?? "";
 
 if (host.down && args[0] !== "--version") {
   fail("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?");
@@ -249,6 +264,7 @@ function create(rest) {
   mkdirSync(join(dir(name), "home"));
   mkdirSync(join(dir(name), "etc"));
   if (existsSync(imageHome(image))) cpSync(imageHome(image), join(dir(name), "home"), { recursive: true });
+  if (existsSync(imageIdentityRoot(image))) cpSync(imageIdentityRoot(image), identityRoot(name), { recursive: true });
   const count = names().length + 1;
   save({
     Id: id,
@@ -274,6 +290,15 @@ function create(rest) {
     FakeAddress: `172.30.0.${count + 1}`,
   });
   console.log(id);
+}
+
+function bootIdentity(name, found) {
+  const identity = identityRoot(name);
+  if (!existsSync(identity)) return { ok: true };
+  rmSync(join(identity, "run"), { recursive: true, force: true });
+  if (host.skipIdentityBootMatching && new RegExp(host.skipIdentityBootMatching).test(name)) return { ok: true };
+  const boot = spawnSync("bash", [identityToolIn(identity), "boot", "--value", envValue(found, "BBBOX_IDENTITY")], { env: identityEnv(name, found), encoding: "utf8" });
+  return { ok: boot.status === 0, said: `${boot.stdout ?? ""}${boot.stderr ?? ""}` };
 }
 
 function waitFor(file) {
@@ -321,8 +346,13 @@ function container(command, rest) {
       const found = find(rest.at(-1)) ?? fail(`Error response from daemon: No such container: ${rest.at(-1)}`);
       const name = found.Name.slice(1);
       mkdirSync(join(dir(name), "run", "bb-box"), { recursive: true });
+      if (host.holdStartUntil && new RegExp(host.holdStartMatching ?? "").test(name)) waitFor(host.holdStartUntil);
+      const identity = bootIdentity(name, found);
       if (host.failStart || (host.failStartMatching && new RegExp(host.failStartMatching).test(name))) {
         writeFileSync(join(dir(name), "logs"), "bb-box-start: something went wrong\n");
+        found.State = { Status: "exited", ExitCode: 1 };
+      } else if (!identity.ok) {
+        writeFileSync(join(dir(name), "logs"), `${identity.said}bb-box-start: the identity reset failed, so the box starts nothing and never says it is ready\n`);
         found.State = { Status: "exited", ExitCode: 1 };
       } else {
         if (!host.neverReady) writeFileSync(join(dir(name), "run", "bb-box", "ready"), "");
@@ -346,6 +376,7 @@ function container(command, rest) {
         checkCpus(options["--cpuset-cpus"]);
         config.CpusetCpus = options["--cpuset-cpus"];
       }
+      if (options["--restart"] !== undefined) config.RestartPolicy = { Name: options["--restart"] };
       if (options["--memory"] !== undefined) config.Memory = Number.parseInt(options["--memory"], 10) * MiB;
       if (options["--memory-swap"] !== undefined) config.MemorySwap = Number.parseInt(options["--memory-swap"], 10) * MiB;
       if (config.MemorySwap > 0 && config.Memory > config.MemorySwap) {
@@ -360,6 +391,7 @@ function container(command, rest) {
       const found = find(rest.at(-1)) ?? fail(`Error response from daemon: No such container: ${rest.at(-1)}`);
       if (command === "kill" && found.State.Status !== "running") fail(`Error response from daemon: cannot kill container: ${rest.at(-1)}: container ${found.Id} is not running`);
       rmSync(join(dir(found.Name.slice(1)), "run"), { recursive: true, force: true });
+      rmSync(join(identityRoot(found.Name.slice(1)), "run"), { recursive: true, force: true });
       found.State = { Status: "exited", ExitCode: 0 };
       for (const network of Object.values(found.NetworkSettings.Networks)) network.IPAddress = "";
       save(found);
@@ -400,6 +432,8 @@ function container(command, rest) {
         if (match) env.set(match[1], match[2]);
       }
       cpSync(join(dir(found.Name.slice(1)), "home"), imageHome(tag), { recursive: true });
+      const identity = identityRoot(found.Name.slice(1));
+      if (existsSync(identity)) cpSync(identity, imageIdentityRoot(tag), { recursive: true, filter: (path) => path !== join(identity, "run") });
       write("image-env.json", { ...read("image-env.json", {}), [tag]: [...env].map(([key, value]) => `${key}=${value}`) });
       write("images.json", { ...images, [tag]: labels });
       write("image-ids.json", { ...read("image-ids.json", {}), [tag]: `sha256:${randomBytes(32).toString("hex")}` });
@@ -447,14 +481,16 @@ function exec(rest) {
       .replaceAll("/var/lib/bb-box/", `${join(dir(name), "var-lib", "bb-box")}/`)
       .replaceAll("/usr/share/bb-box/", `${join(dir(name), "usr-share", "bb-box")}/`)
       .replaceAll("/usr/local/libexec/bb-box/", `${join(dir(name), "libexec", "bb-box")}/`)
-      .replaceAll("/home/box", home);
+      .replaceAll("/home/box", home)
+      .replaceAll(IDENTITY_TOOL, identityToolIn(identityRoot(name)))
+      .replaceAll("sudo -n ", "");
   const [command, ...commandArgs] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), ...rest.slice(i + 1).map(own)];
   const cards = cardsGiven(found.HostConfig.Devices ?? [], found.HostConfig.Privileged === true);
   const gpuEnv = Object.fromEntries((found.Config.Env ?? []).filter((pair) => /^(CUDA_VISIBLE_DEVICES|NVIDIA_VISIBLE_DEVICES)=/.test(pair)).map((pair) => [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)]));
   const cardEnv = cards.length ? { PATH: `${join(root, "gpu-bin")}:${process.env.PATH}`, FAKE_CARDS: JSON.stringify(host.smiListsNone ? [] : cards), FAKE_CUDA_IGNORES_VISIBLE: host.cudaIgnoresVisible ? "1" : "", FAKE_CUDA_NO_DEVICE: host.cudaNoDevice ? "1" : "", FAKE_CUDA_ERROR: host.cudaError ? String(host.cudaError) : "", FAKE_REAL_PYTHON: process.env.FAKE_REAL_PYTHON ?? "python3" } : {};
   const child = spawn(command, commandArgs, {
     cwd: workdir ? own(workdir) : home,
-    env: { PATH: process.env.PATH, HOME: home, ...gpuEnv, ...env, ...cardEnv },
+    env: { ...identityEnv(name, found), HOME: home, ...gpuEnv, ...env, ...cardEnv },
     stdio: "inherit",
   });
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => child.kill(signal));

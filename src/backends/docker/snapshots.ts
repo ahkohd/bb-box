@@ -8,6 +8,7 @@ export const SNAPSHOT_BOX = "bbbox.snapshot.box";
 export const LAYERS_REFUSED_FROM = 120;
 export const RESTORE_START_ABOUT_MS = 5_000;
 export const KILL_ABOUT_MS = 1_000;
+export const DOCKER_FORK_SAFE_FROM = 7;
 
 const RESTORED_SUFFIX = /^-[0-9a-f]{8}$/;
 const VOLUME_COPY_MS_PER_GIB = 15_000;
@@ -100,7 +101,8 @@ export function dockerOffer(): Snapshotting {
     holds: ["disk"],
     whileRunning: "pauses",
     restore: "new-guest",
-    fork: "none",
+    fork: "copy",
+    forkSafeFrom: DOCKER_FORK_SAFE_FROM,
     keepsPastRelease: "no",
     lives: "host",
     outlivesGuest: true,

@@ -19,7 +19,7 @@
 
 import { DockerSnapshotEngine, type RestorableSnapshot } from "./snapshot-engine.ts";
 import { dockerOffer, isBoxContainerName, restoredName } from "./snapshots.ts";
-import type { CopyHooks, GuestIdentity, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
+import type { CopyHooks, ForkArming, GuestIdentity, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
 import { timedSpawn } from "../../transports/spawns.ts";
@@ -134,6 +134,7 @@ import {
 
 /** The images start a box in about a second; a desktop takes a few more. This leaves room for a busy host. */
 import { PRODUCT } from "../../brand.ts";
+import { withDesktopForkSafety } from "../../core/identity.ts";
 const READY_TIMEOUT_MS = 60_000;
 /** setup/docker/start writes it once the box is up. /run is a tmpfs, so it is new at each start. */
 const READY_FILE = "/run/bb-box/ready";
@@ -1260,7 +1261,7 @@ export class DockerBackend implements Backend {
   }
 
   /** Checks room and counts the box against the host, one acquire at a time. */
-  #place(box: BoxIdentity, signal: AbortSignal): Promise<PlacedBox> {
+  #place(box: BoxIdentity, signal: AbortSignal, name = containerName(box.boxId)): Promise<PlacedBox> {
     return this.#underPlacement(async () => {
       this.#unreserve(box.boxId);
       const state = await this.#state(signal);
@@ -1277,9 +1278,8 @@ export class DockerBackend implements Backend {
         if (placed.is === "refused") throw new BackendError("no_capacity", placed.refusal.person, placed.refusal.agent);
         card = placed.card;
       }
-      const name = containerName(box.boxId);
       const cpus = await this.#allot(state, name, box.size.cores, signal);
-      this.#reserve(box.boxId, this.#placingOf(box, card?.device ?? null, card?.uuid ?? null, part, cpus));
+      this.#reserve(box.boxId, this.#placingOf(box, card?.device ?? null, card?.uuid ?? null, part, cpus, name));
       return { host: room.capacity.host, gpu: card?.device ?? null, card, part, cpus };
     }, signal);
   }
@@ -1466,7 +1466,7 @@ export class DockerBackend implements Backend {
   }
 
   snapshotting(kind: string): Snapshotting | null {
-    return this.kinds().some((offer) => offer.id === kind) ? dockerOffer() : null;
+    return this.kinds().some((offer) => offer.id === kind) ? withDesktopForkSafety(kind, dockerOffer()) : null;
   }
 
   planSnapshots(guest: Guest, _kind: string, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
@@ -1513,7 +1513,7 @@ export class DockerBackend implements Backend {
     const stops = signal ?? new AbortController().signal;
     try {
       await this.#network(stops);
-      await this.#createRestored(restored, name, snapshot, made, cpus, stops);
+      await this.#createFromSnapshot(restored, name, snapshot, made, cpus, "unless-stopped", stops);
     } finally {
       this.#unreserve(name);
     }
@@ -1559,7 +1559,50 @@ export class DockerBackend implements Backend {
     }, signal);
   }
 
-  async #createRestored(box: BoxIdentity, name: string, snapshot: RestorableSnapshot, made: MadeGpu, cpus: CpuList | null, signal: AbortSignal): Promise<void> {
+  async forkSnapshot(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    const snapshot = await this.#snapshots.restorable(ref, signal);
+    if (previous) await this.#remove(previous.ref, box.boxId, signal);
+
+    const name = restoredName(containerName(box.boxId), randomBytes(4).toString("hex"));
+    const placed = await this.#place(box, signal, name);
+    const made = madeOnCard(placed.card, placed.part);
+    try {
+      await hooks.claim({ ref: name, host: placed.host, address: null, size: null, data: { box: box.boxId } });
+      await this.#network(signal);
+      await this.#createFromSnapshot(box, name, snapshot, made, placed.cpus, "no", signal);
+    } finally {
+      this.#unreserve(box.boxId);
+    }
+
+    const [container] = await this.#cli.inspect([name], signal);
+    if (!container) throw new Error(`The container ${name} went from ${placed.host} as ${PRODUCT} made it.`);
+    const guest: Guest = { ref: name, host: placed.host, address: null, size: sizeOf(container), data: dataOf(container, made.card, made.part) };
+    await hooks.claim(guest);
+    return guest;
+  }
+
+  async armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) throw this.#gone(guest);
+    if (arming === "boot") await this.#restartPolicy(found.name, "unless-stopped", signal);
+  }
+
+  async disarmFork(guest: Guest, signal?: AbortSignal): Promise<void> {
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) return;
+    await this.#restartPolicy(found.name, "no", signal);
+    if (ACTIVE.has(found.status)) await this.#cli.ok(["container", "kill", found.name], { timeoutMs: 60_000, signal });
+  }
+
+  async guestIdentity(guest: Guest): Promise<GuestIdentity> {
+    return { macs: {}, smbios: null, value: this.#boxOf(guest) };
+  }
+
+  async #restartPolicy(container: string, policy: "unless-stopped" | "no", signal?: AbortSignal): Promise<void> {
+    await this.#cli.ok(["container", "update", "--restart", policy, container], { timeoutMs: 60_000, signal });
+  }
+
+  async #createFromSnapshot(box: BoxIdentity, name: string, snapshot: RestorableSnapshot, made: MadeGpu, cpus: CpuList | null, restart: "unless-stopped" | "no", signal: AbortSignal): Promise<void> {
     if (box.kind === "linux-desktop" && made.gpu) await this.#readGpuBusId(signal);
     const privileged = this.#privileged(box.kind);
     const dockerVolume = privileged ? boxVolumeName(name) : null;
@@ -1579,7 +1622,7 @@ export class DockerBackend implements Backend {
         lxcfs: await this.#lxcfsOnHost(signal),
         privileged,
         network: this.#config.network,
-        restart: "unless-stopped",
+        restart,
         fromSnapshot: snapshot.id,
       }),
       { timeoutMs: 120_000, signal },
