@@ -60,7 +60,9 @@ const { source, class: className, label = "Copy" } = Astro.props;
     if (!source) continue;
     button.hidden = false;
     button.addEventListener("click", async () => {
-      if (await copyText(source.textContent ?? "")) showCopied(button);
+      if (!(await copyText(source.textContent ?? ""))) return;
+      showCopied(button);
+      button.dispatchEvent(new CustomEvent("text-copied", { bubbles: true }));
     });
   }
 </script>

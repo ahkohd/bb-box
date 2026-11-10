@@ -1317,7 +1317,7 @@ On 30 October 2026, during unit 1a:
 On 30 and 31 October 2026, during unit 3, the lead decided:
 
 - **No ZFS node is free**, so ZFS restores ship off, as section 13 says.
-  For Proxmox LXC, [085](085-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md)
+  For Proxmox LXC, [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md)
   supersedes this, and the switch's hold on restoring a held copy below.
   A switch for live checks only, `bb box snapshot zfs-order <backend> on`,
   which exists only with `BB_BOX_LIVE_CHECKS=1` on BB's server and lasts

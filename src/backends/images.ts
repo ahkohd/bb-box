@@ -5,10 +5,11 @@
  * it: how old it is, what is in it, and what it was built with.
  */
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, readdir, readFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { companionWorksWith, IOS_PAIRINGS_WORDS, type OfferedDeviceOf, type OfferedDevices } from "../core/device.ts";
 import { parseOfferedDevices } from "../core/device-parse.ts";
+import { TEMPLATE_FILES as BOAT_TEMPLATE_FILES } from "./boat/templates.ts";
 
 /**
  * The entry a Windows image's record lists among its tools where its VirtIO
@@ -129,6 +130,9 @@ export function recordInDescription(description: string): ImageRecord | null {
  */
 export type PinSet = "linux" | "linux-desktop" | "android" | "macos" | "ios" | "windows" | "windows-arm64";
 
+const LINUX_PIN_FILES = ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/apt-snapshot"] as const;
+const LINUX_DESKTOP_PIN_FILES = [...LINUX_PIN_FILES, "proxmox-lxc/template/desktop-pins.tsv"] as const;
+
 /**
  * What each set's digest covers, under setup/: Linux's are files in
  * proxmox-lxc/template/, in order, as image-record.sh reads them. The others
@@ -136,9 +140,9 @@ export type PinSet = "linux" | "linux-desktop" | "android" | "macos" | "ios" | "
  * in the order the script has them, as the script itself hashes them.
  */
 const PINS: Readonly<Record<PinSet, { readonly files: readonly string[] } | { readonly lines: string }>> = {
-  linux: { files: ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/apt-snapshot"] },
-  "linux-desktop": { files: ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/apt-snapshot", "proxmox-lxc/template/desktop-pins.tsv"] },
-  android: { files: ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/apt-snapshot", "android/pins.json"] },
+  linux: { files: LINUX_PIN_FILES },
+  "linux-desktop": { files: LINUX_DESKTOP_PIN_FILES },
+  android: { files: [...LINUX_PIN_FILES, "android/pins.json"] },
   macos: { lines: "tart/prepare-image.sh" },
   ios: { files: ["tart/ios/pins", "tart/ios/devices.tsv"] },
   windows: { lines: "proxmox-qemu/build.sh" },
@@ -168,61 +172,126 @@ export async function pinsDigest(setup: string, set: PinSet): Promise<string | n
 }
 
 /**
- * The prepare script a backend's Linux image is built with, under setup/.
- * A refresh records this file's SHA-256, so a change to it makes the image due.
+ * What a backend's Linux image is built with, under setup/: its prepare
+ * script, or a list of the files its build reads. A refresh records their
+ * SHA-256, so a change to any of them makes the image due.
  */
-const PREPARE_FILES: Readonly<Record<string, string>> = {
-  tart: "tart/prepare-linux-image.sh",
-  docker: "docker/customize.sh",
-  microsandbox: "docker/customize.sh",
-  "proxmox-lxc": "proxmox-lxc/template/build.sh",
-  "proxmox-qemu": "proxmox-qemu/build-linux.sh",
-  boat: "boat/template.sh",
+type PrepareSources = { readonly script: string } | { readonly listedIn: string };
+
+const DOCKER_IMAGE_SOURCES: PrepareSources = { listedIn: "docker/image-sources" };
+
+const PREPARE_SOURCES: Readonly<Record<string, PrepareSources>> = {
+  tart: { script: "tart/prepare-linux-image.sh" },
+  docker: DOCKER_IMAGE_SOURCES,
+  microsandbox: DOCKER_IMAGE_SOURCES,
+  "proxmox-lxc": { script: "proxmox-lxc/template/build.sh" },
+  "proxmox-qemu": { script: "proxmox-qemu/build-linux.sh" },
 };
+
+const GUEST_DIR = "proxmox-lxc/template/guest";
+
+const BOAT_STAGED_GUEST_FILES = BOAT_TEMPLATE_FILES.filter((file) => file.startsWith(`${GUEST_DIR}/`)).map((file) => file.slice(GUEST_DIR.length + 1));
+
+const BOAT_BUILDS_RECORD_NO_PREPARE = "";
+
+const PINS_DIGEST_COVERS: ReadonlySet<string> = new Set(LINUX_DESKTOP_PIN_FILES);
 
 export function identityResetFor(kind: string): "on" | "off" {
   return kind === "linux" || kind.startsWith("linux-") ? "on" : "off";
 }
 
-/** The SHA-256 of a backend's prepare script, or null when this bb-box has no such file. */
+function providerOf(backendId: string): string {
+  return backendId.split(":")[0] ?? "";
+}
+
+function prepareSourcesOf(backendId: string): PrepareSources | null {
+  return PREPARE_SOURCES[providerOf(backendId)] ?? null;
+}
+
+const isMacMetadata = (name: string): boolean => name === ".DS_Store" || name.startsWith("._");
+
+async function buildFilesUnder(root: string, path: string): Promise<string[]> {
+  const stats = await lstat(join(root, path));
+  if (stats.isFile()) return isMacMetadata(basename(path)) ? [] : [path];
+  if (!stats.isDirectory()) return [];
+  const names = await readdir(join(root, path));
+  const nested = await Promise.all(names.map((name) => buildFilesUnder(root, path === "" ? name : `${path}/${name}`)));
+  return nested.flat();
+}
+
+function inByteOrder(paths: Iterable<string>): string[] {
+  return [...new Set(paths)].sort();
+}
+
+async function hashFiles(hash: ReturnType<typeof createHash>, root: string, paths: readonly string[]): Promise<void> {
+  for (const path of paths) {
+    hash.update(`file ${path}\n`);
+    hash.update(await readFile(join(root, path)));
+  }
+}
+
+function listedPaths(list: string): string[] {
+  return list
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+async function listedSourcesDigest(setup: string, listFile: string): Promise<string> {
+  const listed = listedPaths(await readFile(join(setup, listFile), "utf8"));
+  const files = (await Promise.all(listed.map((path) => buildFilesUnder(setup, path)))).flat();
+  const hash = createHash("sha256");
+  await hashFiles(hash, setup, inByteOrder(files.filter((path) => !PINS_DIGEST_COVERS.has(path))));
+  return hash.digest("hex");
+}
+
+/** The SHA-256 of what a backend's Linux image is built with, or null when this bb-box has no such files. */
 export async function prepareDigest(setup: string, backendId: string): Promise<string | null> {
-  const file = PREPARE_FILES[backendId.split(":")[0] ?? ""];
-  if (!file) return null;
+  const sources = prepareSourcesOf(backendId);
+  if (!sources) return null;
   try {
-    return createHash("sha256").update(await readFile(join(setup, file))).digest("hex");
+    if ("listedIn" in sources) return await listedSourcesDigest(setup, sources.listedIn);
+    return createHash("sha256").update(await readFile(join(setup, sources.script))).digest("hex");
   } catch {
     return null;
   }
 }
 
-/**
- * The SHA-256 image-record.sh writes as `program`: the identity reset, each
- * guest script in order, then the prepare script's SHA-256. Null when the
- * guest directory is not there.
- */
-export async function programDigest(guestDir: string, identityReset: string, prepare: string): Promise<string | null> {
-  let names: string[];
-  try {
-    names = (await readdir(guestDir)).filter((name) => name.endsWith(".sh")).sort();
-  } catch {
-    return null;
-  }
+async function programOf(guestDir: string, files: readonly string[], identityReset: string, prepare: string): Promise<string | null> {
   const hash = createHash("sha256");
   hash.update(`BOX_IDENTITY_RESET=${identityReset}\n`);
-  for (const name of names) {
-    hash.update(`file ${name}\n`);
-    hash.update(await readFile(join(guestDir, name)));
+  try {
+    await hashFiles(hash, guestDir, inByteOrder(files));
+  } catch {
+    return null;
   }
   hash.update(`PREPARE=${prepare}\n`);
   return hash.digest("hex");
 }
 
+/**
+ * The SHA-256 image-record.sh writes as `program`: the identity reset, each
+ * file in the guest directory but .DS_Store and AppleDouble (._) files, by
+ * path in byte order, then the prepare digest. Null when the guest directory
+ * is not there.
+ */
+export async function programDigest(guestDir: string, identityReset: string, prepare: string): Promise<string | null> {
+  let files: string[];
+  try {
+    files = await buildFilesUnder(guestDir, "");
+  } catch {
+    return null;
+  }
+  return programOf(guestDir, files, identityReset, prepare);
+}
+
 /** The program digest a rebuild of `kind` on `backendId` would record, or null when the files are not there. */
 export async function imageProgram(setup: string, kind: string, backendId: string): Promise<string | null> {
-  if (!PREPARE_FILES[backendId.split(":")[0] ?? ""]) return null;
+  const guestDir = join(setup, GUEST_DIR);
+  if (providerOf(backendId) === "boat") return programOf(guestDir, BOAT_STAGED_GUEST_FILES, identityResetFor(kind), BOAT_BUILDS_RECORD_NO_PREPARE);
   const prepare = await prepareDigest(setup, backendId);
   if (!prepare) return null;
-  return programDigest(join(setup, "proxmox-lxc/template/guest"), identityResetFor(kind), prepare);
+  return programDigest(guestDir, identityResetFor(kind), prepare);
 }
 
 /** Chrome's version in the desktop pins for an architecture, such as 156.0.8078.79, or null. */

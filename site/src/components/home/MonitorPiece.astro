@@ -71,7 +71,7 @@ const historyBars = 28;
   };
 
   const menuSays: Record<string, (name: string) => string> = {
-    details: (name) => `In BB, this opens ${name}'s page with its facts, snapshots and size.`,
+    details: (name) => `In BB, this opens ${name}'s facts and snapshots.`,
     desktop: (name) => `In BB, this opens ${name}'s desktop in a tab.`,
     terminal: (name) => `In BB, this opens ${name}'s terminal in a tab.`,
     files: (name) => `In BB, this opens ${name}'s files in a tab.`,
@@ -117,7 +117,7 @@ const historyBars = 28;
       field("system").textContent = machines[name]!.system;
       field("uptime").textContent = machines[name]!.uptime;
       draw(shownSeconds);
-      say(`Watching ${name}. In BB, the Monitor shows every box and machine.`);
+      say(`Watching ${name}. The Monitor shows every box.`);
     };
 
     pieceMenu<null>(piece.querySelector<HTMLElement>(".machine-menu")!, (choice) => pickMachine(choice)).attach(piece.querySelector<HTMLButtonElement>("[data-pick-machine]")!, null);

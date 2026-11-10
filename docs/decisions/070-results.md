@@ -15,7 +15,7 @@ for a production step, said on its line.
 
 | Backend | Live |
 | --- | --- |
-| Proxmox LXC | Take and delete; restore in place with its undo, checked on LVM-thin, and on ZFS in ZFS's order since [085](085-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md); forks by a full copy; Keep by a held copy. Unit 8 made G16's node reboot a condition before production's Keep is turned on |
+| Proxmox LXC | Take and delete; restore in place with its undo, checked on LVM-thin, and on ZFS in ZFS's order since [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md); forks by a full copy; Keep by a held copy. Unit 8 made G16's node reboot a condition before production's Keep is turned on |
 | Proxmox QEMU, Linux | As Proxmox LXC, with or without memory; forks and Keep from the disk only |
 | boat.dev, a paid plan | Saved snapshots within the paid ceiling, with the price on each; restore as a swap to a new sandbox; forks and Keep from version 8 of the reset. Arming boat.dev's reset stays off in production until the owner arms it |
 | boat.dev, the free trial | No snapshots: the trial has no saved snapshots |
@@ -53,7 +53,7 @@ Known gaps, in plain words:
   when one is. Unit 8 made it a condition before production's Keep on
   Proxmox is turned on.
 - **ZFS restores of Linux VMs stay off.** Proxmox LXC boxes restore on ZFS
-  since [085](085-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md), with
+  since [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md), with
   G4 run on a test ZFS pool; see [ZFS restores on Proxmox LXC](#zfs-restores-on-proxmox-lxc).
 - **A snapshot of a stopped Tart box forks only if bb-box stopped it** and
   it has not run since.
@@ -4524,7 +4524,7 @@ resumes with: the check refuses that fork. Not run live here.
 
 ## ZFS restores on Proxmox LXC
 
-Built on 10 November 2026, as [085](085-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md)
+Built on 10 November 2026, as [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md)
 decides: a Proxmox LXC box on ZFS restores in ZFS's order by its plan, not
 by the live-check switch.
 
