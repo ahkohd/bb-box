@@ -296,6 +296,7 @@ test("a restore's plan: rollback to any snapshot on LVM-thin, the size it goes b
   const zfs = await state.backend.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: "", guest });
   assert.equal(zfs.restore.way, "rollback-newest-only");
   assert.equal(zfs.restore.undo, "held-copy");
+  assert.equal(zfs.restore.newer, 1, "the plan counts the newer snapshot that ZFS will not roll back past");
   state.proxmox.storageTypes.delete("local-lvm");
   state.proxmox.privileges.set("/pool/bbbox", new Set(TOKEN_ROLE.filter((privilege) => privilege !== "VM.Snapshot.Rollback")));
   const fresh = new ProxmoxLxcBackend(

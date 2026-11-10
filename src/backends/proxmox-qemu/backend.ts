@@ -36,6 +36,7 @@ import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type Gue
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone } from "../proxmox/forks.ts";
+import { linuxVmSnapshotPlan } from "./linux-snapshots.ts";
 import { WINDOWS_DESKTOP_NO_FORK, WINDOWS_DESKTOP_SNAPSHOTS, windowsDesktopSnapshotPlan } from "./windows-snapshots.ts";
 import { EARLIER_GUEST, copyName, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
@@ -540,7 +541,7 @@ export class ProxmoxQemuBackend implements Backend {
     if (!this.snapshotting(kind)) throw new BackendError("unsupported", `${this.label} takes no snapshots of its ${kind} boxes.`);
     const plan = await this.#snapshots.plan(guest, signal, snapshot);
     if (kind === ANDROID_IMAGE_KIND.id) return androidSnapshotPlan(plan);
-    return kind === KIND.id ? windowsDesktopSnapshotPlan(plan) : plan;
+    return kind === KIND.id ? windowsDesktopSnapshotPlan(plan) : linuxVmSnapshotPlan(plan);
   }
 
   async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {

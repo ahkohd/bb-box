@@ -320,6 +320,14 @@ function quoted(snapshot: Pick<SnapshotRecord, "name">): string {
   return `"${snapshot.name}"`;
 }
 
+function copiesGuests(backend: Backend): boolean {
+  return !!(backend.copyGuest && backend.disarmCopy && backend.templateCopy && backend.copyState && backend.deleteCopy && backend.adoptCopy && backend.retireGuest && backend.guestIdentity);
+}
+
+function switchNewerWords(backend: Backend, target: SnapshotRecord, newer: number): string {
+  return `Live checks run ZFS's order on ${backend.label}: as on ZFS, ${PRODUCT} restores only the newest snapshot there, and ${quoted(target)} has ${newer === 1 ? "1 newer one" : `${newer} newer ones`}. Delete ${newer === 1 ? "it" : "them"} yourself first. ${PRODUCT} never deletes newer snapshots to make a rollback possible.`;
+}
+
 function where(snapshot: Pick<SnapshotRecord, "host" | "backend">): string {
   return snapshot.host ?? snapshot.backend.label;
 }
@@ -2812,37 +2820,35 @@ export class Snapshots {
       if (plan.restore.way !== "new-guest") throw new BoxError("unsupported", `${PRODUCT} cannot restore box ${box.name} to ${quoted(target)}: ${plan.restore.why ?? `${backend.label} restores none of its snapshots now.`}`);
       return "rollback";
     }
-    const copies = !!(backend.copyGuest && backend.disarmCopy && backend.templateCopy && backend.copyState && backend.deleteCopy && backend.adoptCopy && backend.retireGuest && backend.guestIdentity);
+    const copies = copiesGuests(backend);
     if (swap) {
       if (!copies) throw new BoxError("unsupported", `${backend.label} cannot make a box's guest from a held copy, so ${PRODUCT} cannot restore ${quoted(target)}.`);
-      if (!this.#deps.undoByCopy?.(backend.id)) {
-        throw new BoxError("unsupported", `Restoring ${quoted(target)}, a held copy, makes box ${box.name} a new guest, and ${PRODUCT} does that only in live checks until such restores are checked on ZFS. ${PRODUCT} changed nothing.`);
-      }
       return "copy";
     }
     this.#restoreWay(box, backend, plan, target);
-    if (!this.#deps.undoByCopy?.(backend.id) || !copies) return "rollback";
+    const onNewestOnlyStorage = plan.restore.way === "rollback-newest-only";
+    const bySwitch = !onNewestOnlyStorage && this.#deps.undoByCopy?.(backend.id) === true;
+    if (!onNewestOnlyStorage && !(bySwitch && copies)) return "rollback";
+    if (!copies) throw new BoxError("unsupported", `${this.#storageWhere(box, plan)} restores only the newest snapshot, so the undo of a restore there is a full copy of the box, and ${backend.label} cannot make one. ${PRODUCT} changed nothing.`);
     const newer = plan.restore.newer;
-    if (newer > 0) {
-      throw new BoxError(
-        "unsupported",
-        `Live checks run ZFS's order on ${backend.label}: as on ZFS, ${PRODUCT} restores only the newest snapshot there, and ${quoted(target)} has ${newer === 1 ? "1 newer one" : `${newer} newer ones`}. Delete ${newer === 1 ? "it" : "them"} yourself first. ${PRODUCT} never deletes newer snapshots to make a rollback possible.`,
-      );
-    }
+    if (newer > 0) throw new BoxError("unsupported", bySwitch ? switchNewerWords(backend, target, newer) : this.#newestOnlyWords(box, plan, target, newer));
     return "copy";
+  }
+
+  #storageWhere(box: BoxRecord, plan: SnapshotPlan): string {
+    return `${box.guest?.host ? `${box.guest.host}'s ` : ""}storage ${plan.storage.name}`;
+  }
+
+  #newestOnlyWords(box: BoxRecord, plan: SnapshotPlan, target: SnapshotRecord, newer: number): string {
+    const them = newer === 1 ? "the newer one" : `the ${newer} newer ones`;
+    const instead = target.forkSafe !== null ? `Fork ${quoted(target)} instead, or delete ${them} yourself first.` : `Delete ${them} yourself first.`;
+    return `${this.#storageWhere(box, plan)} is ZFS, which restores only the newest snapshot, and ${quoted(target)} has ${newer === 1 ? "1 newer one" : `${newer} newer ones`}. ${instead} ${PRODUCT} never deletes newer snapshots to make a restore possible, and changed nothing.`;
   }
 
   #restoreWay(box: BoxRecord, backend: Backend, plan: SnapshotPlan, target: SnapshotRecord): void {
     const restore = plan.restore;
     if (restore.way === "none") throw new BoxError("unsupported", `${PRODUCT} cannot restore box ${box.name} to ${quoted(target)}: ${restore.why ?? `${backend.label} restores none of its snapshots.`}`);
-    const where = `${box.guest?.host ? `${box.guest.host}'s ` : ""}storage ${plan.storage.name}`;
-    if (restore.way === "rollback-newest-only") {
-      throw new BoxError(
-        "unsupported",
-        `${where} is ZFS, which restores only the newest snapshot, and ${PRODUCT}'s restores on ZFS stay off until they are checked there. ${PRODUCT} changed nothing.`,
-      );
-    }
-    if (restore.way !== "rollback") throw new BoxError("unsupported", `${backend.label} restores no snapshots of its ${box.kind} boxes in place.`);
+    if (restore.way !== "rollback" && restore.way !== "rollback-newest-only") throw new BoxError("unsupported", `${backend.label} restores no snapshots of its ${box.kind} boxes in place.`);
   }
 
   async #lookOn(box: BoxRecord, runsOn: boolean): Promise<Look> {
