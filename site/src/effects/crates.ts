@@ -1,6 +1,11 @@
 import Matter from "matter-js";
 
-const { Bodies, Body, Composite, Engine, Sleeping, Vertices } = Matter;
+const { Bodies, Body, Composite, Engine, Events, Sleeping, Vertices } = Matter;
+
+export interface Landing {
+  pageX: number;
+  speed: number;
+}
 
 export interface Crates {
   setActive: (active: boolean) => void;
@@ -74,6 +79,8 @@ const bashCooldownMs = 180;
 const settleSteps = 90;
 const shelfThickness = 4;
 const crateGap = 2;
+const floorLabel = "floor";
+const landingSpeed = 2.5;
 const pileGap = 12;
 
 const category = { crate: 0x1, shelf: 0x2, ground: 0x4 };
@@ -112,7 +119,7 @@ function staticBodies(stage: Stage): Matter.Body[] {
   const wallHeight = stage.floorY * 2 + 2000;
   return [
     Bodies.rectangle(stage.shelfLeft + shelfWidth / 2, stage.shelfY + shelfThickness / 2, shelfWidth, shelfThickness, { ...still, collisionFilter: { category: category.shelf } }),
-    Bodies.rectangle(stage.width / 2, stage.floorY + 50, stage.width * 3, 100, { ...still, collisionFilter: { category: category.ground } }),
+    Bodies.rectangle(stage.width / 2, stage.floorY + 50, stage.width * 3, 100, { ...still, label: floorLabel, collisionFilter: { category: category.ground } }),
     Bodies.rectangle(-50, stage.floorY / 2, 100, wallHeight, { ...still, collisionFilter: { category: category.ground } }),
     Bodies.rectangle(stage.width + 50, stage.floorY / 2, 100, wallHeight, { ...still, collisionFilter: { category: category.ground } }),
   ];
@@ -130,8 +137,14 @@ function crateBody(x: number, y: number, width: number, height: number): Matter.
   });
 }
 
-export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, active: boolean): Crates {
+export function stackCrates(layer: HTMLElement, shelf: Element, floor: Element, active: boolean, onLanding: (landing: Landing) => void): Crates {
   const engine = Engine.create({ enableSleeping: true, gravity: { x: 0, y: 1, scale: gravityScale } });
+  Events.on(engine, "collisionStart", ({ pairs }) => {
+    for (const { bodyA, bodyB } of pairs) {
+      const crate = bodyA.label === floorLabel ? bodyB : bodyB.label === floorLabel ? bodyA : undefined;
+      if (crate && crate.speed >= landingSpeed) onLanding({ pageX: crate.position.x, speed: crate.speed });
+    }
+  });
   let stage = measureStage(shelf, floor);
   let crates: Crate[] = [];
   let frame = 0;

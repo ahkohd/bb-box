@@ -1,11 +1,28 @@
 <div class="crates" data-motion aria-hidden="true" hidden></div>
 
 <script>
+  import type { Landing } from "../../effects/crates.ts";
   import { onMotionChange, pausedByPerson, reducedMotion } from "../../motion.ts";
 
   const layer = document.querySelector<HTMLElement>(".crates");
   const shelf = document.querySelector(".demo .frame-top");
   const floor = document.querySelector(".foot-inner");
+  const strip = document.querySelector<HTMLElement>(".dither-strip");
+  const dotPitchPx = 6;
+
+  const ripple = ({ pageX, speed }: Landing) => {
+    if (!strip) return;
+    const box = strip.getBoundingClientRect();
+    const width = Math.min(360, Math.max(120, speed * 26));
+    const left = pageX - (box.left + scrollX) - width / 2;
+    const ring = document.createElement("span");
+    ring.className = "strip-ripple";
+    ring.style.left = `${left}px`;
+    ring.style.width = `${width}px`;
+    ring.style.backgroundPositionX = `${-(((left % dotPitchPx) + dotPitchPx) % dotPitchPx)}px`;
+    ring.addEventListener("animationend", () => ring.remove());
+    strip.append(ring);
+  };
   const roomToBash = matchMedia("(hover: hover) and (pointer: fine) and (min-width: 48rem)");
   const motionAllowed = () => roomToBash.matches && !reducedMotion() && !pausedByPerson();
 
@@ -19,7 +36,7 @@
       await document.fonts.ready;
       const { stackCrates } = await import("../../effects/crates.ts");
       layer.hidden = false;
-      const crates = stackCrates(layer, shelf, floor, motionAllowed());
+      const crates = stackCrates(layer, shelf, floor, motionAllowed(), ripple);
       crates.setActive(motionAllowed());
       const follow = () => crates.setActive(motionAllowed());
       onMotionChange(follow);
@@ -48,6 +65,35 @@
     overflow: clip;
     pointer-events: none;
     z-index: 15;
+  }
+
+  @property --ripple-ring {
+    syntax: "<percentage>";
+    inherits: false;
+    initial-value: 0%;
+  }
+
+  .strip-ripple {
+    position: absolute;
+    bottom: 0;
+    height: 100%;
+    background-image: radial-gradient(var(--accent) 0.9px, transparent 1.2px);
+    background-size: 6px 6px;
+    filter: drop-shadow(0 0 3px color-mix(in oklab, var(--accent) 80%, transparent));
+    mask-image: radial-gradient(farthest-side at 50% 100%, transparent calc(var(--ripple-ring) - 14%), #000 var(--ripple-ring), transparent calc(var(--ripple-ring) + 14%));
+    animation: strip-ripple 900ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+    pointer-events: none;
+  }
+
+  @keyframes strip-ripple {
+    from {
+      --ripple-ring: 0%;
+      opacity: 1;
+    }
+    to {
+      --ripple-ring: 100%;
+      opacity: 0;
+    }
   }
 
   .crates[hidden] {
