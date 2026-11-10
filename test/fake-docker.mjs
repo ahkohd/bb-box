@@ -538,6 +538,7 @@ switch (command) {
         console.log(name);
       }
     } else if (sub === "rm") {
+      if (more.includes(host.failVolumeRemove)) fail("Volume removal failed");
       const wanted = more.filter((arg) => !arg.startsWith("-"));
       const known = volumes();
       const errors = [];

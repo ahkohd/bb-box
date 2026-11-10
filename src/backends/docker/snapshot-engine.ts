@@ -136,7 +136,6 @@ export class DockerSnapshotEngine {
       return { ref: image, holds: "disk", capturedAt: state.startedAt, size: { bytes: facts.estimate.addsBytes, means: "whole" } };
     } catch (error) {
       await this.#context.storage.set(this.#key(take.id), { ...state, phase: "failed" });
-      await this.#discard(state);
       throw error;
     } finally {
       this.#active.delete(take.id);
@@ -146,6 +145,7 @@ export class DockerSnapshotEngine {
         this.#context.log?.(`Docker snapshot ${take.id} paused box ${take.box} for ${this.#now() - pausedAt} ms.`);
       }
       await this.#context.storage.set(this.#key(take.id), { ...state, phase: committed ? "complete" : "failed-resumed" });
+      if (!committed) await this.#discard(state).catch((error) => this.#context.logError("cleaning a failed Docker snapshot", error));
     }
   }
 
@@ -191,9 +191,12 @@ export class DockerSnapshotEngine {
   }
 
   async listed(signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    return this.#listed(await this.#volumes(signal), signal);
+  }
+
+  async #listed(volumes: readonly { Name: string; Labels: Record<string, string> }[], signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
     const ids = (await this.#cli.ok(["image", "ls", "--quiet", "--filter", `label=${SNAPSHOT_INSTALL}=${this.#context.installId}`], { signal })).trim().split(/\s+/).filter(Boolean);
     const images = ids.length ? snapshotImagesSchema.parse(JSON.parse(await this.#cli.ok(["image", "inspect", ...new Set(ids)], { signal }))) : [];
-    const volumes = await this.#volumes(signal);
     const volumesByName = new Map(volumes.map((volume) => [volume.Name, volume.Labels]));
     const result: HeldSnapshot[] = [];
 
@@ -271,8 +274,9 @@ export class DockerSnapshotEngine {
   }
 
   async maintain(): Promise<void> {
-    const complete = new Set((await this.listed()).filter((held) => held.state === "complete").map((held) => held.id));
-    for (const volume of await this.#volumes()) {
+    const volumes = await this.#volumes();
+    const complete = new Set((await this.#listed(volumes)).filter((held) => held.state === "complete").map((held) => held.id));
+    for (const volume of volumes) {
       const labels = volume.Labels;
       const id = labels["bbbox.snapshot"];
       const box = labels["bbbox.snapshot.box"];

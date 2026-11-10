@@ -326,3 +326,21 @@ test("Docker recovery unpauses before a cleanup that fails", async () => {
 
   assert.equal((await cli.inspect([guest.ref]))[0]?.status, "running");
 });
+
+test("Docker reports the commit error when cleanup also fails", async () => {
+  const { engine, guest, hooks, fake } = await setup();
+  fake.set({ failSnapshotCommit: true, failVolumeRemove: "bbbox-snapshot-sn123-docker" });
+
+  await assert.rejects(engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks), /commit failed/);
+
+  assert.equal(fake.inspect(guest.ref).State.Status, "running");
+});
+
+test("Docker maintenance lists snapshot volumes once", async () => {
+  const { engine, fake } = await setup();
+  const before = fake.calls().length;
+
+  await engine.maintain();
+
+  assert.equal(fake.calls().slice(before).filter((args) => args[0] === "volume" && args[1] === "ls").length, 1);
+});
