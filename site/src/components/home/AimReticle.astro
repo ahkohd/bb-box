@@ -12,7 +12,7 @@
   import { aimFor, type AimShape } from "../../effects/aim.ts";
 
   const reticle = document.querySelector<HTMLElement>(".aim");
-  const targets = "a[href], button:not([hidden]), label:has(> input[type=radio])";
+  const targets = "a[href], button:not([hidden]), label:has(> input[type=radio]), [data-aim]";
   let aimed: { target: Element; y: number } | null = null;
 
   const amberHues = { from: 25, to: 50 };
@@ -55,10 +55,28 @@
     return lines.find((rect) => y >= rect.top && y <= rect.bottom) ?? lines[0];
   }
 
+  function hasNoSurface(target: Element): boolean {
+    const style = getComputedStyle(target);
+    const background = rgbaOf(style.backgroundColor)[3] === 0;
+    const border = ["Top", "Right", "Bottom", "Left"].every((side) => parseFloat(style.getPropertyValue(`border-${side.toLowerCase()}-width`)) === 0);
+    return background && border && style.boxShadow === "none";
+  }
+
+  function visibleBox(target: Element, box: DOMRect): DOMRect {
+    if (!hasNoSurface(target)) return box;
+    const style = getComputedStyle(target);
+    const left = parseFloat(style.paddingLeft);
+    const right = parseFloat(style.paddingRight);
+    const top = parseFloat(style.paddingTop);
+    const bottom = parseFloat(style.paddingBottom);
+    return new DOMRect(box.left + left, box.top + top, Math.max(0, box.width - left - right), Math.max(0, box.height - top - bottom));
+  }
+
   function place(target: Element, y: number): boolean {
     if (!reticle) return false;
-    const box = lineBox(target, y);
-    if (!box) return false;
+    const line = lineBox(target, y);
+    if (!line) return false;
+    const box = shapeOf(target) === "frame" ? visibleBox(target, line) : line;
     const shape = shapeOf(target);
     const aim = aimFor(shape, { left: box.left, top: box.top, width: box.width, height: box.height });
     reticle.dataset.shape = shape;

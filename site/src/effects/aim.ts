@@ -19,7 +19,7 @@ export function aimFor(shape: AimShape, target: AimBox): Aim {
     const below = target.top + target.height + 1;
     return { left: target.left - 2, top: below, width: target.width + 4, height: 4, corner: clamp(4, target.width * 0.25, 9) };
   }
-  const reach = clamp(4, shortSide * 0.15, 7);
+  const reach = clamp(3, shortSide * 0.15, 7);
   return {
     left: target.left - reach,
     top: target.top - reach,
