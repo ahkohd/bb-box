@@ -1327,7 +1327,9 @@ On 30 and 31 October 2026, during unit 3, the lead decided:
   roll ZFS back past a newer snapshot stays unproved.
 - **No node is rebooted**: the only node runs everything else. G16's
   reboot part stays unproved, and is a condition before ZFS restores or
-  unit 8's Keep are turned on.
+  unit 8's Keep are turned on. For Proxmox LXC's ZFS restores,
+  [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md) sets this
+  condition aside by the owner's decision. It still holds for Keep.
 - **A box threads run on** is any box with a thread, working or idle, on
   its BB machine, or the box the caller's thread runs on. In unit 3 its
   restores are refused for everyone, the CLI's `--force` included, naming
