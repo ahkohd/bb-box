@@ -1,6 +1,6 @@
 import { quote } from "../../transports/process.ts";
 import { PRODUCT } from "../../brand.ts";
-import type { BoxOwner, Guest, HeldSnapshot, HeldSnapshotState, Holds, MachineSize, SnapshotPlan, SnapshotStorage, Snapshotting, TaskOutcome } from "../types.ts";
+import { NO_PAUSE, type BoxOwner, type Guest, type HeldSnapshot, type HeldSnapshotState, type Holds, type MachineSize, type SnapshotPlan, type SnapshotStorage, type Snapshotting, type TakePause, type TaskOutcome } from "../types.ts";
 import { named, parseConfig, parseFields, script, sections, type VmConfig } from "./host.ts";
 
 export const SNAPSHOTS_FOLDER = "bb-box-snapshots";
@@ -583,8 +583,10 @@ export function planOf(host: string, os: "macos" | "linux", read: PlanRead, aske
   const linuxRuns = os === "linux" && running ? `Tart cannot suspend a Linux VM, so ${PRODUCT} takes its snapshot only while the box is stopped. Stop it first` : null;
   const short = roomShort(read, floorGiB);
   const takeWhy = gone ?? elsewhere ?? short ?? linuxRuns;
-  const takeMs = os === "macos" && running ? suspendAboutMs(memoryMiB) + COPY_MS + RESUME_MS : COPY_MS;
-  const memory = os === "macos" ? { storage, addsBytes: memoryBytes } : null;
+  const suspends = os === "macos" && running;
+  const takeMs = suspends ? suspendAboutMs(memoryMiB) + COPY_MS + RESUME_MS : COPY_MS;
+  const pause: TakePause = suspends ? { pauses: true, aboutMs: takeMs, basis: { bytes: memoryBytes, of: "memory" } } : NO_PAUSE;
+  const memory = os === "macos" ? { storage, addsBytes: memoryBytes, pause } : null;
   const target = read.snapshot;
   const label = target?.label ?? null;
   const missing = asked && !target ? `${host} has no copy of it any more` : asked && target && !target.complete ? `its copy on ${host} is not complete` : null;
@@ -607,6 +609,7 @@ export function planOf(host: string, os: "macos" | "linux", read: PlanRead, aske
       aboutMs: takeMs,
       memoryAboutMs: os === "macos" ? takeMs : null,
       addsBytes: memoryBytes,
+      pause,
       memory,
       memoryWhy: os === "macos" ? null : "Tart cannot suspend a Linux VM, so its snapshots hold its disk only.",
     },

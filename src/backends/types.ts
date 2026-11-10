@@ -1024,6 +1024,15 @@ export interface SnapshotStorage {
   readonly usedBytes: number | null;
 }
 
+export interface PauseBasis {
+  readonly bytes: number;
+  readonly of: "disk" | "memory";
+}
+
+export type TakePause = { readonly pauses: false } | { readonly pauses: true; readonly aboutMs: number | null; readonly basis: PauseBasis | null };
+
+export const NO_PAUSE: TakePause = { pauses: false };
+
 export interface SnapshotPlan {
   readonly storage: SnapshotStorage;
   readonly take: {
@@ -1032,7 +1041,8 @@ export interface SnapshotPlan {
     readonly aboutMs: number;
     readonly memoryAboutMs: number | null;
     readonly addsBytes: number | null;
-    readonly memory: { readonly storage: SnapshotStorage; readonly addsBytes: number } | null;
+    readonly pause: TakePause;
+    readonly memory: { readonly storage: SnapshotStorage; readonly addsBytes: number; readonly pause: TakePause } | null;
     readonly memoryWhy: string | null;
   };
   readonly restore: {
@@ -1070,6 +1080,7 @@ export interface SnapshotTaken {
   readonly holds: Holds;
   readonly capturedAt: number;
   readonly size: SnapshotSize | null;
+  readonly pausedMs: number | null;
   readonly dependsOn?: readonly string[];
   readonly notResumed?: string | null;
 }
@@ -1152,6 +1163,7 @@ export interface HeldSnapshot {
   readonly storage: { readonly name: string; readonly type: string } | null;
   readonly forkSafe?: number | null;
   readonly dependsOn?: readonly string[];
+  readonly size?: SnapshotSize | null;
 }
 
 export class SnapshotFailed extends Error {

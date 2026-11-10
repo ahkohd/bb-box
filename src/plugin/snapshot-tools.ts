@@ -7,7 +7,7 @@ import { YesNeeded, type RestoreAnswer } from "../core/snapshots.ts";
 import { toolsForPurposes } from "./purposes.ts";
 import { RESTORE_FORM, RESTORE_FORM_TIMEOUT_MS, isRestoreYes, restoreFormPayload, restoreFormTitle, type RestoreFormPayload } from "./restore-form.ts";
 import type { BbBox } from "./setup.ts";
-import { deletedText, forkMayMissWords, offerSnapshotWords, restoredText, takenText } from "./snapshot-words.ts";
+import { deletedText, forkMayMissWords, offerSnapshotWords, restoredText, takeCheckText, takenText } from "./snapshot-words.ts";
 import { agentErrorText, boxParam, failure, ready, runsOnBox, thread, using, withHint } from "./tools.ts";
 import { boxDetail, startingWords } from "./views.ts";
 import { forkedFromWords, isAcquiring, isMachineName } from "../core/boxes.ts";
@@ -112,18 +112,23 @@ export function registerSnapshotTools(bb: BbPluginApi, app: BbBox): void {
   registerTool({
     name: "box_snapshot",
     description:
-      "Take a snapshot of a box: its disk, or with memory its disk and running apps where its backend can, so you can restore it if a change goes wrong. Take one before a change you cannot undo, such as a migration, an upgrade, a deletion or a change to the system, and when the person asks; never on a schedule of your own.",
+      "Take a snapshot of a box: its disk, or with memory its disk and running apps where its backend can, so you can restore it if a change goes wrong. Take one before a change you cannot undo, such as a migration, an upgrade, a deletion or a change to the system, and when the person asks; never on a schedule of your own. A take can pause the box: call it with check first to see for how long, and tell the person before a pause of more than a few seconds. Its answer says how long it paused the box.",
     presentation: { label: { pending: "Taking a snapshot", completed: "Took a snapshot" } },
     parameters: z.object({
       box: boxParam,
       name: z.string().min(1).max(60).optional().describe('Its name, at most 60 characters, unique on the box, such as "before the migration". The time, such as Thu 10:42, when left out.'),
       note: z.string().min(1).optional().describe("A note, at most 1 KB: what the box held, or why you took it."),
       memory: z.boolean().optional().describe("Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower. Defaults to false where its backend can leave it out, and to true where every snapshot holds it, as on a macOS box on Tart, where false is refused."),
+      check: z.boolean().optional().describe("Say how long the take would take and pause the box, and refuse what it would refuse, taking nothing."),
     }),
-    async execute({ box: ref, name, note, memory }, { threadId, signal }) {
+    async execute({ box: ref, name, note, memory, check }, { threadId, signal }) {
       try {
         const id = thread(threadId);
         const { box, standing } = await snapshotTarget(app, id, ref, signal);
+        if (check) {
+          const planned = await app.snapshots.checkTake(agent(id), box, standing, memory !== undefined ? { memory } : {});
+          return `${takeCheckText(planned, box.name)}${next("Nothing was taken. Call box_snapshot again without check to take it.")}`;
+        }
         const answer = await app.snapshots.take(agent(id), box, standing, { ...(name !== undefined ? { name } : {}), ...(note !== undefined ? { note } : {}), ...(memory !== undefined ? { memory } : {}) });
         const perBox = app.snapshots.settings.perBox;
         const snapshot = answer.snapshot;

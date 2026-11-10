@@ -18,8 +18,10 @@ import {
   type SnapshotTaken,
   type SnapshotStorage,
   type Snapshotting,
+  type TakePause,
   type TaskOutcome,
   type TaskRef,
+  NO_PAUSE,
 } from "../types.ts";
 import { ProxmoxError, type GuestType, type Proxmox, type ProxmoxSnapshot, type StorageConfig } from "./api.ts";
 import { SNAPSHOT_PRIVILEGES, storageSnapshots, type SnapshotRestore } from "./snapshots.ts";
@@ -103,6 +105,13 @@ export interface SnapshotGuests {
 }
 
 const MiB = 1024 * 1024;
+const PAUSES_FOR_AN_UNKNOWN_TIME: TakePause = { pauses: true, aboutMs: null, basis: null };
+const PAUSE_UNMEASURED = null;
+const DID_NOT_PAUSE_MS = 0;
+
+function mayRun(status: { readonly status: string } | null): boolean {
+  return status?.status !== "stopped";
+}
 const STATE_EXTRA_MIB = 500;
 const SHARES_BLOCKS = new Set(["lvmthin", "zfspool", "zfs", "rbd", "btrfs"]);
 const TASK_NAMES: Readonly<Record<string, string>> = {
@@ -272,6 +281,7 @@ export class ProxmoxSnapshotting {
     const type = storage?.type ?? "";
     const lock = typeof config.lock === "string" && config.lock ? config.lock : null;
     const memoryMiB = memoryMiBOf(config);
+    const status = await this.#status(api, vmid, signal);
     const reasons: string[] = [];
     if (privileges && !privileges.has(SNAPSHOT_PRIVILEGES[0])) {
       reasons.push(`The Proxmox token lacks VM.Snapshot on /pool/${this.#guests.pool}, so ${PRODUCT} cannot take snapshots there. Run host/setup-token.sh from the Proxmox LXC setup guide again, as root on ${api.node}.`);
@@ -317,7 +327,7 @@ export class ProxmoxSnapshotting {
       else {
         const memoryStorage = target.name === storageName ? storage : await this.#storage(api, target.name, configs, signal);
         if (!memoryStorage) memoryWhy = `${PRODUCT} cannot read storage ${target.name}, where Proxmox would save its memory.`;
-        else memory = { storage: memoryStorage, addsBytes: (memoryMiB * 2 + STATE_EXTRA_MIB) * MiB };
+        else memory = { storage: memoryStorage, addsBytes: (memoryMiB * 2 + STATE_EXTRA_MIB) * MiB, pause: mayRun(status) ? { pauses: true, aboutMs: null, basis: { bytes: memoryMiB * MiB, of: "memory" } } : NO_PAUSE };
       }
     }
     const fork = await this.#forkPlan(api, vmid, config, { privileges, lock, lockWhy, locked }, target, signal);
@@ -329,11 +339,12 @@ export class ProxmoxSnapshotting {
         aboutMs: TAKES_ABOUT_MS,
         memoryAboutMs: this.#holds.includes("disk-and-memory") ? TAKES_ABOUT_MS + Math.round((memoryMiB * MiB * MEMORY_ABOUT_MS_PER_GIB) / GiB) : null,
         addsBytes: SHARES_BLOCKS.has(type) ? 0 : null,
+        pause: mayRun(status) ? PAUSES_FOR_AN_UNKNOWN_TIME : NO_PAUSE,
         memory,
         memoryWhy,
       },
       restore: await this.#restorePlan(api, guest, config, { type, restores, privileges, lock, lockWhy, takeWhy: reasons[0] ?? null }, target, signal),
-      keep: await this.#keepPlan(api, vmid, fork, signal),
+      keep: await this.#keepPlan(api, vmid, fork, status?.diskUsed ?? null, signal),
       fork,
       locked,
       busy,
@@ -419,14 +430,14 @@ export class ProxmoxSnapshotting {
     return { ok: true, why: null, ...copyOf(size), size };
   }
 
-  async #keepPlan(api: Proxmox, vmid: number, fork: SnapshotPlan["fork"], signal?: AbortSignal): Promise<SnapshotPlan["keep"]> {
-    const usedBytes = await api
-      .status(vmid, signal)
-      .then((status) => status?.diskUsed ?? null)
-      .catch((error: unknown) => {
-        if (signal?.aborted) throw error;
-        return null;
-      });
+  async #status(api: Proxmox, vmid: number, signal?: AbortSignal) {
+    return api.status(vmid, signal).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return null;
+    });
+  }
+
+  async #keepPlan(api: Proxmox, vmid: number, fork: SnapshotPlan["fork"], usedBytes: number | null, signal?: AbortSignal): Promise<SnapshotPlan["keep"]> {
     const room = await this.#guests.freeVmids?.(api, signal).catch((error: unknown) => {
       if (signal?.aborted) throw error;
       return null;
@@ -477,9 +488,11 @@ export class ProxmoxSnapshotting {
     const vmid = this.#guests.vmid(guest);
     const name = snapshotName(take.id);
     let upid: string;
+    let ran = true;
     try {
       if (!(await this.#guests.still(api, guest, signal))) throw new SnapshotFailed(`Guest ${vmid} is no longer the box's.`);
       if (await this.#listed(api, vmid, name, signal)) throw new SnapshotFailed(`Guest ${vmid} has a snapshot named ${name} already.`);
+      ran = mayRun(await this.#status(api, vmid, signal));
       await hooks.submitting();
       upid = await api.startSnapshot(vmid, { name, description: snapshotLabel({ install: this.#guests.installId, box: take.box, snapshot: take.id, reset: take.forkSafe ?? null, kept: null }), memory: take.memory }, signal);
     } catch (error) {
@@ -492,7 +505,7 @@ export class ProxmoxSnapshotting {
     if (!found) throw new SnapshotFailed(failure ?? `Proxmox's task ended, but guest ${vmid} has no snapshot ${name}.`);
     if (found.snapstate) throw new SnapshotIncomplete(`${snapstateWords(found.snapstate)}${failure ? `: ${failure}` : ""}.`);
     if (failure) throw new SnapshotIncomplete(`Proxmox's task failed (${failure}), though it left the snapshot with no part-made state, so ${PRODUCT} does not count it as taken.`);
-    return { ref: name, holds: found.vmstate ? "disk-and-memory" : "disk", capturedAt: found.snaptime !== null ? found.snaptime * 1000 : this.#now(), size: null };
+    return { ref: name, holds: found.vmstate ? "disk-and-memory" : "disk", capturedAt: found.snaptime !== null ? found.snaptime * 1000 : this.#now(), size: null, pausedMs: ran ? PAUSE_UNMEASURED : DID_NOT_PAUSE_MS };
   }
 
   async delete(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {

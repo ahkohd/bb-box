@@ -119,6 +119,48 @@ test("Docker finds complete snapshots without local records", async () => {
   assert.equal(held.length, 1);
   assert.equal(held[0]?.id, "sn123");
   assert.equal(held[0]?.state, "complete");
+  assert.deepEqual(held[0]?.size, { bytes: 4096 + 1024 * 1024, means: "whole" }, "its size, from its image's labels");
+});
+
+function timedCli(cli: DockerCli, after: (args: readonly string[]) => void): DockerCli {
+  return new Proxy(cli, {
+    get(target, key) {
+      const value: unknown = Reflect.get(target, key, target);
+      if (typeof value !== "function") return value;
+      return async (...args: unknown[]) => {
+        const result = await (value as (...given: unknown[]) => Promise<unknown>).apply(target, args);
+        if (key === "ok") after(args[0] as readonly string[]);
+        return result;
+      };
+    },
+  });
+}
+
+test("Docker plans its pause from the bytes it copies, and reports the pause it measured from pause to unpause", async () => {
+  const { cli, guest, hooks, context } = await setup();
+  let clock = 100_000;
+  const spentPaused = (args: readonly string[]) => {
+    if (args[0] === "pause") clock += 3_200;
+    if (args[0] === "info") clock += 60_000;
+  };
+  const engine = new DockerSnapshotEngine(timedCli(cli, spentPaused), context, () => clock);
+
+  const plan = await engine.plan(guest, null);
+  const taken = await engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks);
+
+  assert.deepEqual(plan.take.pause, { pauses: true, aboutMs: plan.take.aboutMs, basis: { bytes: 4096 + 1024 * 1024, of: "disk" } });
+  assert.equal(taken.pausedMs, 3_200, "only the time between pause and unpause");
+});
+
+test("Docker says a take of a stopped box does not pause it, and measures no pause", async () => {
+  const { engine, cli, guest, hooks } = await setup();
+  await cli.ok(["container", "stop", guest.ref]);
+
+  const plan = await engine.plan(guest, null);
+  const taken = await engine.take(guest, { id: "sn123", box: "bx123", memory: false }, hooks);
+
+  assert.deepEqual(plan.take.pause, { pauses: false });
+  assert.equal(taken.pausedMs, 0);
 });
 
 test("Docker does not trust an image after a failed task", async () => {

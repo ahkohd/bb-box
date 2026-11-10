@@ -44,6 +44,29 @@ test("a take is recorded and pinned before the backend is asked, records the pro
   assert.match(state.log.events(box.id).at(-1)!.words!, /^"Fri 10:42" \(sn[a-z2-7]{12}\): disk, in 0\.0 s\.$/);
 });
 
+test("a take's check says how long the take pauses the box, by what it holds, and the take keeps the pause its backend measured", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.provider.pause = { pauses: true, aboutMs: 5000, basis: { bytes: 1.1e9, of: "disk" } };
+
+  const disk = await state.snapshots.checkTake(COMMAND, box, standing(box));
+  const memory = await state.snapshots.checkTake(COMMAND, box, standing(box), { memory: true });
+
+  assert.equal(disk.holds, "disk");
+  assert.deepEqual(disk.pause, { pauses: true, aboutMs: 5000, basis: { bytes: 1.1e9, of: "disk" } });
+  assert.equal(memory.holds, "disk-and-memory");
+  assert.deepEqual(memory.pause, state.provider.memoryPause);
+  assert.equal(state.store.records().length, 0, "a check takes nothing");
+
+  state.provider.pausedMs = 3200;
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
+
+  assert.equal(taken.pausedMs, 3200);
+  assert.match(state.log.events(box.id).at(-1)!.words!, new RegExp(`: disk, in 0\\.0 s\\. It paused ${box.name} for 3\\.2 s\\.$`));
+  await state.restart();
+  assert.equal(state.store.record(taken.id)?.pausedMs, 3200, "kept in snapshots.db");
+});
+
 test("names are unique per box: a repeat gets (2); a long or empty name and a note over 1 KB are refused before anything is recorded", async () => {
   const state = world();
   const box = await readyBox(state);
@@ -553,6 +576,22 @@ test("G3: with snapshots.db's records gone, the next sweep finds every snapshot,
   assert.ok(state.logs.some((line) => line.includes(`Found snapshot ${fromGone.id}`) && line.endsWith("It is listed until you delete it.")), state.logs.join("\n"));
   await state.snapshots.deleteGone(state.store.record(fromGone.id)!, BY_COMMAND);
   assert.equal(state.provider.held.has(fromGone.id), false, "the person's delete");
+});
+
+test("a record rebuilt from its backend after snapshots.db lost it keeps the size its backend lists", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.provider.takenSize = { bytes: 1_100_000_000, means: "whole" };
+  state.provider.listsSizes = true;
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box))).snapshot!;
+  assert.deepEqual(taken.size, { bytes: 1_100_000_000, means: "whole" });
+
+  state.forgetRecords();
+  await state.restart();
+  state.tick(1000);
+  await state.snapshots.sweep();
+
+  assert.deepEqual(state.store.record(taken.id)?.size, { bytes: 1_100_000_000, means: "whole" });
 });
 
 test("a forgotten box's snapshots stay as unavailable, marked gone; a released box's go", async () => {

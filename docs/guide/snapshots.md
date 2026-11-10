@@ -8,12 +8,12 @@ You take, restore, rename and delete snapshots on a box's page, in its [Snapshot
 
 | Backend | Holds | While the box runs | Restores | Forks | Keeps past a release |
 | --- | --- | --- | --- | --- | --- |
-| Proxmox LXC | the disk | taken live, in about a second | in place, to any snapshot, on LVM-thin, Ceph RBD and BTRFS | by a full copy, from a snapshot taken with a working identity reset | by a [held copy](#a-held-copy), of a snapshot that could fork |
-| Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory | as Proxmox LXC, and qcow2 disks on a directory | as Proxmox LXC, from the disk only | as Proxmox LXC, the disk only |
-| Proxmox QEMU, Windows | the disk, with its EFI and TPM state volumes | taken live, in about 6 to 7 seconds, most of it flushing Windows' writes | in place, with a snapshot as the undo, on LVM-thin, Ceph RBD, BTRFS and qcow2 disks. On ZFS, restore is refused: the undo would be a held copy, and a Windows box has no identity reset BB Box has checked | none, for the same reason | none, for the same reason |
+| Proxmox LXC | the disk | taken live, in about a second: Proxmox freezes the container while it snapshots its disk | in place, to any snapshot, on LVM-thin, Ceph RBD and BTRFS | by a full copy, from a snapshot taken with a working identity reset | by a [held copy](#a-held-copy), of a snapshot that could fork |
+| Proxmox QEMU, Linux | the disk, or the disk and memory | taken while it runs: Proxmox stops the VM while it snapshots its disks; with memory, about a second for each GiB of memory | as Proxmox LXC, and qcow2 disks on a directory | as Proxmox LXC, from the disk only | as Proxmox LXC, the disk only |
+| Proxmox QEMU, Windows | the disk, with its EFI and TPM state volumes | taken while it runs, in about 6 to 7 seconds, most of it flushing Windows' writes: Proxmox stops the VM while it snapshots its disks | in place, with a snapshot as the undo, on LVM-thin, Ceph RBD, BTRFS and qcow2 disks. On ZFS, restore is refused: the undo would be a held copy, and a Windows box has no identity reset BB Box has checked | none, for the same reason | none, for the same reason |
 | boat.dev, a paid plan | the disk, as a saved snapshot on your boat.dev account | taken live, after a fresh capture, a minute or more | by a new sandbox made from the snapshot, which runs the box with its ID, name and labels; the old sandbox is deleted | by a new sandbox made from the snapshot, from a snapshot taken with reset version 8 for Linux servers, or version 9 for Linux desktops | as it is, on the account, at boat.dev's daily price past the plan's included ones |
 | boat.dev, the free trial | no snapshots: the trial has no saved snapshots | | | | |
-| microsandbox | the disk, with the box's Docker data, or the disk and memory | the disk live, in under a second; with memory the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
+| microsandbox | the disk, with the box's Docker data, or the disk and memory | in under a second, pausing the box while `msb` captures its disk; with memory, the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
 | Tart, macOS | the disk and memory, always: every snapshot is a copy of the suspended VM | suspends the VM, copies it and resumes it: 11 s for a 16 GiB VM | in place: it suspends the box, takes the undo, puts the snapshot's copy in the VM's place and resumes it, running as it was | by a copy of the snapshot's disk, without its memory, from a snapshot taken with macOS's identity reset | as it is: the copy stays beside the VMs |
 | Tart, Linux | the disk | only while the box is stopped, as Tart cannot suspend a Linux VM | in place, after a shutdown | by a copy of the snapshot's disk, from a snapshot taken with reset version 8 for Linux servers, or version 9 for Linux desktops | as it is: the copy stays beside the VMs |
 | Docker | the disk and the box's Docker data | pauses the box; measured pauses range from 3.5 to 4.9 seconds on small overlay2 boxes to about 45 seconds for a 1.8 GB change on containerd | by a new container made from the snapshot, with a snapshot as the undo, which runs the box with its ID, name and labels; the old container is deleted once the new one runs | by a new container made from the snapshot, with the fork's own ID as its identity value, held until BB Box's check passes, from a snapshot taken with reset version 7 for Linux servers, or version 9 for Linux desktops, of a box made from an image built with the hold | no |
@@ -56,7 +56,7 @@ BB Box starts an Android model cold when its unsaved marker is present. A snapsh
 
 A box's page has a Snapshots card, after its activity and before its facts. Its heading says how many snapshots the box holds of how many it may, its undos apart, what they hold and on which host. Each row has the snapshot's name, a badge for Memory, Kept or Undo, when it was taken and by whom, its size, its note, and a small picture of the box's screen when the box has one. On a desktop, a row's Restore button and its menu show when the pointer is over the row or focus is in it; on a narrow or touch screen they always show.
 
-- **Take snapshot**, in the card or in the menu of the page's heading beside Resize…, asks for a name (the time if you leave it empty), a note, and on a VM that can, "With its memory". It says what the snapshot holds and leaves out, how long it takes, the count after it, whether a picture is kept, and what it costs. When the box's backend would refuse a take now, the card says why, with the fix, and Take snapshot is off.
+- **Take snapshot**, in the card or in the menu of the page's heading beside Resize…, asks for a name (the time if you leave it empty), a note, and on a VM that can, "With its memory". It says what the snapshot holds and leaves out, how long it takes, whether it pauses the box and for about how long, the count after it, whether a picture is kept, and what it costs. When the box's backend would refuse a take now, the card says why, with the fix, and Take snapshot is off.
 - **Restore** opens a dialog that reads what the restore would do and end, live. It says when the box goes back to and what goes, and names each thread on the box, a person holding its desktop and each BB terminal open on it. A box with a thread on it is not restored, as on the command line: the dialog names the threads and says why. A person's control of the desktop or a terminal is named under "Also goes", and the button says "Restore (box) anyway". The undo is ticked: untick it and the button turns red and says "Restore without undo". When no undo can be taken, for room or the ceiling, the dialog says why and leaves it unticked. The restore goes on only past what the dialog showed: if a thread, a terminal or the person's control has come since, or the plan changed, BB Box restores nothing and the dialog reads it all again. If BB Box cannot flush the box's writes before stopping it (below), nothing changes and the dialog asks whether to restore anyway with an undo that may miss the last seconds' writes.
 - **While it restores**, a notice at the top of the page says so and follows each part: the stop, the undo, the rollback and the start. After it, a notice says when the box was restored, to what, and by whom, for 24 hours. Its **Undo…** opens the same dialog for the restore's undo. A restore BB Box could not confirm after a restart has its own notice, with **Check now**, which settles it as the sweep does.
 - **Fork**, beside Restore, opens the [Fork dialog](#forking-a-snapshot). Below 640 px it is in the row's menu, as Fork…. It is off, with why, for a snapshot that cannot fork.
@@ -72,7 +72,7 @@ With each snapshot of a box that has a screen, a desktop or a device, BB Box kee
 ## Taking a snapshot
 
 ```
-bb box snapshot take <box> [--name <name>] [--note <text>] [--memory]
+bb box snapshot take <box> [--name <name>] [--note <text>] [--memory] [--check]
 ```
 
 `--memory` holds the box's memory too, where its backend can: Proxmox QEMU can for a Linux box that runs, and cannot for a Windows desktop; Proxmox LXC cannot. A stopped Proxmox QEMU box is suspended to disk, so start it before you take a snapshot of it. Proxmox saves a VM's memory as a volume of twice its memory and 500 MiB more, on the VM's `vmstatestorage` or else on its disks' storage; BB Box checks that storage's room first, and refuses a memory snapshot when it cannot tell which storage Proxmox would use. Without `--name`, the snapshot is named after the time, such as "Thu 10:42". A name is unique on its box: a repeat gets " (2)".
@@ -80,6 +80,31 @@ bb box snapshot take <box> [--name <name>] [--note <text>] [--memory]
 Before it takes a snapshot of a box that runs, BB Box flushes the box's writes to its disk, with `sync` in the box, for at most 15 seconds, so the snapshot's disk holds what was just written, with or without memory. If the flush fails or takes longer, the snapshot is taken anyway, and it says it may miss the last writes: in the take's answer, in the list, on the page and in every fork of it.
 
 The command waits until the backend confirms the snapshot is complete. A box holds 5 snapshots unless you change it in the settings (below). A take is refused when the host's storage is more than 85% full, or would be with the snapshot, or when its thin metadata is more than 80% full, as a full thin pool stops every box on the host. Both numbers follow the settings.
+
+### How long a take pauses the box
+
+Some backends pause a box while they take its snapshot: nothing in it runs until the take is done. `--check` says before the take whether it would pause the box and for about how long, with what that is based on, and takes nothing:
+
+```
+$ bb box snapshot take build-1 --check
+A snapshot of box build-1 now would hold its disk, on Docker's disk, and take about 5 s.
+Pauses build-1 for about 5 s while it copies 1.1 GB.
+It adds up to 1.1 GB.
+Nothing was taken. Run it again without --check to take it.
+```
+
+The Take snapshot dialog says the same before you take one. An agent's `box_snapshot` says it when called with `check`. After the take, its answer says how long the box was actually paused, such as "It paused build-1 for 4.1 s.", and the snapshot's row in the card says "paused 4.1 s". When a backend pauses a box for a time it cannot estimate or measure, it says so, and the row says "pause not measured".
+
+| Backend | Pauses the box | Estimate based on | Measured |
+| --- | --- | --- | --- |
+| Docker | while it copies the box's changed disk and Docker data, when the box runs | the changed bytes and the Docker data's size, about 25 to 30 seconds a GiB for the disk and 15 for the Docker data, plus 4 seconds | from `docker pause` to `docker unpause` |
+| microsandbox | while `msb` captures the box's disk, or its disk and memory, when the box runs | for a take with memory, the box's memory: about 1.5 seconds. No estimate for a disk-only take | the pause `msb`'s runtime logs, from pausing the microVM to resuming it. Unknown when the take added no such line to its log, or more than one |
+| Tart, macOS | while it suspends the VM, copies it and resumes it, when the box runs | the VM's memory, which a suspend saves | from the suspend to when the VM runs again, before BB Box checks that it answers. Unknown when the VM does not resume |
+| Proxmox LXC | while Proxmox freezes the container and snapshots its disk, when it runs | no estimate: Proxmox does not say | not measured |
+| Proxmox QEMU | while Proxmox stops the VM to snapshot its disks, with or without memory, when it runs. With memory, it stops it at the end of saving its memory | no estimate: Proxmox does not say, and with memory it depends on how fast the VM changes its memory | not measured: Proxmox does not report how long the VM was stopped |
+| boat.dev | never: boat.dev saves a sandbox while it runs | | |
+
+A stopped box is never paused.
 
 ## Listing snapshots
 
@@ -89,7 +114,7 @@ bb box snapshot list [<box>] [--all] [--kept] [--json]
 
 Without a box, it lists the snapshots of the thread's boxes. `--all` lists every snapshot BB Box records, of every thread's boxes and of boxes that are gone.
 
-Each row says the snapshot's name and ID, its state, when it was taken and by whom, what it holds, and its size where the backend says.
+Each row says the snapshot's name and ID, its state, when it was taken and by whom, what it holds, and its size where the backend says. On a box's page, a row also says how long its take paused the box, where it did, or "pause not measured" where its backend could not measure it.
 
 | State | Means |
 | --- | --- |
@@ -221,7 +246,7 @@ A thread's agent has five tools:
 
 | Tool | Does |
 | --- | --- |
-| `box_snapshot` | takes one of a box, with a name and a note, and with its memory where its backend can |
+| `box_snapshot` | takes one of a box, with a name and a note, and with its memory where its backend can. With `check`, it says how long a take would pause the box, and takes nothing |
 | `box_snapshots` | lists a box's, or every box's of the thread and of the machine it runs on, that the thread may see |
 | `box_snapshot_delete` | deletes one that an agent of the thread took and nobody kept |
 | `box_restore` | restores a box, always taking an undo first |
@@ -357,7 +382,7 @@ A guest BB Box has no box record for, whose thread BB says ended, goes at the ne
 
 Each take, delete and restore is recorded before it starts, with the backend's task once it begins. A restore's own steps are above. If BB Box restarts in the middle of one, it reads the backend's task and the box's snapshots when it starts again, and finishes or settles it: a take is ready only if the backend shows it complete, and a take that never began is failed, never taken again.
 
-BB Box also compares its records with each backend's snapshots every few minutes. A snapshot BB Box has no record of gets one again, so a lost `snapshots.db` loses no snapshot. One of a box that is gone is listed as found on its host until you delete it, or as kept until its date when it carries one. A snapshot found again keeps its identity reset's version from its label, and a held copy keeps it and its box's kind from its tags, so either still forks. One labelled before labels carried the version does not know it: it is not kept anew or forked, and a release stops rather than copy it, until you delete it or choose Release and delete what you kept.
+BB Box also compares its records with each backend's snapshots every few minutes. A snapshot BB Box has no record of gets one again, so a lost `snapshots.db` loses no snapshot. The record keeps the snapshot's size where its backend lists one, as Docker, microsandbox and boat.dev do. One of a box that is gone is listed as found on its host until you delete it, or as kept until its date when it carries one. A snapshot found again keeps its identity reset's version from its label, and a held copy keeps it and its box's kind from its tags, so either still forks. One labelled before labels carried the version does not know it: it is not kept anew or forked, and a release stops rather than copy it, until you delete it or choose Release and delete what you kept.
 
 ## The Snapshots tab
 
@@ -407,8 +432,9 @@ Forgetting removes BB Box's records only. The snapshots may still exist on the b
 
 A Docker snapshot holds the disk and a separate copy of the box's Docker data.
 It does not hold running programs, memory, `/run` or `/dev/shm`. A take pauses
-the box while copying the Docker data and committing the disk. BB Box logs the
-actual pause in milliseconds. The pause measurements above are from the design
+the box while copying the Docker data and committing the disk. Before the take,
+BB Box says about how long, from the bytes it copies, and after it, how long the
+box was actually paused. The pause measurements above are from the design
 experiments in decision 082, not a promise for every disk.
 
 Snapshots stay on the box's Docker engine. Their images use
@@ -446,8 +472,8 @@ make a new box and move its files.
 Space estimates count the changed disk bytes once on overlay2 and twice on the
 containerd image store, then add the Docker volume's size. The space check reads
 Docker's own filesystem, including the virtual disk on Docker Desktop or WSL 2.
-Records rebuilt after losing BB Box's database have no displayed size yet; the
-image labels retain the byte counts.
+A record rebuilt after BB Box's database is lost keeps the snapshot's size, from
+the byte counts in its image's labels.
 
 If BB Box crashes during a take, the box can stay paused until recovery runs.
 Recovery waits three times the estimated pause plus 60 seconds, capped at

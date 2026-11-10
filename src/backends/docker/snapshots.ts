@@ -1,4 +1,4 @@
-import type { MachineSize, Snapshotting } from "../types.ts";
+import { NO_PAUSE, type MachineSize, type SnapshotSize, type Snapshotting, type TakePause } from "../types.ts";
 import { LXCFS_TARGETS } from "./lxcfs.ts";
 import { ENV_A_BOX_IS_GIVEN, IMAGE_HOLDS_FORKS, labelsOf } from "./box-container.ts";
 
@@ -71,6 +71,19 @@ export function pauseEstimate(disk: SnapshotDisk): { readonly pauseMs: number; r
     pauseMs: Math.ceil(4_000 + (disk.layerBytes * layerMsPerGiB + disk.volumeBytes * VOLUME_COPY_MS_PER_GIB) / 2 ** 30),
     addsBytes: Math.ceil(disk.layerBytes * layerFactor + disk.volumeBytes),
   };
+}
+
+export function takePause(disk: SnapshotDisk, running: boolean): TakePause {
+  if (!running) return NO_PAUSE;
+  return { pauses: true, aboutMs: pauseEstimate(disk).pauseMs, basis: { bytes: disk.layerBytes + disk.volumeBytes, of: "disk" } };
+}
+
+export function sizeFromLabels(labels: Readonly<Record<string, string>>): SnapshotSize | null {
+  const layerBytes = Number(labels["bbbox.snapshot.layer-bytes"]);
+  const volumeBytes = Number(labels["bbbox.snapshot.volume-bytes"] ?? 0);
+  const store = labels["bbbox.snapshot.store"];
+  if (!(layerBytes >= 0 && volumeBytes >= 0) || (store !== "overlay2" && store !== "containerd")) return null;
+  return { bytes: pauseEstimate({ layerBytes, volumeBytes, store }).addsBytes, means: "whole" };
 }
 
 export function pausedTooLong(task: { readonly startedAt: number; readonly estimateMs: number }, now: number): boolean {

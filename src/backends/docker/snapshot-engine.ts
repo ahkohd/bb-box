@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { SnapshotFailed, type BackendContext, type DoctorCheck, type Guest, type HeldSnapshot, type MachineSize, type SnapshotHooks, type SnapshotPlan, type SnapshotRef, type SnapshotTake, type SnapshotTaken, type TaskOutcome, type TaskRef } from "../types.ts";
 import type { z } from "zod";
 import { DockerCli, LABELS, snapshotContainersSchema, snapshotImagesSchema, snapshotVolumesSchema, snapshotStoreSchema } from "./cli.ts";
-import { commitChanges, FORK_HOLD_MISSING, holdsForks, KILL_ABOUT_MS, layerRefusal, mountRefusal, pauseEstimate, pausedTooLong, restoreAboutMs, sizeTakenAt, snapshotImage, snapshotLabels, snapshotVolume, SNAPSHOT_INSTALL, type ImageStore } from "./snapshots.ts";
+import { commitChanges, FORK_HOLD_MISSING, holdsForks, KILL_ABOUT_MS, layerRefusal, mountRefusal, pauseEstimate, pausedTooLong, restoreAboutMs, sizeFromLabels, sizeTakenAt, snapshotImage, snapshotLabels, snapshotVolume, SNAPSHOT_INSTALL, takePause, type ImageStore } from "./snapshots.ts";
 
 interface TakeState {
   readonly id: string;
@@ -92,7 +92,7 @@ export class DockerSnapshotEngine {
     const restorable = typeof restoring === "string" ? null : restoring;
     return {
       storage: facts.storage,
-      take: { ok: !facts.refusal, why: facts.refusal, aboutMs: facts.estimate.pauseMs, memoryAboutMs: null, addsBytes: facts.estimate.addsBytes, memory: null, memoryWhy: "Docker snapshots hold the disk and Docker data only." },
+      take: { ok: !facts.refusal, why: facts.refusal, aboutMs: facts.estimate.pauseMs, memoryAboutMs: null, addsBytes: facts.estimate.addsBytes, pause: takePause({ layerBytes: facts.container.SizeRw, volumeBytes: facts.volumeBytes, store: facts.store }, facts.container.State.Status === "running"), memory: null, memoryWhy: "Docker snapshots hold the disk and Docker data only." },
       restore: {
         way: restoreWhy ? "none" : "new-guest",
         why: restoreWhy,
@@ -175,11 +175,10 @@ export class DockerSnapshotEngine {
     await hooks.task({ ref: `take:${take.id}@${state.startedAt}`, host: guest.host });
     this.#active.add(take.id);
     let pausedAt: number | null = null;
-    let pauseAttempted = false;
+    let pausedMs = 0;
     let committed = false;
     try {
       if (facts.container.State.Status === "running") {
-        pauseAttempted = true;
         pausedAt = this.#now();
         await this.#cli.ok(["pause", guest.ref], { signal });
       }
@@ -189,20 +188,21 @@ export class DockerSnapshotEngine {
       }
       await this.#cli.ok(["container", "commit", "--pause=false", ...commitChanges(facts.container.Config.Labels, labels).flatMap((change) => ["--change", change]), guest.ref, image], { signal, timeoutMs: 15 * 60_000 });
       committed = true;
-      return { ref: image, holds: "disk", capturedAt: state.startedAt, size: { bytes: facts.estimate.addsBytes, means: "whole" } };
     } catch (error) {
       await this.#context.storage.set(this.#key(take.id), { ...state, phase: "failed" });
       throw error;
     } finally {
       this.#active.delete(take.id);
-      if (pauseAttempted && pausedAt !== null) {
+      if (pausedAt !== null) {
         const current = (await this.#cli.inspect([guest.ref]))[0];
         if (current?.status === "paused" && current.labels[LABELS.install] === this.#context.installId && current.labels[LABELS.box] === take.box) await this.#cli.ok(["unpause", guest.ref]);
-        this.#context.log?.(`Docker snapshot ${take.id} paused box ${take.box} for ${this.#now() - pausedAt} ms.`);
+        pausedMs = this.#now() - pausedAt;
+        this.#context.log?.(`Docker snapshot ${take.id} paused box ${take.box} for ${pausedMs} ms.`);
       }
       await this.#context.storage.set(this.#key(take.id), { ...state, phase: committed ? "complete" : "failed-resumed" });
       if (!committed) await this.#discard(state).catch((error) => this.#context.logError("cleaning a failed Docker snapshot", error));
     }
+    return { ref: image, holds: "disk", capturedAt: state.startedAt, size: { bytes: facts.estimate.addsBytes, means: "whole" }, pausedMs };
   }
 
   async #discard(state: TakeState): Promise<void> {
@@ -281,6 +281,7 @@ export class DockerSnapshotEngine {
         keptUntil: null,
         storage: { name: "Docker's disk", type: `docker-${labels["bbbox.snapshot.store"]}` },
         forkSafe: Number(labels["bbbox.snapshot.reset"]) || null,
+        size: sizeFromLabels(labels),
       });
     }
 

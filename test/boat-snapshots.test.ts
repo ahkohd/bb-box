@@ -200,6 +200,19 @@ test("on a paid plan, a take saves the running sandbox under its name, waits unt
   assert.deepEqual(await backend.providerTask({ ref: `save:${name}`, host: "boat.dev" }), { state: "ok" });
 });
 
+test("a boat.dev take saves the running sandbox live: it says it does not pause the box, measures no pause, and lists the saved snapshot's size", async () => {
+  const { backend } = setup();
+  const guest = await boxOn(backend);
+
+  const plan = await backend.planSnapshots(guest, "linux", null);
+  const taken = await backend.snapshot(guest, { id: SNAP, box: BOX, memory: false }, snapshotHooks());
+  const held = (await backend.heldSnapshots()).find((each) => each.id === SNAP);
+
+  assert.deepEqual(plan.take.pause, { pauses: false });
+  assert.equal(taken.pausedMs, 0);
+  assert.deepEqual(held?.size, { bytes: 3_200_000_000, means: "own" });
+});
+
 test("a save boat fails is deleted and said; a refused one changes nothing", async () => {
   const { fake, backend } = setup();
   const guest = await boxOn(backend);

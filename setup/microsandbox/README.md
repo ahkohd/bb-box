@@ -224,8 +224,9 @@ the host, apart from each box's microVM, and outlive it.
 
 - **What one holds.** The box's disk with its Docker data, or with
   `--memory` its memory and running processes too. `/run` is in memory, so
-  a disk snapshot leaves it out. A take is under a second; with memory the
-  box pauses for about a second.
+  a disk snapshot leaves it out. A take is under a second, and pauses the
+  box while `msb` captures its disk; with memory the box pauses for about a
+  second. The take's answer says how long, from `msb`'s own log.
 - **A restore** makes the box a new microVM from the snapshot, with the
   box's ID, name, labels and identity value, so it stays the same BB machine,
   then deletes the old one. The undo is a snapshot of the box once stopped.

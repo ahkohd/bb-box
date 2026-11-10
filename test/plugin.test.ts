@@ -4510,6 +4510,36 @@ test("bb box snapshot take and box_snapshot hold the memory unasked where every 
   assert.equal(app.snapshotStore.records({ box: box.id }).length, 2);
 });
 
+test("bb box snapshot take --check and box_snapshot with check say how long a take would pause the box, taking nothing; the take then says how long it paused it", async (t) => {
+  const { harness, app, world, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const provider = new FakeSnapshots();
+  provider.pause = { pauses: true, aboutMs: 5_200, basis: { bytes: 1.1e9, of: "disk" } };
+  provider.pausedMs = 4_100;
+  provider.attach(world.backend!, Date.now);
+  assert.equal((await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD])).exitCode, 0);
+  const box = await only(app);
+
+  const checked = await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD, "--check"]);
+  const checkedByTool = text(await tool("box_snapshot", { box: box.name, check: true, memory: true }));
+  const checkedJson = JSON.parse((await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD, "--check", "--json"])).stdout ?? "{}") as { pause: unknown };
+
+  assert.equal(checked.exitCode, 0, checked.stderr);
+  assert.equal(
+    checked.stdout,
+    `A snapshot of box ${box.name} now would hold its disk, on fake's fast, and take about 1 s.\nPauses ${box.name} for about 5 s while it copies 1.1 GB.\nNothing was taken. Run it again without --check to take it.\n`,
+  );
+  assert.match(checkedByTool, new RegExp(`^A snapshot of box ${box.name} now would hold its disk and memory, on fake's fast, and take about 5 s\\.\\nPauses ${box.name} for about 4 s while it saves 4\\.3 GB of memory\\.\\nIt adds up to 9\\.1 GB\\.\\n\\nNext: Nothing was taken\\.`));
+  assert.deepEqual(checkedJson.pause, provider.pause);
+  assert.equal(app.snapshotStore.records({ box: box.id }).length, 0, "a check takes nothing");
+
+  const taken = await harness.behavior.runCli(["snapshot", "take", box.name, "--thread", THREAD]);
+  const takenByTool = text(await tool("box_snapshot", { box: box.name, name: "by agent" }));
+
+  assert.match(taken.stdout ?? "", new RegExp(`\\nIt paused ${box.name} for 4\\.1 s\\.\\n`));
+  assert.match(takenByTool, new RegExp(`\\nIt paused ${box.name} for 4\\.1 s\\.\\n`));
+});
+
 test("bb box snapshot takes, lists and deletes a thread's box's snapshots; box_status and box_list say what it holds and offers; the doctor checks snapshots.db (070)", async (t) => {
   const { harness, app, world, tool } = await start();
   t.after(() => harness.lifecycle.dispose());
