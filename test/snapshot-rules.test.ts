@@ -19,6 +19,8 @@ import {
   newOperationId,
   newSnapshotId,
   noteProblem,
+  pausedWords,
+  pauseWords,
   restoreRoute,
   roomCandidates,
   ACTS,
@@ -347,4 +349,21 @@ test("restoreRoute: an agent restores its own box at once, through the form when
   assert.deepEqual(restoreRoute(COMMAND, { ...on, agentsRestore: false, agentsMemory: false }, { onAMachine: false, memory: true }), { ok: true, through: "restore" });
   assert.match((restoreRoute(AGENT, { ...on, agentsMemory: false }, { onAMachine: false, memory: true }) as { why: string }).why, /^Settings let only the person restore a snapshot that holds memory\./);
   assert.deepEqual(restoreRoute(AGENT, on, { onAMachine: false, memory: true }), { ok: true, through: "restore" });
+});
+
+test("a take's pause reads in plain words: none, an estimate with what it is based on, or a pause its backend cannot estimate", () => {
+  assert.equal(pauseWords({ pauses: false }, "build-1"), "It does not pause build-1.");
+  assert.equal(pauseWords({ pauses: true, aboutMs: 5200, basis: { bytes: 1.1e9, of: "disk" } }, "build-1"), "Pauses build-1 for about 5 s while it copies 1.1 GB.");
+  assert.equal(pauseWords({ pauses: true, aboutMs: 1500, basis: { bytes: 4.2e9, of: "memory" } }, "build-1"), "Pauses build-1 for about 2 s while it saves 4.2 GB of memory.");
+  assert.equal(pauseWords({ pauses: true, aboutMs: 400, basis: null }, "build-1"), "Pauses build-1 for under a second.");
+  assert.equal(pauseWords({ pauses: true, aboutMs: null, basis: { bytes: 8e9, of: "memory" } }, "build-1"), "Pauses build-1 while it saves 8.0 GB of memory. Its backend cannot say for how long.");
+  assert.equal(pauseWords({ pauses: true, aboutMs: null, basis: null }, "build-1"), "Pauses build-1. Its backend cannot say for how long.");
+
+  const backend = { label: "Proxmox LXC" };
+  assert.equal(pausedWords({ pausedMs: 3240, backend }, "build-1"), "It paused build-1 for 3.2 s.");
+  assert.equal(pausedWords({ pausedMs: 45_400, backend }, "build-1"), "It paused build-1 for 45 s.");
+  assert.equal(pausedWords({ pausedMs: 640, backend }, "build-1"), "It paused build-1 for 640 ms.");
+  assert.equal(pausedWords({ pausedMs: 0, backend }, "build-1"), null, "a take that did not pause says nothing after");
+  assert.equal(pausedWords({ pausedMs: null, backend }, "build-1"), "Proxmox LXC cannot measure how long it paused build-1.");
+  assert.equal(pausedWords({ backend }, "build-1"), null, "a record from before pauses were measured says nothing");
 });

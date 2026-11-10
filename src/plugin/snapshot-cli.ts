@@ -5,7 +5,7 @@ import { BY_COMMAND } from "../core/box-log.ts";
 import type { GpuPart } from "../backends/types.ts";
 import { isKept, type Caller, type SnapshotRecord, type Standing } from "../core/snapshot.ts";
 import { HOLD_STEPS, HOLD_WORDS, LIVE_CHECKS_VARIABLE, type HoldStepName } from "./live-checks.ts";
-import { deletedText, forkCheckText, forkedText, keepCheckText, keptText, listText, restoreCheckText, restoredText, takenText } from "./snapshot-words.ts";
+import { deletedText, forkCheckText, forkedText, keepCheckText, keptText, listText, restoreCheckText, restoredText, takeCheckText, takenText } from "./snapshot-words.ts";
 import type { BbBox } from "./setup.ts";
 import { PRODUCT } from "../brand.ts";
 
@@ -82,7 +82,7 @@ export function snapshotCommands(app: BbBox) {
   return {
     "snapshot take": cliCommand({
       summary:
-        "Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it. A box holds as many as Settings, Snapshots allows, 5 unless set.",
+        "Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it, then says how long it paused the box. Run it with --check first to see how long it would pause the box. A box holds as many as Settings, Snapshots allows, 5 unless set.",
       positionals: [{ name: "box", description: "The box's name or ID.", required: true }],
       options: {
         ...threadOption,
@@ -93,10 +93,15 @@ export function snapshotCommands(app: BbBox) {
         memory: { type: "boolean", description: "Hold the box's memory too, so a restore brings back its running apps: only where its backend can, and slower. Where every snapshot holds it, as on a macOS box on Tart, a take holds it unasked." },
         "no-memory": { type: "boolean", description: "Hold the box's disk only. Refused where every snapshot holds the memory." },
         request: { type: "string", description: "An ID you make, so a repeat of this command is the same take." },
+        check: { type: "boolean", description: "Say how long the take would take and pause the box, and refuse what it would refuse, taking nothing." },
       },
       run: ({ positionals, options }, ctx) =>
         guard("Taking the snapshot", async () => {
           const box = await boxes.get(ownerOf(options, ctx), positionals.box);
+          if (options.check) {
+            const check = await snapshots.checkTake(COMMAND, box, standingOf(box), memoryAsked(options));
+            return options.json ? json(check) : out(`${takeCheckText(check, box.name)}\nNothing was taken. Run it again without --check to take it.`);
+          }
           const answer = await snapshots.take(COMMAND, box, standingOf(box), {
             ...(options.name !== undefined ? { name: String(options.name) } : {}),
             ...(options.note !== undefined ? { note: String(options.note) } : {}),

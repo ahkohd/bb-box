@@ -737,7 +737,11 @@ function server(initial: BoxView[], options: { cards?: Record<string, SettingsCa
       if (mine) return { ...blank, box: mine.box, threadId: "operator", owner: "yours", thread: null, threads: mine.threads };
       return { ...blank, box: null, threadId: null, owner: null, thread: null, threads: [], ended: ended.get(id) ?? null };
     },
-    "snapshot.takeCheck": ({ memory }) => options.takeCheck ?? { check: { aboutMs: memory ? 9_000 : 700, addsBytes: null, storage: "fast", host: "pve-1", memory: { aboutMs: 9_000, addsBytes: 8 * 1024 ** 3, storage: "fast" }, memoryWhy: null }, refusal: null },
+    "snapshot.takeCheck": ({ memory }) =>
+      options.takeCheck ?? {
+        check: { holds: memory ? "disk-and-memory" : "disk", aboutMs: memory ? 9_000 : 700, pause: memory ? { pauses: true, aboutMs: 2_000, basis: { bytes: 8e9, of: "memory" } } : { pauses: false }, addsBytes: null, storage: "fast", host: "pve-1", memory: { aboutMs: 9_000, addsBytes: 8 * 1024 ** 3, storage: "fast" }, memoryWhy: null },
+        refusal: null,
+      },
     "snapshot.take": (input) => {
       changes.push(`snapshot.take ${JSON.stringify({ ...input, request: undefined })}`);
       return { error: options.failWith ?? null, pending: false };
@@ -10802,6 +10806,7 @@ function snapshotRow(overrides: Partial<SnapshotRowView> = {}): SnapshotRowView 
     keepWhy: null,
     boxGone: null,
     unflushed: null,
+    pausedMs: null,
     after: [],
     ...overrides,
   };
@@ -10960,7 +10965,7 @@ test("070 unit 6: Take snapshot asks for a name and note, says what it holds, co
   await waitFor(() => expect(takeFactLines(dialog).map((line) => line.label)).toEqual(["Holds", "Takes", "Snapshots", "Picture", "Cost"]));
   expect(takeFactLines(dialog).map((line) => line.value)).toEqual([
     "the disk: files, installed apps and settings.",
-    "About 0.7 s; calm-otter keeps running.",
+    "About 0.7 s. It does not pause calm-otter.",
     "2 of 5 for calm-otter after this.",
     "A picture of its screen around now is kept with it.",
     "No charge: it is on the host's own storage.",
@@ -10985,7 +10990,7 @@ test("the take dialog lists Holds, Leaves out, Takes, Snapshots and Cost in that
   expect(disk.map((line) => line.value)).toEqual([
     "the disk: files, installed apps and settings.",
     `${excludes}.`,
-    "About 0.7 s; calm-otter pauses for a moment.",
+    "About 0.7 s. It does not pause calm-otter.",
     "1 of 5 for calm-otter after this.",
     "Pictures are off in Settings, Snapshots.",
     "It costs $0.005 a day until it is deleted.",
@@ -10996,7 +11001,7 @@ test("the take dialog lists Holds, Leaves out, Takes, Snapshots and Cost in that
   fireEvent.click(within(dialog).getByRole("checkbox", { name: "With its memory" }));
   await waitFor(() => expect(takeFactLines(dialog)[0]?.value).toBe("the disk and the memory: a restore brings back its running apps, and the credentials in them. Up to 8 GiB more on pve-1's fast."));
   expect(takeFactLines(dialog).map((line) => line.label)).toEqual(["Holds", "Leaves out", "Takes", "Snapshots", "Picture", "Cost"]);
-  expect(takeFactLines(dialog)[2]?.value).toBe("About 9.0 s; calm-otter pauses for a moment.");
+  expect(takeFactLines(dialog)[2]?.value).toBe("About 9.0 s. Pauses calm-otter for about 2 s while it saves 8.0 GB of memory.");
   cleanup();
 
   const device = server([box()], {
@@ -11014,12 +11019,25 @@ test("the take dialog lists Holds, Leaves out, Takes, Snapshots and Cost in that
   expect(lines.map((line) => line.value)).toEqual([
     "the device: its disk and memory, with the apps open on it. The rest of calm-otter is not in it.",
     "/tmp, ~/.cache, the build cache.",
-    "About 0.7 s; calm-otter suspends for a few seconds.",
+    "About 0.7 s. It does not pause calm-otter.",
     "5 of 5 for calm-otter after this.",
     "No charge: it is on the host's own storage.",
   ]);
   const codes = Array.from(document.getElementById(within(deviceDialog).getByRole("textbox", { name: "Name" }).getAttribute("aria-describedby")!)!.querySelectorAll("code")).map((code) => code.textContent);
   expect(codes).toEqual(["/tmp", "~/.cache"]);
+});
+
+test("the take dialog says how long the take pauses the box and what that is based on, before the take, and the row says how long it paused it after", async () => {
+  const takeCheck = { check: { holds: "disk" as const, aboutMs: 5_400, pause: { pauses: true as const, aboutMs: 5_200, basis: { bytes: 1.1e9, of: "disk" as const } }, addsBytes: 1.1e9, storage: "Docker's disk", host: null, memory: null, memoryWhy: null }, refusal: null };
+  const { handlers } = server([box()], { takeCheck, snapshots: snapshotsView({ records: [snapshotRow({ pausedMs: 3_240 })] }) });
+  const slot = boxPageAt(handlers, "box/box_1");
+  const card = await slot.findByRole("region", { name: "Snapshots" });
+
+  fireEvent.click(within(card).getByRole("button", { name: "Take snapshot" }));
+  const dialog = await slot.findByRole("alertdialog", { name: "Take a snapshot of calm-otter" });
+
+  await waitFor(() => expect(takeFactLines(dialog).find((line) => line.label === "Takes")?.value).toBe("About 5.4 s. Pauses calm-otter for about 5 s while it copies 1.1 GB."));
+  expect(card.textContent).toContain("paused 3.2 s");
 });
 
 test("070 unit 6: a box whose plan refuses a take says why in the card with Take snapshot off, and a box whose backend has none says so", async () => {

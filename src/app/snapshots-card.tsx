@@ -20,6 +20,7 @@ import { useThreadTitles } from "./desktop.tsx";
 import { CameraGlyph, ForkGlyph } from "./glyphs.tsx";
 import { useBoxesNav } from "./box-nav.tsx";
 import { isMachineName } from "../core/names.ts";
+import { measuredWords, pauseWords } from "../core/snapshot.ts";
 import { PRODUCT } from "./product.ts";
 import {
   aboutWords,
@@ -113,13 +114,6 @@ function withPaths(text: string): ReactNode {
   const parts = text.split(/((?:~)?\/[^\s,]+)/);
   if (parts.length === 1) return text;
   return parts.map((part, index) => (part.startsWith("/") || part.startsWith("~/") ? <code key={index} className="font-mono">{part}</code> : part));
-}
-
-function whileItRuns(whileRunning: "live" | "pauses" | "suspends" | "stopped-only", name: string): string {
-  if (whileRunning === "live") return `${name} keeps running`;
-  if (whileRunning === "pauses") return `${name} pauses for a moment`;
-  if (whileRunning === "suspends") return `${name} suspends for a few seconds`;
-  return `${name} must be stopped`;
 }
 
 export function WarnPanel({ children }: { children: ReactNode }) {
@@ -246,6 +240,7 @@ function rowLine(row: SnapshotRowView, place: RowPlace, now: number, titles: Thr
       actorWords(row.by, titles),
       place.wide ? holdsWords(row.holds, row.scope) : null,
       row.state === "failed" ? null : snapshotSizeWords(row.size),
+      row.pausedMs ? `paused ${measuredWords(row.pausedMs)}` : null,
       snapshotPriceWords(row.price),
       life,
       row.unflushed ? "may miss its last writes" : null,
@@ -455,7 +450,7 @@ export function TakeSnapshotDialog({ box, view, now, onClose, onChanged, returnT
   const facts = [
     { label: "Holds", value: holdsLine.replace(/^It holds /, "") },
     ...(offer.excludes ? [{ label: "Leaves out", value: withPaths(`${offer.excludes}.`) }] : []),
-    ...(check ? [{ label: "Takes", value: `About ${aboutWords(check.aboutMs)}; ${whileItRuns(offer.whileRunning, box.name)}.` }] : []),
+    ...(check ? [{ label: "Takes", value: `About ${aboutWords(check.aboutMs)}. ${pauseWords(check.pause, box.name)}` }] : []),
     { label: "Snapshots", value: `${view.counted + 1} of ${view.perBox} for ${box.name} after this.` },
     ...(view.screen ? [{ label: "Picture", value: view.pictures ? "A picture of its screen around now is kept with it." : "Pictures are off in Settings, Snapshots." }] : []),
     { label: "Cost", value: offer.price ? `It costs ${snapshotPriceWords(offer.price)} until it is deleted.` : "No charge: it is on the host's own storage." },

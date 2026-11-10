@@ -1,4 +1,4 @@
-import type { BoxOwner, Guest, HeldSnapshot, HeldSnapshotState, Holds, Snapshotting, SnapshotStorage } from "../types.ts";
+import type { BoxOwner, Guest, HeldSnapshot, HeldSnapshotState, Holds, SnapshotSize, Snapshotting, SnapshotStorage } from "../types.ts";
 import { endOfUtcDay } from "../../core/snapshot.ts";
 import { MSB_VERSION } from "./release.ts";
 import { PRODUCT } from "../../brand.ts";
@@ -155,7 +155,12 @@ export function heldFrom(input: HeldInput): HeldSnapshot {
     storage: input.storage,
     forkSafe: named.forkSafe,
     dependsOn: dependsOnOf(snapshot, input.all, named.install),
+    size: sizeOfHeld(extras.sizes.get(snapshot.id)),
   };
+}
+
+function sizeOfHeld(bytes: number | undefined): SnapshotSize | null {
+  return bytes ? { bytes, means: "whole" } : null;
 }
 
 export function msbOffer(): Snapshotting {

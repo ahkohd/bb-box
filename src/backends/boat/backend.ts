@@ -40,6 +40,7 @@ import {
   type Snapshotting,
   type TaskOutcome,
   type TaskRef,
+  NO_PAUSE,
   SnapshotFailed,
   SnapshotIncomplete,
   type DoctorCheck,
@@ -759,7 +760,7 @@ export class BoatBackend implements Backend {
       (forkStarts.ok ? null : `${forkStarts.words}.`);
     return {
       storage: BOAT_STORAGE,
-      take: { ok: takeWhy === null, why: takeWhy, aboutMs: sandbox && isRunning(sandbox.state) ? SAVE_RUNNING_ABOUT_MS : SAVE_STOPPED_ABOUT_MS, memoryAboutMs: null, addsBytes: 0, memory: null, memoryWhy: "boat.dev saves a sandbox's disk only." },
+      take: { ok: takeWhy === null, why: takeWhy, aboutMs: sandbox && isRunning(sandbox.state) ? SAVE_RUNNING_ABOUT_MS : SAVE_STOPPED_ABOUT_MS, memoryAboutMs: null, addsBytes: 0, pause: NO_PAUSE, memory: null, memoryWhy: "boat.dev saves a sandbox's disk only." },
       restore: {
         way: restoreWhy ? "none" : "new-guest",
         why: restoreWhy,
@@ -808,7 +809,7 @@ export class BoatBackend implements Backend {
     }
     const capturedAt = (saved.artifact ? await this.#api.captureTime(saved.artifact, signal).catch(() => null) : null) ?? saved.createdAt ?? this.#now();
     await this.#changeFacts((facts) => factsWith(facts, name, { forkSafe: take.forkSafe ?? null, owner: ownerOf(sandbox) })).catch((error: unknown) => this.#context.logError(`keep what a fork of boat's saved snapshot ${name} needs`, error));
-    return { ref: name, holds: "disk", capturedAt, size: saved.bytes !== null ? { bytes: saved.bytes, means: "own" } : null };
+    return { ref: name, holds: "disk", capturedAt, size: saved.bytes !== null ? { bytes: saved.bytes, means: "own" } : null, pausedMs: 0 };
   }
 
   async #savedSettled(name: string, signal?: AbortSignal): Promise<SavedSnapshot> {

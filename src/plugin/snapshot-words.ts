@@ -1,8 +1,8 @@
 import type { Backend, HeldSnapshot, Snapshotting } from "../backends/types.ts";
 import { OPERATOR, forkedFromWords, type BoxRecord } from "../core/boxes.ts";
-import { countsAgainstLimit, dayWords, gbWords, goneWords, holdsWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, unflushedWords, utcDay, type SnapshotRecord } from "../core/snapshot.ts";
+import { aboutSecondsWords, countsAgainstLimit, dayWords, gbWords, goneWords, holdsWords, pausedWords, pauseWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, unflushedWords, utcDay, type SnapshotRecord } from "../core/snapshot.ts";
 import { describeSize } from "../core/sizes.ts";
-import { freedWords, type DeleteAnswer, type ForkAnswer, type ForkCheck, type KeepAnswer, type KeepCheck, type RestoreAnswer, type RestoreCheck, type Snapshots, type TakeAnswer } from "../core/snapshots.ts";
+import { freedWords, type DeleteAnswer, type ForkAnswer, type ForkCheck, type KeepAnswer, type KeepCheck, type RestoreAnswer, type RestoreCheck, type Snapshots, type TakeAnswer, type TakeCheck } from "../core/snapshots.ts";
 import type { BackendSnapshotsView } from "./configuration.ts";
 import { PRODUCT } from "../brand.ts";
 
@@ -23,9 +23,23 @@ export function takenText(answer: TakeAnswer, boxName: string, perBox: number): 
   return [
     `Took snapshot "${snapshot.name}" (${snapshot.id}) of box ${boxName}${took}: it holds its ${holdsWords(snapshot)}.${leaves}`,
     `Size: ${sizeWords(snapshot.size)}. Price: ${priceWords(snapshot.price)}.`,
+    ...nonNull(pausedWords(snapshot, boxName)),
     ...(snapshot.unflushed ? [`${unflushedWords(snapshot.unflushed)}.`] : []),
     ...(answer.notResumed ? [answer.notResumed] : []),
     `Box ${boxName} holds ${answer.counted} of ${perBox} snapshots.`,
+  ].join("\n");
+}
+
+function nonNull(line: string | null): string[] {
+  return line === null ? [] : [line];
+}
+
+export function takeCheckText(check: TakeCheck, boxName: string): string {
+  const where = `${check.host ? `${check.host}'s ` : ""}${check.storage}`;
+  return [
+    `A snapshot of box ${boxName} now would hold its ${check.holds === "disk" ? "disk" : "disk and memory"}, on ${where}, and take ${aboutSecondsWords(check.aboutMs)}.`,
+    pauseWords(check.pause, boxName),
+    ...(check.addsBytes ? [`It adds up to ${gbWords(check.addsBytes)}.`] : []),
   ].join("\n");
 }
 

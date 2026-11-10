@@ -77,6 +77,7 @@ import {
   type Snapshotting,
   type TaskOutcome,
   type TaskRef,
+  NO_PAUSE,
   SnapshotFailed,
   SnapshotIncomplete,
 } from "../types.ts";
@@ -219,6 +220,7 @@ export interface MsbBackendOptions extends MsbCliOptions {
   readonly setup?: string;
   /** The longest an acquire may take, instead of the kind's. */
   readonly readyTimeoutMs?: number;
+  readonly now?: () => number;
 }
 
 /** What the status script says of the host. */
@@ -1566,7 +1568,8 @@ export class MsbBackend implements Backend {
         aboutMs: DISK_TAKE_ABOUT_MS,
         memoryAboutMs: running ? FULL_TAKE_ABOUT_MS : null,
         addsBytes: null,
-        memory: running && memoryMiB ? { storage, addsBytes: memoryMiB * MiB } : null,
+        pause: NO_PAUSE,
+        memory: running && memoryMiB ? { storage, addsBytes: memoryMiB * MiB, pause: { pauses: true, aboutMs: FULL_TAKE_ABOUT_MS, basis: { bytes: memoryMiB * MiB, of: "memory" } } } : null,
         memoryWhy: running ? null : "msb saves a box's memory only while it runs.",
       },
       restore: {
@@ -1604,10 +1607,13 @@ export class MsbBackend implements Backend {
     };
     await hooks.submitting();
     await hooks.task({ ref: `${TAKE_TASK}${group}:${name}`, host: this.#host });
+    const now = this.#options.now ?? Date.now;
+    const began = now();
     const result = await this.#cli.run(
       ["snapshot", "create", name, "--sandbox", guest.ref, "--group", group, ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]), ...(take.memory ? ["--full"] : []), "--quiet"],
       { timeoutMs: SNAPSHOT_MS, signal },
     );
+    const pausedMs = take.memory ? now() - began : 0;
     if (result.timedOut || (result.exitCode !== 0 && this.#cli.error("msb snapshot create", result).unreachable)) throw this.#cli.error("msb snapshot create", result);
     const listed = await this.#snapshotList(signal);
     const made = listed.find((each) => each.group === group && each.name === name) ?? null;
@@ -1626,7 +1632,7 @@ export class MsbBackend implements Backend {
     if (!made) throw new Error(`msb took snapshot ${name} of ${guest.ref} but does not list it.`);
     if (made.availability !== "ready") throw new SnapshotIncomplete(`msb lists snapshot ${made.id} as ${made.availability}.`);
     const bytes = (await this.#snapshotExtras(signal).catch(() => null))?.sizes.get(made.id) ?? null;
-    return { ref: made.id, holds: made.holds, capturedAt: made.createdAt ?? Date.now(), size: bytes ? { bytes, means: "whole" } : null, dependsOn: dependsOnOf(made, listed, this.#context.installId) };
+    return { ref: made.id, holds: made.holds, capturedAt: made.createdAt ?? Date.now(), size: bytes ? { bytes, means: "whole" } : null, pausedMs, dependsOn: dependsOnOf(made, listed, this.#context.installId) };
   }
 
   async #removeSnapshot(snapshot: MsbSnapshot, listed: readonly MsbSnapshot[], signal?: AbortSignal): Promise<void> {

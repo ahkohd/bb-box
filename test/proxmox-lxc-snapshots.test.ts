@@ -75,11 +75,27 @@ test("the plan reads the root disk's storage, its use and its thin metadata, and
   const { guest } = await box(state);
   const plan = await state.backend.planSnapshots(guest, "linux", null);
   assert.deepEqual(plan.storage, { key: "proxmox:pve:local-lvm", name: "local-lvm", type: "lvmthin", percentFull: 33.3, metadataPercentFull: 9.8, metadataUnread: null, totalBytes: 900 * 2 ** 30, usedBytes: 300 * 2 ** 30 });
-  assert.deepEqual(plan.take, { ok: true, why: null, aboutMs: 1000, memoryAboutMs: null, addsBytes: 0, memory: null, memoryWhy: null });
+  assert.deepEqual(plan.take, { ok: true, why: null, aboutMs: 1000, memoryAboutMs: null, addsBytes: 0, pause: { pauses: true, aboutMs: null, basis: null }, memory: null, memoryWhy: null });
   assert.equal(plan.locked, null);
   assert.equal(plan.restore.way, "rollback");
   assert.equal(plan.restore.undo, "snapshot");
   assert.equal(plan.fork.ok, true);
+});
+
+test("a take of a running container says Proxmox freezes it, for a time it cannot say or measure; a stopped container does not pause", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+
+  const plan = await state.backend.planSnapshots(guest, "linux", null);
+  const running = await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, tasks().hooks);
+  await state.backend.stop(guest);
+  const stoppedPlan = await state.backend.planSnapshots(guest, "linux", null);
+  const stopped = await state.backend.snapshot(guest, { id: "snbbbbbbbbbbbb", box: id.boxId, memory: false }, tasks().hooks);
+
+  assert.deepEqual(plan.take.pause, { pauses: true, aboutMs: null, basis: null });
+  assert.equal(running.pausedMs, null);
+  assert.deepEqual(stoppedPlan.take.pause, { pauses: false });
+  assert.equal(stopped.pausedMs, 0);
 });
 
 test("the plan refuses a take on storage that takes none, on a locked guest with the host's command, and without VM.Snapshot", async () => {

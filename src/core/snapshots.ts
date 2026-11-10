@@ -12,6 +12,7 @@ import {
   type Guest,
   type HeldCopyLabel,
   type HeldSnapshot,
+  type Holds,
   type KeepsPastRelease,
   type OutsideRollback,
   type Price,
@@ -21,6 +22,7 @@ import {
   type SnapshotPlan,
   type Snapshotting,
   type SnapshotStorage,
+  type TakePause,
   type GpuHandoff,
   type GpuPart,
   type Started,
@@ -67,6 +69,7 @@ import {
   noteProblem,
   NOT_THE_AGENTS,
   operationWords,
+  pausedWords,
   priceWords,
   restoreRoute,
   roomCandidates,
@@ -597,7 +600,9 @@ function takeSpends(plan: SnapshotPlan, memory: boolean): TakeSpend[] {
 }
 
 export interface TakeCheck {
+  readonly holds: Holds;
   readonly aboutMs: number;
+  readonly pause: TakePause;
   readonly addsBytes: number | null;
   readonly storage: string;
   readonly host: string | null;
@@ -1036,7 +1041,9 @@ export class Snapshots {
     const admission = this.#admit(caller, standing, context, takeSpends(context.plan, memory), this.#now());
     if ("refused" in admission) throw admission.refused;
     return {
+      holds: memory ? "disk-and-memory" : "disk",
       aboutMs: memory ? (plan.take.memoryAboutMs ?? plan.take.aboutMs) : plan.take.aboutMs,
+      pause: memory && plan.take.memory ? plan.take.memory.pause : plan.take.pause,
       addsBytes: memory && plan.take.memory ? plan.take.memory.addsBytes : plan.take.addsBytes,
       storage: memory && plan.take.memory ? plan.take.memory.storage.name : plan.storage.name,
       host: context.box.guest.host,
@@ -1989,13 +1996,14 @@ export class Snapshots {
       const now = this.#now();
       const evicting = consentOf(operation).evicts !== null;
       const ready = ledger.transaction(() => {
-        const updated = ledger.updateRecord(record.id, { state: "ready", ref: taken.ref, holds: taken.holds, capturedAt: taken.capturedAt, size: taken.size, tookMs: now - began, stateAt: now, error: null, dependsOn: taken.dependsOn ?? [] });
+        const updated = ledger.updateRecord(record.id, { state: "ready", ref: taken.ref, holds: taken.holds, capturedAt: taken.capturedAt, size: taken.size, tookMs: now - began, pausedMs: taken.pausedMs, stateAt: now, error: null, dependsOn: taken.dependsOn ?? [] });
         const done = ledger.updateOperation(operation.id, evicting ? { step: "evicting", error: null } : { state: "done", step: "done", endedAt: now, error: null });
         return { updated, done };
       });
       const snapshot = ready.updated ?? record;
       const stopped = taken.notResumed ? await this.#leftSuspended(box, taken.notResumed) : null;
-      this.#event(snapshot, "snapshot-taken", record.by, `"${snapshot.name}" (${snapshot.id}): ${holdsWords(snapshot)}, in ${seconds(now - began)}.${stopped ? ` ${stopped}` : ""}`);
+      const paused = pausedWords(snapshot, box.name);
+      this.#event(snapshot, "snapshot-taken", record.by, `"${snapshot.name}" (${snapshot.id}): ${holdsWords(snapshot)}, in ${seconds(now - began)}.${paused ? ` ${paused}` : ""}${stopped ? ` ${stopped}` : ""}`);
       this.#notify(box.threadId);
       return { snapshot, operation: ready.done ?? operation, counted, repeated: false, notResumed: stopped };
     } finally {
@@ -3004,7 +3012,7 @@ export class Snapshots {
           throw this.#restoreUnsure(context, box, "undo-task", words);
         }
         const now = this.#now();
-        undo = ledger.updateRecord(undo.id, { state: "ready", ref: taken.ref, holds: taken.holds, capturedAt: taken.capturedAt, size: taken.size, tookMs: now - takenAt, stateAt: now, error: null, dependsOn: taken.dependsOn ?? [] }) ?? undo;
+        undo = ledger.updateRecord(undo.id, { state: "ready", ref: taken.ref, holds: taken.holds, capturedAt: taken.capturedAt, size: taken.size, tookMs: now - takenAt, pausedMs: taken.pausedMs, stateAt: now, error: null, dependsOn: taken.dependsOn ?? [] }) ?? undo;
         at("undo-ready");
         this.#event(undo, "snapshot-taken", undo.by, `"${undo.name}" (${undo.id}): ${holdsWords(undo)}, the undo of the restore to ${quoted(target)}, in ${seconds(now - takenAt)}.`);
         await this.#deps.hold?.(operation, "undo", signal);
@@ -3994,7 +4002,7 @@ export class Snapshots {
       scope: "box",
       holds: held.holds,
       excludes: null,
-      size: null,
+      size: held.size ?? null,
       price: this.#priceOfFound(backend, live ? box.kind : (owner?.kind ?? null)),
       owner: dated || (live ? box.threadId === OPERATOR : owner?.threadId === OPERATOR) ? "person" : "thread",
       keptUntil: dated ? held.keptUntil : null,

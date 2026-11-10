@@ -30,14 +30,14 @@ const OTHER = "snbbbbbbbbbbbb";
 const releasing: ReleaseHooks = { resetting: async () => {}, timing: () => {} };
 const signal = () => AbortSignal.timeout(30_000);
 
-function setup(values: Record<string, unknown> = {}) {
+function setup(values: Record<string, unknown> = {}, now?: () => number) {
   const ssh = fakeSsh();
   const mac = ssh.home(MAC);
   fakeMacTools(mac);
   addImage(mac);
   if (values["tart-linux-image"]) addImage(mac, "bb-box-linux", "linux");
   const make = (install = "test") => {
-    const backend = new TartBackend(tartConfig(values), testContext(new MemoryStorage(), install), FAKES);
+    const backend = new TartBackend(tartConfig(values), testContext(new MemoryStorage(), install), { ...FAKES, ...(now ? { now } : {}) });
     made.push(backend);
     return backend;
   };
@@ -119,6 +119,25 @@ test("a take of a running macOS box suspends it, copies its folder with its save
   assert.ok(!existsSync(join(snaps, `${SNAP}.part`)));
   await backend.release(guest, releasing);
   assert.ok(existsSync(join(snaps, SNAP)), "a snapshot lives beside its VM, not in it, so the VM's release leaves it");
+});
+
+test("a Tart take of a running macOS box says it pauses the box while it suspends and saves its memory, and measures the pause from suspend to resume; a stopped box does not pause", async () => {
+  let clock = 1_000_000;
+  const { backend } = setup({}, () => (clock += 9_000));
+  const box = identity();
+  const guest = await backend.acquire(box, null, acquiring, signal());
+
+  const plan = await backend.planSnapshots(guest, "macos-desktop", null, signal());
+  const running = await backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true }, recorder().hooks, signal());
+  await backend.stop(guest);
+  const stoppedPlan = await backend.planSnapshots(guest, "macos-desktop", null, signal());
+  const stopped = await backend.snapshot(guest, { id: "sntartsnaptwob", box: box.boxId, memory: true }, recorder().hooks, signal());
+
+  assert.deepEqual(plan.take.memory?.pause, { pauses: true, aboutMs: plan.take.memoryAboutMs, basis: { bytes: SMALL.memoryMiB * 2 ** 20, of: "memory" } });
+  assert.equal(running.pausedMs, 9_000);
+  assert.deepEqual(stoppedPlan.take.memory?.pause, { pauses: false });
+  assert.equal(stopped.pausedMs, 0);
+  await backend.release(guest, releasing);
 });
 
 test("a take whose suspend fails copies nothing, says so, and leaves the box running", async () => {

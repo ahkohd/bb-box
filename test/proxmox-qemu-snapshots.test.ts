@@ -107,6 +107,21 @@ test("the plan reads the VM's boot disk's storage and scales a memory snapshot's
   assert.equal(windows.keep.way, "no");
 });
 
+test("a VM's disk take does not pause it; one with memory pauses it for a time Proxmox cannot say or measure, while it saves the VM's memory", async () => {
+  const state = world();
+  const { guest, box } = await linuxBox(state);
+  const memoryMiB = Number(state.proxmox.guests.get(Number(guest.ref))!.config.memory);
+
+  const plan = await state.backend.planSnapshots(guest, "linux", null);
+  const withMemory = await state.backend.snapshot(guest, { id: SNAPSHOT, box, memory: true }, tasks().hooks);
+  const diskOnly = await state.backend.snapshot(guest, { id: "snbbbbbbbbbbbb", box, memory: false }, tasks().hooks);
+
+  assert.deepEqual(plan.take.pause, { pauses: false });
+  assert.deepEqual(plan.take.memory?.pause, { pauses: true, aboutMs: null, basis: { bytes: memoryMiB * 2 ** 20, of: "memory" } });
+  assert.equal(withMemory.pausedMs, null);
+  assert.equal(diskOnly.pausedMs, 0);
+});
+
 test("a take with memory asks Proxmox for the VM's state and holds disk and memory; one without holds the disk; both delete", async () => {
   const state = world();
   const { guest, vmid, box } = await linuxBox(state);

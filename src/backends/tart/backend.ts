@@ -363,6 +363,7 @@ export interface TartBackendOptions {
   readonly fillQuietMs?: number;
   readonly iosHostDoctorMs?: number;
   readonly vmStoppedPollMs?: number;
+  readonly now?: () => number;
 }
 
 interface SshKeys {
@@ -2170,8 +2171,11 @@ export class TartBackend implements Backend {
     if (before.sameVolume === false) throw new SnapshotFailed(`The snapshots folder on ${host.name} is on another volume than the VMs, so a copy there would be a full copy. Move it to the VMs' volume. ${PRODUCT} suspended nothing.`);
     await hooks.submitting();
     await hooks.task({ ref: taskRef({ kind: "take", id: take.id }), host: host.name });
+    const now = this.#options.now ?? Date.now;
+    let suspendedAt: number | null = null;
     if (suspends) {
       await this.#forget(host, guest.ref, os);
+      suspendedAt = now();
       try {
         await this.#run(host, stopScript(guest.ref, this.#context.installId, this.#boxOf(guest), "suspend"), { timeoutMs: 240_000, signal });
       } catch (error) {
@@ -2188,11 +2192,12 @@ export class TartBackend implements Backend {
     } finally {
       if (suspends) notResumed = await this.#resumeAfterTake(guest, signal);
     }
+    const pausedMs = suspendedAt !== null ? now() - suspendedAt : 0;
     if (result.exitCode !== 0) throw new SnapshotFailed(this.#said(result), notResumed);
     const taken = parseTaken(result.stdout);
     if (taken === "gone") throw new SnapshotFailed(`The VM ${guest.ref} on ${host.name} is not box ${take.box}'s any more.`, notResumed);
     if (!taken) throw new Error(`${host.name} copied ${guest.ref}, but ${PRODUCT} could not read what it said: ${result.stdout.trim().slice(0, 300)}`);
-    return { ref: take.id, holds: taken.label.holds, capturedAt, size: taken.kib !== null ? { bytes: taken.kib * 1024, means: "whole" } : null, notResumed };
+    return { ref: take.id, holds: taken.label.holds, capturedAt, size: taken.kib !== null ? { bytes: taken.kib * 1024, means: "whole" } : null, pausedMs, notResumed };
   }
 
   #copyFloorGiB(): number {

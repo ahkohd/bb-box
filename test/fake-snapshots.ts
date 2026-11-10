@@ -20,7 +20,9 @@ import {
   type SnapshotHooks,
   type SnapshotPlan,
   type SnapshotRef,
+  type SnapshotSize,
   type SnapshotStorage,
+  type TakePause,
   type Snapshotting,
   type TaskKind,
   type TaskOutcome,
@@ -37,6 +39,7 @@ export interface Held {
   takenAt: number;
   keptUntil: number | null;
   forkSafe?: number | null;
+  size?: SnapshotSize | null;
 }
 
 export type Outcome = "ok" | "failed" | "incomplete" | "unknown" | "ok-task-failed";
@@ -81,6 +84,11 @@ export class FakeSnapshots {
   readonly runs = new Map<string, number>();
   memoryOnly = false;
   notResumed: string | null = null;
+  pause: TakePause = { pauses: false };
+  memoryPause: TakePause = { pauses: true, aboutMs: 4000, basis: { bytes: 4 * GiB, of: "memory" } };
+  pausedMs: number | null = 0;
+  takenSize: SnapshotSize | null = null;
+  listsSizes = false;
   bill: SnapshotBill | Error | null = null;
   billReads = 0;
   billFrozen = false;
@@ -190,7 +198,8 @@ export class FakeSnapshots {
         aboutMs: 1000,
         memoryAboutMs: 5000,
         addsBytes: 0,
-        memory: this.memoryWhy ? null : { storage: this.memoryStorage ?? this.storage(), addsBytes: (4096 * 2 + 500) * MiB },
+        pause: this.pause,
+        memory: this.memoryWhy ? null : { storage: this.memoryStorage ?? this.storage(), addsBytes: (4096 * 2 + 500) * MiB, pause: this.memoryPause },
         memoryWhy: this.memoryWhy,
       },
       restore: {
@@ -219,7 +228,7 @@ export class FakeSnapshots {
         if (submit === "never-arrived") throw new Error("cannot reach the provider: connection reset before the request arrived");
         const outcome = this.take;
         this.take = "ok";
-        const held: Held = { id: take.id, box: take.box, guest, state: outcome === "incomplete" ? "incomplete" : "complete", holds: take.memory ? "disk-and-memory" : "disk", takenAt: now(), keptUntil: null, forkSafe: take.forkSafe ?? null };
+        const held: Held = { id: take.id, box: take.box, guest, state: outcome === "incomplete" ? "incomplete" : "complete", holds: take.memory ? "disk-and-memory" : "disk", takenAt: now(), keptUntil: null, forkSafe: take.forkSafe ?? null, size: this.takenSize };
         if (outcome !== "failed") this.held.set(take.id, held);
         this.order.push(`take ${take.id}`);
         const home = homeOf(guest.ref);
@@ -238,7 +247,7 @@ export class FakeSnapshots {
         if (outcome === "incomplete") throw new SnapshotIncomplete("Proxmox left it part-made (snapstate prepare): received interrupt.");
         if (outcome === "ok-task-failed") throw new SnapshotIncomplete("Proxmox's task failed (vmstate save failed), though it left the snapshot with no part-made state, so BB Box does not count it as taken.");
         if (outcome === "unknown") throw new Error("cannot reach the provider: timed out");
-        return { ref: `bb${take.id}`, holds: held.holds, capturedAt: held.takenAt, size: null, notResumed: this.notResumed };
+        return { ref: `bb${take.id}`, holds: held.holds, capturedAt: held.takenAt, size: this.takenSize, pausedMs: this.pausedMs, notResumed: this.notResumed };
       } finally {
         this.running--;
       }
@@ -445,6 +454,7 @@ export class FakeSnapshots {
         keptUntil: held.keptUntil,
         storage: { name: "fast", type: "lvmthin" },
         forkSafe: held.forkSafe ?? null,
+        ...(this.listsSizes ? { size: held.size ?? null } : {}),
       }));
       const copied = [...this.copies.entries()].map(([ref, held]) => ({
         id: held.snapshot,
