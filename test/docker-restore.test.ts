@@ -260,7 +260,7 @@ test("Docker blanks in a snapshot image every label BB Box gives a box's contain
     lxcfs: null,
     privileged: true,
     network: "bbbox",
-    restart: "unless-stopped",
+    firstStart: "runs-its-services",
     fromSnapshot: "sn1",
   };
   const args = createArgs(settings);

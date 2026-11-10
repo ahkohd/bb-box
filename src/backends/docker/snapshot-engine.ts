@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { SnapshotFailed, type BackendContext, type DoctorCheck, type Guest, type HeldSnapshot, type MachineSize, type SnapshotHooks, type SnapshotPlan, type SnapshotRef, type SnapshotTake, type SnapshotTaken, type TaskOutcome, type TaskRef } from "../types.ts";
 import type { z } from "zod";
 import { DockerCli, LABELS, snapshotContainersSchema, snapshotImagesSchema, snapshotVolumesSchema, snapshotStoreSchema } from "./cli.ts";
-import { commitChanges, KILL_ABOUT_MS, layerRefusal, mountRefusal, pauseEstimate, pausedTooLong, restoreAboutMs, sizeFromLabels, sizeTakenAt, snapshotImage, snapshotLabels, snapshotVolume, SNAPSHOT_INSTALL, takePause, type ImageStore } from "./snapshots.ts";
+import { commitChanges, FORK_HOLD_MISSING, holdsForks, KILL_ABOUT_MS, layerRefusal, mountRefusal, pauseEstimate, pausedTooLong, restoreAboutMs, sizeFromLabels, sizeTakenAt, snapshotImage, snapshotLabels, snapshotVolume, SNAPSHOT_INSTALL, takePause, type ImageStore } from "./snapshots.ts";
 
 interface TakeState {
   readonly id: string;
@@ -21,6 +21,12 @@ export interface RestorableSnapshot {
   readonly volume: string | null;
   readonly volumeBytes: number;
   readonly size: MachineSize | null;
+  readonly holdsForks: boolean;
+}
+
+function forkPlan(refusal: string | null, volumeBytes: number, size: MachineSize | null): SnapshotPlan["fork"] {
+  const aboutMs = restoreAboutMs(volumeBytes);
+  return refusal ? { ok: false, why: refusal, aboutMs, bytes: null, size: null } : { ok: true, why: null, aboutMs, bytes: volumeBytes, size };
 }
 
 export class DockerSnapshotEngine {
@@ -99,7 +105,7 @@ export class DockerSnapshotEngine {
         copyAboutMs: null,
       },
       keep: { way: "no", why: later, aboutMs: null, bytes: null, price: null },
-      fork: { ok: false, why: later, aboutMs: 0, bytes: null, size: null },
+      fork: forkPlan(restoreWhy ?? (restorable && !restorable.holdsForks ? FORK_HOLD_MISSING : null), restorable?.volumeBytes ?? facts.volumeBytes, restorable?.size ?? guest.size),
       locked: null,
       busy: facts.container.State.Paused ? "The box is paused. Unpause it, or wait for its snapshot to finish, then try again." : null,
     };
@@ -119,6 +125,7 @@ export class DockerSnapshotEngine {
       volume: labels["bbbox.snapshot.volume"] || null,
       volumeBytes: Number(labels["bbbox.snapshot.volume-bytes"]) || 0,
       size: sizeTakenAt(labels),
+      holdsForks: holdsForks(labels),
     };
   }
 

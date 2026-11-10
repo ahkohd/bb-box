@@ -211,8 +211,11 @@ is `unless-stopped` from the start, as it is the box. Docker does not
 restart a container stopped by `docker kill`, so the old one stays stopped.
 
 A fork is a new container from the snapshot image, placed again, with its
-own box id in `BBBOX_IDENTITY` and restart policy `no` until the core's
-checks pass. Then the policy becomes `unless-stopped`.
+own box id in `BBBOX_IDENTITY`, restart policy `no` and a hold,
+`BBBOX_FORK_HOLD=1`. Its first start runs the identity reset and nothing
+else, then waits until BB Box releases it. Once the core's checks pass, the
+policy becomes `unless-stopped` and BB Box releases the hold. Item 4's
+results below say why and how.
 
 Keep adds the date tag and removes any other keep tag for that snapshot.
 The tag is written before BB Box's own record. Stopping keeping removes
@@ -339,5 +342,53 @@ freeze, and whether cancelling a commit client stops the engine's commit.
 
 ## Item 2 results
 
-The take, list and delete implementation is measured in [082 results](082-results.md).
-Restore, fork and Keep remain later units.
+The take, list and delete implementation is measured in [082 results](082-results.md),
+with the restore and the fork after it. Keep remains a later unit.
+
+## Item 4: a fork holds every service until its check passes
+
+A restart policy of `no` stops Docker from starting a fork again by itself.
+It does not stop what the fork's first start runs. A fork's start script
+started Docker inside it at once when it found containers, and that Docker
+started the containers copied from the source with their own restart
+policies. With a reset that said it had worked but had not, a copied
+container running an SSH server served the source's SSH host key from the
+fork's address, before BB Box's check had refused the fork. Anything the
+image starts, and anything a copied container runs, could do the same.
+
+So a fork's first start holds every service until BB Box has checked it:
+
+- BB Box makes the fork with `BBBOX_FORK_HOLD=1` beside its own box ID in
+  `BBBOX_IDENTITY`. A new box, a restore and an image box are made without
+  it, and start as before.
+- The image's start script runs the identity reset, then
+  `/usr/local/libexec/bb-box/fork-hold`. In a fork that has not been
+  released, the hold writes `/run/bb-box/held` and starts nothing until
+  `/var/lib/bb-box/fork-released` holds the fork's own box ID. Only then does
+  the start script go on to Docker, the desktop and the ready file. Docker,
+  the desktop and every copied container wait with it. A Docker box's start
+  script never starts BB's daemon, SSH or Tailscale itself: those run only
+  as BB Box's bootstrap or a copied container starts them, after the hold.
+- BB Box starts the fork, waits for `held`, and runs the core's check while
+  the fork is held. When the check passes, it sets the restart policy to
+  `unless-stopped`, writes the release as root with `docker exec`, and waits
+  for the ready file before it hands the fork over.
+- A fork that fails the check is disarmed and removed without a release. A
+  fork BB Box stops before its check stays held, at each start, until the
+  sweep removes it: the hold is in its container settings and the release
+  is on its disk, and only BB Box writes the release.
+- The release names the box, so a fork of a fork is held again, though its
+  copy carries the first fork's release. A snapshot's image blanks
+  `BBBOX_FORK_HOLD`, as it blanks every value BB Box gives a box, so a
+  restore of a fork's snapshot is not held.
+- The images say they hold forks with the label `bbbox.fork-hold="1"`,
+  which a snapshot's image keeps from its box's. A snapshot of a box made
+  from an image built before the hold has no such label, and does not fork:
+  the fork plan says why, and nothing is copied. This change rebuilds the
+  Docker images. Existing boxes and their snapshots keep their old start
+  script, so make the box again from the rebuilt image to fork it.
+
+The hold is in the image, not in the core: the core already starts a fork
+for its check through the backend's `startForForkCheck`, and arms it for its
+boots with `armFork("boot")` after the check. Measured in
+[082 results](082-results.md#a-fork-held-until-its-check).

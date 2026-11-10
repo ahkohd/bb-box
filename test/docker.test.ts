@@ -309,7 +309,7 @@ test("acquires a box as a container labelled from its first write, claimed befor
   assert.deepEqual(Object.keys(seen.timings), ["place", "network", "create", "start", "ready"]);
 
   const container = fake.inspect(name);
-  const imageLabels = new Set(["bbbox.image-version", "bbbox.image-record"]);
+  const imageLabels = new Set(["bbbox.image-version", "bbbox.fork-hold", "bbbox.image-record"]);
   const setByBbBox = Object.fromEntries(Object.entries(container.Config.Labels).filter(([key]) => !imageLabels.has(key)));
   assert.deepEqual(setByBbBox, {
     "bbbox.backend": "docker",
@@ -489,12 +489,14 @@ test("names a box's Docker volume from its container, including one restored und
   const withGpu = createArgs(containerSettings(box, {
     placement: { gpu: GPU_A, card: "0b1c2d3e-0000-0000-0000-000000000001", part: "shared", cpus: [0, 1] },
   }));
+  const heldFork = createArgs(containerSettings(box, { firstStart: "holds-them-for-the-fork-check" }));
   const keys = new Set<string>();
-  for (const args of [plain, withGpu]) {
+  for (const args of [plain, withGpu, heldFork]) {
     for (let i = 0; i < args.length; i++) if (args[i] === "--env") keys.add(args[i + 1]!.slice(0, args[i + 1]!.indexOf("=")));
   }
   const expected = [
     "BBBOX_IDENTITY",
+    "BBBOX_FORK_HOLD",
     "BBBOX_DOCKERD",
     "NVIDIA_DRIVER_CAPABILITIES",
     "CUDA_VISIBLE_DEVICES",
@@ -525,7 +527,7 @@ function containerSettings(box: ReturnType<typeof identity>, over: Partial<BoxCo
     lxcfs: null,
     privileged: true,
     network: "bbbox",
-    restart: "unless-stopped",
+    firstStart: "runs-its-services",
     fromSnapshot: null,
     ...over,
   };

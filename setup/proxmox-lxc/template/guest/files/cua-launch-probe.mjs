@@ -51,6 +51,7 @@ const call = async (name, args) => {
   return reply.result.structuredContent ?? {};
 };
 const windows = async () => (await call("list_windows", {})).windows ?? [];
+const isSignallablePid = (pid) => Number.isSafeInteger(pid) && pid > 0;
 
 // What to close at the end: the process launch_app started, and the window's
 // own, which differ when a URL opens through xdg-open.
@@ -113,7 +114,7 @@ try {
   console.error(String(error.message ?? error));
   process.exitCode = 1;
 } finally {
-  for (const pid of opened) {
+  for (const pid of [...opened].filter(isSignallablePid)) {
     try {
       process.kill(pid);
     } catch {
