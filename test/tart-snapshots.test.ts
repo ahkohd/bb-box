@@ -11,7 +11,7 @@ import { IDENTITY_TOOL, forkCheckScript, forkSafetyScript, forkVerdict, parseFor
 import { BY_COMMAND } from "../src/core/box-log.ts";
 import { quote } from "../src/transports/process.ts";
 import { COMMAND, THREAD, identityGuest, standing, world } from "./snapshot-world.ts";
-import { FAKE_MAC, addImage, fakeMacTools, tartConfig } from "./fake-mac.ts";
+import { FAKE_MAC, addImage, fakeMacTools, imageRecord, tartConfig } from "./fake-mac.ts";
 import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, tempDir, testContext } from "./helpers.ts";
 
 const MAC = FAKE_MAC;
@@ -96,6 +96,97 @@ test("a macOS box's snapshots hold its disk and memory, suspend it, restore in p
   assert.equal(backend.identitySource("macos"), "device");
   assert.equal(backend.identitySource("linux-arm64"), "device");
   assert.equal(backend.identitySource("linux-arm64-desktop-cpu"), "device");
+});
+
+const IOS_DEVICE = {
+  model: "iPhone 18 Pro",
+  native: "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro",
+  runtime: { platform: "ios", os: "27.0", build: "24A434", xcode: "27.0", companion: "1.7.7" },
+  slim: { list: "ios-27.0-24A434", labels: 112, sha256: "a".repeat(64) },
+};
+
+async function iosSetup() {
+  const made = setup({ "tart-ios-image": "bb-box-ios" });
+  addImage(made.mac, "bb-box-ios");
+  writeFileSync(join(made.mac, ".bb-box", "tart", "images", "bb-box-ios.json"), `${imageRecord("ios", { build: "build.20261003-040000-1111", base: "build.20261003-021500", devices: [IOS_DEVICE], tools: { idb_companion: "1.7.7" } })}\n`);
+  const backend = made.make();
+  await backend.withheldKinds("ios", signal());
+  return { ...made, backend };
+}
+
+test("a dedicated iOS box's snapshots are a macOS VM's: its disk and memory, suspending it, restored in place, forked and kept as they are", async () => {
+  const { backend } = await iosSetup();
+
+  const offer = backend.snapshotting("ios");
+
+  assert.deepEqual(offer, backend.snapshotting("macos"));
+  assert.deepEqual([offer?.holds, offer?.whileRunning, offer?.restore, offer?.fork, offer?.keepsPastRelease, offer?.forkSafeFrom], [["disk-and-memory"], "suspends", "in-place", "copy", "as-is", MACOS_FORK_SAFE_FROM]);
+  assert.equal(backend.identitySource("ios"), "device", "so its VM gets macOS's identity reset when it is made");
+});
+
+test("no iOS snapshots while the Tart backend offers no ios boxes", () => {
+  const { backend } = setup();
+
+  assert.equal(backend.snapshotting("ios"), null);
+});
+
+test("a take of a dedicated iOS box suspends its VM, copies it with its memory, labels it an ios snapshot, and a restore puts it back with a suspended undo", async () => {
+  const { backend, snaps, vms } = await iosSetup();
+  const box = identity("ios");
+  const guest = await backend.acquire(box, null, acquiring, signal());
+  writeFileSync(join(vms, guest.ref, "marker.txt"), "app data before");
+
+  const before = await backend.planSnapshots(guest, "ios", null, signal());
+  const taken = await backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true, forkSafe: 3 }, recorder().hooks, signal());
+
+  assert.deepEqual([before.take.ok, before.take.memory?.pause.pauses], [true, true]);
+  assert.equal(taken.holds, "disk-and-memory");
+  assert.equal(label(snaps, SNAP).kind, "ios");
+  assert.ok(existsSync(join(snaps, SNAP, "vm", "state.vzvmsave")));
+  assert.equal(await backend.power(guest), "running");
+
+  writeFileSync(join(vms, guest.ref, "marker.txt"), "app data after");
+  const plan = await backend.planSnapshots(guest, "ios", { id: SNAP, ref: SNAP, guest }, signal());
+  assert.deepEqual([plan.restore.way, plan.restore.undo, plan.keep.way, plan.fork.ok], ["rollback", "suspend-copy", "as-is", true]);
+
+  await backend.powerOff(guest, signal());
+  await backend.rollbackSnapshot(guest, { id: SNAP, ref: SNAP, guest }, recorder().hooks, signal());
+
+  assert.equal(readFileSync(join(vms, guest.ref, "marker.txt"), "utf8"), "app data before");
+  assert.ok(existsSync(join(vms, guest.ref, "state.vzvmsave")), "it resumes with the snapshot's memory");
+  await backend.start(guest, signal());
+  assert.equal(await backend.power(guest), "running");
+  await backend.release(guest, releasing);
+});
+
+test("a macOS box's snapshot is still labelled macos beside an iOS box's", async () => {
+  const { backend, snaps } = await iosSetup();
+  const box = identity("macos-desktop");
+  const guest = await backend.acquire(box, null, acquiring, signal());
+
+  await backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true }, recorder().hooks, signal());
+
+  assert.equal(label(snaps, SNAP).kind, "macos");
+  await backend.release(guest, releasing);
+});
+
+test("a dedicated iOS box's snapshot forks into a VM of its own, from its disk without its memory", async () => {
+  const { backend, vms } = await iosSetup();
+  const box = identity("ios");
+  const guest = await backend.acquire(box, null, acquiring, signal());
+  await backend.snapshot(guest, { id: SNAP, box: box.boxId, memory: true, forkSafe: 3 }, recorder().hooks, signal());
+  await backend.stop(guest);
+
+  const fork = identity("ios");
+  const made = await backend.forkSnapshot({ id: SNAP, ref: SNAP, guest }, fork, null, acquiring, signal());
+
+  assert.equal(made.ref, `bb-box-${fork.boxId}`);
+  assert.ok(!existsSync(join(vms, made.ref, "state.vzvmsave")), "a fork starts from the disk, never the saved memory");
+  const source = JSON.parse(readFileSync(join(vms, guest.ref, "config.json"), "utf8")) as { macAddress: string };
+  const copy = JSON.parse(readFileSync(join(vms, made.ref, "config.json"), "utf8")) as { macAddress: string };
+  assert.notEqual(copy.macAddress, source.macAddress);
+  await backend.release(made, releasing);
+  await backend.release(guest, releasing);
 });
 
 test("a take of a running macOS box suspends it, copies its folder with its saved memory beside the VMs, labels the copy, and resumes the box", async () => {

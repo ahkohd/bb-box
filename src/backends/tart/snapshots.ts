@@ -1,6 +1,7 @@
 import { quote } from "../../transports/process.ts";
 import { PRODUCT } from "../../brand.ts";
 import { NO_PAUSE, type BoxOwner, type Guest, type HeldSnapshot, type HeldSnapshotState, type Holds, type MachineSize, type SnapshotPlan, type SnapshotStorage, type Snapshotting, type TakePause, type TaskOutcome } from "../types.ts";
+import { IOS_IMAGE_KIND } from "./config.ts";
 import { named, parseConfig, parseFields, script, sections, type VmConfig } from "./host.ts";
 
 export const SNAPSHOTS_FOLDER = "bb-box-snapshots";
@@ -250,7 +251,7 @@ export function takeScript(input: TakeScriptInput): string {
     diskGB: null,
   })
     .split("\n")
-    .filter((line) => line && !line.startsWith("holds=") && !line.startsWith("os="))
+    .filter((line) => line && !line.startsWith("holds=") && !line.startsWith("os=") && !line.startsWith("kind="))
     .join("\n");
   return withSnapshots(String.raw`vm=${quote(input.vm)}; id=${quote(input.snapshot)}
 mine "$vm" ${quote(input.install)} ${quote(input.box)} || { echo gone; exit 0; }
@@ -267,9 +268,10 @@ room_for_copy "$snaps" ${input.minFreeGiB} || exit 7
 rm -rf "$sd.part" && mkdir -p "$sd.part" || exit 1
 os=$(os_of "$vm"); [ -n "$os" ] || os=darwin
 holds=disk; [ ! -f "$tart_vms/$vm/state.vzvmsave" ] || holds=disk-and-memory
+kind=${quote(input.kind)}; [ "$(sed -n 's/^kind=//p' "$d/owners/$vm" | head -n 1)" != ${IOS_IMAGE_KIND} ] || kind=${IOS_IMAGE_KIND}
 saved=$d/run/$vm.saved-under
 under() { _u=$(sed -n "s/^$1=//p" "$saved" 2>/dev/null | head -n 1); printf '%s' "${"$"}{_u:-unknown}"; }
-{ printf '%s\n' ${quote(head)}; echo "holds=$holds"; echo "os=$os"; if [ "$holds" = disk-and-memory ]; then echo "macos=$(under macos)"; echo "tart=$(under tart)"; fi; g=$(disk_gb "$tart_vms/$vm"); [ -z "$g" ] || echo "diskgb=$g"; } > "$sd.part/label" || exit 1
+{ printf '%s\n' ${quote(head)}; echo "holds=$holds"; echo "os=$os"; echo "kind=$kind"; if [ "$holds" = disk-and-memory ]; then echo "macos=$(under macos)"; echo "tart=$(under tart)"; fi; g=$(disk_gb "$tart_vms/$vm"); [ -z "$g" ] || echo "diskgb=$g"; } > "$sd.part/label" || exit 1
 this_shell > "$sd.part/pid"
 copy_vm_files "$tart_vms/$vm" "$sd.part/vm" "" || { rm -rf "$sd.part"; echo "The copy of $vm failed." >&2; exit 1; }
 rm -f "$sd.part/pid"

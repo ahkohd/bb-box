@@ -2149,7 +2149,7 @@ export class TartBackend implements Backend {
 
 
   #snapshotOs(kind: string): "macos" | "linux" | null {
-    if (kind === IOS_IMAGE_KIND || !this.kinds().some((offer) => offer.id === kind)) return null;
+    if (!this.kinds().some((offer) => offer.id === kind)) return null;
     const os = guestOsOf(kind);
     return os === "windows" ? null : os;
   }
