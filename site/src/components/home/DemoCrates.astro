@@ -1,0 +1,193 @@
+<div class="crates" data-motion aria-hidden="true" hidden></div>
+
+<script>
+  import type { Burning, Landing } from "../../effects/crates.ts";
+  import { onMotionChange, pausedByPerson, reducedMotion } from "../../motion.ts";
+
+  const layer = document.querySelector<HTMLElement>(".crates");
+  const shelf = document.querySelector(".demo .frame-top");
+  const floor = document.querySelector(".foot-inner");
+  const strip = document.querySelector<HTMLElement>(".dither-strip");
+  const dotPitchPx = 6;
+
+  const heatTheFire = (burning: Burning) => document.dispatchEvent(new CustomEvent<Burning>("crate-burning", { detail: burning }));
+
+  const ripple = ({ pageX, speed }: Landing) => {
+    if (!strip) return;
+    const box = strip.getBoundingClientRect();
+    const width = Math.min(360, Math.max(120, speed * 26));
+    const left = pageX - (box.left + scrollX) - width / 2;
+    const ring = document.createElement("span");
+    ring.className = "strip-ripple";
+    ring.style.left = `${left}px`;
+    ring.style.width = `${width}px`;
+    ring.style.backgroundPositionX = `${-(((left % dotPitchPx) + dotPitchPx) % dotPitchPx)}px`;
+    ring.addEventListener("animationend", () => ring.remove());
+    strip.append(ring);
+  };
+  const roomToBash = matchMedia("(hover: hover) and (pointer: fine) and (min-width: 48rem)");
+  const motionAllowed = () => roomToBash.matches && !reducedMotion() && !pausedByPerson();
+
+  if (layer && shelf && floor) {
+    document.body.append(layer);
+    let started = false;
+
+    const start = async () => {
+      if (started || !motionAllowed()) return;
+      started = true;
+      await document.fonts.ready;
+      const { stackCrates } = await import("../../effects/crates.ts");
+      layer.hidden = false;
+      const crates = stackCrates(layer, shelf, floor, motionAllowed(), ripple, heatTheFire);
+      crates.setActive(motionAllowed());
+      const follow = () => crates.setActive(motionAllowed());
+      onMotionChange(follow);
+      roomToBash.addEventListener("change", follow);
+    };
+
+    new IntersectionObserver(
+      (entries, observer) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        void start();
+      },
+      { rootMargin: "200px" },
+    ).observe(shelf);
+    onMotionChange(() => void start());
+    roomToBash.addEventListener("change", () => void start());
+  }
+</script>
+
+<style is:global>
+  .crates {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    overflow: clip;
+    pointer-events: none;
+    z-index: 15;
+  }
+
+  @property --ripple-ring {
+    syntax: "<percentage>";
+    inherits: false;
+    initial-value: 0%;
+  }
+
+  .strip-ripple {
+    position: absolute;
+    bottom: 0;
+    height: 100%;
+    background-image: radial-gradient(var(--accent) 0.9px, transparent 1.2px);
+    background-size: 6px 6px;
+    filter: drop-shadow(0 0 3px color-mix(in oklab, var(--accent) 80%, transparent));
+    mask-image: radial-gradient(farthest-side at 50% 100%, transparent calc(var(--ripple-ring) - 14%), #000 var(--ripple-ring), transparent calc(var(--ripple-ring) + 14%));
+    animation: strip-ripple 900ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+    pointer-events: none;
+  }
+
+  @keyframes strip-ripple {
+    from {
+      --ripple-ring: 0%;
+      opacity: 1;
+    }
+    to {
+      --ripple-ring: 100%;
+      opacity: 0;
+    }
+  }
+
+  @property --burnt {
+    syntax: "<percentage>";
+    inherits: false;
+    initial-value: -20%;
+  }
+
+  .crate.crate-burning {
+    --crate-edge: var(--accent);
+    --crate-grain: color-mix(in oklab, var(--accent) 55%, transparent);
+    --crate-light: color-mix(in oklab, var(--accent) 45%, transparent);
+    color: var(--accent);
+    filter: drop-shadow(0 0 4px color-mix(in oklab, var(--accent) 75%, transparent));
+    mask-image: linear-gradient(calc(0rad - var(--tilt, 0rad)), transparent var(--burnt), #000 calc(var(--burnt) + 20%));
+    animation:
+      crate-burn var(--burn-seconds, 2.6s) linear forwards,
+      crate-flicker 180ms steps(2) infinite;
+  }
+
+  @keyframes crate-burn {
+    0%,
+    25% {
+      --burnt: -20%;
+    }
+    100% {
+      --burnt: 100%;
+    }
+  }
+
+  @keyframes crate-flicker {
+    50% {
+      opacity: 0.82;
+    }
+  }
+
+  .crates[hidden] {
+    display: none;
+  }
+
+  .crate {
+    --crate-edge: var(--frame-ink);
+    --crate-grain: color-mix(in oklab, var(--foreground) 16%, transparent);
+    --crate-light: color-mix(in oklab, var(--foreground) 10%, transparent);
+    --crate-shade: color-mix(in oklab, var(--background) 55%, black);
+    position: absolute;
+    top: 0;
+    left: 0;
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    height: 1.625rem;
+    border: 1px solid var(--crate-edge);
+    background-color: var(--background);
+    background-image: radial-gradient(var(--crate-grain) 0.6px, transparent 0.9px);
+    background-size: 3px 3px;
+    box-shadow:
+      inset 0 1px 0 var(--crate-light),
+      inset 0 -2px 0 var(--crate-shade);
+    color: var(--muted-foreground);
+    font-family: var(--sl-font-mono);
+    font-size: 0.625rem;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: 0.04em;
+    transform-origin: center;
+    will-change: transform;
+    user-select: none;
+  }
+
+  .crate-small {
+    width: 2.25rem;
+  }
+
+  .crate-medium {
+    width: 3.25rem;
+  }
+
+  .crate-large {
+    width: 4.5rem;
+  }
+
+  .crate-label {
+    padding: 0.125rem 0.25rem;
+    background-color: var(--background);
+    white-space: nowrap;
+  }
+
+  .crate-accent {
+    --crate-edge: var(--accent);
+    --crate-grain: color-mix(in oklab, var(--accent) 40%, transparent);
+    --crate-light: color-mix(in oklab, var(--accent) 30%, transparent);
+    color: var(--accent);
+  }
+</style>

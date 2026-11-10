@@ -1,0 +1,268 @@
+---
+import type { Backend } from "../../home.ts";
+import PieceIcon from "./PieceIcon.astro";
+
+interface Props {
+  backends: Backend[];
+}
+
+const { backends } = Astro.props;
+const systems = [
+  { value: "Linux", words: "Servers and desktops" },
+  { value: "macOS", words: "On a Mac with Apple silicon" },
+  { value: "Windows", words: "Windows 11 desktops" },
+] as const;
+const types = [
+  { value: "server", label: "Server", words: "Terminal", icon: "server" },
+  { value: "desktop", label: "Desktop", words: "Screen · Terminal · Computer use", icon: "monitor" },
+] as const;
+const sizes = [
+  { value: "small", label: "Small", words: "2 cores · 4 GiB" },
+  { value: "medium", label: "Medium", words: "4 cores · 8 GiB" },
+  { value: "large", label: "Large", words: "8 cores · 16 GiB" },
+] as const;
+const runsOn = (backend: Backend) => systems.filter((system) => backend.runs[system.value]).map((system) => system.value).join(" ");
+const formId = "sample-new-box";
+---
+
+<form class="piece new-box" data-new-box-form id={formId} aria-label="New box, a sample">
+  <fieldset>
+    <legend>System</legend>
+    <div class="options three">
+      {
+        systems.map((system, index) => (
+          <label class="option">
+            <input type="radio" name="system" value={system.value} checked={index === 0} />
+            <span class="option-label">{system.value}</span>
+            <span class="option-words">{system.words}</span>
+          </label>
+        ))
+      }
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Type</legend>
+    <div class="options two">
+      {
+        types.map((type, index) => (
+          <label class="option with-icon">
+            <input type="radio" name="type" value={type.value} checked={index === 0} />
+            <PieceIcon name={type.icon} />
+            <span class="option-label">{type.label}</span>
+            <span class="option-words">{type.words}</span>
+          </label>
+        ))
+      }
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Resources</legend>
+    <div class="options three">
+      {
+        sizes.map((size, index) => (
+          <label class="option">
+            <input type="radio" name="size" value={size.value} checked={index === 0} />
+            <span class="option-label">{size.label}</span>
+            <span class="option-words">{size.words}</span>
+          </label>
+        ))
+      }
+    </div>
+  </fieldset>
+  <fieldset>
+    <legend>Provider</legend>
+    <div class="options providers">
+      <label class="option">
+        <input type="radio" name="provider" value="first" checked />
+        <span class="option-label">First with room</span>
+        <span class="option-words" data-first-words>Any of the {backends.filter((backend) => backend.runs.Linux).length} below, in order</span>
+      </label>
+      {
+        backends.map((backend) => (
+          <label class="option" data-runs={runsOn(backend)} hidden={!backend.runs.Linux}>
+            <input type="radio" name="provider" value={backend.name} />
+            <span class="option-label">{backend.name}</span>
+            <span class="option-words">{backend.where}</span>
+          </label>
+        ))
+      }
+    </div>
+  </fieldset>
+  <div class="form-foot">
+    <button type="submit" class="create">Create box</button>
+  </div>
+  <p class="piece-note" aria-live="polite">Choose a system, a type, a size and where it goes.</p>
+</form>
+
+<script>
+  const sizeWords: Record<string, string> = { small: "small", medium: "medium", large: "large" };
+
+  function startForm(form: HTMLFormElement): void {
+    const note = form.querySelector<HTMLElement>(".piece-note")!;
+    const firstWords = form.querySelector<HTMLElement>("[data-first-words]")!;
+    const providerOptions = [...form.querySelectorAll<HTMLElement>(".option[data-runs]")];
+    const serverType = form.querySelector<HTMLInputElement>('input[name="type"][value="server"]')!;
+    const desktopType = form.querySelector<HTMLInputElement>('input[name="type"][value="desktop"]')!;
+    const chosen = (name: string) => form.querySelector<HTMLInputElement>(`input[name="${name}"]:checked`)!;
+
+    const fit = () => {
+      const system = chosen("system").value;
+      const windows = system === "Windows";
+      serverType.disabled = windows;
+      serverType.closest(".option")!.toggleAttribute("data-unavailable", windows);
+      serverType.closest(".option")!.querySelector(".option-words")!.textContent = windows ? "Not available" : "Terminal";
+      if (windows) desktopType.checked = true;
+      let shown = 0;
+      for (const option of providerOptions) {
+        const runs = option.dataset.runs!.split(" ").includes(system);
+        option.hidden = !runs;
+        if (runs) shown += 1;
+        else if (option.querySelector<HTMLInputElement>("input")!.checked) form.querySelector<HTMLInputElement>('input[name="provider"][value="first"]')!.checked = true;
+      }
+      firstWords.textContent = `Any of the ${shown} below, in order`;
+    };
+
+    form.addEventListener("change", fit);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const system = chosen("system").value;
+      const type = chosen("type").value === "desktop" ? `${system} desktop` : `${system} server`;
+      const provider = chosen("provider").value;
+      const where = provider === "first" ? "the first provider with room" : provider;
+      note.textContent = `In BB, this makes a ${sizeWords[chosen("size").value]} ${type} on ${where}. This sample makes nothing.`;
+    });
+    fit();
+  }
+
+  for (const form of document.querySelectorAll<HTMLFormElement>("[data-new-box-form]")) startForm(form);
+</script>
+
+<style>
+  .new-box {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  fieldset {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+
+  legend {
+    padding: 0;
+    margin-bottom: 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--foreground);
+  }
+
+  .options {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .options.three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .options.two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .providers {
+    max-height: 12.5rem;
+    overflow-y: auto;
+  }
+
+  .option {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+  }
+
+  .option[hidden] {
+    display: none;
+  }
+
+  .option.with-icon {
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 0.625rem;
+  }
+
+  .option.with-icon :global(.piece-icon) {
+    grid-row: span 2;
+    margin-top: 0.125rem;
+    color: var(--muted-foreground);
+  }
+
+  .option input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .option:hover {
+    border-color: var(--muted-foreground);
+  }
+
+  .option:has(input:checked) {
+    border-color: var(--piece-row);
+    background: var(--piece-row);
+  }
+
+  .option:has(input:focus-visible) {
+    outline: 1px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .option[data-unavailable] {
+  }
+
+  .option[data-unavailable] .option-label {
+    color: var(--muted-foreground);
+  }
+
+  .option-label {
+    overflow-wrap: anywhere;
+  }
+
+  .option-words {
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .form-foot {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .create {
+    height: 2.25rem;
+    padding: 0 1rem;
+    border: 0;
+    background: var(--foreground);
+    color: var(--background) !important;
+  }
+
+  .create:hover {
+    background: var(--accent-fill);
+    color: var(--accent-ink) !important;
+  }
+
+  .piece-note {
+    margin-top: -0.25rem;
+  }
+
+  @media (max-width: 40rem) {
+    .options.three {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+</style>

@@ -44,6 +44,13 @@ test("the reference in docs/reference is as npm run reference writes it", async 
   assert.deepEqual(stale, [], "out of date: run npm run reference");
 });
 
+test("the CLI reference sets each flag in its prose as code, so --all keeps both its dashes", async () => {
+  const cli = withoutCode((await referencePages())["cli.md"]!);
+  assert.match(cli, /every box with `--all`/);
+  const prose = cli.replace(/`[^`\n]*`/g, "");
+  assert.deepEqual([...prose.matchAll(/(?:^|[^\w-])(--[a-z][a-z-]*)/gm)].map((match) => match[1]), []);
+});
+
 test("the reference names every command, tool and parameter, field, kind and check", async () => {
   const found = await registered();
 

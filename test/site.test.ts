@@ -6,6 +6,10 @@ import { join } from "node:path";
 import { homePageHead, icons, shareImage, siteHead, type HeadTag } from "../site/src/head.ts";
 import { descriptions, entryData, fullTextPath, headingAnchors as anchorsInMarkdown, llmsFullTxt, llmsTxt, markdownCopies, markdownPath } from "../site/src/llms.ts";
 import { blankedCode, lightTwinOf, pagesByFile, readPages, repoRoot, repository, siteHref, withoutFrontmatter, type Page } from "../site/src/repo.ts";
+import { aimFor } from "../site/src/effects/aim.ts";
+import { sampleBoxName } from "../site/src/effects/sample-names.ts";
+import { cipherFrame, letterGlyphsFor, revealTimes } from "../site/src/effects/cipher-text.ts";
+import { glyphRule } from "../site/src/effects/glyph-rule.ts";
 import { installCommand, setupPrompt } from "../site/src/setup-prompt.ts";
 import { sidebar } from "../site/src/sidebar.ts";
 import { repositoryFiles } from "./repository-files.ts";
@@ -31,6 +35,67 @@ test("the site has the getting-started path and a page for every guide, backend 
     expected.filter((file) => !files.has(file)),
     [],
   );
+});
+
+test("a page made from one section of a file starts its headings at level 2, as the README's Quick start does under its own heading", () => {
+  const quickStart = pages.find((page) => page.id === "start/quick-start")!;
+  const levels = [...blankedCode(quickStart.body).matchAll(/^(#{2,6}) /gm)].map((match) => match[1]!.length);
+  assert.ok(levels.length > 0, "the quick start has headings");
+  assert.equal(Math.min(...levels), 2);
+});
+
+test("the home page's demo is the plain video: each of its videos has controls, with JavaScript and without, and nothing draws over it", () => {
+  const demo = readFileSync(join(repoRoot, "site", "src", "components", "home", "DemoVideo.astro"), "utf8");
+  assert.doesNotMatch(demo, /<canvas\b|getContext\(|webgl/i, "no canvas or WebGL over the demo");
+  const videos = [...demo.matchAll(/<video\b[^>]*>/g)].map((match) => match[0]);
+  assert.equal(videos.length, 2);
+  assert.deepEqual(videos.filter((video) => !/\scontrols\s/.test(video)), []);
+});
+
+test("a cipher heading keeps its words' length and spaces while it scrambles, and shows the words once every glyph is revealed", () => {
+  const text = "Any provider, one interface";
+  const revealAt = revealTimes(text, 1000, () => 0.5);
+  const scrambled = cipherFrame(text, 0, revealAt, letterGlyphsFor, () => 0.3);
+  assert.equal(scrambled.length, text.length);
+  assert.deepEqual(
+    scrambled.map((piece, index) => (text[index] === " " ? piece.glyph : " ")).join(""),
+    text.replace(/\S/g, " "),
+  );
+  assert.ok(scrambled.some((piece) => !piece.settled));
+  assert.ok("ijlt1!|:;".includes(scrambled[text.indexOf("i")]!.glyph), "a narrow letter scrambles to a narrow glyph, so the heading keeps its shape");
+  const resolved = cipherFrame(text, 1000, revealAt, letterGlyphsFor, Math.random);
+  assert.equal(resolved.map((piece) => piece.glyph).join(""), text);
+  assert.ok(resolved.every((piece) => piece.settled));
+});
+
+test("a section rule is a line of the ramp's characters, the same for a seed every time, with quiet and dense stretches, and different for each seed", () => {
+  const rule = glyphRule(2.4, 220);
+  assert.equal(rule.length, 220);
+  assert.match(rule, /^[ .·:\-=+*]+$/);
+  assert.equal(glyphRule(2.4, 220), rule);
+  assert.notEqual(glyphRule(3.9, 220), rule);
+  assert.match(rule, /[ .·:]{6}/, "a quiet stretch");
+  assert.match(rule, /[+*=]{4}/, "a dense stretch");
+});
+
+test("the aim reticle frames a target outside its edges with corners sized to it, so it never covers text", () => {
+  const button = { left: 100, top: 200, width: 180, height: 44 };
+  const frame = aimFor(button);
+  assert.ok(frame.left < button.left && frame.top < button.top);
+  assert.ok(frame.left + frame.width > button.left + button.width && frame.top + frame.height > button.top + button.height);
+  assert.ok(frame.corner >= 5 && frame.corner <= 12);
+  assert.ok(aimFor({ left: 0, top: 0, width: 400, height: 400 }).corner <= 12, "corners stay short on large targets");
+  assert.ok(aimFor({ left: 0, top: 0, width: 16, height: 16 }).corner >= 5, "corners stay visible on small targets");
+});
+
+test("a sample box name is an adjective and a noun that no other sample box has", () => {
+  const taken = new Set(["proud-crane", "clear-comet"]);
+  const name = sampleBoxName(taken);
+  assert.match(name, /^[a-z]+-[a-z]+$/);
+  assert.ok(!taken.has(name));
+  let calls = 0;
+  const alwaysFirst = () => (calls++ < 2 ? 0 : 0.99);
+  assert.equal(sampleBoxName(new Set(["quiet-crane"]), alwaysFirst), "deep-stone");
 });
 
 test("every page of the site is in its sidebar once a section lists it", () => {
@@ -203,12 +268,12 @@ test("every page shares the site's card as an absolute image with its size and a
   assert.deepEqual(
     linked.map((tag) => [tag.attrs.rel, tag.attrs.href, tag.attrs.sizes]),
     [
-      ["icon", `/${icons.png.path}`, "32x32"],
-      ["apple-touch-icon", `/${icons.appleTouch.path}`, "180x180"],
+      ["icon", `/${icons.png.path}`, "64x64"],
+      ["apple-touch-icon", `/${icons.appleTouch.path}`, "192x192"],
     ],
   );
-  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.png.path)), { width: 32, height: 32 });
-  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.appleTouch.path)), { width: 180, height: 180 });
+  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.png.path)), { width: icons.png.size, height: icons.png.size });
+  assert.deepEqual(pngSize(join(repoRoot, "site", "public", icons.appleTouch.path)), { width: icons.appleTouch.size, height: icons.appleTouch.size });
   assert.deepEqual(pngSize(join(repoRoot, "site", "og", "github-social.png")), { width: 1280, height: 640 });
 });
 

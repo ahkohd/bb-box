@@ -32,7 +32,7 @@
   type Theme = "light" | "dark" | "auto";
 
   const storageKey = "starlight-theme";
-  const cycle: readonly Theme[] = ["light", "dark", "auto"];
+  const cycle: readonly Theme[] = ["auto", "dark", "light"];
 
   const parseTheme = (theme: unknown): Theme => (theme === "light" || theme === "dark" ? theme : "auto");
   const loadTheme = (): Theme => parseTheme(typeof localStorage !== "undefined" && localStorage.getItem(storageKey));

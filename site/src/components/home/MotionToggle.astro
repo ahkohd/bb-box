@@ -1,0 +1,69 @@
+---
+interface Props {
+  class?: string;
+}
+
+const { class: className } = Astro.props;
+---
+
+<button type="button" class:list={["motion-toggle", className]} hidden>
+  <span class="motion-word"><span class="motion-verb">Pause</span><span class="motion-noun"> motion</span></span>
+</button>
+
+<script>
+  import { onMotionChange, pausedByPerson, reducedMotion, setPausedByPerson } from "../../motion.ts";
+
+  const somethingMoves = () => [...document.querySelectorAll<HTMLElement>("[data-motion]")].some((element) => !element.hidden);
+
+  for (const toggle of document.querySelectorAll<HTMLButtonElement>("button.motion-toggle")) {
+    const verb = toggle.querySelector(".motion-verb")!;
+    const show = () => {
+      toggle.hidden = reducedMotion() || !somethingMoves();
+      verb.textContent = pausedByPerson() ? "Play" : "Pause";
+    };
+    toggle.addEventListener("click", () => setPausedByPerson(!pausedByPerson()));
+    onMotionChange(show);
+    show();
+  }
+</script>
+
+<style>
+  .motion-toggle {
+    padding: 0.25rem 0;
+    border: 0;
+    background: transparent;
+    font-family: var(--sl-font-mono);
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--muted-foreground);
+  }
+
+  .motion-toggle[hidden] {
+    display: none;
+  }
+
+  .motion-toggle:hover {
+    color: var(--foreground);
+  }
+
+  .motion-word::before {
+    content: "[ " / "";
+    color: var(--accent);
+  }
+
+  @media (max-width: 40rem) {
+    .motion-noun {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+    }
+  }
+
+  .motion-word::after {
+    content: " ]" / "";
+    color: var(--accent);
+  }
+</style>

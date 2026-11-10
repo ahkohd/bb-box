@@ -11,8 +11,8 @@ export const shareImage = {
 };
 
 export const icons = {
-  appleTouch: { path: "apple-touch-icon.png", size: 180 },
-  png: { path: "favicon-32.png", size: 32 },
+  appleTouch: { path: "apple-touch-icon.png", size: 192 },
+  png: { path: "favicon.png", size: 64 },
 };
 
 const withBase = (base: string, path: string) => `${base.replace(/\/?$/, "/")}${path}`;

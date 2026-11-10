@@ -1,0 +1,137 @@
+---
+interface Props {
+  title: string;
+  class?: string;
+  pointing?: boolean;
+}
+
+const { title, class: className, pointing = false } = Astro.props;
+---
+
+<div class:list={["box-frame", className]} data-pointing={pointing ? "" : undefined}>
+  {pointing && <canvas class="frame-compass" aria-hidden="true"></canvas>}
+  <div class="frame-top">
+    <span class="frame-title">{title}</span>
+    <span class="frame-run"></span>
+    <span class="frame-action"><slot name="action" /></span>
+  </div>
+  <div class="frame-body"><slot /></div>
+  <div class="frame-bottom">
+    <span class="frame-run"></span>
+  </div>
+</div>
+
+<script>
+  import { pointFramesAtPointer } from "../../effects/compass.ts";
+
+  for (const frame of document.querySelectorAll<HTMLElement>(".box-frame[data-pointing]")) pointFramesAtPointer(frame);
+</script>
+
+<style>
+  .frame-compass {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  .box-frame[data-compass="on"]::before,
+  .box-frame[data-compass="on"]::after {
+    display: none;
+  }
+
+  .box-frame[data-compass="on"] .frame-top::before,
+  .box-frame[data-compass="on"] .frame-top::after,
+  .box-frame[data-compass="on"] .frame-bottom::before,
+  .box-frame[data-compass="on"] .frame-bottom::after,
+  .box-frame[data-compass="on"] .frame-run::before {
+    visibility: hidden;
+  }
+
+  .box-frame {
+    position: relative;
+    font-family: var(--sl-font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.5rem;
+    color: var(--frame-ink);
+  }
+
+  .box-frame::before,
+  .box-frame::after {
+    content: "";
+    position: absolute;
+    top: 0.75rem;
+    bottom: 0.75rem;
+    width: 1px;
+    background-color: var(--frame-ink);
+  }
+
+  .box-frame::before {
+    left: 0.3em;
+  }
+
+  .box-frame::after {
+    right: 0.3em;
+  }
+
+  .frame-top,
+  .frame-bottom {
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+
+  .frame-top::before {
+    content: "┌─" / "";
+  }
+
+  .frame-top::after {
+    content: "─┐" / "";
+  }
+
+  .frame-bottom::before {
+    content: "└" / "";
+  }
+
+  .frame-bottom::after {
+    content: "┘" / "";
+  }
+
+  .frame-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 0.6em;
+    color: var(--muted-foreground);
+  }
+
+  .frame-action:empty {
+    display: none;
+  }
+
+  .frame-action {
+    padding: 0 0.6em;
+  }
+
+  .frame-run {
+    position: relative;
+    flex: 1;
+    min-width: 1.2em;
+    height: 1.5rem;
+    overflow: hidden;
+  }
+
+  .frame-run::before {
+    position: absolute;
+    inset: 0 auto 0 0;
+    content: "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────";
+  }
+
+  .frame-body {
+    position: relative;
+    margin: 0.25rem 1.2em;
+    font-family: "Inter Variable", system-ui, sans-serif;
+    color: var(--foreground);
+  }
+</style>

@@ -1,0 +1,129 @@
+<canvas class="strip-fire" data-motion aria-hidden="true"></canvas>
+
+<script>
+  import { cssValue, deviceScale } from "../../effects/gl.ts";
+  import { animateWhileSeen } from "../../motion.ts";
+
+  const pitchPx = 6;
+  const rise = { cellsPerSecond: 1.7, tongueSpread: 0.09, tongueStretch: 0.33 };
+  const height = { across: 0.05, drift: 0.3, least: 0.3 };
+  const brightest = 1;
+  const emberAbove = 0.84;
+
+  const smooth = (value: number) => value * value * (3 - 2 * value);
+
+  function lattice(x: number, y: number): number {
+    const value = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return value - Math.floor(value);
+  }
+
+  function noise(x: number, y: number): number {
+    const left = Math.floor(x);
+    const bottom = Math.floor(y);
+    const across = smooth(x - left);
+    const up = smooth(y - bottom);
+    const lower = lattice(left, bottom) + (lattice(left + 1, bottom) - lattice(left, bottom)) * across;
+    const upper = lattice(left, bottom + 1) + (lattice(left + 1, bottom + 1) - lattice(left, bottom + 1)) * across;
+    return lower + (upper - lower) * up;
+  }
+
+  interface Blaze {
+    pageX: number;
+    halfWidth: number;
+    startsAt: number;
+    seconds: number;
+  }
+
+  const flare = { spreadPx: 26, reach: 0.9, heat: 0.55, rampSeconds: 0.4 };
+
+  function blazeAt(blazes: Blaze[], pageX: number, now: number): number {
+    let strongest = 0;
+    for (const blaze of blazes) {
+      const age = (now - blaze.startsAt) / 1000;
+      if (age < 0 || age > blaze.seconds) continue;
+      const swell = Math.min(1, age / flare.rampSeconds) * Math.min(1, (blaze.seconds - age) / flare.rampSeconds);
+      const off = Math.max(0, Math.abs(pageX - blaze.pageX) - blaze.halfWidth);
+      strongest = Math.max(strongest, swell * Math.max(0, 1 - off / flare.spreadPx));
+    }
+    return strongest;
+  }
+
+  function startFire(canvas: HTMLCanvasElement): void {
+    const pen = canvas.getContext("2d");
+    if (!pen) return;
+    let blazes: Blaze[] = [];
+    document.addEventListener("crate-burning", (event) => {
+      const { pageX, width, seconds } = (event as CustomEvent<{ pageX: number; width: number; seconds: number }>).detail;
+      const now = performance.now();
+      blazes = [...blazes.filter((blaze) => (now - blaze.startsAt) / 1000 < blaze.seconds), { pageX, halfWidth: width / 2, startsAt: now, seconds: seconds + 0.6 }];
+    });
+    let width = 0;
+    let tall = 0;
+    const ink = { flame: "", core: "" };
+
+    const restyle = () => {
+      ink.flame = cssValue(canvas, "--accent");
+      ink.core = cssValue(canvas, "--field-hot") || ink.flame;
+    };
+
+    const resize = () => {
+      const scale = deviceScale();
+      ({ width, height: tall } = canvas.getBoundingClientRect());
+      canvas.width = Math.round(width * scale);
+      canvas.height = Math.round(tall * scale);
+      pen.setTransform(scale, 0, 0, scale, 0, 0);
+    };
+
+    const draw = (seconds: number) => {
+      if (!width) resize();
+      pen.clearRect(0, 0, width, tall);
+      const columns = Math.ceil(width / pitchPx);
+      const rows = Math.floor(tall / pitchPx);
+      const now = performance.now();
+      const pageLeft = canvas.getBoundingClientRect().left + scrollX;
+      for (let column = 0; column < columns; column++) {
+        const blaze = blazes.length ? blazeAt(blazes, pageLeft + column * pitchPx + pitchPx / 2, now) : 0;
+        const reach = Math.min(1, height.least + (1 - height.least) * noise(column * height.across, seconds * height.drift + 40) + blaze * flare.reach);
+        for (let row = 0; row < rows; row++) {
+          const climbed = row / rows / reach;
+          const heat = noise(column * rise.tongueSpread * 4, row * rise.tongueStretch - seconds * rise.cellsPerSecond);
+          if (climbed >= 1) {
+            const ember = noise(column * 0.9 + 17, row * 0.6 - seconds * rise.cellsPerSecond * 1.4);
+            if (ember < emberAbove) continue;
+            pen.globalAlpha = ((ember - emberAbove) / (1 - emberAbove)) * (1 - row / rows) * 0.9;
+            pen.fillStyle = ink.flame;
+            pen.beginPath();
+            pen.arc(column * pitchPx + pitchPx / 2, tall - (row * pitchPx + pitchPx / 2), 0.7, 0, Math.PI * 2);
+            pen.fill();
+            continue;
+          }
+          const flicker = Math.min(1, Math.max(0, (heat - 0.2) / 0.8) + blaze * flare.heat);
+          const glow = Math.min(1, (flicker * (1 - climbed ** 1.5)) ** 1.1 * brightest * 1.25);
+          if (glow < 0.04) continue;
+          pen.globalAlpha = glow;
+          pen.fillStyle = glow > 0.5 ? ink.core : ink.flame;
+          const radius = 0.6 + glow * 0.6;
+          pen.beginPath();
+          pen.arc(column * pitchPx + pitchPx / 2, tall - (row * pitchPx + pitchPx / 2), radius, 0, Math.PI * 2);
+          pen.fill();
+        }
+      }
+      pen.globalAlpha = 1;
+    };
+
+    restyle();
+    animateWhileSeen(canvas, { draw, resize, restyle }, 30);
+  }
+
+  for (const canvas of document.querySelectorAll<HTMLCanvasElement>("canvas.strip-fire")) startFire(canvas);
+</script>
+
+<style>
+  .strip-fire {
+    position: absolute;
+    inset: -2rem 0 0;
+    width: 100%;
+    height: calc(100% + 2rem);
+    pointer-events: none;
+  }
+</style>

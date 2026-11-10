@@ -8,20 +8,20 @@
 | --- | --- |
 | [`bb box doctor`](#bb-box-doctor) | Check each backend's settings and host, and say how to fix what is wrong. |
 | [`bb box kinds`](#bb-box-kinds) | List the kinds of box the active backends offer. |
-| [`bb box list`](#bb-box-list) | List a thread's boxes, or every box with --all. |
+| [`bb box list`](#bb-box-list) | List a thread's boxes, or every box with `--all`. |
 | [`bb box acquire`](#bb-box-acquire) | Acquire a box for a thread and wait until it answers. |
 | [`bb box status`](#bb-box-status) | Show one box, checking its power state with the backend. |
-| [`bb box run`](#bb-box-run) | Run a shell command in a thread's box, or with --machine in one of your machines, as its user, and print its output. It exits with the command's exit code. For a long command, use box_run, which keeps it as a job. |
-| [`bb box resize`](#bb-box-resize) | Resize a thread's box: its cores, memory, disk or GPU, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows. |
+| [`bb box run`](#bb-box-run) | Run a shell command in a thread's box, or with `--machine` in one of your machines, as its user, and print its output. It exits with the command's exit code. For a long command, use box_run, which keeps it as a job. |
+| [`bb box resize`](#bb-box-resize) | Resize a thread's box: its cores, memory, disk or GPU, where its backend can, live or with `--restart`. Parts left out stay as they are, and the disk only grows. |
 | [`bb box machines`](#bb-box-machines) | List your machines: boxes you own, kept as BB machines, which no thread ending releases. |
 | [`bb box machines add`](#bb-box-machines-add) | Add a machine of your own: a box of the kind, kept as a BB machine under the name until you remove it. |
-| [`bb box machines resize`](#bb-box-machines-resize) | Resize one of your machines: its cores, memory, disk or GPU, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows. |
-| [`bb box machines remove`](#bb-box-machines-remove) | Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept. |
+| [`bb box machines resize`](#bb-box-machines-resize) | Resize one of your machines: its cores, memory, disk or GPU, where its backend can, live or with `--restart`. Parts left out stay as they are, and the disk only grows. |
+| [`bb box machines remove`](#bb-box-machines-remove) | Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless `--force`. Snapshots you kept are copied first, so they outlive it, unless `--delete-kept`. |
 | [`bb box thread`](#bb-box-thread) | Start a child thread of a thread on one of its boxes, as a BB machine, with the thread's project. |
-| [`bb box release`](#bb-box-release) | Release a box. Its disk is deleted. A box a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept. |
-| [`bb box stop`](#bb-box-stop) | Stop a thread's box, or with --machine one of your machines, keeping its disk. A box a thread is working on is refused unless --force. |
-| [`bb box start`](#bb-box-start) | Start a thread's stopped box, or with --machine one of your machines, and wait until it answers. |
-| [`bb box enrol`](#bb-box-enrol) | Add a ready box that is not a BB machine to BB again, as a thread's box, or with --machine one of your machines: BB's installer runs in it as its user. It does not restart, stop or resize the box. It stops only the BB daemon of a machine that BB no longer has. A box whose machine BB still has is left as it is, and recorded as a BB machine. Waits up to 2 minutes for the try. |
+| [`bb box release`](#bb-box-release) | Release a box. Its disk is deleted. A box a thread is working on is refused unless `--force`. Snapshots you kept are copied first, so they outlive it, unless `--delete-kept`. |
+| [`bb box stop`](#bb-box-stop) | Stop a thread's box, or with `--machine` one of your machines, keeping its disk. A box a thread is working on is refused unless `--force`. |
+| [`bb box start`](#bb-box-start) | Start a thread's stopped box, or with `--machine` one of your machines, and wait until it answers. |
+| [`bb box enrol`](#bb-box-enrol) | Add a ready box that is not a BB machine to BB again, as a thread's box, or with `--machine` one of your machines: BB's installer runs in it as its user. It does not restart, stop or resize the box. It stops only the BB daemon of a machine that BB no longer has. A box whose machine BB still has is left as it is, and recorded as a BB machine. Waits up to 2 minutes for the try. |
 | [`bb box forget`](#bb-box-forget) | Forget a box whose backend is no longer in BB Box's settings: BB Box removes its record and deletes nothing, so a guest that still runs keeps running. |
 | [`bb box image set`](#bb-box-image-set) | Set a project's image (049): a script run as root on its kinds' standard images, for the boxes of the project's threads, with an optional check run as the box user. BB Box keeps a copy of the files. Setting it changes every new box of those kinds in the project. |
 | [`bb box image remove`](#bb-box-image-remove) | Remove a project's image (049). Boxes of its kinds in its projects start from the standard images again. |
@@ -30,23 +30,23 @@
 | [`bb box image try`](#bb-box-image-try) | Try a project's image's script as a build runs it (049), on a kind it covers, and remove what the try made. It prints each check's result and the build's last lines, and exits 1 if one failed. |
 | [`bb box images list`](#bb-box-images-list) | List the standard images BB Box rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first. |
 | [`bb box images refresh`](#bb-box-images-refresh) | Rebuild the standard images that are due (049), one at a time, most needed first, and start none after the time limit. A BB script automation runs it each night. It ends with a line per image, and exits 1 if one failed. Should this command end first, the run goes on. |
-| [`bb box images build`](#bb-box-images-build) | Rebuild one standard image now, due or not, and whatever its last rebuild did (049), and replace it when its trial box passes. --try checks a new build and keeps the old one. |
+| [`bb box images build`](#bb-box-images-build) | Rebuild one standard image now, due or not, and whatever its last rebuild did (049), and replace it when its trial box passes. `--try` checks a new build and keeps the old one. |
 | [`bb box images versions`](#bb-box-images-versions) | Show what a rebuild of the standard Linux images would take now (049): upstream's latest stable Claude Code, Codex, pi, gh and Chrome, each with the SHA-256 it publishes, and the day's apt snapshot, against this BB Box's pins. |
-| [`bb box setup docker`](#bb-box-setup-docker) | Set up Docker for boxes, as the Box panel's first run does: on the BB machine that runs BB, or --machine, turn Docker on with the Linux image alone and wait while it builds, usually 5 to 12 min. Where something stands in the way, it gives that machine's line to fix it. --no-wait starts it and says how far the build is; run it again to see. |
+| [`bb box setup docker`](#bb-box-setup-docker) | Set up Docker for boxes, as the Box panel's first run does: on the BB machine that runs BB, or `--machine`, turn Docker on with the Linux image alone and wait while it builds, usually 5 to 12 min. Where something stands in the way, it gives that machine's line to fix it. `--no-wait` starts it and says how far the build is; run it again to see. |
 | [`bb box docker-check`](#bb-box-docker-check) | Check that Docker on a BB machine answers through BB Box's Docker relay (042), with its version, cores and memory. |
 | [`bb box docker-build`](#bb-box-docker-build) | Build the images a BB machine that hosts Docker boxes lacks there, or has from another layout or with another build of BB's app, through BB Box's relay (042). Waits for the build. Building all three needs about 36 GB free there; with less, it does not start. |
-| [`bb box install-id`](#bb-box-install-id) | Show this install's ID, which it records on its guests. --set takes back the ID it had before it lost its storage. |
-| [`bb box config show`](#bb-box-config-show) | Show BB Box's configuration. --json prints it as a file for config apply, with no secret in it: keep it to set BB Box up again. |
-| [`bb box config check`](#bb-box-config-check) | Check a configuration file without saving it. --test also runs the doctor of each backend in it that is on, within 30 s each. |
-| [`bb box config apply`](#bb-box-config-apply) | Save a configuration file as BB Box's whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one, or --replace, saves over what is there, as when setting BB Box up again from an export. |
-| [`bb box config migrated`](#bb-box-config-migrated) | Show the copy of BB's settings BB Box kept when it moved them into its configuration. --remove removes it. |
+| [`bb box install-id`](#bb-box-install-id) | Show this install's ID, which it records on its guests. `--set` takes back the ID it had before it lost its storage. |
+| [`bb box config show`](#bb-box-config-show) | Show BB Box's configuration. `--json` prints it as a file for config apply, with no secret in it: keep it to set BB Box up again. |
+| [`bb box config check`](#bb-box-config-check) | Check a configuration file without saving it. `--test` also runs the doctor of each backend in it that is on, within 30 s each. |
+| [`bb box config apply`](#bb-box-config-apply) | Save a configuration file as BB Box's whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one, or `--replace`, saves over what is there, as when setting BB Box up again from an export. |
+| [`bb box config migrated`](#bb-box-config-migrated) | Show the copy of BB's settings BB Box kept when it moved them into its configuration. `--remove` removes it. |
 | [`bb box backend list`](#bb-box-backend-list) | List the configuration's backends, in the order a new box tries them: each one's switch, state, kinds, boxes and last check. |
 | [`bb box backend types`](#bb-box-backend-types) | List the types of backend BB Box has: what each is for, what setting it up needs, the kinds it makes, and its setup guide and scripts in BB Box's repository. |
 | [`bb box backend fields`](#bb-box-backend-fields) | List a backend type's fields, or a backend's with their values now: each key, what it takes, whether it is a secret, and the first line of its help. Secrets show only as set or not. |
-| [`bb box backend add`](#bb-box-backend-add) | Add a backend, on unless --off, through the same checked save as the settings page, then run its checks. Secrets come only from a dotenv file or stdin. Exits 2 when it saved and its checks failed. |
+| [`bb box backend add`](#bb-box-backend-add) | Add a backend, on unless `--off`, through the same checked save as the settings page, then run its checks. Secrets come only from a dotenv file or stdin. Exits 2 when it saved and its checks failed. |
 | [`bb box backend set`](#bb-box-backend-set) | Change a backend: its fields, secrets, switch, name or warm boxes, through the same checked save as the settings page, then run its checks. Exits 2 when it saved and its checks failed. |
-| [`bb box backend remove`](#bb-box-backend-remove) | Remove a backend: its settings, its secrets, which cannot be got back, and its warm boxes. Refused while it has boxes, as on the settings page. Asks for --yes. |
-| [`bb box backend host add`](#bb-box-backend-host-add) | Add a host to a backend whose hosts are set up alike, such as a Mac to Tart. The SSH host pool lists its machines in its machines field instead: bb box backend set ssh-pool --add-line. |
+| [`bb box backend remove`](#bb-box-backend-remove) | Remove a backend: its settings, its secrets, which cannot be got back, and its warm boxes. Refused while it has boxes, as on the settings page. Asks for `--yes`. |
+| [`bb box backend host add`](#bb-box-backend-host-add) | Add a host to a backend whose hosts are set up alike, such as a Mac to Tart. The SSH host pool lists its machines in its machines field instead: bb box backend set ssh-pool `--add-line`. |
 | [`bb box backend host set`](#bb-box-backend-host-set) | Change a backend's host: its fields, or its switch. Off, it takes no new boxes, and its boxes keep working. |
 | [`bb box backend host remove`](#bb-box-backend-host-remove) | Remove a host from a backend. Refused while it has boxes, as on the settings page. |
 | [`bb box kind set`](#bb-box-kind-set) | Change a kind: whether it is offered, its presets' sizes, its default preset, its largest custom size, its spare boxes, its GPU when not asked for, or make it the default kind, through the same checked save as the settings page. Sizes and the GPU change new boxes only. |
@@ -54,21 +54,21 @@
 | [`bb box option get`](#bb-box-option-get) | Show one general or Monitor option: its value now, its default, and what it does. |
 | [`bb box option set`](#bb-box-option-set) | Set general and Monitor options, such as monitor.enabled=false, defaultKind=linux or general.snapshots.ceilings.&lt;backend>=7.50, a ceiling on a backend's paid snapshots, in one checked save, as the settings page saves them. bb box option list lists them. |
 | [`bb box option unset`](#bb-box-option-unset) | Give general and Monitor options back their defaults, in one checked save. general.tailnet.mode turns the tailnet off and clears its client. |
-| [`bb box snapshot take`](#bb-box-snapshot-take) | Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it. A box holds as many as Settings, Snapshots allows, 5 unless set. |
-| [`bb box snapshot list`](#bb-box-snapshot-list) | List the snapshots of a box, of a thread's boxes, of your machines with --machine, or with --all every snapshot BB Box records, those of released boxes too. |
-| [`bb box snapshot delete`](#bb-box-snapshot-delete) | Delete a snapshot of a thread's box, or with --machine one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list --all gives. |
-| [`bb box snapshot restore`](#bb-box-snapshot-restore) | Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. BB Box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force. It refuses a box threads run on, as restores of such boxes stay off until BB Box can hold every turn on them. Asks for --replace. |
-| [`bb box snapshot fork`](#bb-box-snapshot-fork) | Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and BB Box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks, from its held copy on Proxmox and from the snapshot itself on Tart, as one of your machines; name its box as bb box snapshot list --all does. |
-| [`bb box snapshot keep`](#bb-box-snapshot-keep) | Keep a snapshot of a thread's box, or with --machine one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart. BB Box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list --all names it. |
-| [`bb box snapshot unkeep`](#bb-box-snapshot-unkeep) | Stop keeping a snapshot of a thread's box, or with --machine one of your machines: it goes with its box again. A released box's kept snapshot is deleted instead, with bb box snapshot delete. |
-| [`bb box snapshot forget`](#bb-box-snapshot-forget) | Forget every snapshot BB Box records on a backend, so the backend can be removed from BB Box's settings. BB Box deletes nothing: they may still exist there, and be billed. Asks for --yes. |
-| [`bb box gpu update`](#bb-box-gpu-update) | Update NVIDIA's userspace in a running box with a GPU to the host's driver, after that driver changed (071). BB Box checks the box first: BB Box's own Linux image on x86_64, 2 GiB free, and no NVIDIA or CUDA packages from apt. It then downloads NVIDIA's installer for exactly the host's driver, checks it against NVIDIA's SHA-256, installs it with no kernel modules, restarts the box, and checks that nvidia-smi lists the box's card and CUDA's driver initialises, and for a desktop that it draws and encodes its video on the GPU. Everything running in the box stops. It is refused while a person holds control of the box's desktop, and while threads are working on it unless --force. Several boxes are updated one at a time. BB Box never updates a box's userspace by itself; bb box doctor names the boxes that need it. |
-| [`bb box gpu mark`](#bb-box-gpu-mark) | Mark each guest of this install whose device lines name a card with the claim they give, as a tag the host's GPU helper answers (071): gpu.shared.&lt;card's UUID>.g&lt;N>, or gpu.whole where the box's record says a whole card, N above the last generation the helper answered for the guest. It changes only tags: it never restarts, stops or resizes a guest, never changes its device lines, and never touches a guest that is not this install's; a running box is marked as it runs. It leaves, and names, a guest the helper would refuse or whose lines it would rewrite, one that is locked or has another marker, and checks each again from the config it reads just before it writes. It counts a guest granted only from the helper's own answer to that marker. It waits up to 10 s for the answers, and exits 1 when it leaves a guest or the helper does not grant one. --undo clears each claim the helper holds for this install's guests, through a gpu.release marker the helper answers, then takes that marker off: device lines stay as they are, and the helper no longer writes them. |
-| [`bb box monitor snapshot`](#bb-box-monitor-snapshot) | Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history. |
-| [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says. |
-| [`bb box monitor logs`](#bb-box-monitor-logs) | Show background monitoring's diagnostic records, oldest first: the last 100, or --limit up to 500. --json gives JSON lines. |
+| [`bb box snapshot take`](#bb-box-snapshot-take) | Take a snapshot of a thread's box, or with `--machine` one of your machines: its disk, or with `--memory` its disk and its memory where its backend can. Waits until the backend confirms it. A box holds as many as Settings, Snapshots allows, 5 unless set. |
+| [`bb box snapshot list`](#bb-box-snapshot-list) | List the snapshots of a box, of a thread's boxes, of your machines with `--machine`, or with `--all` every snapshot BB Box records, those of released boxes too. |
+| [`bb box snapshot delete`](#bb-box-snapshot-delete) | Delete a snapshot of a thread's box, or with `--machine` one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list `--all` gives. |
+| [`bb box snapshot restore`](#bb-box-snapshot-restore) | Restore a thread's box, or with `--machine` one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. BB Box takes an undo first, a snapshot of the box once stopped, unless `--no-undo`. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless `--force`. It refuses a box threads run on, as restores of such boxes stay off until BB Box can hold every turn on them. Asks for `--replace`. |
+| [`bb box snapshot fork`](#bb-box-snapshot-fork) | Fork a snapshot of a thread's box, or with `--machine` one of your machines, into a new box: of the box's thread, or with `--as-machine` one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and BB Box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks, from its held copy on Proxmox and from the snapshot itself on Tart, as one of your machines; name its box as bb box snapshot list `--all` does. |
+| [`bb box snapshot keep`](#bb-box-snapshot-keep) | Keep a snapshot of a thread's box, or with `--machine` one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart. BB Box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list `--all` names it. |
+| [`bb box snapshot unkeep`](#bb-box-snapshot-unkeep) | Stop keeping a snapshot of a thread's box, or with `--machine` one of your machines: it goes with its box again. A released box's kept snapshot is deleted instead, with bb box snapshot delete. |
+| [`bb box snapshot forget`](#bb-box-snapshot-forget) | Forget every snapshot BB Box records on a backend, so the backend can be removed from BB Box's settings. BB Box deletes nothing: they may still exist there, and be billed. Asks for `--yes`. |
+| [`bb box gpu update`](#bb-box-gpu-update) | Update NVIDIA's userspace in a running box with a GPU to the host's driver, after that driver changed (071). BB Box checks the box first: BB Box's own Linux image on x86_64, 2 GiB free, and no NVIDIA or CUDA packages from apt. It then downloads NVIDIA's installer for exactly the host's driver, checks it against NVIDIA's SHA-256, installs it with no kernel modules, restarts the box, and checks that nvidia-smi lists the box's card and CUDA's driver initialises, and for a desktop that it draws and encodes its video on the GPU. Everything running in the box stops. It is refused while a person holds control of the box's desktop, and while threads are working on it unless `--force`. Several boxes are updated one at a time. BB Box never updates a box's userspace by itself; bb box doctor names the boxes that need it. |
+| [`bb box gpu mark`](#bb-box-gpu-mark) | Mark each guest of this install whose device lines name a card with the claim they give, as a tag the host's GPU helper answers (071): gpu.shared.&lt;card's UUID>.g&lt;N>, or gpu.whole where the box's record says a whole card, N above the last generation the helper answered for the guest. It changes only tags: it never restarts, stops or resizes a guest, never changes its device lines, and never touches a guest that is not this install's; a running box is marked as it runs. It leaves, and names, a guest the helper would refuse or whose lines it would rewrite, one that is locked or has another marker, and checks each again from the config it reads just before it writes. It counts a guest granted only from the helper's own answer to that marker. It waits up to 10 s for the answers, and exits 1 when it leaves a guest or the helper does not grant one. `--undo` clears each claim the helper holds for this install's guests, through a gpu.release marker the helper answers, then takes that marker off: device lines stay as they are, and the helper no longer writes them. |
+| [`bb box monitor snapshot`](#bb-box-monitor-snapshot) | Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. `--json` gives the whole reading, with its recent history. |
+| [`bb box monitor health`](#bb-box-monitor-health) | Show the pressure on BB's server. Exits 2 when it is critical; with `--json` it exits 0, and status says. |
+| [`bb box monitor logs`](#bb-box-monitor-logs) | Show background monitoring's diagnostic records, oldest first: the last 100, or `--limit` up to 500. `--json` gives JSON lines. |
 | [`bb box monitor test-alert`](#bb-box-monitor-test-alert) | Show a labelled preview of a pressure alert in every BB window that is open and visible. Needs background monitoring and its notifications on. |
-| [`bb box monitor history`](#bb-box-monitor-history) | Show box history (069): whether it reads boxes, how many readings were due, taken, skipped and failed each hour, each box's newest point, and the room its file uses. --hours chooses how many hours, 24 by default. |
+| [`bb box monitor history`](#bb-box-monitor-history) | Show box history (069): whether it reads boxes, how many readings were due, taken, skipped and failed each hour, each box's newest point, and the room its file uses. `--hours` chooses how many hours, 24 by default. |
 | [`bb box sweep`](#bb-box-sweep) | Run the clean-up now: release the boxes of ended threads, finish interrupted work and remove leftovers, and settle and check BB Box's snapshots against each backend's. |
 
 ## bb box doctor
@@ -99,7 +99,7 @@ Options:
 
 ## bb box list
 
-List a thread's boxes, or every box with --all.
+List a thread's boxes, or every box with `--all`.
 
 ```text
 Usage:
@@ -160,7 +160,7 @@ Options:
 
 ## bb box run
 
-Run a shell command in a thread's box, or with --machine in one of your machines, as its user, and print its output. It exits with the command's exit code. For a long command, use box_run, which keeps it as a job.
+Run a shell command in a thread's box, or with `--machine` in one of your machines, as its user, and print its output. It exits with the command's exit code. For a long command, use box_run, which keeps it as a job.
 
 ```text
 Usage:
@@ -179,7 +179,7 @@ Options:
 
 ## bb box resize
 
-Resize a thread's box: its cores, memory, disk or GPU, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.
+Resize a thread's box: its cores, memory, disk or GPU, where its backend can, live or with `--restart`. Parts left out stay as they are, and the disk only grows.
 
 ```text
 Usage:
@@ -245,7 +245,7 @@ Options:
 
 ## bb box machines resize
 
-Resize one of your machines: its cores, memory, disk or GPU, where its backend can, live or with --restart. Parts left out stay as they are, and the disk only grows.
+Resize one of your machines: its cores, memory, disk or GPU, where its backend can, live or with `--restart`. Parts left out stay as they are, and the disk only grows.
 
 ```text
 Usage:
@@ -268,7 +268,7 @@ Options:
 
 ## bb box machines remove
 
-Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept.
+Remove one of your machines: its box is released and its disk deleted. A machine a thread is working on is refused unless `--force`. Snapshots you kept are copied first, so they outlive it, unless `--delete-kept`.
 
 ```text
 Usage:
@@ -303,7 +303,7 @@ Options:
 
 ## bb box release
 
-Release a box. Its disk is deleted. A box a thread is working on is refused unless --force. Snapshots you kept are copied first, so they outlive it, unless --delete-kept.
+Release a box. Its disk is deleted. A box a thread is working on is refused unless `--force`. Snapshots you kept are copied first, so they outlive it, unless `--delete-kept`.
 
 ```text
 Usage:
@@ -321,7 +321,7 @@ Options:
 
 ## bb box stop
 
-Stop a thread's box, or with --machine one of your machines, keeping its disk. A box a thread is working on is refused unless --force.
+Stop a thread's box, or with `--machine` one of your machines, keeping its disk. A box a thread is working on is refused unless `--force`.
 
 ```text
 Usage:
@@ -339,7 +339,7 @@ Options:
 
 ## bb box start
 
-Start a thread's stopped box, or with --machine one of your machines, and wait until it answers.
+Start a thread's stopped box, or with `--machine` one of your machines, and wait until it answers.
 
 ```text
 Usage:
@@ -357,7 +357,7 @@ Options:
 
 ## bb box enrol
 
-Add a ready box that is not a BB machine to BB again, as a thread's box, or with --machine one of your machines: BB's installer runs in it as its user. It does not restart, stop or resize the box. It stops only the BB daemon of a machine that BB no longer has. A box whose machine BB still has is left as it is, and recorded as a BB machine. Waits up to 2 minutes for the try.
+Add a ready box that is not a BB machine to BB again, as a thread's box, or with `--machine` one of your machines: BB's installer runs in it as its user. It does not restart, stop or resize the box. It stops only the BB daemon of a machine that BB no longer has. A box whose machine BB still has is left as it is, and recorded as a BB machine. Waits up to 2 minutes for the try.
 
 ```text
 Usage:
@@ -494,7 +494,7 @@ Options:
 
 ## bb box images build
 
-Rebuild one standard image now, due or not, and whatever its last rebuild did (049), and replace it when its trial box passes. --try checks a new build and keeps the old one.
+Rebuild one standard image now, due or not, and whatever its last rebuild did (049), and replace it when its trial box passes. `--try` checks a new build and keeps the old one.
 
 ```text
 Usage:
@@ -525,7 +525,7 @@ Options:
 
 ## bb box setup docker
 
-Set up Docker for boxes, as the Box panel's first run does: on the BB machine that runs BB, or --machine, turn Docker on with the Linux image alone and wait while it builds, usually 5 to 12 min. Where something stands in the way, it gives that machine's line to fix it. --no-wait starts it and says how far the build is; run it again to see.
+Set up Docker for boxes, as the Box panel's first run does: on the BB machine that runs BB, or `--machine`, turn Docker on with the Linux image alone and wait while it builds, usually 5 to 12 min. Where something stands in the way, it gives that machine's line to fix it. `--no-wait` starts it and says how far the build is; run it again to see.
 
 ```text
 Usage:
@@ -568,7 +568,7 @@ Arguments:
 
 ## bb box install-id
 
-Show this install's ID, which it records on its guests. --set takes back the ID it had before it lost its storage.
+Show this install's ID, which it records on its guests. `--set` takes back the ID it had before it lost its storage.
 
 ```text
 Usage:
@@ -582,7 +582,7 @@ Options:
 
 ## bb box config show
 
-Show BB Box's configuration. --json prints it as a file for config apply, with no secret in it: keep it to set BB Box up again.
+Show BB Box's configuration. `--json` prints it as a file for config apply, with no secret in it: keep it to set BB Box up again.
 
 ```text
 Usage:
@@ -595,7 +595,7 @@ Options:
 
 ## bb box config check
 
-Check a configuration file without saving it. --test also runs the doctor of each backend in it that is on, within 30 s each.
+Check a configuration file without saving it. `--test` also runs the doctor of each backend in it that is on, within 30 s each.
 
 ```text
 Usage:
@@ -612,7 +612,7 @@ Options:
 
 ## bb box config apply
 
-Save a configuration file as BB Box's whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one, or --replace, saves over what is there, as when setting BB Box up again from an export.
+Save a configuration file as BB Box's whole configuration, then rebuild what changed. A revision in the file must be the current one; a file without one, or `--replace`, saves over what is there, as when setting BB Box up again from an export.
 
 ```text
 Usage:
@@ -629,7 +629,7 @@ Options:
 
 ## bb box config migrated
 
-Show the copy of BB's settings BB Box kept when it moved them into its configuration. --remove removes it.
+Show the copy of BB's settings BB Box kept when it moved them into its configuration. `--remove` removes it.
 
 ```text
 Usage:
@@ -685,7 +685,7 @@ Options:
 
 ## bb box backend add
 
-Add a backend, on unless --off, through the same checked save as the settings page, then run its checks. Secrets come only from a dotenv file or stdin. Exits 2 when it saved and its checks failed.
+Add a backend, on unless `--off`, through the same checked save as the settings page, then run its checks. Secrets come only from a dotenv file or stdin. Exits 2 when it saved and its checks failed.
 
 ```text
 Usage:
@@ -754,7 +754,7 @@ Options:
 
 ## bb box backend remove
 
-Remove a backend: its settings, its secrets, which cannot be got back, and its warm boxes. Refused while it has boxes, as on the settings page. Asks for --yes.
+Remove a backend: its settings, its secrets, which cannot be got back, and its warm boxes. Refused while it has boxes, as on the settings page. Asks for `--yes`.
 
 ```text
 Usage:
@@ -774,7 +774,7 @@ Options:
 
 ## bb box backend host add
 
-Add a host to a backend whose hosts are set up alike, such as a Mac to Tart. The SSH host pool lists its machines in its machines field instead: bb box backend set ssh-pool --add-line.
+Add a host to a backend whose hosts are set up alike, such as a Mac to Tart. The SSH host pool lists its machines in its machines field instead: bb box backend set ssh-pool `--add-line`.
 
 ```text
 Usage:
@@ -949,7 +949,7 @@ Options:
 
 ## bb box snapshot take
 
-Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it. A box holds as many as Settings, Snapshots allows, 5 unless set.
+Take a snapshot of a thread's box, or with `--machine` one of your machines: its disk, or with `--memory` its disk and its memory where its backend can. Waits until the backend confirms it. A box holds as many as Settings, Snapshots allows, 5 unless set.
 
 ```text
 Usage:
@@ -972,7 +972,7 @@ Options:
 
 ## bb box snapshot list
 
-List the snapshots of a box, of a thread's boxes, of your machines with --machine, or with --all every snapshot BB Box records, those of released boxes too.
+List the snapshots of a box, of a thread's boxes, of your machines with `--machine`, or with `--all` every snapshot BB Box records, those of released boxes too.
 
 ```text
 Usage:
@@ -992,7 +992,7 @@ Options:
 
 ## bb box snapshot delete
 
-Delete a snapshot of a thread's box, or with --machine one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list --all gives.
+Delete a snapshot of a thread's box, or with `--machine` one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list `--all` gives.
 
 ```text
 Usage:
@@ -1012,7 +1012,7 @@ Options:
 
 ## bb box snapshot restore
 
-Restore a thread's box, or with --machine one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. BB Box takes an undo first, a snapshot of the box once stopped, unless --no-undo. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless --force. It refuses a box threads run on, as restores of such boxes stay off until BB Box can hold every turn on them. Asks for --replace.
+Restore a thread's box, or with `--machine` one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. BB Box takes an undo first, a snapshot of the box once stopped, unless `--no-undo`. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless `--force`. It refuses a box threads run on, as restores of such boxes stay off until BB Box can hold every turn on them. Asks for `--replace`.
 
 ```text
 Usage:
@@ -1037,7 +1037,7 @@ Options:
 
 ## bb box snapshot fork
 
-Fork a snapshot of a thread's box, or with --machine one of your machines, into a new box: of the box's thread, or with --as-machine one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and BB Box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks, from its held copy on Proxmox and from the snapshot itself on Tart, as one of your machines; name its box as bb box snapshot list --all does.
+Fork a snapshot of a thread's box, or with `--machine` one of your machines, into a new box: of the box's thread, or with `--as-machine` one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and BB Box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks, from its held copy on Proxmox and from the snapshot itself on Tart, as one of your machines; name its box as bb box snapshot list `--all` does.
 
 ```text
 Usage:
@@ -1061,7 +1061,7 @@ Options:
 
 ## bb box snapshot keep
 
-Keep a snapshot of a thread's box, or with --machine one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart. BB Box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list --all names it.
+Keep a snapshot of a thread's box, or with `--machine` one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart. BB Box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list `--all` names it.
 
 ```text
 Usage:
@@ -1083,7 +1083,7 @@ Options:
 
 ## bb box snapshot unkeep
 
-Stop keeping a snapshot of a thread's box, or with --machine one of your machines: it goes with its box again. A released box's kept snapshot is deleted instead, with bb box snapshot delete.
+Stop keeping a snapshot of a thread's box, or with `--machine` one of your machines: it goes with its box again. A released box's kept snapshot is deleted instead, with bb box snapshot delete.
 
 ```text
 Usage:
@@ -1102,7 +1102,7 @@ Options:
 
 ## bb box snapshot forget
 
-Forget every snapshot BB Box records on a backend, so the backend can be removed from BB Box's settings. BB Box deletes nothing: they may still exist there, and be billed. Asks for --yes.
+Forget every snapshot BB Box records on a backend, so the backend can be removed from BB Box's settings. BB Box deletes nothing: they may still exist there, and be billed. Asks for `--yes`.
 
 ```text
 Usage:
@@ -1118,7 +1118,7 @@ Options:
 
 ## bb box gpu update
 
-Update NVIDIA's userspace in a running box with a GPU to the host's driver, after that driver changed (071). BB Box checks the box first: BB Box's own Linux image on x86_64, 2 GiB free, and no NVIDIA or CUDA packages from apt. It then downloads NVIDIA's installer for exactly the host's driver, checks it against NVIDIA's SHA-256, installs it with no kernel modules, restarts the box, and checks that nvidia-smi lists the box's card and CUDA's driver initialises, and for a desktop that it draws and encodes its video on the GPU. Everything running in the box stops. It is refused while a person holds control of the box's desktop, and while threads are working on it unless --force. Several boxes are updated one at a time. BB Box never updates a box's userspace by itself; bb box doctor names the boxes that need it.
+Update NVIDIA's userspace in a running box with a GPU to the host's driver, after that driver changed (071). BB Box checks the box first: BB Box's own Linux image on x86_64, 2 GiB free, and no NVIDIA or CUDA packages from apt. It then downloads NVIDIA's installer for exactly the host's driver, checks it against NVIDIA's SHA-256, installs it with no kernel modules, restarts the box, and checks that nvidia-smi lists the box's card and CUDA's driver initialises, and for a desktop that it draws and encodes its video on the GPU. Everything running in the box stops. It is refused while a person holds control of the box's desktop, and while threads are working on it unless `--force`. Several boxes are updated one at a time. BB Box never updates a box's userspace by itself; bb box doctor names the boxes that need it.
 
 ```text
 Usage:
@@ -1139,7 +1139,7 @@ Options:
 
 ## bb box gpu mark
 
-Mark each guest of this install whose device lines name a card with the claim they give, as a tag the host's GPU helper answers (071): gpu.shared.<card's UUID>.g<N>, or gpu.whole where the box's record says a whole card, N above the last generation the helper answered for the guest. It changes only tags: it never restarts, stops or resizes a guest, never changes its device lines, and never touches a guest that is not this install's; a running box is marked as it runs. It leaves, and names, a guest the helper would refuse or whose lines it would rewrite, one that is locked or has another marker, and checks each again from the config it reads just before it writes. It counts a guest granted only from the helper's own answer to that marker. It waits up to 10 s for the answers, and exits 1 when it leaves a guest or the helper does not grant one. --undo clears each claim the helper holds for this install's guests, through a gpu.release marker the helper answers, then takes that marker off: device lines stay as they are, and the helper no longer writes them.
+Mark each guest of this install whose device lines name a card with the claim they give, as a tag the host's GPU helper answers (071): gpu.shared.<card's UUID>.g<N>, or gpu.whole where the box's record says a whole card, N above the last generation the helper answered for the guest. It changes only tags: it never restarts, stops or resizes a guest, never changes its device lines, and never touches a guest that is not this install's; a running box is marked as it runs. It leaves, and names, a guest the helper would refuse or whose lines it would rewrite, one that is locked or has another marker, and checks each again from the config it reads just before it writes. It counts a guest granted only from the helper's own answer to that marker. It waits up to 10 s for the answers, and exits 1 when it leaves a guest or the helper does not grant one. `--undo` clears each claim the helper holds for this install's guests, through a gpu.release marker the helper answers, then takes that marker off: device lines stay as they are, and the helper no longer writes them.
 
 ```text
 Usage:
@@ -1155,7 +1155,7 @@ Options:
 
 ## bb box monitor snapshot
 
-Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. --json gives the whole reading, with its recent history.
+Show BB's server's CPU, load, memory, disk and processes, as the Monitor reads them. `--json` gives the whole reading, with its recent history.
 
 ```text
 Usage:
@@ -1168,7 +1168,7 @@ Options:
 
 ## bb box monitor health
 
-Show the pressure on BB's server. Exits 2 when it is critical; with --json it exits 0, and status says.
+Show the pressure on BB's server. Exits 2 when it is critical; with `--json` it exits 0, and status says.
 
 ```text
 Usage:
@@ -1181,7 +1181,7 @@ Options:
 
 ## bb box monitor logs
 
-Show background monitoring's diagnostic records, oldest first: the last 100, or --limit up to 500. --json gives JSON lines.
+Show background monitoring's diagnostic records, oldest first: the last 100, or `--limit` up to 500. `--json` gives JSON lines.
 
 ```text
 Usage:
@@ -1204,7 +1204,7 @@ Usage:
 
 ## bb box monitor history
 
-Show box history (069): whether it reads boxes, how many readings were due, taken, skipped and failed each hour, each box's newest point, and the room its file uses. --hours chooses how many hours, 24 by default.
+Show box history (069): whether it reads boxes, how many readings were due, taken, skipped and failed each hour, each box's newest point, and the room its file uses. `--hours` chooses how many hours, 24 by default.
 
 ```text
 Usage:

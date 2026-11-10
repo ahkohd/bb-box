@@ -10,13 +10,19 @@
     "og": "node og/render.ts"
   },
   "dependencies": {
+    "@astrojs/markdown-satteri": "0.4.6",
     "@astrojs/starlight": "^0.42.7",
     "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "astro": "^7.4.4",
+    "matter-js": "^0.20.0",
     "sharp": "^0.34.0"
   },
   "engines": {
     "node": ">=22.18"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "@types/matter-js": "^0.20.2"
+  }
 }

@@ -1,0 +1,48 @@
+---
+import interLatin from "@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url";
+import monoLatin from "@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2?url";
+import { siteHead, type HeadTag } from "../../head.ts";
+import { motionPausedKey } from "../../motion-memory.ts";
+
+interface Props {
+  title: string;
+  description: string;
+  head: HeadTag[];
+}
+
+const { title, description, head } = Astro.props;
+const base = import.meta.env.BASE_URL;
+const site = Astro.site?.href;
+const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : undefined;
+const tags: HeadTag[] = [
+  ...siteHead({ site, base }),
+  ...head,
+  { tag: "meta", attrs: { property: "og:title", content: title } },
+  { tag: "meta", attrs: { property: "og:description", content: description } },
+  { tag: "meta", attrs: { property: "og:site_name", content: "BB Box" } },
+  { tag: "meta", attrs: { property: "og:locale", content: "en" } },
+  ...(canonical ? [{ tag: "meta" as const, attrs: { property: "og:url", content: canonical } }] : []),
+  { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
+];
+---
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{title}</title>
+<link rel="preload" href={interLatin} as="font" type="font/woff2" crossorigin />
+<link rel="preload" href={monoLatin} as="font" type="font/woff2" crossorigin />
+<meta name="description" content={description} />
+{canonical && <link rel="canonical" href={canonical} />}
+{site && <link rel="sitemap" href={`${base.replace(/\/?$/, "/")}sitemap-index.xml`} />}
+<link rel="shortcut icon" href={`${base.replace(/\/?$/, "/")}favicon.png`} type="image/png" />
+{tags.map((tag) => (tag.tag === "meta" ? <meta {...tag.attrs} /> : <link {...tag.attrs} />))}
+<script is:inline define:vars={{ motionPausedKey }}>
+  (() => {
+    const stored = typeof localStorage !== "undefined" && localStorage.getItem("starlight-theme");
+    const chosen = stored === "light" || stored === "dark" ? stored : matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    document.documentElement.dataset.theme = chosen;
+    try {
+      if (sessionStorage.getItem(motionPausedKey) === "yes") document.documentElement.dataset.motion = "paused";
+    } catch {}
+  })();
+</script>

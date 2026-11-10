@@ -1,0 +1,36 @@
+---
+import still from "../../../../docs/media/recording-step.png";
+import clip from "../../../../docs/media/recording.webp?url";
+
+const description = "An agent's recording of a test run on a Linux desktop: it types a note, then cancels the save, captioned Cancel the save and The save was cancelled.";
+---
+
+<figure class="piece recording-piece" data-recording>
+  <picture>
+    <source srcset={still.src} media="(prefers-reduced-motion: reduce)" />
+    <img src={clip} data-clip={clip} data-still={still.src} width={still.width} height={still.height} loading="lazy" decoding="async" alt={description} />
+  </picture>
+</figure>
+
+<script>
+  import { onMotionChange, pausedByPerson } from "../../motion.ts";
+
+  for (const figure of document.querySelectorAll<HTMLElement>("[data-recording]")) {
+    const picture = figure.querySelector("img")!;
+    const show = () => {
+      const wanted = pausedByPerson() ? picture.dataset.still! : picture.dataset.clip!;
+      if (!picture.src.endsWith(wanted)) picture.src = wanted;
+    };
+    onMotionChange(show);
+    show();
+  }
+</script>
+
+<style>
+  .recording-piece img {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: var(--sample-desktop);
+  }
+</style>

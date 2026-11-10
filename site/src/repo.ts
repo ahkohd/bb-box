@@ -118,6 +118,11 @@ function secondLevelSections(body: string): Section[] {
   return starts.map((section, i) => ({ ...section, end: starts[i + 1]?.start ?? body.length }));
 }
 
+function raisedOneLevel(body: string): string {
+  const deeperHeadings = [...blankedCode(body).matchAll(/^#{3,6} /gm)];
+  return deeperHeadings.reduceRight((text, heading) => text.slice(0, heading.index) + text.slice(heading.index + 1), body);
+}
+
 function sectionOf(body: string, heading: string, file: string): Section {
   const section = secondLevelSections(body).find((candidate) => candidate.heading === heading);
   if (!section) throw new Error(`The site expects a "## ${heading}" section in ${file}`);
@@ -151,7 +156,7 @@ function pageFrom(source: Source): Page {
   let titleAnchor = headingAnchor(title);
   if (source.onlySection) {
     const section = sectionOf(body, source.onlySection, source.file);
-    pageBody = body.slice(section.start, section.end).replace(/^## .+\n/, "");
+    pageBody = raisedOneLevel(body.slice(section.start, section.end).replace(/^## .+\n/, ""));
     titleAnchor = headingAnchor(section.heading);
   }
   if (source.withoutSection) {
