@@ -271,7 +271,7 @@ export class AndroidDriver implements DeviceDriver {
       const loaded = started.unsaved
         ? "cold, as its emulator last ended without saving its snapshot, which would lose what was done since"
         : started.cold
-          ? "cold, as requested or after the host restarted"
+          ? "cold, as asked"
           : (await this.#emulator.snapshotLoaded())
             ? "from its snapshot"
             : "cold: its snapshot did not load";
