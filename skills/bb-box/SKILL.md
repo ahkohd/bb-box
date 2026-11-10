@@ -61,6 +61,7 @@ where it is built ahead, which its boxes claim at once (#440). The
 - Ask for `linux-docker` when you need Docker for sure: it skips offers
   without it. A box in Docker runs no systemd, so `systemctl` does not work
   there.
+- Docker snapshots pause the box while copying its disk and Docker data. They hold no memory or running programs. Take, list and delete are available; restore, fork and Keep are not. Release deletes the snapshots. Other writable mounts are refused before pausing.
 - Docker boxes keep their Docker data in a volume labelled for the box and install. A failed removal is reported. Maintenance retries removal after the container has gone, leaving live boxes and boxes being made alone.
   A held volume does not stop other maintenance.
 - Ask for `linux-vm` when you need a kernel of your own: to load kernel
@@ -542,3 +543,8 @@ agent mostly needs:
   each step of joining BB took.
 
 The Files view opens one folder level first, then fills quick open in the background. Cached folders refresh quietly. Its tree is on the right on wide windows; the create menu sits beside the path. These panel calls remain unavailable to agents.
+
+Docker snapshots allow LXCFS mounts and leave their contents out. A crash during
+a take can leave the box paused for several minutes until maintenance recovers it.
+Deleting an image used by another container removes its tag; its layers stay
+until Docker can reclaim them. Report the size as an estimate, not space freed.

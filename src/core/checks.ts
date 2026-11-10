@@ -123,6 +123,9 @@ export const CHECKS = {
   "ssh.key": { name: "SSH key", from: ["proxmox-lxc", "proxmox-qemu", "ssh-pool"], what: `${PRODUCT}'s SSH key reads, and, where ${PRODUCT} made it, its public key to install.` },
 
   // Docker.
+  "docker.snapshots": { name: "Snapshots", from: ["docker"], what: "Docker's image store, the space snapshots need and the disk's use." },
+  "docker.snapshot-leftovers": { name: "Snapshot leftovers", from: ["docker"], what: "Interrupted snapshot tasks and paused boxes waiting for recovery." },
+  "docker.snapshot-layers": { name: "Snapshot layers", from: ["docker"], what: "Box images near Docker's layer limit. A take refuses from 120 layers." },
   "docker.cli": { name: "docker CLI", from: ["docker"], what: "The docker CLI runs on BB's server." },
   "docker.daemon": { name: "Docker daemon", from: ["docker"], what: "The Docker host answers, runs Linux containers, and its architecture." },
   "docker.attach": {

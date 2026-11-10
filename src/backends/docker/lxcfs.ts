@@ -3,6 +3,8 @@ export const LXCFS_ROOT = "/var/lib/lxcfs";
 const PROC_FILES = ["cpuinfo", "meminfo", "stat", "uptime", "swaps", "loadavg", "diskstats"] as const;
 const CPU_ONLINE = "sys/devices/system/cpu/online";
 const FILES = [...PROC_FILES.map((file) => `proc/${file}`), CPU_ONLINE];
+export const LXCFS_TARGETS = FILES.map((file) => `/${file}`);
+
 const PROBE_MOUNT = "/lxcfs";
 const PROBE_FILES = "/probe";
 

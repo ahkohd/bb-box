@@ -17,6 +17,9 @@
 // - Every call that acts on a container inspects it first and acts only on
 //   one whose labels name this install and the box (018).
 
+import { DockerSnapshotEngine } from "./snapshot-engine.ts";
+import { dockerOffer } from "./snapshots.ts";
+import type { SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
 import { timedSpawn } from "../../transports/spawns.ts";
@@ -617,6 +620,8 @@ export class DockerBackend implements Backend {
   #probing: Promise<void> | null = null;
   #lastProbed: readonly ProbedCard[] | null = null;
 
+  readonly #snapshots: DockerSnapshotEngine;
+
   constructor(config: DockerConfig, context: BackendContext, options: DockerBackendOptions = {}) {
     this.id = context.id;
     this.#config = config;
@@ -636,6 +641,7 @@ export class DockerBackend implements Backend {
           await machines.ready(machine);
         })
       : new DockerCli(config.host, options.binary));
+    this.#snapshots = new DockerSnapshotEngine(this.#cli, context, () => this.#now());
     void this.#recallName();
   }
 
@@ -1192,6 +1198,7 @@ export class DockerBackend implements Backend {
   }
 
   async maintain(signal?: AbortSignal): Promise<void> {
+    await this.#snapshots.maintain().catch((error) => this.#context.logError("maintaining Docker snapshots", error));
     await this.#underPlacement(async () => {
       const state = await this.#state(signal);
       await this.#dropDaemonRecords(GPU_PARTS, state, signal);
@@ -1454,6 +1461,34 @@ export class DockerBackend implements Backend {
     };
     const first = await once();
     return !first.ok && first.reading === "incomplete" ? once() : first;
+  }
+
+  snapshotting(kind: string): Snapshotting | null {
+    return this.kinds().some((offer) => offer.id === kind) ? dockerOffer() : null;
+  }
+
+  planSnapshots(guest: Guest, _kind: string, _target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+    return this.#snapshots.plan(guest, signal);
+  }
+
+  snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
+    return this.#snapshots.take(guest, take, hooks, signal);
+  }
+
+  heldSnapshots(signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    return this.#snapshots.listed(signal);
+  }
+
+  async snapshotsOn(guest: Guest, signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    return (await this.heldSnapshots(signal)).filter((snapshot) => snapshot.box === guest.data?.box);
+  }
+
+  deleteSnapshot(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    return this.#snapshots.remove(ref, hooks, signal);
+  }
+
+  providerTask(task: TaskRef): Promise<TaskOutcome> {
+    return this.#snapshots.settle(task);
   }
 
   async release(guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<void> {
@@ -2068,6 +2103,14 @@ export class DockerBackend implements Backend {
       }
     } else {
       for (const image of images) skip(`image.${image}`, `Image ${image}`);
+    }
+
+    if (checks.some((check) => check.id === "docker.daemon" && check.status === "ok")) {
+      try {
+        checks.push(...await this.#snapshots.doctor(signal));
+      } catch (error) {
+        push("docker.snapshots", "Snapshots", "warn", message(error), "Check Docker's disk and try the doctor again.");
+      }
     }
 
     const ok = checks.every((check) => check.status !== "fail");

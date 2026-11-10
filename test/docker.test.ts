@@ -894,6 +894,9 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
       ["docker.privileged", "ok"],
       ["docker.capacity", "ok"],
       ["docker.sizes", "ok"],
+      ["docker.snapshots", "skipped"],
+      ["docker.snapshot-leftovers", "ok"],
+      ["docker.snapshot-layers", "ok"],
     ],
   );
   assert.match(report.checks[1]!.detail, /Docker 29\.0\.0 on fake-docker \(Ubuntu 24\.04 LTS, x86_64, 16 cores, 64 GiB\)/);
@@ -1818,4 +1821,25 @@ test("maintenance reports a held orphan and still removes other orphans", async 
 
   assert.deepEqual(volumeNames(fake.binary), ["a-held"]);
   assert.match(context.errors.join("\n"), /removing orphan Docker volume a-held.*volume is in use/);
+});
+
+test("Docker takes a snapshot of an acquired box with writable LXCFS mounts", async () => {
+  const { backend } = setup({}, { lxcfs: true });
+  const box = identity();
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+
+  const taken = await backend.snapshot(guest, { id: "snlxcfs", box: box.boxId, memory: false }, { submitting: async () => {}, task: async () => {} });
+
+  assert.equal(taken.holds, "disk");
+  assert.equal((await backend.snapshotsOn(guest))[0]?.state, "complete");
+});
+
+test("Docker snapshot maintenance failures leave orphan cleanup running", async () => {
+  const { backend, fake, context } = setup({}, { failSnapshotPrune: true });
+  execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=test", "--label", "bbbox.volume-of=bbbox-gone", "snapshot-maintenance-orphan"]);
+
+  await backend.maintain();
+
+  assert.equal(volumeNames(fake.binary).includes("snapshot-maintenance-orphan"), false);
+  assert.match(context.errors.join("\n"), /maintaining Docker snapshots.*prune/);
 });

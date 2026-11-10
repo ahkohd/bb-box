@@ -48,7 +48,7 @@ sh ~/bb-box/scripts/demo/stage.sh ~/bb-box
 2. installs bb-box from the checkout
 3. lets boxes join it as machines, through the Docker bridge
 4. registers the agent and makes it the default, and turns off onboarding and telemetry
-5. sets up the Docker backend with `bbbox/linux-desktop:1` as its desktop image, and builds both images. Docker's boxes take no snapshots, so Docker makes only the desktop, and a microsandbox backend on BB's server, first in the order, makes the Linux server, from the same image
+5. sets up the Docker backend with `bbbox/linux-desktop:1` as its desktop image, and builds both images. Docker's boxes cannot restore snapshots yet, so Docker makes only the desktop, and a microsandbox backend on BB's server, first in the order, makes the Linux server, from the same image
 6. sets the Monitor to read every 2 seconds, so its CPU and memory move in the few seconds it shows
 
 ### Record
@@ -108,3 +108,9 @@ Wait for Android to boot after each restore and show both markers. Use the
 Box panel to switch to another device and back, then tap an app on the
 screen. Capture the screen before and after the tap. A model whose unsaved
 marker is present boots cold. Models with clean saves can quick-boot.
+
+For a Docker snapshot demonstration, use a separate BB with LXCFS installed
+on its Docker engine's host. Acquire a Linux box through BB Box, then take,
+list and delete a snapshot. Take another and release the box to show that
+release removes its snapshots too. Check the saved image's last layer for
+LXCFS file contents; those mounted files must not become part of the image.

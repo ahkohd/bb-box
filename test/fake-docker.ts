@@ -12,8 +12,9 @@ import { fakeGroup, tempDir } from "./helpers.ts";
 /** A container as the fake's `docker container inspect` prints it. */
 export interface FakeContainer {
   readonly Id: string;
+  readonly Image: string;
   readonly Name: string;
-  readonly State: { readonly Status: string; readonly ExitCode: number };
+  readonly State: { readonly Status: string; readonly ExitCode: number; readonly Paused?: boolean };
   readonly Config: { readonly Hostname: string; readonly Image: string; readonly Labels: Record<string, string>; readonly Env: string[]; readonly Cmd: string[] };
   readonly HostConfig: {
     readonly NanoCpus: number;
@@ -40,6 +41,8 @@ export interface FakeDockerHost {
   /** The names of the containers on the host. */
   containers(): string[];
   inspect(name: string): FakeContainer;
+  writeVolumeFiles(name: string, files: Readonly<Record<string, string>>): void;
+  volumeFiles(name: string): Readonly<Record<string, string>>;
   /** The box user's home in a container. */
   home(name: string): string;
 }
@@ -83,6 +86,14 @@ export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHo
         : [],
     containers: () => (existsSync(containers) ? readdirSync(containers).filter((name) => existsSync(join(containers, name, "config.json"))).sort() : []),
     inspect: (name) => JSON.parse(readFileSync(join(containers, name, "config.json"), "utf8")) as FakeContainer,
+    writeVolumeFiles: (name, files) => {
+      const path = join(root, "volumes.json");
+      const volumes = JSON.parse(readFileSync(path, "utf8"));
+      if (!volumes[name]) throw new Error(`No such volume: ${name}`);
+      volumes[name].Files = files;
+      writeFileSync(path, JSON.stringify(volumes));
+    },
+    volumeFiles: (name) => JSON.parse(readFileSync(join(root, "volumes.json"), "utf8"))[name]?.Files ?? {},
     home: (name) => join(containers, name, "home"),
   };
 }
