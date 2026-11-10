@@ -50,6 +50,12 @@ function world() {
 
 const quiet: AcquireHooks = { claim: async () => {}, starting: async () => {}, timing: () => {} };
 
+async function windowsBox(state: ReturnType<typeof world>): Promise<{ guest: Guest; vmid: number; box: string }> {
+  const box = { boxId: "bxwindowsvmaaa", threadId: "thr_abc123", name: "calm-otter", kind: "windows-desktop", createdAt: 1_790_000_000_000, size: { ...defaultSize(kindSizes("windows-desktop")), gpu: "none" as const } };
+  const guest = await state.backend.acquire(box, null, quiet, new AbortController().signal);
+  return { guest, vmid: Number(guest.ref), box: box.boxId };
+}
+
 async function linuxBox(state: ReturnType<typeof world>): Promise<{ guest: Guest; vmid: number; box: string }> {
   rmSync(join(state.ssh.dir, "windows", "192.0.2.150"), { force: true });
   const box = { boxId: "bxlinuxvmaaaaa", threadId: "thr_abc123", name: "calm-otter", kind: "linux", createdAt: 1_790_000_000_000, size: { ...defaultSize(kindSizes("linux")), gpu: "none" as const } };
@@ -63,10 +69,22 @@ function tasks(): { hooks: SnapshotHooks; seen: TaskRef[]; submitted: number[] }
   return { seen, submitted, hooks: { submitting: async () => void submitted.push(seen.length), task: async (task) => void seen.push(task) } };
 }
 
-test("a Linux VM offers snapshots of its disk, or its disk and memory, taken while it runs, and forks by a full copy from version 5 of the identity reset; a Windows VM offers none yet", () => {
+test("a Linux VM offers snapshots of its disk, or its disk and memory, taken while it runs, and forks by a full copy from version 5 of the identity reset; a Windows desktop offers its disk only, with no fork and no Keep", () => {
   const { backend } = world();
   assert.deepEqual(backend.snapshotting("linux"), { scope: "box", holds: ["disk", "disk-and-memory"], whileRunning: "live", restore: "in-place", fork: "copy", forkSafeFrom: 5, keepsPastRelease: "held-copy", lives: "host", price: null, excludes: null });
-  assert.equal(backend.snapshotting("windows-desktop"), null);
+  assert.deepEqual(backend.snapshotting("windows-desktop"), {
+    scope: "box",
+    holds: ["disk"],
+    whileRunning: "live",
+    restore: "in-place",
+    fork: "none",
+    keepsPastRelease: "no",
+    lives: "host",
+    price: null,
+    excludes: null,
+    forkWhy: "a Windows box has no identity reset BB Box has checked, so a copy of it would keep the box's identity",
+  });
+  assert.equal(backend.snapshotting("android"), null);
 });
 
 test("the plan reads the VM's boot disk's storage and scales a memory snapshot's time to its memory, about a second a GiB", async () => {
@@ -78,7 +96,10 @@ test("the plan reads the VM's boot disk's storage and scales a memory snapshot's
   assert.equal(plan.take.ok, true);
   const memoryGiB = Number(state.proxmox.guests.get(Number(guest.ref))!.config.memory) / 1024;
   assert.equal(plan.take.memoryAboutMs, 1000 + memoryGiB * 1000);
-  await assert.rejects(state.backend.planSnapshots(guest, "windows-desktop", null), (error: unknown) => error instanceof BackendError && error.code === "unsupported");
+  const windows = await state.backend.planSnapshots(guest, "windows-desktop", null);
+  assert.equal(windows.take.memoryAboutMs, null);
+  assert.equal(windows.take.memory, null);
+  assert.equal(windows.keep.way, "no");
 });
 
 test("a take with memory asks Proxmox for the VM's state and holds disk and memory; one without holds the disk; both delete", async () => {
@@ -220,6 +241,131 @@ test("070 unit 7: a VM's fork is a full copy of its snapshot's disk, disarmed fi
   assert.match(config.smbios1 ?? "", new RegExp(`serial=${Buffer.from(`${made.address}/24 192.0.2.1`).toString("base64")}`), "the address of its own VMID, as the VM reads it");
   assert.equal(config.vmstate, undefined, "it starts from the disk, never the saved memory");
   assert.match(config.tags ?? "", /box\.bxforkedvmaaaa/);
+
+  const clones = () => state.proxmox.calls.filter((call) => call.method === "POST" && /\/clone$/.test(call.path)).length;
+  const before = clones();
   const refused = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: `bb${SNAPSHOT}`, guest }, { ...forked, kind: "windows-desktop" }, null, quiet, new AbortController().signal).catch((caught: unknown) => caught);
-  assert.ok(refused instanceof BackendError);
+  if (!(refused instanceof BackendError)) throw refused;
+  assert.match(refused.message, /forks no windows-desktop boxes: a Windows box has no identity reset BB Box has checked/);
+  assert.equal(clones(), before, "a refused Windows fork copies nothing");
+});
+
+const UNDO = "snwinundoaaaaa";
+
+test("a Windows desktop on LVM-thin plans a disk snapshot and a snapshot undo, and plans no memory, fork or Keep; Ceph does too", async () => {
+  const state = world();
+  const { guest } = await windowsBox(state);
+
+  const plan = await state.backend.planSnapshots(guest, "windows-desktop", null);
+
+  assert.equal(plan.storage.type, "lvmthin");
+  assert.equal(plan.take.ok, true);
+  assert.equal(plan.take.memory, null);
+  assert.equal(plan.take.memoryAboutMs, null);
+  assert.equal(plan.take.memoryWhy, "A Windows desktop's snapshot holds its disk only.");
+  assert.equal(plan.restore.way, "rollback");
+  assert.equal(plan.restore.undo, "snapshot");
+  assert.equal(plan.fork.ok, false);
+  assert.match(plan.fork.why ?? "", /A Windows box has no identity reset BB Box has checked/);
+  assert.equal(plan.keep.way, "no");
+  assert.match(plan.keep.why ?? "", /keeps a snapshot past a release only when it can fork/);
+
+  state.proxmox.storageTypes.set("local-lvm", "rbd");
+  const ceph = await state.backend.planSnapshots(guest, "windows-desktop", null);
+  assert.equal(ceph.restore.way, "rollback");
+  assert.equal(ceph.restore.undo, "snapshot");
+});
+
+test("a Windows desktop's EFI and TPM state volumes are part of its snapshot, and one on raw files refuses the take", async () => {
+  const state = world();
+  state.proxmox.guests.get(9104)!.config.tpmstate0 = "local-lvm:base-9104-disk-2,size=4M,version=v2.0";
+  const { guest, vmid } = await windowsBox(state);
+  const vm = state.proxmox.guests.get(vmid)!;
+
+  const ready = await state.backend.planSnapshots(guest, "windows-desktop", null);
+
+  assert.equal(ready.take.ok, true);
+  assert.match(String(vm.config.efidisk0), /^local-lvm:/);
+  assert.match(String(vm.config.tpmstate0), /^local-lvm:/);
+
+  addStorage(state.proxmox, "files", "dir", { path: "/srv/files" });
+  vm.config.tpmstate0 = `files:${vmid}/vm-${vmid}-disk-2.raw,size=4M,version=v2.0`;
+  const tpm = await state.backend.planSnapshots(guest, "windows-desktop", null);
+  assert.equal(tpm.take.ok, false);
+  assert.match(tpm.take.why ?? "", new RegExp(`Guest ${vmid}'s tpmstate0 is on files`));
+
+  vm.config.tpmstate0 = "local-lvm:base-9104-disk-2,size=4M,version=v2.0";
+  vm.config.efidisk0 = `files:${vmid}/vm-${vmid}-disk-9.raw,efitype=4m,size=4M`;
+  const efi = await state.backend.planSnapshots(guest, "windows-desktop", null);
+  assert.equal(efi.take.ok, false);
+  assert.match(efi.take.why ?? "", new RegExp(`Guest ${vmid}'s efidisk0 is on files`));
+});
+
+test("a Windows desktop on ZFS takes and deletes a snapshot, and restore is refused", async () => {
+  const state = world();
+  const { guest, vmid, box } = await windowsBox(state);
+  state.proxmox.storageTypes.set("local-lvm", "zfspool");
+
+  const plan = await state.backend.planSnapshots(guest, "windows-desktop", null);
+
+  assert.equal(plan.take.ok, true);
+  assert.equal(plan.restore.way, "none");
+  assert.equal(plan.restore.undo, "none");
+  assert.match(plan.restore.why ?? "", /local-lvm is ZFS, which restores only the newest snapshot/);
+  assert.match(plan.restore.why ?? "", /held copy/);
+  assert.match(plan.restore.why ?? "", /no identity reset BB Box has checked/);
+  assert.match(plan.restore.why ?? "", /Take and delete still work here/);
+
+  const taken = await state.backend.snapshot(guest, { id: SNAPSHOT, box, memory: false }, tasks().hooks);
+  assert.equal(taken.holds, "disk");
+  await state.backend.deleteSnapshot({ id: SNAPSHOT, ref: "", guest }, tasks().hooks);
+  assert.deepEqual(await state.backend.heldSnapshots(), []);
+  assert.equal(state.proxmox.guests.has(vmid), true);
+});
+
+test("a Windows desktop restores in place to a snapshot and then to its undo, and the VM keeps its identity; a memory take is refused, and Keep is refused", async () => {
+  const state = world();
+  state.proxmox.guests.get(9104)!.config.tpmstate0 = "local-lvm:base-9104-disk-2,size=4M,version=v2.0";
+  const { guest, vmid, box } = await windowsBox(state);
+  const vm = state.proxmox.guests.get(vmid)!;
+
+  const memory = await state.backend.snapshot(guest, { id: SNAPSHOT, box, memory: true }, tasks().hooks).catch((caught: unknown) => caught);
+  if (!(memory instanceof BackendError)) throw memory;
+  assert.match(memory.message, /disk only/);
+  assert.match(memory.message, /Leave memory out/);
+  assert.equal(state.proxmox.calls.some((call) => call.method === "POST" && call.path.endsWith("/snapshot")), false);
+
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box, memory: false }, tasks().hooks);
+  assert.equal(state.proxmox.calls.filter((call) => call.method === "POST" && call.path.endsWith("/snapshot")).at(-1)?.params.vmstate, "0");
+  const original = { smbios1: vm.config.smbios1, efidisk0: vm.config.efidisk0, tpmstate0: vm.config.tpmstate0, net0: vm.config.net0 };
+  vm.config.smbios1 = String(vm.config.smbios1).replace(/uuid=[^,]+/, "uuid=later-uuid");
+  vm.config.efidisk0 = "local-lvm:vm-later-efi,efitype=4m,size=4M";
+  vm.config.tpmstate0 = "local-lvm:vm-later-tpm,size=4M,version=v2.0";
+  const later = { smbios1: vm.config.smbios1, efidisk0: vm.config.efidisk0, tpmstate0: vm.config.tpmstate0 };
+  await state.backend.snapshot(guest, { id: UNDO, box, memory: false }, tasks().hooks);
+
+  await state.backend.powerOff(guest);
+  await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: "", guest }, tasks().hooks);
+  assert.equal(vm.config.smbios1, original.smbios1);
+  assert.equal(vm.config.efidisk0, original.efidisk0);
+  assert.equal(vm.config.tpmstate0, original.tpmstate0);
+  assert.equal(vm.config.net0, original.net0);
+  assert.equal(guest.ref, String(vmid));
+
+  await state.backend.rollbackSnapshot(guest, { id: UNDO, ref: "", guest }, tasks().hooks);
+  assert.equal(vm.config.smbios1, later.smbios1);
+  assert.equal(vm.config.efidisk0, later.efidisk0);
+  assert.equal(vm.config.tpmstate0, later.tpmstate0);
+  assert.equal(vm.config.net0, original.net0);
+  assert.equal(guest.ref, String(vmid));
+
+  const guests = state.proxmox.guests.size;
+  const kept = await state.backend.copySnapshot({ id: SNAPSHOT, ref: `bb${SNAPSHOT}`, guest }, { box, snapshot: SNAPSHOT, kept: "2026-11-30" }, { ...tasks().hooks, claimed: async () => {} }).catch((caught: unknown) => caught);
+  if (!(kept instanceof BackendError)) throw kept;
+  assert.match(kept.message, /keeps no snapshot of a windows-desktop box past its release: a Windows box has no identity reset BB Box has checked/);
+  assert.equal(state.proxmox.guests.size, guests);
+
+  await state.backend.deleteSnapshot({ id: SNAPSHOT, ref: "", guest }, tasks().hooks);
+  await state.backend.deleteSnapshot({ id: UNDO, ref: "", guest }, tasks().hooks);
+  assert.deepEqual(await state.backend.heldSnapshots(), []);
 });

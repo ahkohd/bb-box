@@ -242,7 +242,12 @@ Beyond those:
 
 Where a box's backend takes them (`box_status` and `box_list` say), a
 snapshot keeps a box's disk, or with `memory` its running apps too, so you
-can put the box back to it.
+can put the box back to it. A Windows desktop on Proxmox QEMU snapshots its
+disk while it runs, including the EFI and TPM state volumes, and restores in
+place with an undo on LVM-thin, Ceph RBD, BTRFS and qcow2. It takes no
+memory snapshot. Fork and Keep refuse, because a Windows box has no identity
+reset BB Box has checked. On ZFS, take and delete work, and restore refuses
+for that reason.
 
 - Take one with `box_snapshot` before a change you cannot undo: a
   migration, an upgrade, a deletion, or a change to the system. Take one

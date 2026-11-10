@@ -10,6 +10,18 @@ The backend shares the Proxmox LXC backend's host settings, bridge, pool, API
 token and SSH key. How bb-box drives a box is in the
 [architecture](../../docs/architecture.md#backends).
 
+## Snapshots
+
+A Windows desktop takes a snapshot of its disk while it runs. The snapshot
+includes the EFI disk and the TPM state volume, and a restore puts them back
+with the disk. The undo is another snapshot, on LVM-thin, Ceph RBD, BTRFS and
+qcow2 disks. On ZFS, take and delete work, and restore is refused: the undo
+would be a held copy, and a Windows box has no identity reset BB Box has
+checked. There is no snapshot of the memory, no fork and no Keep. Linux boxes
+on this backend keep the snapshots they had. The
+[snapshots guide](../../docs/guide/snapshots.md#what-each-backend-offers) has
+the full table.
+
 | Path | What it does |
 | --- | --- |
 | `build.sh` | Builds and checks the template, on the Proxmox host as root |

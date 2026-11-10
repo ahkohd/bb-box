@@ -384,7 +384,7 @@ boat's new-guest restores keep the box the same machine.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | Proxmox LXC | box; disk | live (0.7 s) | in-place, after a hard stop; by storage, above | a snapshot after the stop, or a held copy on ZFS | copy (9.3 s for 4 GiB used) | held-copy | none | 1a, 2, 3, 7, 8 |
 | Proxmox QEMU, Linux | box; disk, or disk and memory | live (1.1 s); memory about 1 s a GiB | in-place; by storage | as LXC | copy (6.5 s) | held-copy, disk only | none | 1b, 2, 3, 7, 8 |
-| Proxmox QEMU, Windows | box; disk | live | in-place; by storage | as LXC | none until a unit builds Windows' reset | no: with no fork, a kept copy could not be used | none | 3 |
+| Proxmox QEMU, Windows | box; disk, with its EFI and TPM state volumes | live | in-place on storage that rolls back past newer snapshots; none on ZFS | a snapshot. No held copy, because a Windows box has no identity reset BB Box has checked | none | no | none | 3 |
 | Tart, macOS | box; disk and memory only | suspends (about 7 s, then resumes) | in-place: puts a copy back, then resumes (11 s) | a copy of the suspended VM, memory included | copy from the disk, new MAC address, once unit 9 builds macOS's reset | as-is, once forks are built: the copy stays on the VMs' volume, holding its whole size once the VM is deleted | none | 9 |
 | Tart, Linux | box; disk | stopped-only | in-place | a copy, after the stop | copy | as-is | none | 9 |
 | microsandbox | box; disk with the box's Docker disk, or disk and memory; none on a box whose Docker disk is a file of the host's | pauses (0.3 s; memory 1.5 s) | new-guest (3.9 s), a swap | a snapshot of the stopped box (decided during unit 10) | copy: the snapshot's disk restored as a new sandbox; never `msb fork`, which copies memory | as-is: a snapshot outlives its sandbox (confirmed in unit 10) | none | 10 |
@@ -642,8 +642,10 @@ The capture order, per backend:
 
 | Backend | Before the undo | The undo | Then |
 | --- | --- | --- | --- |
-| Proxmox LXC and QEMU, not ZFS | a hard stop (bb-box's own, 1.3 s; `pct rollback` on a running container shut it down for 45 s), after checking no turn runs | a snapshot of the stopped guest | rollback, start |
-| Proxmox on ZFS | the same stop | a held copy of the stopped guest | rollback to the newest, start |
+| Proxmox LXC and QEMU Linux, not ZFS | a hard stop (bb-box's own, 1.3 s; `pct rollback` on a running container shut it down for 45 s), after checking no turn runs | a snapshot of the stopped guest | rollback, start |
+| Proxmox QEMU Windows, not ZFS | the same stop | a snapshot of the stopped guest | rollback, start |
+| Proxmox on ZFS, not a Windows desktop | the same stop | a held copy of the stopped guest | rollback to the newest, start |
+| Proxmox QEMU Windows on ZFS | restore is refused before the box stops | none. The undo would be a held copy, and a Windows box has no identity reset BB Box has checked | nothing changes |
 | Tart, macOS | a suspend, which saves memory; never a hard stop | an APFS copy of the suspended VM, memory included | put the target's copy back, resume |
 | Tart, Linux | a shutdown, as its snapshots are stopped-only | an APFS copy | put the target's copy back, start |
 | microsandbox, boat, Docker | none: the box keeps running while its undo is taken (a pause for microsandbox and Docker; a fresh capture for boat) | a snapshot of the running box | stop the old guest, start the new one with the box's identity, swap |

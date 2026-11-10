@@ -2,7 +2,7 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools, on Proxmox LXC boxes, Proxmox QEMU Linux boxes, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
+You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools. Where the backend allows it, you [fork](#forking-a-snapshot) a snapshot into a new box and [keep](#keeping-a-snapshot) one past the box's release. This works on Proxmox LXC boxes, Proxmox QEMU Linux boxes, Proxmox QEMU Windows desktops, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
 
 ## What each backend offers
 
@@ -10,12 +10,13 @@ You take, restore, [fork](#forking-a-snapshot), [keep](#keeping-a-snapshot), ren
 | --- | --- | --- | --- | --- | --- |
 | Proxmox LXC | the disk | taken live, in about a second | in place, to any snapshot, on LVM-thin, Ceph RBD and BTRFS | by a full copy, from a snapshot taken with a working identity reset | by a [held copy](#a-held-copy), of a snapshot that could fork |
 | Proxmox QEMU, Linux | the disk, or the disk and memory | taken live; with memory about a second for each GiB of memory | as Proxmox LXC, and qcow2 disks on a directory | as Proxmox LXC, from the disk only | as Proxmox LXC, the disk only |
+| Proxmox QEMU, Windows | the disk, with its EFI and TPM state volumes | taken live, in about 6 to 7 seconds, most of it flushing Windows' writes | in place, with a snapshot as the undo, on LVM-thin, Ceph RBD, BTRFS and qcow2 disks. On ZFS, restore is refused: the undo would be a held copy, and a Windows box has no identity reset BB Box has checked | none, for the same reason | none, for the same reason |
 | boat.dev, a paid plan | the disk, as a saved snapshot on your boat.dev account | taken live, after a fresh capture, a minute or more | by a new sandbox made from the snapshot, which runs the box with its ID, name and labels; the old sandbox is deleted | by a new sandbox made from the snapshot, from a snapshot taken with reset version 8 for Linux servers, or version 9 for Linux desktops | as it is, on the account, at boat.dev's daily price past the plan's included ones |
 | boat.dev, the free trial | no snapshots: the trial has no saved snapshots | | | | |
 | microsandbox | the disk, with the box's Docker data, or the disk and memory | the disk live, in under a second; with memory the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
 | Tart, macOS | the disk and memory, always: every snapshot is a copy of the suspended VM | suspends the VM, copies it and resumes it: 11 s for a 16 GiB VM | in place: it suspends the box, takes the undo, puts the snapshot's copy in the VM's place and resumes it, running as it was | by a copy of the snapshot's disk, without its memory, from a snapshot taken with macOS's identity reset | as it is: the copy stays beside the VMs |
 | Tart, Linux | the disk | only while the box is stopped, as Tart cannot suspend a Linux VM | in place, after a shutdown | by a copy of the snapshot's disk, from a snapshot taken with reset version 8 for Linux servers, or version 9 for Linux desktops | as it is: the copy stays beside the VMs |
-| Docker, Hetzner and Namespace boxes, the SSH host pool's machines, Windows and iOS boxes, and Android devices on Proxmox QEMU | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
+| Docker, Hetzner and Namespace boxes, the SSH host pool's machines, Windows boxes on Tart, iOS boxes, and Android devices on Proxmox QEMU | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
 
 Linux desktops need an image built with identity reset version 9 or later. Older images refuse forks and Keep, saying why. Refresh the image and make the box again; an image rebuild does not update existing boxes or snapshots.
 
@@ -33,6 +34,8 @@ A restore copies the snapshot beside the VM, then swaps it into the VM's place i
 
 A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS, or qcow2 disks on a directory for VMs. It also needs the token's `VM.Snapshot` right. `bb box doctor` says whether both are so, in its Snapshots check.
 
+A Windows desktop's snapshot holds its disk and its EFI and TPM state volumes. It restores in place, and the undo is another snapshot, on storage that rolls back past a newer snapshot. On ZFS it takes and deletes snapshots, and restore is refused, because the undo would be a held copy and a Windows box has no identity reset BB Box has checked. It does not fork, and Keep is refused for the same reason. It takes no snapshot of its memory.
+
 ### What is not built yet
 
 - **Restores of a box threads run on stay off.** BB cannot yet hold every turn on a box: its "Send now" can start a turn while BB Box stops the box to restore it. Until BB can, move the threads off the box, or archive them, before you restore it. You and agents can restore every other box. See [restores of a box threads run on stay off](#restores-of-a-box-threads-run-on-stay-off).
@@ -41,7 +44,8 @@ A Proxmox snapshot needs storage that takes them: LVM-thin, ZFS, Ceph RBD, BTRFS
 - **ZFS restores stay off** until they are checked on a ZFS node. Snapshots on ZFS are taken and deleted as elsewhere.
 - **Docker, Hetzner and Namespace boxes take no snapshots yet.** They are planned for later, as a copy of the paused container with the box's Docker data, restored as a new container.
 - **An Android device's own snapshots are planned for later**: the emulator's snapshot of the device alone. Until then, an Android box on boat.dev takes snapshots of its whole VM, and one on Proxmox QEMU takes none.
-- **Windows and iOS boxes, and the SSH host pool's machines, take no snapshots**, and none are planned yet.
+- **A Windows desktop on Proxmox QEMU takes no snapshot of its memory yet**, and it does not fork or Keep until a Windows identity reset is checked. A restore on ZFS stays off for that reason.
+- **Windows boxes on Tart, iOS boxes, and the SSH host pool's machines take no snapshots**, and none are planned yet.
 
 ## On a box's page
 
@@ -66,7 +70,7 @@ With each snapshot of a box that has a screen, a desktop or a device, BB Box kee
 bb box snapshot take <box> [--name <name>] [--note <text>] [--memory]
 ```
 
-`--memory` holds the box's memory too, where its backend can: Proxmox QEMU can, for a box that runs; Proxmox LXC cannot. A stopped Proxmox QEMU box is suspended to disk, so start it before you take a snapshot of it. Proxmox saves a VM's memory as a volume of twice its memory and 500 MiB more, on the VM's `vmstatestorage` or else on its disks' storage; BB Box checks that storage's room first, and refuses a memory snapshot when it cannot tell which storage Proxmox would use. Without `--name`, the snapshot is named after the time, such as "Thu 10:42". A name is unique on its box: a repeat gets " (2)".
+`--memory` holds the box's memory too, where its backend can: Proxmox QEMU can for a Linux box that runs, and cannot for a Windows desktop; Proxmox LXC cannot. A stopped Proxmox QEMU box is suspended to disk, so start it before you take a snapshot of it. Proxmox saves a VM's memory as a volume of twice its memory and 500 MiB more, on the VM's `vmstatestorage` or else on its disks' storage; BB Box checks that storage's room first, and refuses a memory snapshot when it cannot tell which storage Proxmox would use. Without `--name`, the snapshot is named after the time, such as "Thu 10:42". A name is unique on its box: a repeat gets " (2)".
 
 Before it takes a snapshot of a box that runs, BB Box flushes the box's writes to its disk, with `sync` in the box, for at most 15 seconds, so the snapshot's disk holds what was just written, with or without memory. If the flush fails or takes longer, the snapshot is taken anyway, and it says it may miss the last writes: in the take's answer, in the list, on the page and in every fork of it.
 
@@ -277,7 +281,7 @@ On Tart, a macOS box of 16 GiB took 13 to 15 s: its suspend, which saves its mem
 
 ### ZFS
 
-ZFS rolls a disk back only to its newest snapshot. BB Box restores nothing on ZFS yet: it says so, and changes nothing. Its restores there come once they are checked on a ZFS node. They will take a held copy of the stopped box as the undo, a full copy that cannot start, made only of a box whose [identity reset](#a-copy-of-a-box-gives-up-its-identity) works; undoing such a restore makes the box a new guest from that copy, with the box's own identity, and the box's other snapshots then stay on its earlier guest, to fork only. Until then, restoring a held copy works only in BB Box's live checks.
+ZFS rolls a disk back only to its newest snapshot. BB Box restores nothing on ZFS yet: it says so, and changes nothing. Restores there come once they are checked on a ZFS node. They will take a held copy of the stopped box as the undo, a full copy that cannot start, made only of a box whose [identity reset](#a-copy-of-a-box-gives-up-its-identity) works. BB Box does not restore a Windows desktop on ZFS, because that undo is a held copy and a Windows box has no identity reset BB Box has checked. Undoing a held-copy restore makes the box a new guest from that copy, with the box's own identity, and the box's other snapshots then stay on its earlier guest, to fork only. Until then, restoring a held copy works only in BB Box's live checks.
 
 ### Restores made outside BB Box
 
@@ -291,7 +295,7 @@ Each step is recorded before it runs, with Proxmox's task once it begins. When B
 
 Keep makes a snapshot yours and keeps it past its box's release, for 30 days from the day you keep it unless Settings say otherwise, or until a date you choose. No agent can delete a kept snapshot, and BB Box deletes it after its date, whether its box lives or not; from 3 days before, its row says "goes in 3 days" in amber, and the Snapshots tab counts it. Keep it again to renew it: **Keep 30 more days…** adds the days to its keep date, at most 365 days from today. A date you choose can shorten a keep, and the dialog says so first. Days are counted in UTC.
 
-After its box's release, the only way to use a kept snapshot is to fork it. So Keep is offered only for a snapshot that could be forked then: of a Linux box, or a macOS box on Tart, taken with a working identity reset of the version its backend forks from. Otherwise Keep… is off, with why: "taken before amber-fox's image had the identity reset: it could not be forked after a release". Windows boxes take no snapshots yet, so there is nothing to keep there.
+After its box's release, the only way to use a kept snapshot is to fork it. So Keep is offered only for a snapshot that could be forked then: of a Linux box, or a macOS box on Tart, taken with a working identity reset of the version its backend forks from. Otherwise Keep… is off, with why: "taken before amber-fox's image had the identity reset: it could not be forked after a release". A Windows desktop on Proxmox QEMU takes snapshots of its disk, and Keep stays off, because a Windows box has no identity reset BB Box has checked, so a kept copy could not be forked.
 
 The **Keep dialog** asks for the date, the default chosen, and says what keeping costs on that backend before you confirm: on Proxmox, "If amber-fox is released, BB Box first copies this snapshot in full into a template that cannot start: up to about 38 s, and about 2.8 GB, at most 17 GB, on pve-1's local-lvm until 2026-11-30, at no charge." The space is the box's disk use now, where Proxmox says it (containers), and at most the snapshot's disk. When, at today's size, a release would find no room for that copy, or no free VMID, the dialog says so; it keeps the snapshot anyway, as the room may be there by then. On microsandbox nothing is copied: "If amber-fox is released, it stays where it is until 2026-11-30." It stays on the host at its whole size.
 
