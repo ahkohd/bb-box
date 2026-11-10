@@ -120,7 +120,51 @@ function gpuArgs(settings: BoxContainerSettings): readonly string[] {
   ];
 }
 
-export function createArgs(settings: BoxContainerSettings): readonly string[] {
+export interface ImageContainerSettings {
+  readonly imageBox: true;
+  readonly name: string;
+  readonly image: string;
+  readonly installId: string;
+  readonly kind: string;
+  readonly label: string;
+  readonly cores: number;
+  readonly memoryMiB: number;
+  readonly privileged: boolean;
+  readonly network: string;
+}
+
+function resourceArgs(cores: number, memoryMiB: number): readonly string[] {
+  return [
+    "--init",
+    "--cpus", String(cores),
+    "--memory", `${memoryMiB}m`,
+    "--memory-swap", `${memoryMiB}m`,
+    "--shm-size", shmSize(memoryMiB),
+    "--pids-limit", "16384",
+    "--stop-timeout", "10",
+    "--tmpfs", "/run:exec,mode=755",
+  ];
+}
+
+export function createArgs(settings: BoxContainerSettings | ImageContainerSettings): readonly string[] {
+  if ("imageBox" in settings) {
+    const labels = {
+      [LABELS.backend]: "docker",
+      [LABELS.install]: settings.installId,
+      [LABELS.imageBox]: settings.installId,
+      [LABELS.kind]: settings.kind,
+      [LABELS.name]: settings.label.slice(0, 120),
+    };
+    return [
+      "container", "create", "--pull", "never", "--name", settings.name,
+      ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
+      "--hostname", "bb-box-image",
+      ...resourceArgs(settings.cores, settings.memoryMiB),
+      "--network", settings.network,
+      ...(settings.privileged ? ["--privileged", ...given("BBBOX_DOCKERD", "1"), "--volume", DOCKER_DATA] : []),
+      settings.image, BOX_START,
+    ];
+  }
   const { box, placement } = settings;
   const { cores, memoryMiB } = box.size;
   const labels = labelsOf(settings);
@@ -131,18 +175,11 @@ export function createArgs(settings: BoxContainerSettings): readonly string[] {
     "--name", settings.name,
     ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
     "--hostname", hostnameOf(box.name),
-    "--init",
+    ...resourceArgs(cores, memoryMiB),
     ...given(IDENTITY_VARIABLE, box.boxId),
-    "--cpus", String(cores),
     ...(placement.cpus ? ["--cpuset-cpus", formatCpuList(placement.cpus)] : given("OMP_NUM_THREADS", String(Math.ceil(cores)))),
     ...(settings.lxcfs ? lxcfsMountArgs(settings.lxcfs) : []),
-    "--memory", `${memoryMiB}m`,
-    "--memory-swap", `${memoryMiB}m`,
-    "--shm-size", shmSize(memoryMiB),
-    "--pids-limit", "16384",
     "--restart", settings.restart,
-    "--stop-timeout", "10",
-    "--tmpfs", "/run:exec,mode=755",
     "--network", settings.network,
     ...dockerArgs(settings),
     ...gpuArgs(settings),

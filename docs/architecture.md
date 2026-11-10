@@ -942,7 +942,7 @@ Code in [src/backends/docker/](../src/backends/docker/). Set up by
   `/run` as a tmpfs and the restart policy `unless-stopped`.
 - A box is privileged, unless `privileged` is off
   ([041](decisions/041-every-linux-box-has-docker.md)). Its Docker data
-  is a named volume, `bbbox-<container>-docker`, labelled
+  is a named volume, `<container>-docker`, labelled
   `bbbox.volume-of` with the container's name and `bbbox.install` with
   the install, on the same engine as the container: a local daemon, one
   over SSH, or a BB machine's Docker

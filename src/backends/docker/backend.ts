@@ -73,7 +73,7 @@ import { sizesCheck } from "../fit.ts";
 import { endpointOf } from "../../host/relay.ts";
 import { ATTACH_PING, forwarderReason, isLocalhost, readAfterHalfClose } from "./attach.ts";
 import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
-import { BOX_START, boxVolumeName, createArgs, dockerVolumeCreateArgs, dockerVolumesOfArgs, hostnameOf, shmSize, VOLUME_OF } from "./box-container.ts";
+import { BOX_START, boxVolumeName, createArgs, dockerVolumeCreateArgs, dockerVolumesOfArgs, hostnameOf, VOLUME_OF } from "./box-container.ts";
 import { containerLxcfsProbeArgs, lxcfsFromContainerProbe, lxcfsFromProbe, lxcfsProbeArgs, type LxcfsOnHost } from "./lxcfs.ts";
 import { allotCpus, cpusBothAllow, cpusToPinTo, daemonCpusFromRefusal, formatCpuList, hostCpusFromProbe, movesOntoFreeCpus, resizeCpus, type CpuList } from "./cpus.ts";
 import { BB_MACHINE, DOCKER_KINDS, IMAGE_VERSION, type DockerConfig, type DockerKind } from "./config.ts";
@@ -1196,6 +1196,7 @@ export class DockerBackend implements Backend {
       const state = await this.#state(signal);
       await this.#dropDaemonRecords(GPU_PARTS, state, signal);
       await this.#dropRelabels(state);
+      await this.#removeOrphanVolumes(state, signal);
       if (!state.containers.some((container) => ACTIVE.has(container.status))) return;
       if (this.#hostCpus && this.#now() - this.#hostCpus.at < PROBES_REFRESHED_AFTER_MS) return;
       await this.#lxcfsOnHost(signal, true);
@@ -2271,13 +2272,12 @@ export class DockerBackend implements Backend {
     }
 
     const made = await this.#cli.run([...dockerVolumeCreateArgs(volume, containerName, this.#context.installId)], { timeoutMs: 60_000, signal });
-    if (made.exitCode === 0) return true;
-    if (!/already exists/i.test(made.stderr)) throw this.#cli.error("docker volume create", made);
+    if (made.exitCode !== 0) throw this.#cli.error("docker volume create", made);
 
     const again = await this.#dockerVolumeLabels(volume, signal);
-    if (!again) throw this.#cli.error("docker volume create", made);
+    if (!again) throw new Error(`The Docker volume ${volume} disappeared after creation. Make the box again.`);
     this.#requireOwnVolume(volume, containerName, again);
-    return false;
+    return true;
   }
 
   #requireOwnVolume(volume: string, containerName: string, labels: Readonly<Record<string, string>>): void {
@@ -2307,10 +2307,31 @@ export class DockerBackend implements Backend {
     return labels;
   }
 
-  async #dropDockerVolumeIfUnused(volume: string, signal?: AbortSignal): Promise<void> {
+  async #dropDockerVolumeIfUnused(volume: string, containerName: string, signal?: AbortSignal): Promise<void> {
+    const labels = await this.#dockerVolumeLabels(volume, signal);
+    if (!labels) return;
+    this.#requireOwnVolume(volume, containerName, labels);
     const result = await this.#cli.run(["volume", "rm", volume], { timeoutMs: 60_000, signal });
-    if (result.exitCode === 0 || /no such volume|volume is in use/i.test(result.stderr)) return;
-    this.#context.logError(`removing the unused Docker volume ${volume}`, this.#cli.error("docker volume rm", result));
+    if (result.exitCode !== 0 && !/no such volume/i.test(result.stderr)) throw this.#cli.error("docker volume rm", result);
+  }
+
+  async #removeOrphanVolumes(state: HostState, signal?: AbortSignal): Promise<void> {
+    const listed = await this.#cli.ok(["volume", "ls", "--filter", `label=${LABELS.install}=${this.#context.installId}`, "--filter", `label=${VOLUME_OF}`, "--format", "{{.Name}}"], { timeoutMs: 30_000, signal });
+    const making = new Set(state.placing.map((placing) => placing.name));
+    const failures: unknown[] = [];
+    for (const volume of listed.split("\n").map((name) => name.trim()).filter(Boolean)) {
+      try {
+        const labels = await this.#dockerVolumeLabels(volume, signal);
+        const name = labels?.[VOLUME_OF];
+        if (!name || labels?.[LABELS.install] !== this.#context.installId || making.has(name)) continue;
+        const containers = await this.#cli.inspect([name], signal);
+        if (containers.length) continue;
+        await this.#dropDockerVolumeIfUnused(volume, name, signal);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length) throw new AggregateError(failures, failures.map(message).join("\n"));
   }
 
   async #removeLabelledVolumes(containerName: string, signal?: AbortSignal): Promise<void> {
@@ -2323,8 +2344,7 @@ export class DockerBackend implements Backend {
       .filter((name) => /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name));
     if (!names.length) return;
 
-    const removed = await this.#cli.run(["volume", "rm", ...names], { timeoutMs: 120_000, signal });
-    if (removed.exitCode !== 0 && !/no such volume/i.test(removed.stderr)) throw this.#cli.error("docker volume rm", removed);
+    for (const name of names) await this.#dropDockerVolumeIfUnused(name, containerName, signal);
   }
 
   /** The network bb-box keeps its boxes on, made the first time, on which they cannot reach each other. */
@@ -2372,7 +2392,7 @@ export class DockerBackend implements Backend {
     );
     if (result.exitCode === 0) return made;
 
-    if (createdVolume && dockerVolume) await this.#dropDockerVolumeIfUnused(dockerVolume, signal);
+    if (createdVolume && dockerVolume) await this.#dropDockerVolumeIfUnused(dockerVolume, name, signal);
     if (/Conflict|already in use/i.test(result.stderr)) {
       const found = await this.#owned(name, box.boxId, signal);
       if (!found) throw new Error(`The container ${name} on ${this.#host} belongs to another box, so ${PRODUCT} left it alone.`);
@@ -2439,32 +2459,18 @@ export class DockerBackend implements Backend {
     const name = `bbbox-image-${randomBytes(6).toString("hex")}`;
     const { cores, memoryMiB } = this.#context.kind(build.kind).defaultSize;
     const privileged = this.#privileged(build.kind);
-    const labels: Record<string, string> = {
-      [LABELS.backend]: "docker",
-      [LABELS.install]: this.#context.installId,
-      [LABELS.imageBox]: this.#context.installId,
-      [LABELS.kind]: build.kind,
-      [LABELS.name]: label.slice(0, 120),
-    };
-    const args = [
-      "container", "create",
-      "--pull", "never",
-      "--name", name,
-      ...Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]),
-      "--hostname", "bb-box-image",
-      "--init",
-      "--cpus", String(cores),
-      "--memory", `${memoryMiB}m`,
-      "--memory-swap", `${memoryMiB}m`,
-      "--shm-size", shmSize(memoryMiB),
-      "--pids-limit", "16384",
-      "--stop-timeout", "10",
-      "--tmpfs", "/run:exec,mode=755",
-      "--network", this.#config.network,
-      ...(privileged ? ["--privileged", "--env", "BBBOX_DOCKERD=1", "--volume", "/var/lib/docker"] : []),
-      build.ref,
-      BOX_START,
-    ];
+    const args = createArgs({
+      imageBox: true,
+      name,
+      image: build.ref,
+      installId: this.#context.installId,
+      kind: build.kind,
+      label,
+      cores,
+      memoryMiB,
+      privileged,
+      network: this.#config.network,
+    });
     try {
       await this.#cli.ok(args, { timeoutMs: 120_000, signal });
       await this.#cli.ok(["container", "start", name], { timeoutMs: 120_000, signal });

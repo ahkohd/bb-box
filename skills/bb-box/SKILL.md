@@ -528,3 +528,7 @@ agent mostly needs:
   each step of joining BB took.
 
 The Files view opens one folder level first, then fills quick open in the background. Cached folders refresh quietly. Its tree is on the right on wide windows; the create menu sits beside the path. These panel calls remain unavailable to agents.
+
+Docker boxes keep their Docker data in a volume labelled for the box and
+install. A failed removal is reported. Maintenance retries removal after
+the container has gone, leaving live boxes and boxes being made alone.

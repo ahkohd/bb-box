@@ -52,7 +52,7 @@ start, as they are at any start.
 | Snapshot image | `bbbox-snapshot/<install>/<box>:<snapshot>` | `bbbox.snapshot`, the install, the box, the kind, the reset version, when it was taken, the size, the volume name, and the sizes. The box's own `bbbox.*` labels and `BBBOX_IDENTITY` are blank |
 | Snapshot volume | `bbbox-snapshot-<snapshot>-docker` | `bbbox.snapshot`, the install and the box |
 | Keep date | tag `bbbox-kept/<install>/<snapshot>:<yyyy-mm-dd>` | one tag, moved when the date changes |
-| The box's Docker data | `bbbox-<container>-docker` | `bbbox.volume-of` is the container's name, and `bbbox.install` is the install |
+| The box's Docker data | `<container>-docker` | `bbbox.volume-of` is the container's name, and `bbbox.install` is the install |
 
 A restored or forked container is named `bbbox-<box>-<8 hex>` and carries
 `bbbox.from-snapshot`. Its volume is `bbbox-<box>-<8 hex>-docker`, the same
@@ -113,7 +113,7 @@ Taking, listing, restoring, forking and keeping a snapshot come later, in
 the sequence below. They are not built with this record.
 
 Every privileged Docker box BB Box makes from now on gets a volume named
-`bbbox-<container>-docker`. The labels are `bbbox.volume-of` set to the
+`<container>-docker`. The labels are `bbbox.volume-of` set to the
 container's name, and `bbbox.install` set to the install. The volume is
 created before the container, so Docker does not invent an unlabelled
 volume of that name. It is mounted at `/var/lib/docker`.
@@ -140,7 +140,10 @@ container for this install, and no other. A volume whose name does not
 match a volume name is left alone, so a label cannot become a flag. If the
 container is already gone and the box id is known, the labelled volumes of
 that container name are still removed, so a release interrupted after the
-container went can finish.
+container went can finish. At each maintenance pass, the backend also finds
+this install's labelled volumes without a container and removes them. It
+leaves volumes of boxes being made alone, using the engine's shared placement
+reservations. Removal failures are reported and retried on the next pass.
 
 A box made before this record keeps its anonymous volume. Making it again
 finds the container, leaves it, and removes the named volume this attempt
@@ -149,7 +152,10 @@ the anonymous volume with the container.
 
 If a volume of the box's name already exists and its labels are not this
 container's for this install, the make stops and says to remove that
-volume. It does not mount it and it does not delete it.
+volume. It checks the labels again after creation, because Docker returns success
+when the volume already exists. It does not mount or delete a foreign volume.
+Each removal checks its own result; a missing volume cannot hide another
+volume's failure.
 
 On rootless Docker, and when `privileged` is off, there is no volume, as
 today. A take of such a box will be the commit alone.
@@ -161,7 +167,8 @@ offer stays off until their own changes.
 
 An image box, which tries a build and is not a box a person keeps, stays
 on an anonymous volume. Removing that container with `--volumes` already
-deletes it. Restore and fork will not use that path.
+deletes it. Image boxes use the same container argument builder as ordinary
+boxes. Restore and fork will use that builder in later units.
 
 ### How a later take, restore, fork and keep will work
 
