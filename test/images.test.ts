@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { IMAGE_CONTRACT, describeImage, judgeImage, parseImageRecord, pinLines, pinsDigest, programDigest, recordInDescription, identityResetFor, imageProgram, type ImageRecord } from "../src/backends/images.ts";
+import { IMAGE_CONTRACT, describeImage, judgeImage, parseImageRecord, pinLines, pinsDigest, programDigest, recordInDescription, identityResetFor, imageProgram, prepareDigest, type ImageRecord } from "../src/backends/images.ts";
 import { tempDir } from "./helpers.ts";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -125,6 +125,95 @@ test("image-record.sh writes a record BB Box reads, with the pins' digest BB Box
   assert.equal(recorded.status, 0, recorded.stderr);
   const wrote = parseImageRecord(JSON.parse(readFileSync(join(out, "image.json"), "utf8")));
   assert.equal(wrote?.program, await programDigest(join(build, "guest"), "on", "abc"));
+});
+
+function recordedProgram(build: string, out: string, prepare: string): string | null | undefined {
+  writeFileSync(join(build, "build.env"), `BOX_IDENTITY_RESET=on\nPREPARE=${prepare}\nBUILD_ID=build.20261003-021500-3f9c\n`);
+  const run = spawnSync("bash", [join(build, "guest", "image-record.sh"), build, "linux", out], { env: { PATH: process.env.PATH }, encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  return parseImageRecord(JSON.parse(readFileSync(join(out, "image.json"), "utf8")))?.program;
+}
+
+test("a fresh build records the program digest the plugin computes for its image, so it is not due at once", { skip: !jq || !existsSync("/etc/os-release") }, async () => {
+  const dir = tempDir("image-record-program");
+  const [build, out] = [join(dir, "build"), join(dir, "out")];
+  mkdirSync(out, { recursive: true });
+  cpSync(TEMPLATE, build, { recursive: true });
+  writeFileSync(join(out, "template-release"), "kind=linux\n");
+
+  for (const backend of ["docker", "microsandbox", "proxmox-lxc", "proxmox-qemu", "tart", "boat"]) {
+    const prepare = (await prepareDigest(SETUP, backend))!;
+    assert.equal(recordedProgram(build, out, prepare), await imageProgram(SETUP, "linux", backend), backend);
+  }
+
+  writeFileSync(join(build, "guest", ".DS_Store"), "Finder");
+  writeFileSync(join(build, "guest", "files", "._cua-launch-probe.mjs"), "AppleDouble");
+  const docker = (await prepareDigest(SETUP, "docker"))!;
+  assert.equal(recordedProgram(build, out, docker), await imageProgram(SETUP, "linux", "docker"), "a copy's hidden files count for nothing");
+
+  appendFileSync(join(build, "guest", "files", "cua-launch-probe.mjs"), "\n");
+  assert.notEqual(recordedProgram(build, out, docker), await imageProgram(SETUP, "linux", "docker"), "a guest file that is not a script counts");
+});
+
+async function withChanged(file: string, check: (setup: string) => Promise<void>): Promise<void> {
+  const setup = join(tempDir("image-sources"), "setup");
+  cpSync(SETUP, setup, { recursive: true });
+  appendFileSync(join(setup, file), "\n");
+  await check(setup);
+}
+
+test("a change to any file the Docker images are built from makes them due, on Docker and microsandbox", async () => {
+  const sources = ["docker/start", "docker/fork-hold", "docker/gpu-bus-id", "docker/Dockerfile", "docker/customize.sh", "proxmox-lxc/host/common.sh", "proxmox-lxc/template/fetch-artifacts.sh", "proxmox-lxc/template/guest/files/cua-launch-probe.mjs"];
+
+  for (const backend of ["docker", "microsandbox"]) {
+    const before = await imageProgram(SETUP, "linux-desktop", backend);
+    for (const file of sources) {
+      await withChanged(file, async (setup) => assert.notEqual(await imageProgram(setup, "linux-desktop", backend), before, `${backend}: ${file}`));
+    }
+    for (const file of ["docker/README.md", "proxmox-lxc/template/pins.json", "proxmox-lxc/template/desktop-pins.tsv", "proxmox-lxc/template/apt-snapshot"]) {
+      await withChanged(file, async (setup) => assert.equal(await imageProgram(setup, "linux-desktop", backend), before, `${backend}: ${file} is not built from, or the pins' digest covers it`));
+    }
+  }
+});
+
+test("a change to a guest file that is not a script makes every image that copies the guest folder due", async () => {
+  for (const backend of ["docker", "microsandbox", "proxmox-lxc", "proxmox-qemu", "tart", "boat"]) {
+    const before = await imageProgram(SETUP, "linux-desktop", backend);
+    await withChanged("proxmox-lxc/template/guest/files/cua-launch-probe.mjs", async (setup) => assert.notEqual(await imageProgram(setup, "linux-desktop", backend), before, backend));
+  }
+});
+
+function dockerfileSources(dockerfile: string): string[] {
+  const lines = dockerfile.replace(/\\\n/g, " ").split("\n");
+  const copied = lines
+    .filter((line) => /^COPY\s/.test(line) && !/--from=/.test(line))
+    .flatMap((line) => line.split(/\s+/).slice(1).filter((word) => !word.startsWith("--")).slice(0, -1));
+  const bound = [...dockerfile.matchAll(/--mount=type=bind,([^\s]+)/g)]
+    .map((match) => match[1]!)
+    .filter((options) => !/(^|,)from=/.test(options))
+    .map((options) => /(?:^|,)source=([^,]+)/.exec(options)![1]!);
+  return [...copied, ...bound];
+}
+
+test("the list of the Docker images' sources names every file the Dockerfile copies or binds", () => {
+  const listed = readFileSync(join(SETUP, "docker", "image-sources"), "utf8").split("\n").filter(Boolean);
+  const pinFiles = ["proxmox-lxc/template/pins.json", "proxmox-lxc/template/desktop-pins.tsv", "proxmox-lxc/template/apt-snapshot"];
+  const covered = (source: string) => pinFiles.includes(source) || listed.some((entry) => source === entry || source.startsWith(`${entry}/`));
+  const sources = dockerfileSources(readFileSync(join(SETUP, "docker", "Dockerfile"), "utf8"));
+
+  assert.ok(listed.includes("docker/Dockerfile"));
+  assert.ok(sources.includes("docker/fork-hold") && sources.includes("proxmox-lxc/template"), "the Dockerfile's copies and binds are read");
+  assert.deepEqual(sources.filter((source) => !covered(source)), []);
+  for (const entry of listed) assert.ok(existsSync(join(SETUP, entry)), entry);
+});
+
+test("each Docker image's build records the digest build.sh gives it", () => {
+  const dockerfile = readFileSync(join(SETUP, "docker", "Dockerfile"), "utf8");
+  const stages = dockerfile.split(/^FROM /m).filter((stage) => stage.includes("bash /mnt/customize.sh"));
+
+  assert.equal(stages.length, 3);
+  for (const stage of stages) assert.match(stage, /^ARG IMAGE_SOURCES_SHA256=\n(?:.*\n)*?RUN [^\n]*\n(?:\s.*\n)*?\s+bash \/mnt\/customize\.sh/m, stage.split("\n")[0]);
+  assert.match(readFileSync(join(SETUP, "docker", "customize.sh"), "utf8"), /^PREPARE=\$\{IMAGE_SOURCES_SHA256:-\}$/m);
 });
 
 test("every Linux desktop's program digest includes its enabled reset and changes with guest scripts on each image backend", async () => {

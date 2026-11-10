@@ -33,6 +33,7 @@ shared connection. How bb-box drives a box is in the
 | `customize.sh` | Runs those scripts inside the image as it is built |
 | `start` | A box's main process: starts its services, then waits |
 | `fork-hold` | Holds a fork's services, at its first start, until BB Box has checked its identity |
+| `image-sources` | The files the images are built from. A change to any of them makes the images due |
 
 ## What you need
 
@@ -340,6 +341,10 @@ npm run conformance -- --backend docker --settings docker.json
   cached.
 - **On a BB machine**, bb-box builds an image again itself when it has no
   record, an older contract, or another build of BB's app.
+- **A change to a file the images are built from**, one that
+  `image-sources` lists or one in the guest folder, makes them due. Add a
+  file the Dockerfile copies or binds to `image-sources` too: a test fails
+  until it is there.
 - **After a driver upgrade** on a GPU host, generate the CDI spec again.
 
 ## Remove

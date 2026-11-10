@@ -42,6 +42,7 @@ With **Rebuild each night** on, on the Images page of [settings](settings.md#ima
 - a Linux image is due after a week
 - a macOS image is due after a month
 - a Windows image is due after a month
+- a Linux or Android image is due when a file it is built from changes: any file in the guest folder its build copies, its backend's build script, or, for Docker and microsandbox, any file that `setup/docker/image-sources` lists
 
 A Windows image is refreshed in a box of its current build, which installs Windows' updates and the pinned tools. The build before stays as a rollback until the next refresh succeeds. How to go back to it is in the [Proxmox QEMU](../../setup/proxmox-qemu/README.md#update) and [Tart](../../setup/tart/README.md#update) guides. Proxmox QEMU's Linux images are refreshed the same way, in a box, with the build before kept as a rollback.
 

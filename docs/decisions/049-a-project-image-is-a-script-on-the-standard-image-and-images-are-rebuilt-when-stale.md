@@ -8,7 +8,9 @@ spares can be of an image; and
 [042](042-a-docker-host-can-be-a-bb-machine.md): Docker images are rebuilt
 through the same relay. Extended by
 [050](050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md):
-standard Linux images carry Tailscale, stopped and with no state.
+standard Linux images carry Tailscale, stopped and with no state, and by
+[085](085-an-image-is-due-when-any-file-it-is-built-from-changes.md): a
+Linux or Android image is also due when any file it is built from changes.
 Amended before it was built, 3 October 2026: a person never writes the
 script. It lives in the project's repository, and an agent writes it from
 a draft that bb-box makes from the project's files.

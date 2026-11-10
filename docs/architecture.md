@@ -730,8 +730,12 @@ rebuilt each night. A project can add a script on top.
   run each night by a BB script automation, rebuilds due standard images
   one at a time, most needed first, with the latest agent CLIs, gh and
   Chrome that publish checksums (`src/backends/versions.ts`). Linux images
-  are due after 7 days and macOS images after 30. A run starts no image
-  after 4 hours. A trial box of the new build must pass the kind's check,
+  are due after 7 days and macOS images after 30. A Linux or Android
+  image is also due when its record's program digest is not the one a
+  rebuild would record now: every file in the guest folder, and its
+  backend's prepare script or, for Docker and microsandbox, every file
+  `setup/docker/image-sources` lists (085). A run starts no image after
+  4 hours. A trial box of the new build must pass the kind's check,
   have BB's app and the record, answer no more than 5 s slower and have no
   older tool before the build takes the image's name. Windows images are
   not refreshed yet (#450).

@@ -59,6 +59,7 @@ RUN mkdir /app && if [ -n "$BB_URL" ]; then \
 # takes no room. The app's layer comes last, as it changes with each build of
 # BB's app, and bbbox.bb-app says which build it has, for the plugin to see.
 FROM ${UBUNTU} AS linux
+ARG IMAGE_SOURCES_SHA256=
 RUN --mount=type=bind,source=proxmox-lxc/template,target=/mnt/template \
     --mount=type=bind,source=docker/customize.sh,target=/mnt/customize.sh \
     --mount=type=bind,from=fetch,source=/artifacts,target=/mnt/artifacts \
@@ -78,6 +79,7 @@ LABEL bbbox.image-version="1" bbbox.fork-hold="1" bbbox.bb-app="$BB_APP_SHA256"
 CMD ["/usr/local/sbin/bb-box-start"]
 
 FROM ${UBUNTU} AS desktop
+ARG IMAGE_SOURCES_SHA256=
 RUN --mount=type=bind,source=proxmox-lxc/template,target=/mnt/template \
     --mount=type=bind,source=docker/customize.sh,target=/mnt/customize.sh \
     --mount=type=bind,from=fetch-desktop,source=/artifacts,target=/mnt/artifacts \
@@ -101,6 +103,7 @@ CMD ["/usr/local/sbin/bb-box-start"]
 
 # The Wayland desktop (048): Sway on the CPU, streamed by wayvnc, with no GPU.
 FROM ${UBUNTU_WAYLAND} AS desktop-wayland
+ARG IMAGE_SOURCES_SHA256=
 RUN --mount=type=bind,source=proxmox-lxc/template,target=/mnt/template \
     --mount=type=bind,source=docker/customize.sh,target=/mnt/customize.sh \
     --mount=type=bind,from=fetch-desktop-wayland,source=/artifacts,target=/mnt/artifacts \

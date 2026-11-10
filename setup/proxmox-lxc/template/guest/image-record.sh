@@ -65,11 +65,11 @@ program=$(
   {
     printf 'BOX_IDENTITY_RESET=%s\n' "$(settings BOX_IDENTITY_RESET)"
     if [ -d "$build/guest" ]; then
-      for f in $(cd "$build/guest" && LC_ALL=C ls -1 *.sh 2>/dev/null | LC_ALL=C sort); do
-        [ -f "$build/guest/$f" ] || continue
-        printf 'file %s\n' "$f"
-        cat "$build/guest/$f"
-      done
+      (cd "$build/guest" && find . -type f ! -path '*/.*' | sed 's|^\./||' | LC_ALL=C sort) |
+        while IFS= read -r f; do
+          printf 'file %s\n' "$f"
+          cat "$build/guest/$f"
+        done
     fi
     printf 'PREPARE=%s\n' "$(settings PREPARE)"
   } | sha256sum | cut -d' ' -f1

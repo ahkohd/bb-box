@@ -57,7 +57,7 @@ DESKTOP_GPU=none
 DESKTOP_SESSION=$session
 BOX_RUNTIME=docker
 BOX_IDENTITY_RESET=on
-PREPARE=$(sha256sum "$0" | awk 'NR==1{print $1}')
+PREPARE=${IMAGE_SOURCES_SHA256:-}
 END
 
 bash "$build/guest/customize-base.sh" "$build"
