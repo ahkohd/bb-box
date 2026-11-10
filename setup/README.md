@@ -11,14 +11,14 @@ A backend is where boxes come from. You can turn on several, and a new box goes 
 | Docker | the quickest start: it needs only Docker, on the machine that runs BB, another host, or a BB machine | none yet | [Docker](docker/README.md), and [Docker in WSL on a Windows PC](docker-wsl/README.md) |
 | microsandbox | an option beside Docker, not the default: Linux boxes and desktops that each need a kernel of their own, such as Docker without a privileged container, as microVMs on a Linux host with KVM or a Mac: the machine that runs BB, another host, or a BB machine | yes, with or without memory | [microsandbox](microsandbox/README.md) |
 | Proxmox LXC | Linux boxes and desktops, including desktops on a GPU, on a Proxmox VE host | yes | [Proxmox LXC](proxmox-lxc/README.md) |
-| Proxmox QEMU | Windows desktops, Linux boxes with a kernel of their own, and Android emulator devices, on a Proxmox VE host | Linux boxes, with or without memory | [Proxmox QEMU](proxmox-qemu/README.md) |
+| Proxmox QEMU | Windows desktops, Linux boxes with a kernel of their own, and Android emulator devices, on a Proxmox VE host | Linux boxes, with or without memory. Windows desktops, the disk only, restored in place on storage that rolls back past newer snapshots. None for Android | [Proxmox QEMU](proxmox-qemu/README.md) |
 | Tart | macOS, Linux on arm64 and Windows on arm64, on your Macs with Apple silicon | macOS with its memory, and Linux | [Tart](tart/README.md) |
 | SSH host pool | your own physical Linux machines or Macs, lent to one thread at a time | none | [SSH host pool](ssh-pool/README.md) |
 | Hetzner Cloud | Linux boxes and CPU desktops, on x86 or arm64, with no machine of your own: BB Box rents Docker hosts by the hour as boxes need them, deletes them when idle, and keeps to a monthly limit | none yet | [Hetzner Cloud](../docs/guide/hetzner.md) |
 | Namespace | macOS boxes and desktops beyond your own Macs, and Linux boxes and desktops, including Linux that can run VMs: a machine for each box, rented by the minute, within the workspace's plan | none yet | [Namespace](../docs/guide/namespace.md) |
 | boat.dev | Linux boxes with KVM, CPU desktops and Android emulator devices with no machine of your own: a Linux VM for each box, forked from BB Box's template in seconds and billed by the second | on a paid plan, as saved snapshots priced on your account | [boat.dev](../docs/guide/boat.md) |
 
-Where a backend takes snapshots, a box restores to one with an undo, and a Linux or macOS box can fork one into a new box. What each backend holds, restores, forks and keeps is in [snapshots](../docs/guide/snapshots.md#what-each-backend-offers).
+Where a backend takes snapshots, a box restores to one with an undo, and a Linux or macOS box can fork one into a new box. A Windows desktop on Proxmox QEMU restores its disk and does not fork. What each backend holds, restores, forks and keeps is in [snapshots](../docs/guide/snapshots.md#what-each-backend-offers).
 
 The cloud backends join their machines to your tailnet when BB is on one: see [joining cloud machines to your tailnet](../docs/guide/tailnet.md).
 
