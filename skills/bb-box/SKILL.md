@@ -257,6 +257,11 @@ including Android data and Linux host files. Restore uses a snapshot undo
 on LVM-thin, Ceph RBD, BTRFS and qcow2; ZFS refuses restore. Memory, fork
 and Keep are refused because memory restore and identity reset are unproved.
 
+An iOS box with `dedicated` on Tart snapshots its whole macOS VM with its
+memory, so a restore brings its device back booted, with the device, apps
+and data it had when the snapshot was taken. A fork boots the device
+afresh. A shared iOS box takes no snapshots: it has no VM of its own.
+
 BB Box starts an Android model cold when its unsaved marker is present. A snapshot taken while that model runs keeps the marker, as does an undo taken after a hard stop. A clean emulator save removes the marker, so a matching quick-boot save can still load after a host restart. New boxes can use the image's quick-boot saves. Wait for Android to finish booting before running adb commands.
 
 - Take one with `box_snapshot` before a change you cannot undo: a
@@ -266,7 +271,8 @@ BB Box starts an Android model cold when its unsaved marker is present. A snapsh
   Call `box_snapshot` with `check` first to see whether it pauses the box
   and for about how long. Tell the person before a pause of more than a few
   seconds, such as a large Docker box's. Docker, microsandbox, Tart's
-  macOS VMs and Proxmox all pause a box that runs. The take's answer says
+  macOS VMs, including iOS boxes with `dedicated`, and Proxmox all pause a
+  box that runs. The take's answer says
   how long it paused the box, or that its backend cannot measure it, as
   Proxmox cannot.
 - When an attempt went wrong, restore with `box_restore` rather than

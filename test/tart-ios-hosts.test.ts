@@ -182,6 +182,22 @@ test("a slot box's transports reach it as its slot's user, with the host keeping
   await assert.rejects(backend.stop(slot, signal()), /cannot be stopped on its own/);
 });
 
+test("a slot box is planned no snapshot, takes none and restores none, and says it has no VM of its own, though the ios kind offers snapshots for a dedicated box", async () => {
+  const { backend } = setup();
+  await backend.withheldKinds("ios", signal());
+  const box = identity();
+  const { guest } = await place(backend, box);
+  const slot = await backend.acquire(box, guest, hooks().hooks, signal());
+  const ref = { id: "snaaaaaaaaaaaa", ref: "snaaaaaaaaaaaa", guest: slot };
+  const hooksOfSnapshot = { submitting: async () => {}, task: async () => {} };
+  const noVmOfItsOwn = /A box on a shared iOS host has no VM of its own, so BB Box takes no snapshot of it\./;
+
+  assert.notEqual(backend.snapshotting("ios"), null);
+  await assert.rejects(backend.planSnapshots(slot, "ios", null, signal()), noVmOfItsOwn);
+  await assert.rejects(backend.snapshot(slot, { id: ref.id, box: box.boxId, memory: true }, hooksOfSnapshot, signal()), noVmOfItsOwn);
+  await assert.rejects(backend.rollbackSnapshot(slot, ref, hooksOfSnapshot, signal()), noVmOfItsOwn);
+});
+
 test("the upkeep deletes a host that holds no box, and the doctor lists each host's slots (064)", async () => {
   const { backend, hosts } = setup();
   const box = identity();

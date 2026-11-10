@@ -486,7 +486,11 @@ snapshot. Nothing is installed for them on the Mac; they use the Mac's
 - **macOS boxes get an identity reset** when they are first ready: bb-box
   installs `/usr/local/sbin/bb-box-identity` and the LaunchDaemon
   `dev.bb-box.identity` in each macOS VM, which also runs at a fork's first
-  boot.
+  boot. An iOS box in a VM of its own is a macOS VM, and gets the same reset.
+- **An iOS box in a VM of its own takes snapshots as a macOS box does**,
+  with its device's state in the VM's memory, and its snapshot's label says
+  `kind=ios`. An iOS box in a slot on a shared iOS host takes none: it has
+  no VM of its own to copy.
 - **Linux boxes have the identity reset in their image**, on, from an image
   `prepare-linux-image.sh` built from this bb-box on: it runs at each boot
   before the network, SSH and the box user's services. A Linux fork gets a

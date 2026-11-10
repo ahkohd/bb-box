@@ -5,6 +5,7 @@ import lightPoster from "../../../../docs/media/demo-light-poster.jpg";
 import lightVideo from "../../../../docs/media/demo-light.mp4?url";
 import { clockOf, demoSeconds } from "../../demo.ts";
 import { demoDescription } from "../../home.ts";
+import DemoSeek from "./DemoSeek.astro";
 
 interface Props {
   class?: string;
@@ -46,12 +47,13 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
 <div class="demo-controls" data-demo-controls hidden>
   <button type="button" class="demo-button" data-demo-play aria-label="Pause demo"><span class="demo-word">Pause</span></button>
   <span class="demo-time" aria-hidden="true">{clockOf(0)} / {clockOf(demoSeconds)}</span>
-  <span class="demo-run" aria-hidden="true"></span>
+  <DemoSeek />
 </div>
 
 <script>
   import { clockOf, demoSeconds } from "../../demo.ts";
   import { onMotionChange, pausedByPerson, reducedMotion } from "../../motion.ts";
+  import { startSeek } from "../../effects/seek-dots.ts";
 
   function startDemo(stage: HTMLElement, controls: HTMLElement): void {
     const video = stage.querySelector("video")!;
@@ -63,6 +65,7 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
 
     controls.hidden = false;
     video.controls = false;
+    startSeek(controls.querySelector<HTMLElement>(".demo-seek")!, video, demoSeconds);
 
     const showTime = () => {
       time.textContent = `${clockOf(video.currentTime)} / ${clockOf(video.duration || demoSeconds)}`;
@@ -134,11 +137,6 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
     display: none;
   }
 
-  .demo-run {
-    flex: 1;
-    height: 1px;
-    background-color: var(--frame-ink);
-  }
 
   .demo-button {
     padding: 0.25rem 0;
@@ -150,6 +148,12 @@ const reservedShape = `aspect-ratio: ${darkPoster.width} / ${darkPoster.height}`
 
   .demo-button:hover {
     color: var(--accent);
+  }
+
+  .demo-word {
+    display: inline-block;
+    min-width: 9ch;
+    text-align: start;
   }
 
   .demo-word::before {

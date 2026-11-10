@@ -2,7 +2,7 @@
 
 A snapshot keeps a box's state at one moment, so you can put the box back to it later. BB Box keeps its own record of each snapshot, and the box's backend keeps the snapshot itself, on the box's host.
 
-You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools. Where the backend allows it, you [fork](#forking-a-snapshot) a snapshot into a new box and [keep](#keeping-a-snapshot) one past the box's release. Docker boxes take, list, restore, fork and delete snapshots. This works on Docker boxes, Proxmox LXC boxes, Proxmox QEMU Linux boxes, Proxmox QEMU Windows desktops and Android boxes, microsandbox boxes, Tart's macOS and Linux VMs and boat.dev boxes on a paid plan. Only you keep one.
+You take, restore, rename and delete snapshots on a box's page, in its [Snapshots card](#on-a-boxs-page), on the Boxes page's [Snapshots tab](#the-snapshots-tab), or from the command line, and a thread's agent does with its tools. Where the backend allows it, you [fork](#forking-a-snapshot) a snapshot into a new box and [keep](#keeping-a-snapshot) one past the box's release. Docker boxes take, list, restore, fork and delete snapshots. This works on Docker boxes, Proxmox LXC boxes, Proxmox QEMU Linux boxes, Proxmox QEMU Windows desktops and Android boxes, microsandbox boxes, Tart's macOS and Linux VMs, iOS boxes in a VM of their own on Tart, and boat.dev boxes on a paid plan. Only you keep one.
 
 ## What each backend offers
 
@@ -15,9 +15,10 @@ You take, restore, rename and delete snapshots on a box's page, in its [Snapshot
 | boat.dev, the free trial | no snapshots: the trial has no saved snapshots | | | | |
 | microsandbox | the disk, with the box's Docker data, or the disk and memory | in under a second, pausing the box while `msb` captures its disk; with memory, the box pauses for about a second | by a new microVM made from the snapshot, which runs the box with its ID, name and labels; the old microVM is deleted | by a new microVM booted from the snapshot's disk, never its memory, from a snapshot taken with a working identity reset | as it is: a snapshot outlives its box's microVM, on the host |
 | Tart, macOS | the disk and memory, always: every snapshot is a copy of the suspended VM | suspends the VM, copies it and resumes it: 11 s for a 16 GiB VM | in place: it suspends the box, takes the undo, puts the snapshot's copy in the VM's place and resumes it, running as it was | by a copy of the snapshot's disk, without its memory, from a snapshot taken with macOS's identity reset | as it is: the copy stays beside the VMs |
+| Tart, iOS in a VM of its own | as Tart, macOS: the VM's disk and memory, with the Simulator and its device as they were | as Tart, macOS | as Tart, macOS: the device comes back booted, with its apps open and its data as they were | as Tart, macOS: the fork boots its device afresh, with the snapshot's apps and data | as Tart, macOS |
 | Tart, Linux | the disk | only while the box is stopped, as Tart cannot suspend a Linux VM | in place, after a shutdown | by a copy of the snapshot's disk, from a snapshot taken with reset version 8 for Linux servers, or version 9 for Linux desktops | as it is: the copy stays beside the VMs |
 | Docker | the disk and the box's Docker data | pauses the box; measured pauses range from 3.5 to 4.9 seconds on small overlay2 boxes to about 45 seconds for a 1.8 GB change on containerd | by a new container made from the snapshot, with a snapshot as the undo, which runs the box with its ID, name and labels; the old container is deleted once the new one runs | by a new container made from the snapshot, with the fork's own ID as its identity value, held until BB Box's check passes, from a snapshot taken with reset version 7 for Linux servers, or version 9 for Linux desktops, of a box made from an image built with the hold | no |
-| Hetzner and Namespace boxes, the SSH host pool's machines, Windows boxes on Tart, iOS boxes | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
+| Hetzner and Namespace boxes, the SSH host pool's machines, Windows boxes on Tart, iOS boxes in a slot on a shared host | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
 
 Linux desktops need an image built with identity reset version 9 or later. Older images refuse forks and Keep, saying why. Refresh the image and make the box again; an image rebuild does not update existing boxes or snapshots.
 
@@ -30,6 +31,8 @@ A Tart snapshot is an APFS clone of the VM's folder, kept beside the VMs, in `bb
 A macOS snapshot holds the VM's saved memory, and Virtualization restores a saved state only under the macOS build and Tart that saved it. So at each suspend BB Box notes beside the VM the macOS build and Tart it was saved under, and each snapshot's label carries that note. After the Mac's macOS or Tart changes, BB Box does not restore a snapshot saved before, nor one whose memory has no such note, and says to fork it instead, which starts from its disk. The start just after a restore never boots the box from its disk when the snapshot's memory does not resume: it fails and says so, and a later start does.
 
 A restore copies the snapshot beside the VM, then swaps it into the VM's place in two renames. It records each phase on the Mac first, with its shell's process and start time, and each restore has its own record. If BB Box or the Mac stops in the middle, the next look at the box, its start, or its release puts the right folder back: the snapshot's whole copy once it was in place, the VM's own folder otherwise, never neither. While a restore still runs, the box is neither started nor deleted. A release also deletes what a restore or a fork cut short left beside the VMs.
+
+An iOS box in a VM of its own, with `dedicated`, is a macOS VM that runs the iOS Simulator, so its snapshots are a macOS VM's. A restore brings the device back booted, with the apps that were open and their data. The device a snapshot was taken on comes back with it: restore a snapshot taken before you switched device, and the box shows the device it had then, with that device's own apps and data. Its undo brings back the device you had switched to. A fork, or a Keep of a box that was released, boots its device afresh from the snapshot's disk, with the snapshot's apps and data but none of them open. An iOS box in a slot on a shared iOS host takes no snapshots.
 
 ### Proxmox
 
@@ -50,7 +53,7 @@ BB Box starts an Android model cold when its unsaved marker is present. A snapsh
 - **Hetzner and Namespace boxes take no snapshots yet.** These are planned for later.
 - **An Android device's own snapshots are planned for later**: the emulator's snapshot of the device alone. Until then, Android boxes on boat.dev and Proxmox QEMU take snapshots of the whole VM.
 - **A Windows desktop on Proxmox QEMU takes no snapshot of its memory yet**, and it does not fork or Keep until a Windows identity reset is checked. A restore on ZFS stays off for that reason.
-- **Windows boxes on Tart, iOS boxes, and the SSH host pool's machines take no snapshots**, and none are planned yet.
+- **Windows boxes on Tart, iOS boxes in a slot on a shared host, and the SSH host pool's machines take no snapshots**, and none are planned yet. A shared iOS box has no VM of its own to copy: a take, restore or fork of one is refused and says so. For now its Snapshots card and its status still say what Tart takes of an iOS box in a VM of its own, and Take snapshot gives the reason only when you try it.
 
 ## On a box's page
 
