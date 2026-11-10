@@ -1,0 +1,66 @@
+---
+interface Props {
+  words: string[];
+}
+
+const { words } = Astro.props;
+---
+
+<span class="swap" data-words={JSON.stringify(words)}>{words[0]}</span>
+
+<script>
+  import { cipherDuration, cipherFrame, letterGlyphsFor, revealTimes } from "../../effects/cipher-text.ts";
+  import { animateWhileSeen, pausedByPerson, reducedMotion } from "../../motion.ts";
+
+  const holdSeconds = 2.6;
+  const escaped = (glyph: string) => (glyph === "<" ? "&lt;" : glyph === ">" ? "&gt;" : glyph === "&" ? "&amp;" : glyph);
+
+  for (const swap of document.querySelectorAll<HTMLElement>(".swap[data-words]")) {
+    const words: string[] = JSON.parse(swap.dataset.words ?? "[]");
+    if (words.length < 2) continue;
+    const scrambleSeconds = words.map((word) => cipherDuration(word) / 1000);
+    const revealAt = words.map((word, index) => revealTimes(word, scrambleSeconds[index]! * 1000, Math.random));
+    const cycleSeconds = words.reduce((sum, _, index) => sum + holdSeconds + scrambleSeconds[index]!, 0);
+    let shown = "";
+
+    const show = (html: string) => {
+      if (html === shown) return;
+      shown = html;
+      swap.innerHTML = html;
+    };
+
+    animateWhileSeen(
+      swap,
+      {
+        draw(seconds) {
+          let into = seconds % cycleSeconds;
+          for (let index = 0; index < words.length; index++) {
+            const next = (index + 1) % words.length;
+            if (into < holdSeconds || reducedMotion() || pausedByPerson()) {
+              show(escaped(words[index]!));
+              return;
+            }
+            into -= holdSeconds;
+            if (into < scrambleSeconds[next]!) {
+              const pieces = cipherFrame(words[next]!, into * 1000, revealAt[next]!, letterGlyphsFor, Math.random);
+              show(pieces.map((piece) => (piece.settled ? escaped(piece.glyph) : `<span class="swap-glyph">${escaped(piece.glyph)}</span>`)).join(""));
+              return;
+            }
+            into -= scrambleSeconds[next]!;
+          }
+        },
+      },
+      30,
+    );
+  }
+</script>
+
+<style>
+  .swap {
+    display: block;
+  }
+
+  .swap :global(.swap-glyph) {
+    color: var(--accent);
+  }
+</style>

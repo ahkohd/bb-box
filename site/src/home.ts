@@ -6,7 +6,9 @@ import { installCommand, quickStartOnGitHub, setupPrompt } from "./setup-prompt.
 import { startingPoints } from "./starting-points.ts";
 
 export const tagline = "Computers for BB threads: Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.";
-export const headline = "Computers for BB threads";
+export const headlineWords = ["Computers", "Devices", "Simulators", "Emulators", "Macs", "Sandboxes", "VMs", "Desktops"];
+export const headlineRest = "for BB threads";
+export const headline = `${headlineWords[0]} ${headlineRest}`;
 export const subline = "Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.";
 export const demoDescription =
   "A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop, glances at the box's CPU and memory in the Monitor, then makes a server box and runs a command in its terminal. On the server box's page, the person takes a snapshot, breaks the box from its terminal, and restores the snapshot with an undo.";

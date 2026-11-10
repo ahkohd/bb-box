@@ -15,6 +15,7 @@ import PointerBox from "../components/home/PointerBox.astro";
 import HomeHead from "../components/home/HomeHead.astro";
 import AimReticle from "../components/home/AimReticle.astro";
 import DemoCrates from "../components/home/DemoCrates.astro";
+import SwappingWord from "../components/home/SwappingWord.astro";
 import MotionToggle from "../components/home/MotionToggle.astro";
 import BoxPanelPiece from "../components/home/BoxPanelPiece.astro";
 import DesktopPiece from "../components/home/DesktopPiece.astro";
@@ -24,7 +25,7 @@ import RecordingPiece from "../components/home/RecordingPiece.astro";
 import ThemeToggle from "../components/ThemeToggle.astro";
 import { demoSeconds } from "../demo.ts";
 import { homePageHead } from "../head.ts";
-import { headline, homeData, platformLines, platformNames, subline, tagline } from "../home.ts";
+import { headline, headlineRest, headlineWords, homeData, platformLines, platformNames, subline, tagline } from "../home.ts";
 import { pageUrl } from "../repo.ts";
 
 const base = import.meta.env.BASE_URL;
@@ -72,7 +73,7 @@ import appIcon from "../assets/app-icon.png";
             <span class="line"><span class="prompt-sign" aria-hidden="true">$</span> <span class="typed" style={`--chars: ${acquire.length}`}>{acquire}</span></span>
             <span class="line reply"><span class="ready" aria-hidden="true">●</span> Ready in seconds, and a warm box at once.</span>
           </p>
-          <h1 id="headline">{headline}</h1>
+          <h1 id="headline" aria-label={headline}><SwappingWord words={headlineWords} /> {headlineRest}</h1>
           <p class="lead">{subline}</p>
           <div class="actions">
             <CopyButton source="setup-prompt" class="button primary" label="Copy setup prompt" />
