@@ -47,7 +47,7 @@ import { isDriverVersion } from "../../core/gpu-userspace.ts";
 import { GPU_RESTART_SECONDS, helperNotReadyRefusal, noDriverRefusal, noSharedCardRefusal, noWholeCardRefusal, placementOf, plannedChange, startFirstRefusal, unmarkedRefusal, type OtherOnCard, type PlanBox } from "./gpu-resize.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
-import { NoLongerOurs, OwnedGuests, boxOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, sameDescription, templateOwner, unstampedOwner, warmOwner, type GuestOwner, type PowerAction } from "./owned.ts";
+import { NoLongerOurs, OwnedGuests, adoptingOwner, boxOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, sameDescription, templateOwner, unstampedOwner, warmOwner, type GuestOwner, type PowerAction } from "./owned.ts";
 import { EARLIER_GUEST, copyName, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import {
   BUILD,
@@ -2260,7 +2260,7 @@ export class ProxmoxLxcBackend implements Backend {
     await this.#forget(this.#vmid(guest));
     const api = await this.client();
     if (await this.#still(api, guest, signal)) {
-      await this.#owned(api).destroy(this.#vmid(guest), this.#boxOf(guest), signal, () =>
+      await this.#owned(api).destroy(this.#vmid(guest), this.#boxOrAdopting(guest), signal, () =>
         this.disarmFork(guest, signal).catch((error: unknown) => this.#context.logError("disarm before release", error)),
       );
     }
@@ -3847,6 +3847,10 @@ export class ProxmoxLxcBackend implements Backend {
 
   #boxOf(guest: Guest): GuestOwner {
     return boxOwner(this.#context.installId, this.#boxData(guest));
+  }
+
+  #boxOrAdopting(guest: Guest): GuestOwner {
+    return eitherOwner(this.#boxOf(guest), adoptingOwner(this.#context.installId, this.#boxData(guest)));
   }
 
   #writesFor(api: Proxmox, owner: GuestOwner): ForkWrites {

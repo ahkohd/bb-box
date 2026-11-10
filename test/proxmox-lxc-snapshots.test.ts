@@ -424,6 +424,33 @@ test("G16 on Proxmox LXC: a held copy is cloned into the box range, labelled, di
   assert.equal(state.proxmox.guests.has(Number(copy.ref)), false);
 });
 
+test("a new guest cut short while it is cloned from a held copy, still carrying the copy's tags, is deleted by its release; the held copy and the earlier guest are not", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, tasks().hooks);
+  await state.backend.powerOff(guest);
+  const copy = await state.backend.copyGuest(guest, { box: id.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }, { ...tasks().hooks, claimed: async () => {} });
+  await state.backend.disarmCopy(copy);
+  await state.backend.templateCopy(copy);
+  await state.backend.retireGuest(guest, id);
+  const identity = await state.backend.guestIdentity(guest);
+  let made: Guest | null = null;
+  const stopped = new Error("BB Box stopped once the clone's task began");
+  const cutShort = { ...tasks().hooks, claimed: async (fresh: Guest) => void (made = fresh), task: async () => { throw stopped; } };
+
+  await assert.rejects(state.backend.adoptCopy(copy, id, identity, cutShort), stopped);
+
+  const half = state.proxmox.guests.get(Number(made!.ref))!;
+  assert.match(half.config.tags ?? "", /held-copy/, "the clone still carries the held copy's tags");
+  const hooks = { resetting: async () => {}, timing: () => {} };
+  await state.backend.release(made!, hooks);
+  assert.equal(state.proxmox.guests.has(Number(made!.ref)), false, "the half-made guest is deleted");
+  await state.backend.release(copy, hooks).catch(() => undefined);
+  assert.ok(state.proxmox.guests.has(Number(copy.ref)), "a release never deletes the held copy");
+  await state.backend.release(guest, hooks).catch(() => undefined);
+  assert.ok(state.proxmox.guests.has(vmid), "nor the earlier guest");
+});
+
 test("review A3: a restore's task is looked up among the token's own, never another user's", async () => {
   const state = world();
   const { guest } = await box(state);
