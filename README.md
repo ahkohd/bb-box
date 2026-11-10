@@ -107,6 +107,7 @@ Every kind of box, and its sizes, is in [kinds and sizes](docs/reference/kinds.m
 ## Documentation
 
 - [User guide](docs/guide/README.md)
+- [Common questions](docs/guide/faq.md)
 - [Setting up BB Box](setup/README.md)
 - [Reference](docs/reference/README.md)
 - [Architecture](docs/architecture.md)
