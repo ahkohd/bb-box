@@ -54,8 +54,8 @@ const piles: Pile[] = [
   {
     across: 0.72,
     rows: [
-      [large("linux"), medium(), large("windows"), small(), medium("mac")],
-      [medium(), large("android"), small(), medium("vm")],
+      [large("linux"), medium("qemu"), large("windows"), small(), medium("mac")],
+      [large("proxmox"), large("android"), small(), medium("vm")],
       [medium("ios"), { size: "medium", label: "box", accent: true }, small()],
       [large("docker"), small()],
       [medium("gpu")],
@@ -63,7 +63,7 @@ const piles: Pile[] = [
   },
   {
     across: 0.42,
-    rows: [[medium("lxc"), small(), medium()], [medium(), small("vm")], [small()]],
+    rows: [[medium("lxc"), small("msb"), large("sandbox")], [medium(), small("vm")], [small()]],
   },
   {
     across: 0.95,
