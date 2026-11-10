@@ -1,0 +1,118 @@
+<div class="scroll-rail" aria-hidden="true" hidden>
+  <div class="scroll-thumb"></div>
+</div>
+
+<script>
+  const rail = document.querySelector<HTMLElement>(".scroll-rail");
+  const thumb = rail?.querySelector<HTMLElement>(".scroll-thumb");
+  const finePointer = matchMedia("(pointer: fine)");
+  const leastThumbPx = 36;
+
+  if (rail && thumb) {
+    let frame = 0;
+    let drag: { startY: number; startScroll: number } | undefined;
+
+    const page = () => {
+      const root = document.documentElement;
+      const scrollable = root.scrollHeight - innerHeight;
+      const railHeight = rail.clientHeight;
+      const thumbHeight = Math.max(leastThumbPx, (innerHeight / root.scrollHeight) * railHeight);
+      return { scrollable, railHeight, thumbHeight, travel: railHeight - thumbHeight };
+    };
+
+    const place = () => {
+      frame = 0;
+      const { scrollable, thumbHeight, travel } = page();
+      rail.hidden = !finePointer.matches || scrollable <= 1;
+      if (rail.hidden) return;
+      thumb.style.height = `${thumbHeight}px`;
+      thumb.style.transform = `translateY(${(scrollY / scrollable) * travel}px)`;
+    };
+
+    const soon = () => {
+      if (!frame) frame = requestAnimationFrame(place);
+    };
+
+    thumb.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      thumb.setPointerCapture(event.pointerId);
+      drag = { startY: event.clientY, startScroll: scrollY };
+      rail.dataset.dragging = "";
+    });
+    thumb.addEventListener("pointermove", (event) => {
+      if (!drag) return;
+      const { scrollable, travel } = page();
+      scrollTo({ top: drag.startScroll + ((event.clientY - drag.startY) / Math.max(1, travel)) * scrollable, behavior: "instant" });
+    });
+    const endDrag = () => {
+      drag = undefined;
+      delete rail.dataset.dragging;
+    };
+    thumb.addEventListener("pointerup", endDrag);
+    thumb.addEventListener("pointercancel", endDrag);
+
+    rail.addEventListener("pointerdown", (event) => {
+      if (event.target !== rail) return;
+      const { scrollable, thumbHeight, travel } = page();
+      const box = rail.getBoundingClientRect();
+      const share = (event.clientY - box.top - thumbHeight / 2) / Math.max(1, travel);
+      scrollTo({ top: Math.min(1, Math.max(0, share)) * scrollable, behavior: "smooth" });
+    });
+
+    addEventListener("scroll", soon, { passive: true });
+    addEventListener("resize", soon);
+    new ResizeObserver(soon).observe(document.body);
+    finePointer.addEventListener("change", soon);
+    place();
+  }
+</script>
+
+<style is:global>
+  html:has(.scroll-rail) {
+    scrollbar-width: none;
+  }
+
+  html:has(.scroll-rail)::-webkit-scrollbar {
+    display: none;
+  }
+
+  .scroll-rail {
+    position: fixed;
+    top: 0.375rem;
+    right: 0.25rem;
+    bottom: 0.375rem;
+    z-index: 30;
+    width: 0.5rem;
+    background-image: linear-gradient(var(--frame-ink) 1px, transparent 1px);
+    background-size: 1px 6px;
+    background-position: center top;
+    background-repeat: repeat-y;
+    cursor: pointer;
+  }
+
+  .scroll-rail[hidden] {
+    display: none;
+  }
+
+  .scroll-thumb {
+    width: 100%;
+    border: 1px solid var(--muted-foreground);
+    background-color: var(--background);
+    background-image: repeating-linear-gradient(-45deg, var(--muted-foreground) 0 1px, transparent 1px 4px);
+    cursor: grab;
+    transition:
+      border-color 150ms ease,
+      background-image 150ms ease;
+    will-change: transform;
+  }
+
+  .scroll-rail:hover .scroll-thumb,
+  .scroll-rail[data-dragging] .scroll-thumb {
+    border-color: var(--accent);
+    background-image: repeating-linear-gradient(-45deg, var(--accent) 0 1px, transparent 1px 4px);
+  }
+
+  .scroll-rail[data-dragging] .scroll-thumb {
+    cursor: grabbing;
+  }
+</style>
