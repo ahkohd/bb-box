@@ -677,7 +677,10 @@ import appIcon from "../assets/app-icon.png";
     position: absolute;
     inset: -3.5rem 0 0 auto;
     width: 62%;
-    mask-image: radial-gradient(ellipse 80% 90% at 78% 38%, var(--foreground) 20%, transparent 74%);
+    mask-image:
+      linear-gradient(to bottom, transparent, var(--foreground) 4.5rem),
+      radial-gradient(ellipse 80% 90% at 78% 38%, var(--foreground) 20%, transparent 74%);
+    mask-composite: intersect;
   }
 
   h2 {
@@ -1095,6 +1098,7 @@ import appIcon from "../assets/app-icon.png";
       width: auto;
       height: 8.5rem;
       mask-image: linear-gradient(to bottom, transparent, var(--foreground) 30%, var(--foreground) 55%, transparent);
+      mask-composite: add;
     }
 
     nav a:nth-child(2) {
