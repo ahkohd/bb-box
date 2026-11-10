@@ -4,6 +4,22 @@ import type { Contract, MonitorSnapshot } from "../../plugin/contract.ts";
 import { createSnapshotSource } from "./snapshot-source.ts";
 import { createVisiblePoller } from "./visible-poller.ts";
 
+export type OrderedSnapshot = MonitorSnapshot & { readonly takenOrder: number };
+
+let nextTakenOrder = 1;
+
+export function takenOrder(snapshot: MonitorSnapshot): number | null {
+  const order = (snapshot as { takenOrder?: unknown }).takenOrder;
+  return typeof order === "number" && Number.isSafeInteger(order) ? order : null;
+}
+
+function startOrderedReading(load: () => Promise<MonitorSnapshot>): Promise<OrderedSnapshot> {
+  const takenOrder = nextTakenOrder;
+  nextTakenOrder += 1;
+
+  return load().then((snapshot) => ({ ...snapshot, takenOrder }));
+}
+
 type SnapshotSource = ReturnType<typeof createSnapshotSource<MonitorSnapshot>>;
 
 const sources = new Map<string, SnapshotSource>();
@@ -67,9 +83,11 @@ export function useMonitorSnapshot(machineId: string) {
         forceRefresh.current = false;
         return source.load(
           () =>
-            machineId === SERVER_MACHINE
-              ? rpc.call("monitor.server", { force })
-              : rpc.call("monitor.machine", { machineId, force }),
+            startOrderedReading(() =>
+              machineId === SERVER_MACHINE
+                ? rpc.call("monitor.server", { force })
+                : rpc.call("monitor.machine", { machineId, force }),
+            ),
           force,
         );
       },
