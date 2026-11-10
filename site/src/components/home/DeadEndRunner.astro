@@ -1,0 +1,128 @@
+<canvas class="dead-end-runner" data-motion aria-hidden="true"></canvas>
+
+<script>
+  import { cssValue, deviceScale } from "../../effects/gl.ts";
+  import { hashed, obstaclesBetween, pose, run, travelled } from "../../effects/runner.ts";
+  import { animateWhileSeen } from "../../motion.ts";
+
+  const fontPx = 13;
+  const boxPx = 14;
+  const groundGapPx = 18;
+  const trail = { dots: 6, everySeconds: 0.045 };
+  const starSpacingPx = 26;
+  const groundTickSpacingPx = 14;
+  const parallax = 0.3;
+  const pxPerMetre = 10;
+
+  function startRunner(canvas: HTMLCanvasElement): void {
+    const pen = canvas.getContext("2d");
+    if (!pen) return;
+    let width = 0;
+    let height = 0;
+    const ink = { box: "", obstacle: "", ground: "", dust: "", count: "" };
+
+    const restyle = () => {
+      ink.box = cssValue(canvas, "--accent");
+      ink.obstacle = cssValue(canvas, "--muted-foreground");
+      ink.ground = cssValue(canvas, "--frame-ink");
+      ink.dust = cssValue(canvas, "--dither-ink");
+      ink.count = cssValue(canvas, "--muted-foreground");
+    };
+
+    const resize = () => {
+      const scale = deviceScale();
+      ({ width, height } = canvas.getBoundingClientRect());
+      canvas.width = Math.round(width * scale);
+      canvas.height = Math.round(height * scale);
+      pen.setTransform(scale, 0, 0, scale, 0, 0);
+    };
+
+    const runnerX = () => Math.min(96, width * 0.18);
+
+    const drawDust = (scrolled: number, groundY: number) => {
+      pen.fillStyle = ink.dust;
+      const starsFrom = Math.floor((scrolled * parallax) / starSpacingPx);
+      for (let index = starsFrom; index * starSpacingPx - scrolled * parallax < width; index++) {
+        if (hashed(index, 5) > 0.35) continue;
+        pen.fillText(".", index * starSpacingPx - scrolled * parallax, 6 + hashed(index, 6) * (groundY - 30));
+      }
+      pen.fillStyle = ink.ground;
+      const ticksFrom = Math.floor(scrolled / groundTickSpacingPx);
+      for (let index = ticksFrom; index * groundTickSpacingPx - scrolled < width; index++) {
+        if (hashed(index, 7) > 0.5) continue;
+        pen.fillText(hashed(index, 8) > 0.5 ? "·" : ".", index * groundTickSpacingPx - scrolled, groundY + 11);
+      }
+    };
+
+    const drawBox = (x: number, bottom: number, turn: number, alpha: number) => {
+      pen.save();
+      pen.globalAlpha = alpha;
+      pen.translate(x, bottom - boxPx / 2);
+      pen.rotate(turn);
+      pen.strokeStyle = ink.box;
+      pen.fillStyle = ink.box;
+      pen.lineWidth = 1.5;
+      pen.strokeRect(-boxPx / 2 + 0.75, -boxPx / 2 + 0.75, boxPx - 1.5, boxPx - 1.5);
+      pen.fillRect(-2, -2, 4, 4);
+      pen.restore();
+    };
+
+    const draw = (seconds: number) => {
+      if (!width) resize();
+      pen.clearRect(0, 0, width, height);
+      pen.font = `${fontPx}px "JetBrains Mono Variable", ui-monospace, monospace`;
+      pen.textBaseline = "alphabetic";
+      const groundY = height - groundGapPx;
+      const scrolled = travelled(seconds);
+      const x = runnerX();
+
+      drawDust(scrolled, groundY);
+
+      pen.fillStyle = ink.ground;
+      pen.fillRect(0, groundY, width, 1);
+
+      pen.fillStyle = ink.obstacle;
+      pen.textAlign = "center";
+      for (const obstacle of obstaclesBetween(scrolled, scrolled + width)) {
+        const screenX = obstacle.centre - scrolled;
+        if (screenX < -40 || screenX > width + 40) continue;
+        pen.fillText(obstacle.glyphs, screenX, groundY - 1);
+      }
+
+      for (let back = trail.dots; back >= 1; back--) {
+        const then = seconds - back * trail.everySeconds;
+        if (then < 0) continue;
+        const was = pose(then, x);
+        pen.globalAlpha = 0.5 * (1 - back / (trail.dots + 1));
+        pen.fillStyle = ink.box;
+        pen.fillRect(x - back * trail.everySeconds * run.pxPerSecond - 1, groundY - was.lift - boxPx / 2 - 1, 2, 2);
+      }
+      pen.globalAlpha = 1;
+
+      const now = pose(seconds, x);
+      drawBox(x, groundY - now.lift, now.turn, 1);
+
+      pen.textAlign = "right";
+      pen.fillStyle = ink.count;
+      pen.font = `11px "JetBrains Mono Variable", ui-monospace, monospace`;
+      pen.fillText(`${String(Math.floor(scrolled / pxPerMetre)).padStart(5, "0")} m`, width, 12);
+      pen.textAlign = "left";
+    };
+
+    restyle();
+    document.fonts.ready.then(resize);
+    animateWhileSeen(canvas, { draw, resize, restyle }, 60);
+  }
+
+  for (const canvas of document.querySelectorAll<HTMLCanvasElement>("canvas.dead-end-runner")) startRunner(canvas);
+</script>
+
+<style>
+  .dead-end-runner {
+    display: block;
+    width: 100%;
+    height: 4.5rem;
+    margin-top: 2.5rem;
+    pointer-events: none;
+  }
+</style>
