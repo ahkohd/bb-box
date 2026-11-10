@@ -12,7 +12,7 @@ const { words } = Astro.props;
   import { cipherDuration, cipherFrame, letterGlyphsFor, revealTimes } from "../../effects/cipher-text.ts";
   import { animateWhileSeen, pausedByPerson, reducedMotion } from "../../motion.ts";
 
-  const holdSeconds = 2.6;
+  const holdSeconds = 1.6;
   const escaped = (glyph: string) => (glyph === "<" ? "&lt;" : glyph === ">" ? "&gt;" : glyph === "&" ? "&amp;" : glyph);
 
   for (const swap of document.querySelectorAll<HTMLElement>(".swap[data-words]")) {
@@ -33,20 +33,20 @@ const { words } = Astro.props;
       swap,
       {
         draw(seconds) {
+          const settled = reducedMotion() || pausedByPerson();
           let into = seconds % cycleSeconds;
           for (let index = 0; index < words.length; index++) {
-            const next = (index + 1) % words.length;
-            if (into < holdSeconds || reducedMotion() || pausedByPerson()) {
+            if (into < scrambleSeconds[index]! && !settled) {
+              const pieces = cipherFrame(words[index]!, into * 1000, revealAt[index]!, letterGlyphsFor, Math.random);
+              show(pieces.map((piece) => (piece.settled ? escaped(piece.glyph) : `<span class="swap-glyph">${escaped(piece.glyph)}</span>`)).join(""));
+              return;
+            }
+            into -= scrambleSeconds[index]!;
+            if (into < holdSeconds || settled) {
               show(escaped(words[index]!));
               return;
             }
             into -= holdSeconds;
-            if (into < scrambleSeconds[next]!) {
-              const pieces = cipherFrame(words[next]!, into * 1000, revealAt[next]!, letterGlyphsFor, Math.random);
-              show(pieces.map((piece) => (piece.settled ? escaped(piece.glyph) : `<span class="swap-glyph">${escaped(piece.glyph)}</span>`)).join(""));
-              return;
-            }
-            into -= scrambleSeconds[next]!;
           }
         },
       },
