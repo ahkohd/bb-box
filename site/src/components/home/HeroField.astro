@@ -109,28 +109,27 @@ const { class: className } = Astro.props;
 
   const quietLeftFor = (cssWidth: number) => (cssWidth > 900 ? 1 : 0.6);
 
-  function drawStillIn2d(canvas: HTMLCanvasElement): void {
+  function paintStillField(canvas: HTMLCanvasElement): void {
     const look = lookOf(canvas);
-    const fresh = canvas.cloneNode() as HTMLCanvasElement;
-    fresh.removeAttribute("data-motion");
-    canvas.replaceWith(fresh);
-    announceMotionChange();
-    const pen = fresh.getContext("2d");
+    const pen = canvas.getContext("2d");
     if (!pen) {
-      fresh.hidden = true;
+      canvas.hidden = true;
       return;
     }
-    const { width, height } = fresh.getBoundingClientRect();
-    fresh.width = Math.max(1, Math.round(width));
-    fresh.height = Math.max(1, Math.round(height));
+
+    const { width, height } = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.round(width));
+    canvas.height = Math.max(1, Math.round(height));
     pen.font = `${glyphFontPx}px "JetBrains Mono Variable", ui-monospace, monospace`;
     pen.textBaseline = "top";
+
     const cellWidth = pen.measureText("0").width;
     const columns = Math.ceil(width / cellWidth);
     const rows = Math.ceil(height / glyphLinePx);
     const quietLeft = quietLeftFor(width);
     const [r, g, b] = look.ink.map((channel) => Math.round(channel * 255));
     const levels = [...ramp].map(() => [] as string[]);
+
     for (let row = 0; row < rows; row++) {
       const lines = levels.map(() => Array<string>(columns).fill(" "));
       for (let column = 0; column < columns; column++) {
@@ -140,12 +139,45 @@ const { class: className } = Astro.props;
       }
       lines.forEach((line, level) => levels[level]!.push(line.join("")));
     }
+
     levels.forEach((lines, level) => {
       if (level === 0) return;
       const value = (level + 0.5) / ramp.length;
       pen.fillStyle = `rgb(${r} ${g} ${b} / ${(look.strength * (0.35 + 0.65 * value)).toFixed(3)})`;
       lines.forEach((line, row) => pen.fillText(line, 0, row * glyphLinePx));
     });
+  }
+
+  function watchStillField(canvas: HTMLCanvasElement): void {
+    let paintedWidth = 0;
+    let paintedHeight = 0;
+
+    const paintAtSize = (width: number, height: number) => {
+      const nextWidth = Math.round(width);
+      const nextHeight = Math.round(height);
+      if (nextWidth < 1 || nextHeight < 1) return;
+      if (nextWidth === paintedWidth && nextHeight === paintedHeight) return;
+      paintedWidth = nextWidth;
+      paintedHeight = nextHeight;
+      paintStillField(canvas);
+    };
+
+    const box = canvas.getBoundingClientRect();
+    paintAtSize(box.width, box.height);
+    new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      paintAtSize(entry.contentRect.width, entry.contentRect.height);
+    }).observe(canvas);
+    new MutationObserver(() => paintStillField(canvas)).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  }
+
+  function drawStillIn2d(canvas: HTMLCanvasElement): void {
+    const fresh = canvas.cloneNode() as HTMLCanvasElement;
+    fresh.removeAttribute("data-motion");
+    canvas.replaceWith(fresh);
+    announceMotionChange();
+    watchStillField(fresh);
   }
 
   function giveUp(canvas: HTMLCanvasElement, gl: WebGLRenderingContext | null, made: Parameters<typeof releaseGl>[1]): void {
