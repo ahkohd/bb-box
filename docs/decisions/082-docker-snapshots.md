@@ -189,10 +189,12 @@ uses the box's own image, with `--pull never`.
 On a box with no Docker volume, the take is the commit alone, while paused.
 
 Only the take pauses a box. After a restart, a paused container is settled
-from the engine. An image means the take finished. No image, and still
+from its saved take record and the engine. An image means the take finished. No image, and still
 inside the time bound, means it is still running. Past the bound, the
 container is unpaused, the leftover volume is deleted, and the take has
-failed. The sweep uses the same bound.
+failed. The sweep uses the same bound. If BB Box's records are lost, it
+removes stale partial volumes but leaves the container paused: the engine
+alone cannot prove who owns the pause.
 
 A restore stops the box, takes an undo, makes a new container from the
 snapshot at the snapshot's size, with the box's identity and the old
