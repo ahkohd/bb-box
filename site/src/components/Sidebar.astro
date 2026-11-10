@@ -28,6 +28,18 @@ const contents = (Astro.locals.starlightRoute.toc?.items ?? []).filter((item) =>
   })();
 </script>
 <script>
+  const pane = document.querySelector<HTMLElement>(".sidebar-pane");
+  if (pane) {
+    const showEdges = () => {
+      pane.toggleAttribute("data-scrolled", pane.scrollTop > 0);
+      pane.toggleAttribute("data-more-below", pane.scrollTop + pane.clientHeight < pane.scrollHeight - 1);
+    };
+    pane.addEventListener("scroll", showEdges, { passive: true });
+    new ResizeObserver(showEdges).observe(pane);
+    showEdges();
+  }
+</script>
+<script>
   const links = [...document.querySelectorAll<HTMLAnchorElement>(".sidebar-content .page-contents a")];
   const headings = links.map((link) => document.getElementById(decodeURIComponent(link.hash.slice(1)))).filter((heading): heading is HTMLElement => heading !== null);
   const showCurrent = () => {
