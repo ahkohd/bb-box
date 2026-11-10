@@ -207,7 +207,7 @@ Change a box's size: its cores, memory or disk, by a preset or by parts, and its
 
 ## box_restore
 
-Restore a box to one of its snapshots when an attempt went wrong, rather than undoing it by hand. Everything on its disk since then goes, and the box restarts, so every process in it ends. BB Box always takes an undo first, a snapshot of the box once stopped. While Settings turn agents' restores off, this opens a form for a yes given in the thread and answers at once: then end your turn. A box this thread or another runs on, or one of the person's machines, is restored only through such a form, and only where BB Box allows it; this says so when it does not.
+Restore a box to one of its snapshots when an attempt went wrong, rather than undoing it by hand. Everything on its disk since then goes, and the box restarts, so every process in it ends. BB Box always takes an undo first, a snapshot of the box once stopped, or on ZFS a full copy of it. On ZFS only the newest snapshot restores. While Settings turn agents' restores off, this opens a form for a yes given in the thread and answers at once: then end your turn. A box this thread or another runs on, or one of the person's machines, is restored only through such a form, and only where BB Box allows it; this says so when it does not.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

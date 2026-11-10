@@ -1317,6 +1317,8 @@ On 30 October 2026, during unit 1a:
 On 30 and 31 October 2026, during unit 3, the lead decided:
 
 - **No ZFS node is free**, so ZFS restores ship off, as section 13 says.
+  For Proxmox LXC, [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md)
+  supersedes this, and the switch's hold on restoring a held copy below.
   A switch for live checks only, `bb box snapshot zfs-order <backend> on`,
   which exists only with `BB_BOX_LIVE_CHECKS=1` on BB's server and lasts
   until bb-box restarts, runs ZFS's order on an LVM-thin backend: the held
@@ -1325,7 +1327,9 @@ On 30 and 31 October 2026, during unit 3, the lead decided:
   roll ZFS back past a newer snapshot stays unproved.
 - **No node is rebooted**: the only node runs everything else. G16's
   reboot part stays unproved, and is a condition before ZFS restores or
-  unit 8's Keep are turned on.
+  unit 8's Keep are turned on. For Proxmox LXC's ZFS restores,
+  [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md) sets this
+  condition aside by the owner's decision. It still holds for Keep.
 - **A box threads run on** is any box with a thread, working or idle, on
   its BB machine, or the box the caller's thread runs on. In unit 3 its
   restores are refused for everyone, the CLI's `--force` included, naming

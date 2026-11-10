@@ -41,6 +41,21 @@ async function swapReady(state: World): Promise<{ box: BoxRecord; undo: string; 
   return { box: now, undo: first.undo!.id, old: now.guest! };
 }
 
+const ZFS_ORDERS: readonly { readonly name: string; enter(state: World): void }[] = [
+  {
+    name: "on ZFS storage",
+    enter: (state) => {
+      state.provider.restoreWay = "rollback-newest-only";
+    },
+  },
+  {
+    name: "by the live-check switch",
+    enter: (state) => {
+      state.undoByCopy = true;
+    },
+  },
+];
+
 test("review A3: a rollback that fails before Proxmox gets it keeps no earlier task, and recovery rolls back rather than taking the undo's task for it", async () => {
   const state = world();
   const box = await targetBox(state);
@@ -205,9 +220,9 @@ test("Opus 1: a swap cut short at adopt-task discards only the half-made new gue
   assert.equal(readIn(state, await current(state, box), "work.txt"), "before");
 });
 
-test("Opus 2: ZFS's order cut short at rollback-submitting goes on from its held copy, and makes no second one", async () => {
+for (const order of ZFS_ORDERS) test(`Opus 2: ZFS's order ${order.name} cut short at rollback-submitting goes on from its held copy, and makes no second one`, async () => {
   const state = armedWorld();
-  state.undoByCopy = true;
+  order.enter(state);
   const box = await targetBox(state);
   Object.assign(state.backend, {
     rollbackSnapshot: async (_guest: Guest, _ref: unknown, hooks: SnapshotHooks, signal?: AbortSignal) => {
@@ -236,6 +251,42 @@ test("review A5 and Opus 3: a held copy needs the box's identity reset now, and 
   state.store.updateRecord(target.id, { forkSafe: 2 });
   const restored = await state.snapshots.restore(COMMAND, box, standing(box), "target");
   assert.equal(restored.undo?.forkSafe, null, "the undo holds the box's disk now, which had no working reset");
+});
+
+test("on ZFS, the check says the undo is a held copy; a box with no working identity reset gets none, and a person may restore it without an undo, by a rollback alone", async () => {
+  const armed = armedWorld();
+  armed.provider.restoreWay = "rollback-newest-only";
+  const ready = await targetBox(armed);
+  const check = await armed.snapshots.checkRestore(COMMAND, ready, standing(ready), "target");
+  assert.equal(check.undo?.kind, "held-copy");
+
+  const state = world({ markersOn: false });
+  state.provider.restoreWay = "rollback-newest-only";
+  const box = await targetBox(state);
+  state.provider.order.length = 0;
+  const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "target"));
+  assert.match(refused.message, /makes such a copy only of a box whose identity reset works now/);
+  assert.equal(state.provider.order.length, 0, "refused before the box stops");
+
+  const restored = await state.snapshots.restore(COMMAND, box, standing(box), "target", { undo: false });
+
+  assert.equal(restored.undo, null);
+  assert.equal(state.provider.copies.size, 0);
+  assert.deepEqual(state.provider.order.filter((step) => !step.startsWith("flush")), ["power-off", `rollback ${restored.snapshot!.id}`, "start"]);
+  assert.equal(readIn(state, box, "work.txt"), "target");
+});
+
+test("on ZFS, a backend that cannot copy a box in full restores nothing, as its undo would be such a copy", async () => {
+  const state = armedWorld();
+  state.provider.restoreWay = "rollback-newest-only";
+  const box = await targetBox(state);
+  Object.assign(state.backend, { copyGuest: undefined });
+  state.provider.order.length = 0;
+
+  const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "target"));
+
+  assert.match(refused.message, /restores only the newest snapshot, so the undo of a restore there is a full copy of the box, and Fake host cannot make one\. BB Box changed nothing\.$/);
+  assert.equal(state.provider.order.length, 0, "refused before the box stops");
 });
 
 test("review A7: a box that was a thread's own machine, with no thread on it now, may be restored", async () => {
@@ -302,12 +353,17 @@ test("Opus 5: a restoring mark never outlives its operation", async () => {
   await state.boxes.start(THREAD, box.name).catch(() => undefined);
 });
 
-test("Opus 6: a held copy is restored by a swap only while the live-check switch is on", async () => {
+test("Opus 6: a held copy is restored by a swap with the live-check switch off, as the undo of a restore on ZFS is", async () => {
   const state = armedWorld();
-  const { box, undo } = await swapReady(state);
+  const { box, undo, old } = await swapReady(state);
   state.undoByCopy = false;
-  const refused = await rejection(state.snapshots.restore(COMMAND, box, standing(box), undo, { undo: false }));
-  assert.match(refused.message, /BB Box does that only in live checks until such restores are checked on ZFS/);
+
+  const undone = await state.snapshots.restore(COMMAND, box, standing(box), undo, { undo: false });
+
+  const after = await current(state, box);
+  assert.equal(undone.operation.state, "done");
+  assert.notEqual(after.guest!.ref, old.ref, "the box runs on a new guest made from its held copy");
+  assert.equal(readIn(state, after, "work.txt"), "before");
 });
 
 test("Opus 8: restarts mid-task: an undo's task still running stays unknown, then finishes; a failed one puts the box back", async () => {
@@ -351,9 +407,9 @@ test("Opus 8: restarts mid-task: a rollback's task ended OK finishes; one that f
   assert.equal((await current(state, box)).state, "stopped");
 });
 
-test("Opus 8: restarts mid-task in ZFS's order: a copy whose task began is deleted and made again", async () => {
+for (const order of ZFS_ORDERS) test(`Opus 8: restarts mid-task in ZFS's order ${order.name}: a copy whose task began is deleted and made again`, async () => {
   const state = armedWorld();
-  state.undoByCopy = true;
+  order.enter(state);
   const box = await targetBox(state);
   await heldAt(state, box, "task");
   const operation = state.store.unsettled()[0]!;

@@ -138,6 +138,22 @@ function snapstateWords(snapstate: string): string {
   return snapstate === "prepare" ? "Proxmox left it part-made (snapstate prepare)" : snapstate === "delete" ? "Proxmox left it part-deleted (snapstate delete)" : `Proxmox left it in state ${snapstate}`;
 }
 
+function ancestorsOf(listed: readonly ProxmoxSnapshot[], snapshot: ProxmoxSnapshot): ReadonlySet<string> {
+  const byName = new Map(listed.map((each) => [each.name, each]));
+  const ancestors = new Set<string>();
+  for (let parent = snapshot.parent; parent !== null && !ancestors.has(parent); parent = byName.get(parent)?.parent ?? null) ancestors.add(parent);
+  return ancestors;
+}
+
+function takenAfter(listed: readonly ProxmoxSnapshot[], target: ProxmoxSnapshot): ProxmoxSnapshot[] {
+  const targetTime = target.snaptime;
+  if (targetTime === null) return [];
+  const takenBefore = ancestorsOf(listed, target);
+  const laterSecond = (snapshot: ProxmoxSnapshot) => snapshot.snaptime! > targetTime;
+  const sameSecondButNotBefore = (snapshot: ProxmoxSnapshot) => snapshot.snaptime === targetTime && !takenBefore.has(snapshot.name);
+  return listed.filter((snapshot) => snapshot.name !== target.name && snapshot.snaptime !== null && (laterSecond(snapshot) || sameSecondButNotBefore(snapshot)));
+}
+
 function percent(used: number, total: number): number {
   return total > 0 ? Math.round((used / total) * 1000) / 10 : 0;
 }
@@ -387,7 +403,7 @@ export class ProxmoxSnapshotting {
     const found = listed.find((snapshot) => snapshot.name === name);
     if (!found) return none(`Guest ${vmid} has no snapshot ${name}.`);
     if (found.snapstate) return none(`${snapstateWords(found.snapstate)}, so ${PRODUCT} does not restore it.`);
-    const newer = found.snaptime === null ? 0 : listed.filter((snapshot) => snapshot.name !== name && snapshot.snaptime !== null && snapshot.snaptime > found.snaptime!).length;
+    const newer = takenAfter(listed, found).length;
     const sizeBack = await api
       .snapshotConfig(vmid, name, signal)
       .then((saved) => this.#guests.sizeOf(saved))

@@ -231,7 +231,7 @@ test("a failed undo, a refused rollback or a failed stop leaves the disk as it w
   assert.match(state.log.events(box.id).at(-1)!.words!, /^At the rollback: Proxmox's rollback task failed: rollback interrupted\. BB Box then found it stopped\.$/);
 });
 
-test("G7: a locked guest refuses a restore with the host's command, and ZFS restores are refused, before anything changes; a restore across a disk's growth gives the disk back its size then", async () => {
+test("G7: a locked guest refuses a restore with the host's command before anything changes; a restore across a disk's growth gives the disk back its size then", async () => {
   const state = world();
   const box = await readyBox(state);
   await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });
@@ -244,9 +244,6 @@ test("G7: a locked guest refuses a restore with the host's command, and ZFS rest
     { id: `snapshots.locked.${box.name}`, name: `${box.name} locked`, status: "fail", detail: `Fake host left box ${box.name} locked (rollback), so BB Box takes, deletes and restores none of its snapshots.`, fix: "Run `pct unlock 214` on pve-1." },
   ]);
   state.provider.locked = null;
-  state.provider.restoreWay = "rollback-newest-only";
-  assert.match((await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"))).message, /storage fast is ZFS, which restores only the newest snapshot, and BB Box's restores on ZFS stay off until they are checked there\./);
-  state.provider.restoreWay = "rollback";
   const snapshot = state.store.records({ box: box.id })[0]!;
   state.provider.sizes.set(snapshot.id, { cores: 2, memoryMiB: 4096, diskGiB: 8 });
   assert.deepEqual(state.provider.order, []);
@@ -373,9 +370,31 @@ test("G13: restores made outside BB Box are logged from the provider's tasks by 
   assert.equal(events().length, 5);
 });
 
-test("G4 in ZFS's order (the live-check switch): the newest only, after a held copy of the stopped box; undoing it is a swap to a new guest with the box's identity, which leaves an earlier guest, fork only", async () => {
+interface ZfsOrderMode {
+  readonly name: string;
+  enter(state: World): void;
+  readonly olderRefused: RegExp;
+}
+
+const ON_ZFS: ZfsOrderMode = {
+  name: "on ZFS storage",
+  enter: (state) => {
+    state.provider.restoreWay = "rollback-newest-only";
+  },
+  olderRefused: /^fake's storage fast is ZFS, which restores only the newest snapshot, and "one" has 1 newer one\. Fork "one" instead, or delete the newer one yourself first\. BB Box never deletes newer snapshots to make a restore possible, and changed nothing\.$/,
+};
+
+const BY_THE_SWITCH: ZfsOrderMode = {
+  name: "by the live-check switch",
+  enter: (state) => {
+    state.undoByCopy = true;
+  },
+  olderRefused: /as on ZFS, BB Box restores only the newest snapshot there, and "one" has 1 newer one\. Delete it yourself first\. BB Box never deletes newer snapshots/,
+};
+
+for (const mode of [ON_ZFS, BY_THE_SWITCH]) test(`G4 in ZFS's order ${mode.name}: the newest only, after a held copy of the stopped box; undoing it is a swap to a new guest with the box's identity, which leaves an earlier guest, fork only`, async () => {
   const state = armedWorld();
-  state.undoByCopy = true;
+  mode.enter(state);
   const box = await readyBox(state);
   const first = box.guest!;
   write(state, box, "work.txt", "one");
@@ -385,8 +404,12 @@ test("G4 in ZFS's order (the live-check switch): the newest only, after a held c
   await state.snapshots.take(COMMAND, box, standing(box), { name: "two" });
   write(state, box, "work.txt", "before the restore");
   state.provider.newer = 1;
+  state.provider.order.length = 0;
   const older = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
-  assert.match(older.message, /as on ZFS, BB Box restores only the newest snapshot there, and "one" has 1 newer one\. Delete it yourself first\. BB Box never deletes newer snapshots/);
+  assert.match(older.message, mode.olderRefused);
+  assert.deepEqual(state.provider.order, [], "an older snapshot is refused before the box stops");
+  assert.equal(state.store.records({ box: box.id }).length, 2, "and nothing is deleted or added");
+  assert.equal(state.provider.copies.size, 0);
   state.provider.newer = 0;
   state.provider.order.length = 0;
   const restored = await state.snapshots.restore(COMMAND, box, standing(box), "two");
@@ -435,9 +458,9 @@ test("G4 in ZFS's order (the live-check switch): the newest only, after a held c
   assert.equal(await state.backend.power(first), null);
 });
 
-test("G6 and G16 in ZFS's order: a copy cut short before it is a template is deleted and made again, never trusted; a swap cut short after its new guest is made finishes", async () => {
+for (const mode of [ON_ZFS, BY_THE_SWITCH]) test(`G6 and G16 in ZFS's order ${mode.name}: a copy cut short before it is a template is deleted and made again, never trusted; a swap cut short after its new guest is made finishes`, async () => {
   const state = armedWorld();
-  state.undoByCopy = true;
+  mode.enter(state);
   const box = await readyBox(state);
   write(state, box, "work.txt", "one");
   await state.snapshots.take(COMMAND, box, standing(box), { name: "one" });

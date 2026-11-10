@@ -326,6 +326,19 @@ test("a Windows desktop's EFI and TPM state volumes are part of its snapshot, an
   assert.match(efi.take.why ?? "", new RegExp(`Guest ${vmid}'s efidisk0 is on files`));
 });
 
+test("a Linux VM on ZFS takes snapshots, and restore stays refused until it is checked on a VM there", async () => {
+  const state = world();
+  const { guest } = await linuxBox(state);
+  state.proxmox.storageTypes.set("local-lvm", "zfspool");
+
+  const plan = await state.backend.planSnapshots(guest, "linux", null);
+
+  assert.equal(plan.take.ok, true);
+  assert.equal(plan.restore.way, "none");
+  assert.equal(plan.restore.undo, "none");
+  assert.equal(plan.restore.why, "local-lvm is ZFS, which restores only the newest snapshot, and BB Box restores a Linux VM there only once that is checked on one. Take, delete, fork and Keep still work here.");
+});
+
 test("a Windows desktop on ZFS takes and deletes a snapshot, and restore is refused", async () => {
   const state = world();
   const { guest, vmid, box } = await windowsBox(state);

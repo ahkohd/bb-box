@@ -277,7 +277,10 @@ BB Box starts an Android model cold when its unsaved marker is present. A snapsh
   Proxmox cannot.
 - When an attempt went wrong, restore with `box_restore` rather than
   undoing it by hand. BB Box always takes an undo first, named "before the
-  restore at 11:02": restore that to undo the restore.
+  restore at 11:02": restore that to undo the restore. On ZFS, a Proxmox
+  LXC box restores only its newest snapshot, and its undo is a full copy
+  of the stopped box. Restoring that undo moves the box to a new guest
+  with the same identity, and its other snapshots then fork only.
 - `box_snapshots` lists what you may see of a box's snapshots. Delete your
   own with `box_snapshot_delete` once they are no longer needed. A box holds 5 unless the person set otherwise; when you take one
   past that, BB Box deletes the oldest one an agent of this thread took.

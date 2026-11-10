@@ -60,6 +60,16 @@ export function madeOwner(install: string, box: string | null): GuestOwner {
   return guarded({ words: `the guest ${PRODUCT} is making for box ${box} of this install`, owns: (config) => !isTemplate(config) && describedFor(config, install, box) }, install);
 }
 
+export function adoptingOwner(install: string, box: string | null): GuestOwner {
+  return guarded({
+    words: `the guest ${PRODUCT} is making for box ${box} of this install from its held copy`,
+    owns: (config) => {
+      const tags = parseTags(config.tags);
+      return !isTemplate(config) && isHeldCopy(tags) && !isEarlierGuest(tags) && describedFor(config, install, box);
+    },
+  }, install);
+}
+
 export function copyOwner(install: string, box: string | null): GuestOwner {
   return {
     words: `a held copy or an earlier guest of box ${box ?? "-"} of this install`,

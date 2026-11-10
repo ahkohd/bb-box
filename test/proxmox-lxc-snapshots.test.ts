@@ -296,6 +296,7 @@ test("a restore's plan: rollback to any snapshot on LVM-thin, the size it goes b
   const zfs = await state.backend.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: "", guest });
   assert.equal(zfs.restore.way, "rollback-newest-only");
   assert.equal(zfs.restore.undo, "held-copy");
+  assert.equal(zfs.restore.newer, 1, "the plan counts the newer snapshot that ZFS will not roll back past");
   state.proxmox.storageTypes.delete("local-lvm");
   state.proxmox.privileges.set("/pool/bbbox", new Set(TOKEN_ROLE.filter((privilege) => privilege !== "VM.Snapshot.Rollback")));
   const fresh = new ProxmoxLxcBackend(
@@ -307,6 +308,60 @@ test("a restore's plan: rollback to any snapshot on LVM-thin, the size it goes b
   const noRight = await fresh.planSnapshots(guest, "linux", { id: SNAPSHOT, ref: "", guest });
   assert.equal(noRight.restore.way, "none");
   assert.match(noRight.restore.why!, /^The Proxmox token lacks VM\.Snapshot\.Rollback on \/pool\/bbbox, so BB Box cannot restore snapshots there\./);
+});
+
+const SAME_SECOND = 1_790_000_000;
+const OLDER = "snaaaaaaaaaaaa";
+const LATER = "snbbbbbbbbbbbb";
+const LATEST = "sncccccccccccc";
+
+async function newerOn(state: ReturnType<typeof world>, guest: Guest, snapshot: string): Promise<number> {
+  const plan = await state.backend.planSnapshots(guest, "linux", { id: snapshot, ref: snapshotName(snapshot), guest });
+  return plan.restore.newer;
+}
+
+test("on ZFS, of two snapshots taken in the same second, the plan counts the later one as newer by Proxmox's parent chain, and the later one has none newer", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  const { hooks } = tasks();
+  state.proxmox.storageTypes.set("local-lvm", "zfspool");
+  state.proxmox.snapshotSeconds = () => SAME_SECOND;
+
+  await state.backend.snapshot(guest, { id: OLDER, box: id.boxId, memory: false }, hooks);
+  await state.backend.snapshot(guest, { id: LATER, box: id.boxId, memory: false }, hooks);
+
+  assert.equal(await newerOn(state, guest, OLDER), 1, "the older one is refused before the box stops");
+  assert.equal(await newerOn(state, guest, LATER), 0, "the newest one still restores");
+});
+
+test("on ZFS, a deleted snapshot's place in the chain passes to its parent, so the same-second order holds", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  const { hooks } = tasks();
+  state.proxmox.storageTypes.set("local-lvm", "zfspool");
+  state.proxmox.snapshotSeconds = () => SAME_SECOND;
+  for (const snapshot of [OLDER, LATER, LATEST]) await state.backend.snapshot(guest, { id: snapshot, box: id.boxId, memory: false }, hooks);
+
+  await state.backend.deleteSnapshot({ id: LATER, ref: snapshotName(LATER), guest }, hooks);
+
+  assert.equal(await newerOn(state, guest, OLDER), 1);
+  assert.equal(await newerOn(state, guest, LATEST), 0);
+});
+
+test("a same-second snapshot on another branch of the chain counts as newer, as its order cannot be told", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks } = tasks();
+  state.proxmox.snapshotSeconds = () => SAME_SECOND;
+  await state.backend.snapshot(guest, { id: OLDER, box: id.boxId, memory: false }, hooks);
+  await state.backend.snapshot(guest, { id: LATER, box: id.boxId, memory: false }, hooks);
+  state.proxmox.guests.get(vmid)!.config.parent = snapshotName(OLDER);
+
+  await state.backend.snapshot(guest, { id: LATEST, box: id.boxId, memory: false }, hooks);
+
+  assert.equal(await newerOn(state, guest, OLDER), 2);
+  assert.equal(await newerOn(state, guest, LATER), 1);
+  assert.equal(await newerOn(state, guest, LATEST), 1);
 });
 
 test("a rollback refuses a running guest, records its task before it waits, puts the snapshot's config back, and says when its task failed part way", async () => {
@@ -421,6 +476,33 @@ test("G16 on Proxmox LXC: a held copy is cloned into the box range, labelled, di
   assert.ok(state.proxmox.guests.has(Number(copy.ref)), "a copy that names another box is left alone");
   await state.backend.deleteCopy(copy);
   assert.equal(state.proxmox.guests.has(Number(copy.ref)), false);
+});
+
+test("a new guest cut short while it is cloned from a held copy, still carrying the copy's tags, is deleted by its release; the held copy and the earlier guest are not", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, tasks().hooks);
+  await state.backend.powerOff(guest);
+  const copy = await state.backend.copyGuest(guest, { box: id.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }, { ...tasks().hooks, claimed: async () => {} });
+  await state.backend.disarmCopy(copy);
+  await state.backend.templateCopy(copy);
+  await state.backend.retireGuest(guest, id);
+  const identity = await state.backend.guestIdentity(guest);
+  let made: Guest | null = null;
+  const stopped = new Error("BB Box stopped once the clone's task began");
+  const cutShort = { ...tasks().hooks, claimed: async (fresh: Guest) => void (made = fresh), task: async () => { throw stopped; } };
+
+  await assert.rejects(state.backend.adoptCopy(copy, id, identity, cutShort), stopped);
+
+  const half = state.proxmox.guests.get(Number(made!.ref))!;
+  assert.match(half.config.tags ?? "", /held-copy/, "the clone still carries the held copy's tags");
+  const hooks = { resetting: async () => {}, timing: () => {} };
+  await state.backend.release(made!, hooks);
+  assert.equal(state.proxmox.guests.has(Number(made!.ref)), false, "the half-made guest is deleted");
+  await state.backend.release(copy, hooks).catch(() => undefined);
+  assert.ok(state.proxmox.guests.has(Number(copy.ref)), "a release never deletes the held copy");
+  await state.backend.release(guest, hooks).catch(() => undefined);
+  assert.ok(state.proxmox.guests.has(vmid), "nor the earlier guest");
 });
 
 test("review A3: a restore's task is looked up among the token's own, never another user's", async () => {
