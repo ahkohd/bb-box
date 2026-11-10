@@ -7,6 +7,8 @@ import { HISTORY_RANGES } from "../src/monitor/history-view.ts";
 import type { BoxView } from "../src/plugin/views.ts";
 import { forgetLive } from "../src/app/common.tsx";
 import { forgetActivity } from "../src/app/activity.tsx";
+import { clockWithSeconds } from "../src/app/activity-words.ts";
+import { forgetMonitorReadings } from "../src/app/monitor/use-snapshot.ts";
 import { upWords } from "../src/app/monitor/status.tsx";
 import { sidebarTitle, threadGroupHeading } from "../src/app/desktop.tsx";
 import { threadInSentence } from "../src/app/thread-chips.tsx";
@@ -113,11 +115,11 @@ function historyView(range: HistoryRange, patch: Partial<BoxHistoryView> = {}, m
   };
 }
 
-function handlers(state: { page: () => BoxPageState; reading: () => MonitorSnapshot; history?: (range: HistoryRange) => BoxHistoryView | null }): PluginRpcTestHandlers<Contract> {
+function handlers(state: { page: () => BoxPageState; reading: () => MonitorSnapshot | Promise<MonitorSnapshot>; machine?: (machineId: string) => MonitorSnapshot | Promise<MonitorSnapshot>; history?: (range: HistoryRange) => BoxHistoryView | null }): PluginRpcTestHandlers<Contract> {
   return {
     boxPage: () => state.page(),
     "monitor.history": ({ range }: { range: HistoryRange }) => (state.history ?? ((asked: HistoryRange) => historyView(asked)))(range),
-    "monitor.machine": () => state.reading(),
+    "monitor.machine": ({ machineId }: { machineId: string }) => (state.machine ? state.machine(machineId) : state.reading()),
     "monitor.state": () => ({ enabled: true, backgroundMonitoring: false, pressureNotifications: true, boxHistory: true, historyFull: null }),
     "monitor.machines": () => ({ machines: [] }),
     "monitor.alerts": () => ({ enabled: false, notifications: true, cursor: 0, active: [], recent: [] }),
@@ -321,6 +323,64 @@ test("a box BB Box cannot read says the Monitor's words in Activity's frame, whi
   const kept = await within(await activity()).findByRole("application", { name: /^CPU and memory, the last 24 hours/ });
   await waitFor(() => expect(document.getElementById(kept.getAttribute("aria-describedby")!)!.textContent).toMatch(/CPU averaged 30%/));
 });
+
+test("a reading that started earlier never replaces the one the card shows, and the next reading does even when its clock is behind", async () => {
+  forgetMonitorReadings();
+  const early = "host-early-1428";
+  const later = "host-later-1428";
+  const earlierAt = "2026-11-10T08:32:10.000Z";
+  const shownAt = "2026-11-10T08:32:13.000Z";
+  const behindAt = "2026-11-10T08:32:08.000Z";
+  const readAt = (iso: string) => `Read at ${clockWithSeconds(Date.parse(iso))}`;
+  const cpu = () => within(screen.getByRole("region", { name: "Activity" })).getByRole("region", { name: "CPU" }).textContent ?? "";
+  const at = (iso: string, usage: number) => {
+    const base = snapshot({ timestamp: iso, refreshIntervalMs: 2000 });
+    return { ...base, cpu: { ...base.cpu, usagePercent: usage } };
+  };
+
+  let machineId = early;
+  let earlyCalls = 0;
+  let releaseEarly: (reading: MonitorSnapshot) => void = () => {};
+  const earlyReading = new Promise<MonitorSnapshot>((resolve) => {
+    releaseEarly = resolve;
+  });
+  const slot = open(handlers({
+    page: () => page(boxView(), { is: "read", machineId, why: null }),
+    reading: () => snapshot(),
+    machine: (id) => {
+      if (id === early) {
+        earlyCalls += 1;
+        return earlyCalls === 1 ? earlyReading : at(behindAt, 53);
+      }
+      return at(shownAt, 81);
+    },
+  }));
+
+  await vi.waitFor(() => expect(earlyCalls).toBe(1));
+
+  machineId = later;
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+  await waitFor(() => expect(cpu()).toContain("81"));
+  expect(screen.getByRole("region", { name: "Activity" }).textContent).toContain(readAt(shownAt));
+
+  releaseEarly(at(earlierAt, 17));
+  await earlyReading;
+  machineId = early;
+  await slot.behavior.emitRealtime("changed", { threadId: THREAD });
+
+  const started = Date.now();
+  while (Date.now() - started < 1000) {
+    expect(cpu()).toContain("81");
+    expect(cpu()).not.toContain("17");
+    expect(screen.getByRole("region", { name: "Activity" }).textContent).toContain(readAt(shownAt));
+    expect(screen.getByRole("region", { name: "Activity" }).textContent).not.toContain(readAt(earlierAt));
+    await pause(50);
+  }
+
+  await vi.waitFor(() => expect(cpu()).toContain("53"), { timeout: 12_000, interval: 100 });
+  expect(screen.getByRole("region", { name: "Activity" }).textContent).toContain(readAt(behindAt));
+  expect(screen.getByRole("region", { name: "Activity" }).textContent).not.toContain(readAt(shownAt));
+}, 20_000);
 
 test("a reading that fails after one worked keeps the last numbers under the Monitor's notice", async () => {
   let calls = 0;
