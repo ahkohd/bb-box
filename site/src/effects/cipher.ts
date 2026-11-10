@@ -67,7 +67,7 @@ function tick(now: number): void {
 
 export function playCipher(element: HTMLElement, delayMs = Number(element.dataset.cipherDelay ?? 0)): void {
   if (still() || running.has(element)) return;
-  const chars = [...element.querySelectorAll<HTMLElement>(".cipher-char")];
+  const chars = Array.from(element.querySelectorAll<HTMLElement>(".cipher-char"));
   const real = element.querySelector<HTMLElement>(".cipher-real");
   const layer = element.querySelector<HTMLElement>(".cipher-layer");
   if (!chars.length && (!real || !layer)) return;
@@ -108,11 +108,11 @@ const seen = new IntersectionObserver(
 );
 
 export function watchCiphers(root: ParentNode = document): void {
-  for (const element of root.querySelectorAll<HTMLElement>("[data-cipher]")) {
+  for (const element of Array.from(root.querySelectorAll<HTMLElement>("[data-cipher]"))) {
     if (started.has(element)) continue;
     started.add(element);
     seen.observe(element);
-    const hoverTarget = element.closest<HTMLElement>("[data-cipher-hover]");
+    const hoverTarget = element.closest("[data-cipher-hover]");
     hoverTarget?.addEventListener("pointerenter", () => playCipher(element, 0));
   }
 }

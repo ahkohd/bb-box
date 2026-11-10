@@ -47,7 +47,7 @@
   --dither-strength: 0.55;
   --dither-floor: 0.2;
   --field-left: 0.3;
-  --wordmark-ink: #3d3d3d;
+  --wordmark-ink: color-mix(in srgb, var(--foreground) 21.25%, var(--background));
   --wordmark-dense: color-mix(in srgb, var(--accent) 38%, transparent);
 
   --sl-color-white: var(--foreground);
