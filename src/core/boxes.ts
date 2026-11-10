@@ -70,7 +70,7 @@ import type { GeneralConfig } from "./config.ts";
 import type { CheckId } from "./checks.ts";
 import type { ImageConfig } from "./document.ts";
 import { quote } from "../transports/process.ts";
-import { command, envFile, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
+import { accessFileRewrite, command, envScript, jobScript, timedOutExits, type Access, type Session } from "./in-box.ts";
 import { generateName, isFriendlyName, isMachineName } from "./names.ts";
 import { FORK_SAFE_PROBE_MS, MARKER_WRITE_MS, forkVerdict, identityStatusScript, parseIdentityStatus, readForkSafe, readForkSeen, readsForkSafetyAtStop, writeIdentityMarker, type ForkSafety, type HeldIdentity, type StoppedForkSafety } from "./identity.ts";
 import { forksOn } from "./snapshot.ts";
@@ -4129,12 +4129,9 @@ export class Boxes {
   async writeAccess(box: BoxRecord, signal?: AbortSignal): Promise<void> {
     const env = await this.#envFile(box);
     if (env === undefined) throw new BoxError("unreachable", `${PRODUCT} could not work out the access of box ${box.name}, so it wrote no access file there.`);
-    const os = box.capabilities.os;
-    const digest = createHash("sha256").update(env).digest("hex");
-    const check = os === "windows" ? ":" : `[ "$(sha256sum < "$HOME/${envFile(os)}" | cut -d' ' -f1)" = ${digest} ]`;
     const transport = (await this.#backend(box).transports(box.guest!, box.kind)).command;
     if (!transport) throw new BoxError("unsupported", `${PRODUCT} cannot run commands in box ${box.name}: its kind has no command transport.`);
-    const result = await transport.run(command(os, check, { env }), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
+    const result = await transport.run(accessFileRewrite(box.capabilities.os, env), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
     if (result.exitCode !== 0) throw new BoxError("unreachable", `Writing the access file of box ${box.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}.`);
   }
 
