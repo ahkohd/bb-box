@@ -2,12 +2,14 @@
 interface Props {
   title: string;
   class?: string;
+  pointing?: boolean;
 }
 
-const { title, class: className } = Astro.props;
+const { title, class: className, pointing = false } = Astro.props;
 ---
 
-<div class:list={["box-frame", className]}>
+<div class:list={["box-frame", className]} data-pointing={pointing ? "" : undefined}>
+  {pointing && <canvas class="frame-compass" aria-hidden="true"></canvas>}
   <div class="frame-top">
     <span class="frame-title">{title}</span>
     <span class="frame-run"></span>
@@ -19,7 +21,34 @@ const { title, class: className } = Astro.props;
   </div>
 </div>
 
+<script>
+  import { pointFramesAtPointer } from "../../effects/compass.ts";
+
+  for (const frame of document.querySelectorAll<HTMLElement>(".box-frame[data-pointing]")) pointFramesAtPointer(frame);
+</script>
+
 <style>
+  .frame-compass {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+
+  .box-frame[data-compass="on"]::before,
+  .box-frame[data-compass="on"]::after {
+    display: none;
+  }
+
+  .box-frame[data-compass="on"] .frame-top::before,
+  .box-frame[data-compass="on"] .frame-top::after,
+  .box-frame[data-compass="on"] .frame-bottom::before,
+  .box-frame[data-compass="on"] .frame-bottom::after,
+  .box-frame[data-compass="on"] .frame-run::before {
+    visibility: hidden;
+  }
+
   .box-frame {
     position: relative;
     font-family: var(--sl-font-mono);
