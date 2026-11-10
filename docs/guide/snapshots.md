@@ -419,9 +419,12 @@ not available yet.
 A restore flushes the box's writes, stops it at once, as a power cut would, and
 takes its undo from the stopped box: no pause, as nothing runs. It then makes a new container,
 `bbbox-<box>-<8 hex>`, from the snapshot's image, with the box's ID, name and
-labels, at the cores and memory the snapshot was taken at. Its Docker data is a
-new volume copied from the snapshot's, so the snapshot stays as it was taken and
-can be restored again. Once the new container has started and is ready, BB Box
+labels, at the cores and memory the snapshot was taken at. A box with a GPU
+keeps the card and part it has now, read from the container being replaced, on
+every restore. If the box has a GPU but that container has none, BB Box refuses
+the restore and leaves the box as it was, rather than restore it without one.
+Its Docker data is a new volume copied from the snapshot's, so the snapshot
+stays as it was taken and can be restored again. Once the new container has started and is ready, BB Box
 deletes the old container and its Docker data. If the new one does not start,
 BB Box deletes it and starts the old one again. If BB Box or BB stops part way,
 its next start finishes the restore or puts the old container back, so the box

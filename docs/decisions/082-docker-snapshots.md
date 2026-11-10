@@ -199,7 +199,11 @@ alone cannot prove who owns the pause.
 A restore stops the box with `docker kill`, takes an undo of the stopped
 box, makes a new container from the snapshot at the snapshot's size, with
 the box's identity and the old container's GPU placement, and deletes the
-old container once the new one starts. A failed start puts the old
+old container once the new one starts. The old container is the box's own
+container now, found by its labels, not the container the snapshot was taken
+from, which an earlier restore may have deleted. If the box has a GPU and that
+container has none, or the box has two containers on different GPUs, the
+restore is refused and the box is left as it was. A failed start puts the old
 container back. The snapshot's volume is copied into the new container's
 own volume by the same kind of helper a take uses. The snapshot's own
 volume is never mounted by the new box. The new container's restart policy
