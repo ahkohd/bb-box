@@ -35,11 +35,15 @@ function edgeNeedles(frame: HTMLElement): Needle[] {
   const bottomY = bottom.top - box.top + bottom.height / 2;
   const needle = (x: number, y: number): Needle => ({ x, y, angle: restAngle, level: false });
   const needles: Needle[] = [];
-  for (let x = left; x <= right; x += spacing.alongPx) {
+  const across = Math.max(1, Math.round((right - left) / spacing.alongPx));
+  for (let step = 0; step <= across; step++) {
+    const x = left + ((right - left) * step) / across;
     if (!gaps.some(([from, to]) => x > from && x < to)) needles.push({ x, y: topY, angle: 0, level: true });
     needles.push(needle(x, bottomY));
   }
-  for (let y = topY + spacing.downPx; y < bottomY; y += spacing.downPx) {
+  const down = Math.max(1, Math.round((bottomY - topY) / spacing.downPx));
+  for (let step = 1; step < down; step++) {
+    const y = topY + ((bottomY - topY) * step) / down;
     needles.push(needle(left, y));
     needles.push(needle(right, y));
   }
