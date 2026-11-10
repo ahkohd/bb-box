@@ -1,0 +1,126 @@
+---
+interface Props {
+  source: string;
+  quiet?: boolean;
+}
+
+const { source, quiet = false } = Astro.props;
+---
+
+<canvas class="copy-field" data-motion data-source={source} data-quiet={quiet ? "" : undefined} aria-hidden="true"></canvas>
+
+<script>
+  import { cssValue, deviceScale } from "../../effects/gl.ts";
+  import { animateWhileSeen, pausedByPerson, reducedMotion } from "../../motion.ts";
+
+  const pitchPx = 6;
+  const lively = { ticksPerSecond: 5, litAbove: 0.94, faint: 0.08, twinkle: 0.38, scanLift: 0.3 };
+  const quieter = { ...lively, litAbove: 0.97, faint: 0.05, twinkle: 0.26, scanLift: 0.16 };
+  const scan = { secondsAcross: 6, halfWidthPx: 24 };
+  const burst = { seconds: 1.3, pxPerSecond: 560, frontPx: 14, glitter: 0.75, ticksPerSecond: 24 };
+
+  function hashed(column: number, row: number, tick: number): number {
+    const value = Math.sin(column * 127.1 + row * 311.7 + tick * 74.7) * 43758.5453;
+    return value - Math.floor(value);
+  }
+
+  interface Burst {
+    x: number;
+    y: number;
+    startsAt: number;
+  }
+
+  function burstHeat(bursts: Burst[], x: number, y: number, column: number, row: number, now: number): number {
+    let strongest = 0;
+    for (const { x: fromX, y: fromY, startsAt } of bursts) {
+      const age = (now - startsAt) / 1000;
+      if (age < 0 || age > burst.seconds) continue;
+      const fading = 1 - age / burst.seconds;
+      const reached = Math.hypot(x - fromX, y - fromY);
+      const front = age * burst.pxPerSecond;
+      const onFront = Math.max(0, 1 - Math.abs(reached - front) / burst.frontPx) * fading;
+      const glittering = reached < front && hashed(column, row, Math.floor(now / 1000 * burst.ticksPerSecond)) > 0.55;
+      strongest = Math.max(strongest, onFront, glittering ? burst.glitter * fading * fading : 0);
+    }
+    return strongest;
+  }
+
+  function startField(canvas: HTMLCanvasElement): void {
+    const pen = canvas.getContext("2d");
+    if (!pen) return;
+    const idle = canvas.dataset.quiet === undefined ? lively : quieter;
+    let width = 0;
+    let tall = 0;
+    let bursts: Burst[] = [];
+    const ink = { dot: "", hot: "" };
+
+    document.addEventListener("text-copied", (event) => {
+      const copied = event.target as HTMLElement;
+      if (copied.dataset.copy !== canvas.dataset.source || reducedMotion() || pausedByPerson()) return;
+      const field = canvas.getBoundingClientRect();
+      const button = copied.getBoundingClientRect();
+      const now = performance.now();
+      bursts = [
+        ...bursts.filter((old) => (now - old.startsAt) / 1000 < burst.seconds),
+        { x: button.left + button.width / 2 - field.left, y: button.top + button.height / 2 - field.top, startsAt: now },
+      ];
+    });
+
+    const restyle = () => {
+      ink.dot = cssValue(canvas, "--muted-foreground");
+      ink.hot = cssValue(canvas, "--accent");
+    };
+
+    const resize = () => {
+      const scale = deviceScale();
+      ({ width, height: tall } = canvas.getBoundingClientRect());
+      canvas.width = Math.round(width * scale);
+      canvas.height = Math.round(tall * scale);
+      pen.setTransform(scale, 0, 0, scale, 0, 0);
+    };
+
+    const draw = (seconds: number) => {
+      if (!width) resize();
+      pen.clearRect(0, 0, width, tall);
+      const columns = Math.ceil(width / pitchPx);
+      const rows = Math.ceil(tall / pitchPx);
+      const now = performance.now();
+      const scanX = ((seconds / scan.secondsAcross) % 1) * (width + scan.halfWidthPx * 2) - scan.halfWidthPx;
+      for (let column = 0; column < columns; column++) {
+        const x = column * pitchPx + pitchPx / 2;
+        const scanned = Math.max(0, 1 - Math.abs(x - scanX) / scan.halfWidthPx);
+        for (let row = 0; row < rows; row++) {
+          const y = row * pitchPx + pitchPx / 2;
+          const tick = Math.floor(seconds * idle.ticksPerSecond + hashed(column, row, 0) * 7);
+          const lit = hashed(column, row, tick) > idle.litAbove;
+          const read = scanned && hashed(column, row, tick + 3) > 0.6 ? scanned * idle.scanLift : 0;
+          const heat = bursts.length ? burstHeat(bursts, x, y, column, row, now) : 0;
+          const glow = Math.min(1, Math.max(idle.faint, lit ? idle.twinkle : 0, read, heat));
+          const hot = heat > 0.3 || (lit && hashed(column, row, tick + 5) > 0.75);
+          pen.globalAlpha = glow;
+          pen.fillStyle = hot ? ink.hot : ink.dot;
+          const side = 1.2 + Math.max(heat, read) * 1.2;
+          pen.fillRect(x - side / 2, y - side / 2, side, side);
+        }
+      }
+      pen.globalAlpha = 1;
+      if (bursts.length && bursts.every((old) => (now - old.startsAt) / 1000 > burst.seconds)) bursts = [];
+    };
+
+    restyle();
+    animateWhileSeen(canvas, { draw, resize, restyle }, 30);
+  }
+
+  for (const canvas of document.querySelectorAll<HTMLCanvasElement>("canvas.copy-field")) startField(canvas);
+</script>
+
+<style>
+  .copy-field {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+</style>

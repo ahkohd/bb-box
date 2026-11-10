@@ -128,8 +128,8 @@ const formId = "sample-new-box";
       const system = chosen("system").value;
       const type = chosen("type").value === "desktop" ? `${system} desktop` : `${system} server`;
       const provider = chosen("provider").value;
-      const where = provider === "first" ? "the first provider with room" : provider;
-      note.textContent = `In BB, this makes a ${sizeWords[chosen("size").value]} ${type} on ${where}. This sample makes nothing.`;
+      const where = provider === "first" ? "wherever it fits" : `on ${provider}`;
+      note.textContent = `In BB, this makes a ${sizeWords[chosen("size").value]} ${type} ${where}.`;
     });
     fit();
   }
