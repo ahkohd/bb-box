@@ -26,6 +26,7 @@ import MonitorPiece from "../components/home/MonitorPiece.astro";
 import NewBoxPiece from "../components/home/NewBoxPiece.astro";
 import RecordingPiece from "../components/home/RecordingPiece.astro";
 import ThemeToggle from "../components/ThemeToggle.astro";
+import { asciiCursorCss } from "../cursor-art.ts";
 import { demoSeconds } from "../demo.ts";
 import { homePageHead } from "../head.ts";
 import { headline, headlineRest, headlineWords, homeData, platformLines, platformNames, subline, tagline } from "../home.ts";
@@ -229,6 +230,7 @@ import appIcon from "../assets/app-icon.png";
       </section>
     </main>
 
+    <Fragment set:html={`<style>${asciiCursorCss}</style>`} />
     <AimReticle />
     <ScrollRail />
     <DemoCrates />
@@ -552,7 +554,6 @@ import appIcon from "../assets/app-icon.png";
     border-radius: 0;
     font-size: 0.9375rem;
     text-decoration: none;
-    cursor: pointer;
   }
 
   :global(.button.primary) {
@@ -582,7 +583,6 @@ import appIcon from "../assets/app-icon.png";
     font-family: var(--sl-font-mono);
     font-size: 0.8125rem;
     color: var(--accent);
-    cursor: pointer;
   }
 
   :global(.frame-button:hover) {
