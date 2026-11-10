@@ -65,6 +65,23 @@ if [ -n "$bb_url" ]; then
   [ -n "$app_sha256" ] || { echo "BB's server at $bb_url gave no digest for its app." >&2; exit 1; }
 fi
 
+image_sources_digest() {
+  (
+    cd "$here/.."
+    while read -r entry; do
+      [ -z "$entry" ] || find "$entry" -type f ! -name .DS_Store ! -name '._*'
+    done <"$here/image-sources" |
+      grep -vxF -e proxmox-lxc/template/pins.json -e proxmox-lxc/template/apt-snapshot -e proxmox-lxc/template/desktop-pins.tsv |
+      LC_ALL=C sort -u |
+      while IFS= read -r file; do
+        printf 'file %s\n' "$file"
+        cat "$file"
+      done |
+      sha256sum | cut -d' ' -f1
+  )
+}
+image_sources_sha256=$(image_sources_digest)
+
 # A build needs this much of the Docker host's disk free, in GB. From an
 # empty cache, on Docker 29 with its containerd image store, the linux image
 # took about 6 GB, the desktop 12, the Wayland desktop 12 and all three 28:
@@ -132,7 +149,7 @@ for target in "${targets[@]}"; do
   image=${tag:-$image}
   # The guest scripts install the tools built for the image's architecture.
   build=(docker build --platform "$platform" --target "$target" --build-arg BB_URL="$bb_url"
-    --build-arg BB_APP_SHA256="$app_sha256" -t "$image" -f "$here/Dockerfile")
+    --build-arg BB_APP_SHA256="$app_sha256" --build-arg IMAGE_SOURCES_SHA256="$image_sources_sha256" -t "$image" -f "$here/Dockerfile")
   "${build[@]}" "$here/.."
   # Its record (049) in a label, where the plugin's doctor reads it without
   # starting the image: the image's own, which a second build, all from the

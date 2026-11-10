@@ -2,13 +2,14 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { dockerImageBuilding } from "../src/backends/docker/building.ts";
+import { prepareDigest } from "../src/backends/images.ts";
 import { BUILD_FREE_GB, DockerImages, bbAppDigest, imageStep, outdated, type DockerImagesDeps, type ImageBuild } from "../src/plugin/docker-images.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -190,7 +191,7 @@ const WAYLAND_FREE_GB = 18;
  * /usr/share/bb-box/image.json, and a curl that gives `digest` as BB's app's,
  * gives none ("none"), or fails ("fail").
  */
-function buildWith(freeGB: number, args: readonly string[] = [], error?: string, digest = "none", record = '{"contract":1,"kind":"linux"}', extra: { readonly imageError?: string; readonly startError?: string } = {}) {
+function buildWith(freeGB: number, args: readonly string[] = [], error?: string, digest = "none", record = '{"contract":1,"kind":"linux"}', extra: { readonly imageError?: string; readonly startError?: string; readonly script?: string } = {}) {
   const dir = tempDir("docker-build");
   const bin = join(dir, "bin");
   mkdirSync(bin);
@@ -261,7 +262,7 @@ printf 'content-length: 1191955\\r\\n\\r\\n'
   );
   chmodSync(join(bin, "curl"), 0o755);
   const env = { PATH: `${bin}:/usr/bin:/bin`, FAKE_FREE_KB: String(Math.floor((freeGB * 1e9) / 1024)), FAKE_DIGEST: digest, FAKE_RECORD: record, ...(error ? { FAKE_ERROR: error } : {}), ...(extra.imageError ? { FAKE_IMAGE_ERROR: extra.imageError } : {}), ...(extra.startError ? { FAKE_START_ERROR: extra.startError } : {}) };
-  const result = spawnSync("bash", [BUILD_SCRIPT, ...args], { encoding: "utf8", env });
+  const result = spawnSync("bash", [extra.script ?? BUILD_SCRIPT, ...args], { encoding: "utf8", env });
   const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
   // Each target's build, then a second one, from the cache, that labels it with its record (049).
   const builds = calls.filter((call) => call.startsWith("build ") && !call.includes("bbbox.image-record="));
@@ -274,6 +275,7 @@ printf 'content-length: 1191955\\r\\n\\r\\n'
     reads: calls.filter((call) => call.startsWith("create ") && call.includes("bbbox/")),
     attached: calls.filter((call) => /^(run|exec|attach|logs) /.test(call)),
     built: builds.map((call) => / --target ([\w-]+) /.exec(call)?.[1]),
+    sourcesDigests: builds.map((call) => / --build-arg IMAGE_SOURCES_SHA256=(\S*) /.exec(call)?.[1]),
     curls: existsSync(`${log}.curl`) ? readFileSync(`${log}.curl`, "utf8").split("\n").filter(Boolean) : [],
   };
 }
@@ -324,6 +326,32 @@ test("build.sh labels each image with its own record, and stops at an image with
     [none.status, none.stderr, none.built, none.labelled],
     [1, "Error response from daemon: Could not find the file /usr/share/bb-box/image.json in container c0\n", ["linux"], []],
   );
+});
+
+test("build.sh gives each build the digest of the files its image is built from, as the plugin computes it", async () => {
+  const setup = join(tempDir("docker-sources"), "setup");
+  cpSync(fileURLToPath(new URL("../setup/", import.meta.url)), setup, { recursive: true });
+  const script = join(setup, "docker", "build.sh");
+
+  const fresh = buildWith(BUILD_FREE_GB, ["linux", "desktop"], undefined, "none", undefined, { script });
+  assert.equal(fresh.status, 0, fresh.stderr);
+  assert.deepEqual(fresh.sourcesDigests, [await prepareDigest(setup, "docker"), await prepareDigest(setup, "docker")]);
+
+  appendFileSync(join(setup, "docker", "start"), "\ntrue\n");
+  appendFileSync(join(setup, "proxmox-lxc", "template", "pins.json"), "\n");
+  writeFileSync(join(setup, "proxmox-lxc", "template", "guest", "files", "._display"), "AppleDouble");
+  const changed = buildWith(BUILD_FREE_GB, ["linux"], undefined, "none", undefined, { script });
+
+  assert.equal(changed.status, 0, changed.stderr);
+  assert.notEqual(changed.sourcesDigests[0], fresh.sourcesDigests[0], "a change to start");
+  assert.deepEqual(changed.sourcesDigests, [await prepareDigest(setup, "docker")], "less the pins and Mac metadata, as the plugin leaves them out");
+
+  writeFileSync(join(setup, "proxmox-lxc", "template", ".template-config"), "SETTING=1\n");
+  const hidden = buildWith(BUILD_FREE_GB, ["linux"], undefined, "none", undefined, { script });
+
+  assert.equal(hidden.status, 0, hidden.stderr);
+  assert.notEqual(hidden.sourcesDigests[0], changed.sourcesDigests[0], "a hidden file that is not Mac metadata counts");
+  assert.deepEqual(hidden.sourcesDigests, [await prepareDigest(setup, "docker")]);
 });
 
 test("build.sh reports Docker's own error when it cannot create a container to read an image, or start one to read the disk", () => {
