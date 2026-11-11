@@ -82,12 +82,6 @@ if [ -n "$installed" ] && dpkg --compare-versions "$installed" ge "$(dpkg-deb -f
   echo "customize-desktop-wayland: keeping Chrome $installed, as new as the pin or newer"
   chrome=
 fi
-# Downloads are retried through snapshot.ubuntu.com's short outages, as in
-# baseline.sh; files already downloaded stay in apt's cache.
-opts=()
-apt_acquire_options opts
-# shellcheck disable=SC2086
-apt_retry apt-get "${opts[@]}" install -y -q --no-install-recommends --download-only $desktop_packages $gpui_packages "$selkies" ${chrome:+"$chrome"}
 # shellcheck disable=SC2086
 apt_install -y -q --no-install-recommends $desktop_packages $gpui_packages "$selkies" ${chrome:+"$chrome"}
 for package in $desktop_packages $gpui_packages selkies google-chrome-stable; do

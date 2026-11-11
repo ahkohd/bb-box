@@ -106,13 +106,41 @@ test("running apt.sh update is the same retry", () => {
   assert.match(lines(always, "log")[0]!, /Acquire::Retries::Delay=true/);
 });
 
-test("apt-get install is given Acquire::Retries, and one failure is the result", () => {
+test("apt-get install downloads under the retry, so it rides out an outage, then installs from the cache", () => {
   const dir = layout("once");
+
   const ran = run(dir, '. "$APT_SCRIPT"\napt_install -y -q --no-install-recommends jq\n', { APT_RETRY_DELAY_SUPPORTED: "1" });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(lines(dir, "log"), [
+    "-o Acquire::Retries=5 -o Acquire::Retries::Delay=true install --download-only -y -q --no-install-recommends jq",
+    "-o Acquire::Retries=5 -o Acquire::Retries::Delay=true install --download-only -y -q --no-install-recommends jq",
+    "-o Acquire::Retries=5 -o Acquire::Retries::Delay=true install -y -q --no-install-recommends jq",
+  ]);
+  assert.deepEqual(lines(dir, "sleeps"), ["0"]);
+  assert.match(ran.stderr, /install --download-only -y -q --no-install-recommends jq failed \(try 1 of 5\); retrying in 0 s/);
+});
+
+test("an outage longer than every try fails the install with the archive's error and what to do", () => {
+  const dir = layout("always");
+
+  const ran = run(dir, '. "$APT_SCRIPT"\napt_install -y -q jq\n', { APT_RETRY_DELAY_SUPPORTED: "0", APT_RETRY_SLEEP_SCALE: "30" });
+
   assert.equal(ran.status, 100);
-  assert.deepEqual(lines(dir, "log"), ["-o Acquire::Retries=5 -o Acquire::Retries::Delay=true install -y -q --no-install-recommends jq"]);
-  assert.deepEqual(lines(dir, "sleeps"), []);
-  assert.match(ran.stderr, /503/);
+  assert.equal(lines(dir, "log").length, 5);
+  assert.ok(lines(dir, "log").every((call) => call.includes("--download-only")), "nothing is installed from a download that failed");
+  assert.deepEqual(lines(dir, "sleeps"), ["30", "60", "90", "120"]);
+  assert.match(ran.stderr, /503 {2}Service Unavailable/);
+  assert.match(ran.stderr, /apt: apt-get -o Acquire::Retries=5 install --download-only -y -q jq failed 5 times over 300 s\. The package archive did not serve it for that long: check the errors above, then build again\.$/m);
+});
+
+test("running apt.sh install is the same retry", () => {
+  const dir = layout("once");
+
+  const ran = run(dir, 'bash "$APT_SCRIPT" install -y -q jq\n', { APT_RETRY_DELAY_SUPPORTED: "0" });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.equal(lines(dir, "log").length, 3);
 });
 
 test("the wait and the try count default to the build's, and delay follows this apt", () => {

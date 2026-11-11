@@ -31,10 +31,11 @@ apt_retry_conf() {
 }
 
 apt_retry() {
-  local try tries status wait log
+  local try tries status wait log waited
   tries=${APT_RETRY_TRIES:-5}
   log=$(mktemp)
   try=1
+  waited=0
   while [ "$try" -le "$tries" ]; do
     if "$@" >"$log" 2>&1; then
       cat "$log"
@@ -46,11 +47,13 @@ apt_retry() {
     if [ "$try" -eq "$tries" ]; then
       cat "$log" >&2
       rm -f "$log"
+      echo "apt: $* failed $tries times over ${waited} s. The package archive did not serve it for that long: check the errors above, then build again." >&2
       return "$status"
     fi
     wait=$((try * ${APT_RETRY_SLEEP_SCALE:-30}))
     echo "apt: $* failed (try $try of $tries); retrying in ${wait} s" >&2
     sleep "$wait"
+    waited=$((waited + wait))
     try=$((try + 1))
   done
 }
@@ -64,6 +67,7 @@ apt_update() {
 apt_install() {
   local -a opts=()
   apt_acquire_options opts
+  apt_retry apt-get "${opts[@]}" install --download-only "$@" || return
   apt-get "${opts[@]}" install "$@"
 }
 
