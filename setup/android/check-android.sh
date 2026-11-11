@@ -12,9 +12,10 @@ box's adb key is its own, and for each device the build made, as
 /usr/share/bb-box/android-devices.json lists them: it boots from its snapshot, its screens' pixels are the model table's, the
 image's defaults hold, AndroidWifi is in its Wi-Fi store on disk and it has a
 validated default network, its gRPC refuses no token and a wrong one, and its
-ports are closed to another interface over IPv4 and IPv6. It runs before
-finalize.sh writes the image's record, in build.sh's check, and after it, in
-a clone's and a refresh's trial box. BB_BOX_SHARE gives another folder than
+ports are closed to another interface over IPv4 and IPv6. A foldable's
+defaults include auto-rotate on in every posture, which Android keeps for
+each. It runs before finalize.sh writes the image's record, in build.sh's
+check, and after it, in a clone's and a refresh's trial box. BB_BOX_SHARE gives another folder than
 /usr/share/bb-box.
 USAGE
   exit 2
@@ -102,8 +103,16 @@ wifi() {
   echo "AndroidWifi saved on disk, a validated default network"
 }
 
+POSTURE_LOCKED=1
+
+foldable() { [ "$(wc -w <<<"$1")" = 2 ]; }
+
+no_posture_locked() {
+  awk -F: -v locked="$POSTURE_LOCKED" '$0 == "" || $0 == "null" { exit 1 } { for (i = 2; i <= NF; i += 2) if ($i == locked) exit 1 }'
+}
+
 defaults() {
-  local avd=$1 got failed=
+  local avd=$1 screens=$2 got failed= rotating="auto-rotate on"
   for expect in "secure stylus_handwriting_enabled 0" "secure spell_checker_enabled 0" "system accelerometer_rotation 1" "system screen_off_timeout 2147483647"; do
     read -r scope key value <<<"$expect"
     got=$(shell settings get "$scope" "$key")
@@ -111,8 +120,13 @@ defaults() {
   done
   shell dumpsys power | grep -q 'mStayOn=true' || failed="$failed stayon=false"
   grep -Eqx 'hw\.keyboard *= *yes' "$HOME/.android/avd/$avd.avd/config.ini" || failed="$failed hw.keyboard"
+  if foldable "$screens"; then
+    got=$(shell settings get secure device_state_rotation_lock)
+    no_posture_locked <<<"$got" || failed="$failed device_state_rotation_lock=$got"
+    rotating="auto-rotate on in every posture"
+  fi
   [ -z "$failed" ] || { echo "not as the image sets them:$failed"; return 1; }
-  echo "hw.keyboard, stylus handwriting off, spell checker off, auto-rotate on, awake"
+  echo "hw.keyboard, stylus handwriting off, spell checker off, $rotating, awake"
 }
 
 tokens() {
@@ -166,8 +180,8 @@ for i in $(seq 0 $((count - 1))); do
     *snapshot=loaded*) echo "$(printf '%-34s ' "$model boots from its snapshot")ok   $booted" ;;
     *) echo "$(printf '%-34s ' "$model boots from its snapshot")FAIL ${booted:0:300}"; bb-box-emulator stop >/dev/null 2>&1; continue ;;
   esac
-  if [ "$(wc -w <<<"$screens")" = 2 ]; then t "$model screens" fold_pixels $screens; else t "$model screen" pixels "$screens"; fi
-  t "$model defaults" defaults "$avd"
+  if foldable "$screens"; then t "$model screens" fold_pixels $screens; else t "$model screen" pixels "$screens"; fi
+  t "$model defaults" defaults "$avd" "$screens"
   t "$model Wi-Fi" wifi
   t "$model gRPC token" tokens
   t "$model ports" ports_closed

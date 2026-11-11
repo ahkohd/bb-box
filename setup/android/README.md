@@ -112,7 +112,11 @@ Before its snapshot is saved, each device has:
 - stylus handwriting off, so Gboard's "Try out your stylus" sheet does not
   take the typing
 - the system spell checker off
-- auto-rotate on, which rotation by the emulator needs
+- auto-rotate on, which rotation by the emulator needs. Android keeps
+  auto-rotate for each posture of the Pixel Fold, and by default locks it
+  while the device is closed. The template turns it on in every posture, so
+  a folded Pixel Fold rotates too, and folding and opening it never leaves
+  auto-rotate off
 - the screen always on, with no lock screen
 - the emulator's AndroidWifi network written to Android's Wi-Fi store on
   disk, not only held in memory: Android writes a new network about 10 s

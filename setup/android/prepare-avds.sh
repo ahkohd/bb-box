@@ -8,8 +8,9 @@ usage: prepare-avds.sh <pins.json> <devices.json>
 
 Run as the box user in an Android image's build. Makes one AVD for each device
 in pins.json with avdmanager, with a hardware keyboard, boots it cold, sets the
-image's defaults in it, waits until Android has written the emulator's
-AndroidWifi network to its Wi-Fi store, clears its clipboard and logcat, and
+image's defaults in it, with auto-rotate on in every posture of a foldable,
+waits until Android has written the emulator's AndroidWifi network to its
+Wi-Fi store, clears its clipboard and logcat, and
 stops it, which saves its snapshot. Then boots it once from that snapshot to check that it
 loads. Writes the image record's devices, with each runtime and the
 snapshot's origin, to <devices.json>.
@@ -35,6 +36,26 @@ trap 'bb-box-emulator stop >/dev/null 2>&1 || true' EXIT
 
 shell() { adb -s "$serial" shell "$@" </dev/null; }
 
+POSTURE_LOCKED=1
+POSTURE_UNLOCKED=2
+
+unlocked_in_every_posture() {
+  awk -F: -v OFS=: -v locked="$POSTURE_LOCKED" -v unlocked="$POSTURE_UNLOCKED" '{ for (i = 2; i <= NF; i += 2) if ($i == locked) $i = unlocked; print }'
+}
+
+no_posture_locked() {
+  awk -F: -v locked="$POSTURE_LOCKED" '$0 == "" || $0 == "null" { exit 1 } { for (i = 2; i <= NF; i += 2) if ($i == locked) exit 1 }'
+}
+
+posture_rotation() { shell settings get secure device_state_rotation_lock | tr -d '\r'; }
+
+rotate_in_every_posture() {
+  local postures
+  postures=$(posture_rotation)
+  case "$postures" in "" | null) return 0 ;; esac
+  shell settings put secure device_state_rotation_lock "$(unlocked_in_every_posture <<<"$postures")"
+}
+
 set_config() {
   local file=$1 key=$2 value=$3
   if grep -Eq "^${key//./\\.} *=" "$file"; then sed -Ei "s|^${key//./\\.} *=.*|$key=$value|" "$file"; else echo "$key=$value" >>"$file"; fi
@@ -44,6 +65,7 @@ apply_defaults() {
   shell settings put secure stylus_handwriting_enabled 0
   shell settings put secure spell_checker_enabled 0
   shell settings put system accelerometer_rotation 1
+  [ "$foldable" = no ] || rotate_in_every_posture
   shell settings put system screen_off_timeout 2147483647
   shell svc power stayon true
   shell locksettings set-disabled true >/dev/null
@@ -73,6 +95,10 @@ check_defaults() {
     [ "$got" = "$3" ] || { echo "prepare-avds: $2 is $got, not $3" >&2; failed=1; }
   done
   shell dumpsys power | grep -q 'mStayOn=true' || { echo "prepare-avds: the device does not stay awake" >&2; failed=1; }
+  if [ "$foldable" = yes ]; then
+    got=$(posture_rotation)
+    no_posture_locked <<<"$got" || { echo "prepare-avds: device_state_rotation_lock is $got, which locks auto-rotate in a posture" >&2; failed=1; }
+  fi
   return "$failed"
 }
 
@@ -82,6 +108,8 @@ for i in $(seq 0 $((count - 1))); do
   model=$(jq -r ".devices[$i].model" "$pins")
   avd=$(jq -r ".devices[$i].avd" "$pins")
   profile=$(jq -r ".devices[$i].profile" "$pins")
+  foldable=no
+  [ "$(jq ".devices[$i].screens | length" "$pins")" != 2 ] || foldable=yes
   log "$model: making $avd from $profile"
   echo no | avdmanager --silent create avd --force -n "$avd" -k "$package" -d "$profile" >/dev/null
   config=$HOME/.android/avd/$avd.avd/config.ini
