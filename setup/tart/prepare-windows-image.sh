@@ -185,12 +185,18 @@ mkdir "$d"
 # The Mac stays awake for the build.
 caffeinate -i -w $$ >/dev/null 2>&1 &
 
+signal_pidfile() {
+  _p=$(cat "$1" 2>/dev/null)
+  case $_p in '' | 0* | *[!0-9]*) return 1 ;; esac
+  kill "$_p" 2>/dev/null
+}
+
 # QEMU stops, and the build with it, should the disk fill below the reserve.
 (
   while :; do
     if [ "$(kib)" -lt "$floor" ]; then
       : >"$w/low"
-      kill "$(cat "$w/pid" 2>/dev/null)" 2>/dev/null
+      signal_pidfile "$w/pid"
       exit 0
     fi
     sleep 5
