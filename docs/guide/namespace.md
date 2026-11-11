@@ -126,7 +126,7 @@ Its ID is `namespace:team-b`. **Add backend**, then **Namespace**, in BB Box's s
 - **Most machines counts the backend's own machines**, and those of other BB Box installs in its workspace, but not another backend's of this install. The workspace's Mac cores in use, which Namespace reports for the whole workspace, count for each backend on it.
 - **Each builds its own Linux images**, in its workspace's registry. So the first Linux box of each kind on each backend waits for its build, about 4 to 9 minutes. The first backend's images are tagged `bbbox/linux:<version>`; another's carry its name first, as `bbbox/linux:team-b-<version>`. No backend deletes images from a registry. `bb box images list` lists each backend's images, with when each was built.
 - **Each runs its own shared iOS host**, in its own workspace, with its own token. Its record says which backend it is on.
-- **With the tailnet on**, a second backend's machines join it as `bb-box-nsb-`, then the install's ID, the length of the backend's name, the name and the box's name, such as `bb-box-nsb-k3v9q2m7xa-6-team-b-my-box`. So no backend takes another's tailnet devices for its own. A name is at most 15 characters, so that this fits in a tailnet name.
+- **With the tailnet on**, a second backend's machines join it as `bb-box-nsb-`, then the install's ID, the length of the backend's name, the name and the box's name, such as `bb-box-nsb-k3v9q2m7xa-6-team-b-my-box`. So no backend takes another's tailnet devices for its own. A backend's name is at most 15 characters, so that there is room for the box's name. A tailnet name is at most 63 characters. Where one would be longer, BB Box keeps the start of the box's name and adds a code of 6 characters made from it, so each box still has a name of its own. On an install whose ID is longer than 23 characters, it may also shorten the install's ID to its first 16 characters and a code. With the ID BB Box makes, of 10 characters, a box's name is never shortened.
 
 The first Namespace backend, with the ID `namespace`, keeps its ID when you add another, and with it its boxes, machines, iOS host and images. It also looks after machines that carry only the install's label, which versions of BB Box before several workspaces made. No other backend touches them.
 
@@ -142,6 +142,27 @@ A Mac is ready about 20 seconds after BB Box asks for it. BB Box then gets it re
 When the box is released, BB Box takes it off the tailnet and destroys the Mac. Nothing on it is kept.
 
 A Mac cannot outlive your plan's limit. BB Box keeps each Mac's end an hour ahead while its box is held, up to that limit, so a Mac that BB Box loses track of ends within the hour.
+
+### Mac sizes
+
+Namespace names each Mac by its cores and memory, such as 6x14 for 6 cores and 14 GiB of memory. You cannot choose a Mac's disk: it follows the shape, at 48 GiB plus 8 GiB for each core or for each 2 GiB of memory, whichever gives more.
+
+| Mac | Cores | Memory | Disk |
+| --- | --- | --- | --- |
+| 4x7 | 4 | 7 GiB | 80 GiB |
+| 4x14 | 4 | 14 GiB | 104 GiB |
+| 6x14 | 6 | 14 GiB | 104 GiB |
+| 8x14 | 8 | 14 GiB | 112 GiB |
+| 6x28 | 6 | 28 GiB | 160 GiB |
+| 8x28 | 8 | 28 GiB | 160 GiB |
+| 12x28 | 12 | 28 GiB | 160 GiB |
+| 16x28 | 16 | 28 GiB | 176 GiB |
+| 12x56 | 12 | 56 GiB | 272 GiB |
+| 16x56 | 16 | 56 GiB | 272 GiB |
+
+BB Box gives a Mac box the smallest of these with at least the cores, memory and disk its size asks for. A box that asks for more disk gets a larger Mac, so a 6-core box with 14 GiB of memory and 128 GiB of disk needs a 6x28.
+
+If no Mac the workspace allows is large enough, BB Box refuses the box before it asks Namespace. The refusal names each part that is too large, the largest Mac the workspace allows with its disk, and a size that fits. To ask for a smaller disk, give `disk_gib` to the box, or `--disk-gib` on the command line.
 
 ## iOS boxes on a shared Namespace host
 

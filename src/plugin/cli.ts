@@ -568,7 +568,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         "images list": cliCommand({
-          summary: `List the standard images ${PRODUCT} rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first. Then the images a backend builds and refreshes by itself, such as each Namespace backend's Linux images in its workspace's registry; --json gives only the first.`,
+          summary: `List the standard images ${PRODUCT} rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first. Then the images a backend builds and refreshes by itself, such as each Namespace backend's Linux images in its workspace's registry and each boat.dev backend's templates; --json gives only the first.`,
           options: { ...jsonOption, output: { type: "string", description: "Print this image's last rebuild's last lines, as <backend>/<ref>." } },
           run: ({ options }, ctx) =>
             guard("Listing the images", async () => {
