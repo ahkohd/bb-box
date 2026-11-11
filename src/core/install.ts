@@ -7,7 +7,8 @@
 import { randomInt } from "node:crypto";
 
 export const INSTALL_ID_KEY = "install-id";
-const PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
+export const LONGEST_INSTALL_ID = 32;
+const PATTERN = new RegExp(`^[a-z0-9][a-z0-9-]{0,${LONGEST_INSTALL_ID - 1}}$`);
 const LETTERS = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 interface Kv {

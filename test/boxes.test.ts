@@ -1860,6 +1860,17 @@ test("an acquire may name its provider, by name, ID or host, without case; only 
   assert.equal((await acquire()).backend, world.backend.id);
 });
 
+test("a second backend of a type with no host of its own is named with its ID's name, and an acquire may name it so, with or without what its boxes are (#1455)", async () => {
+  const world = setup();
+  const teamB = new FakeBackend({ root: tempDir("boxes-team-b"), storage: scopedStorage(world.kv, "backend/fake:team-b/"), id: "fake:team-b" }) as unknown as Backend;
+  world.others = [teamB];
+  const acquire = (on: string) => world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", on });
+
+  for (const name of ["Fake host (team-b)", "fake host (TEAM-B) (VM)", "fake:team-b"]) assert.equal((await acquire(name)).backend, "fake:team-b", name);
+  for (const name of ["Fake host", "Fake host (VM)"]) assert.equal((await acquire(name)).backend, world.backend.id, name);
+  await world.boxes.idle();
+});
+
 test("a plain linux acquire takes a VM's offer last, whatever the backends' order, unless it asks for a VM by linux-vm or on (057)", async () => {
   // The first backend's linux boxes are VMs, with the feature kernel; the second's are not.
   const vm: BoxKind = { ...FAKE_KINDS[0]!, capabilities: { ...FAKE_KINDS[0]!.capabilities, features: ["docker", "kernel"] } };
@@ -3736,16 +3747,16 @@ test("071 unit 7: a GPU no provider gives is refused before any box, never turne
   const world = gpuWorld(false);
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: AGENT }), (error: unknown) => {
     assert.ok(error instanceof BoxError && error.code === "unsupported");
-    assert.equal(error.message, "Not made: no provider here gives linux boxes a shared GPU: Fake host gives linux boxes no GPU. Ask for gpu none, or ask the user. BB Box changed nothing.");
+    assert.equal(error.message, "Not made: no provider here gives linux boxes a shared GPU: Fake host (plain) gives linux boxes no GPU. Ask for gpu none, or ask the user. BB Box changed nothing.");
     return true;
   });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "shared", who: { is: "person" } }), {
-    message: "No provider gives linux boxes a shared GPU: Fake host gives linux boxes no GPU. Ask for gpu none.",
+    message: "No provider gives linux boxes a shared GPU: Fake host (plain) gives linux boxes no GPU. Ask for gpu none.",
   });
   assert.deepEqual(await world.boxes.list(THREAD), [], "no box was made");
   const desktops = setup({ id: "fake:gpu", kinds: [{ ...FAKE_KINDS[1]!, id: "linux-desktop", capabilities: { ...FAKE_KINDS[1]!.capabilities, gpu: true } }] });
   await assert.rejects(desktops.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux-desktop", gpu: "none", who: AGENT }), {
-    message: "Not made: no provider here gives linux-desktop boxes no GPU: linux-desktop boxes from Fake host always have a GPU. Ask for linux-desktop-cpu for a desktop drawn by the CPU, or ask the user. BB Box changed nothing.",
+    message: "Not made: no provider here gives linux-desktop boxes no GPU: linux-desktop boxes from Fake host (gpu) always have a GPU. Ask for linux-desktop-cpu for a desktop drawn by the CPU, or ask the user. BB Box changed nothing.",
   });
 });
 
@@ -3797,10 +3808,10 @@ test("071 unit 8: a whole card no provider gives is refused before any box, and 
   world.backend = new FakeBackend({ root: tempDir("gpu-shared-whole"), storage: scopedStorage(world.kv, "backend/fake/"), id: "fake:plain", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] }], cards: GPU_CARDS });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: AGENT }), {
     code: "unsupported",
-    message: "Not made: no provider here gives linux boxes a whole card: Fake host gives linux boxes a shared GPU, not a whole card. Ask for gpu shared, or ask the user. BB Box changed nothing.",
+    message: "Not made: no provider here gives linux boxes a whole card: Fake host (plain) gives linux boxes a shared GPU, not a whole card. Ask for gpu shared, or ask the user. BB Box changed nothing.",
   });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", gpu: "whole", who: { is: "person" } }), {
-    message: "No provider gives linux boxes a whole card: Fake host gives linux boxes a shared GPU, not a whole card. Ask for gpu shared.",
+    message: "No provider gives linux boxes a whole card: Fake host (plain) gives linux boxes a shared GPU, not a whole card. Ask for gpu shared.",
   });
   assert.deepEqual(await world.boxes.list(THREAD), []);
 });
@@ -4262,10 +4273,10 @@ test("071 unit 15, review: a kind's configured GPU is a requirement: a provider 
   world.general = { ...world.general, gpuWhenNotAsked: { linux: "shared" } };
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: AGENT }), {
     code: "unsupported",
-    message: "Not made: no provider here gives linux boxes a shared GPU, the GPU the user set for linux boxes that do not ask for one: Fake host gives linux boxes no GPU. Ask for gpu none, or ask the user. BB Box changed nothing.",
+    message: "Not made: no provider here gives linux boxes a shared GPU, the GPU the user set for linux boxes that do not ask for one: Fake host (plain) gives linux boxes no GPU. Ask for gpu none, or ask the user. BB Box changed nothing.",
   });
   await assert.rejects(world.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: { is: "person" } }), {
-    message: "No provider gives linux boxes a shared GPU, linux's GPU when not asked for in BB Box's settings: Fake host gives linux boxes no GPU. Ask for gpu none, or change linux's GPU when not asked for in BB Box's settings, or with bb box kind set linux --gpu <none|shared|whole>.",
+    message: "No provider gives linux boxes a shared GPU, linux's GPU when not asked for in BB Box's settings: Fake host (plain) gives linux boxes no GPU. Ask for gpu none, or change linux's GPU when not asked for in BB Box's settings, or with bb box kind set linux --gpu <none|shared|whole>.",
   });
   assert.deepEqual(await world.boxes.list(THREAD), [], "no box with no GPU was made");
   world.others.push(new FakeBackend({ root: tempDir("gpu-setting-cards"), storage: scopedStorage(world.kv, "backend/cards/"), id: "fake:cards", kinds: [{ ...FAKE_KINDS[0]!, gpuParts: ["none", "shared"] }], cards: GPU_CARDS }));

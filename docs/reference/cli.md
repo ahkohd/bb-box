@@ -28,7 +28,7 @@
 | [`bb box image list`](#bb-box-image-list) | List projects' images (049): each one's kinds, projects, how it is baked, where its script came from, and its builds. |
 | [`bb box image show`](#bb-box-image-show) | Print a project's image's script, and its check, as BB Box keeps them (049). |
 | [`bb box image try`](#bb-box-image-try) | Try a project's image's script as a build runs it (049), on a kind it covers, and remove what the try made. It prints each check's result and the build's last lines, and exits 1 if one failed. |
-| [`bb box images list`](#bb-box-images-list) | List the standard images BB Box rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first. |
+| [`bb box images list`](#bb-box-images-list) | List the standard images BB Box rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first. Then the images a backend builds and refreshes by itself, such as each Namespace backend's Linux images in its workspace's registry; `--json` gives only the first. |
 | [`bb box images refresh`](#bb-box-images-refresh) | Rebuild the standard images that are due (049), one at a time, most needed first, and start none after the time limit. A BB script automation runs it each night. It ends with a line per image, and exits 1 if one failed. Should this command end first, the run goes on. |
 | [`bb box images build`](#bb-box-images-build) | Rebuild one standard image now, due or not, and whatever its last rebuild did (049), and replace it when its trial box passes. `--try` checks a new build and keeps the old one. |
 | [`bb box images versions`](#bb-box-images-versions) | Show what a rebuild of the standard Linux images would take now (049): upstream's latest stable Claude Code, Codex, pi, gh and Chrome, each with the SHA-256 it publishes, and the day's apt snapshot, against this BB Box's pins. |
@@ -58,8 +58,8 @@
 | [`bb box snapshot list`](#bb-box-snapshot-list) | List the snapshots of a box, of a thread's boxes, of your machines with `--machine`, or with `--all` every snapshot BB Box records, those of released boxes too. |
 | [`bb box snapshot delete`](#bb-box-snapshot-delete) | Delete a snapshot of a thread's box, or with `--machine` one of your machines, by its name or ID, and wait until its backend confirms. An incomplete one is cleaned up on its host. A box that is gone is named by the ID bb box snapshot list `--all` gives. |
 | [`bb box snapshot restore`](#bb-box-snapshot-restore) | Restore a thread's box, or with `--machine` one of your machines, to one of its snapshots: everything on its disk since then goes, and the box restarts. BB Box takes an undo first, a snapshot of the box once stopped, or on ZFS a full copy of it, unless `--no-undo`. On ZFS only the newest snapshot restores. It refuses while a person holds the box's desktop or a BB terminal is open on it, unless `--force`. It refuses a box threads run on, as restores of such boxes stay off until BB Box can hold every turn on them. Asks for `--replace`. |
-| [`bb box snapshot fork`](#bb-box-snapshot-fork) | Fork a snapshot of a thread's box, or with `--machine` one of your machines, into a new box: of the box's thread, or with `--as-machine` one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and BB Box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks, from its held copy on Proxmox and from the snapshot itself on Tart, as one of your machines; name its box as bb box snapshot list `--all` does. |
-| [`bb box snapshot keep`](#bb-box-snapshot-keep) | Keep a snapshot of a thread's box, or with `--machine` one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart. BB Box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list `--all` names it. |
+| [`bb box snapshot fork`](#bb-box-snapshot-fork) | Fork a snapshot of a thread's box, or with `--machine` one of your machines, into a new box: of the box's thread, or with `--as-machine` one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and BB Box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks, from its held copy on Proxmox and from the snapshot itself on Tart, microsandbox, Docker and boat.dev, as one of your machines; name its box as bb box snapshot list `--all` does. |
+| [`bb box snapshot keep`](#bb-box-snapshot-keep) | Keep a snapshot of a thread's box, or with `--machine` one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart, microsandbox, Docker and boat.dev. BB Box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list `--all` names it. |
 | [`bb box snapshot unkeep`](#bb-box-snapshot-unkeep) | Stop keeping a snapshot of a thread's box, or with `--machine` one of your machines: it goes with its box again. A released box's kept snapshot is deleted instead, with bb box snapshot delete. |
 | [`bb box snapshot forget`](#bb-box-snapshot-forget) | Forget every snapshot BB Box records on a backend, so the backend can be removed from BB Box's settings. BB Box deletes nothing: they may still exist there, and be billed. Asks for `--yes`. |
 | [`bb box gpu update`](#bb-box-gpu-update) | Update NVIDIA's userspace in a running box with a GPU to the host's driver, after that driver changed (071). BB Box checks the box first: BB Box's own Linux image on x86_64, 2 GiB free, and no NVIDIA or CUDA packages from apt. It then downloads NVIDIA's installer for exactly the host's driver, checks it against NVIDIA's SHA-256, installs it with no kernel modules, restarts the box, and checks that nvidia-smi lists the box's card and CUDA's driver initialises, and for a desktop that it draws and encodes its video on the GPU. Everything running in the box stops. It is refused while a person holds control of the box's desktop, and while threads are working on it unless `--force`. Several boxes are updated one at a time. BB Box never updates a box's userspace by itself; bb box doctor names the boxes that need it. |
@@ -466,7 +466,7 @@ Options:
 
 ## bb box images list
 
-List the standard images BB Box rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first.
+List the standard images BB Box rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first. Then the images a backend builds and refreshes by itself, such as each Namespace backend's Linux images in its workspace's registry; `--json` gives only the first.
 
 ```text
 Usage:
@@ -714,7 +714,7 @@ Options:
   --label <value>             Its name in the settings and in box_list, such as Docker on build-1. Empty gives back the type's name.
   --warm <kind=count>         Ready boxes of a kind to keep waiting here, such as linux=1; 0 keeps none. (repeatable)
   --no-doctor                 Do not run the backend's checks after saving.
-  --id <value>                Its ID, for a second backend of a type that allows several, such as docker:build-1, or just build-1. The type by default.
+  --id <value>                Its ID, for a second backend of a type that allows several, such as docker:build-1 for another Docker host or namespace:team-b for another Namespace workspace, or just build-1 or team-b. The type by default.
   --help, -h                  Show this help and exit
 ```
 
@@ -1038,7 +1038,7 @@ Options:
 
 ## bb box snapshot fork
 
-Fork a snapshot of a thread's box, or with `--machine` one of your machines, into a new box: of the box's thread, or with `--as-machine` one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and BB Box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks, from its held copy on Proxmox and from the snapshot itself on Tart, as one of your machines; name its box as bb box snapshot list `--all` does.
+Fork a snapshot of a thread's box, or with `--machine` one of your machines, into a new box: of the box's thread, or with `--as-machine` one of your machines. The fork gets the snapshot's files, at its size, and an identity of its own: it resets at its first boot, and BB Box checks that before it is ready. Waits until it is ready. A kept snapshot of a box that was released forks, from its held copy on Proxmox and from the snapshot itself on Tart, microsandbox, Docker and boat.dev, as one of your machines; name its box as bb box snapshot list `--all` does.
 
 ```text
 Usage:
@@ -1062,7 +1062,7 @@ Options:
 
 ## bb box snapshot keep
 
-Keep a snapshot of a thread's box, or with `--machine` one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart. BB Box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list `--all` names it.
+Keep a snapshot of a thread's box, or with `--machine` one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart, microsandbox, Docker and boat.dev. BB Box deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list `--all` names it.
 
 ```text
 Usage:

@@ -65,6 +65,7 @@ import {
   type HeldGuest,
   type HostCapacity,
   type ImageBox,
+  type LeasedAddressNow,
   type ImageBuild,
   type Limit,
   type MachineAccess,
@@ -197,6 +198,7 @@ export interface DockerBackendOptions {
   readonly now?: () => number;
   /** Runs setup/docker/build.sh with `args`, for tests; bash by default. Resolves with its exit code. */
   readonly script?: (script: string, args: readonly string[], env: NodeJS.ProcessEnv, onLine: (line: string) => void, signal: AbortSignal) => Promise<number | null>;
+  readonly keepOffBecause?: string;
 }
 
 /** setup/docker/build.sh's target for the image of each kind. */
@@ -647,7 +649,7 @@ export class DockerBackend implements Backend {
           await machines.ready(machine);
         })
       : new DockerCli(config.host, options.binary));
-    this.#snapshots = new DockerSnapshotEngine(this.#cli, context, () => this.#now());
+    this.#snapshots = new DockerSnapshotEngine(this.#cli, context, () => this.#now(), options.keepOffBecause ?? null);
     void this.#recallName();
   }
 
@@ -1469,7 +1471,7 @@ export class DockerBackend implements Backend {
   }
 
   snapshotting(kind: string): Snapshotting | null {
-    return this.kinds().some((offer) => offer.id === kind) ? withDesktopForkSafety(kind, dockerOffer()) : null;
+    return this.kinds().some((offer) => offer.id === kind) ? withDesktopForkSafety(kind, dockerOffer(this.#options.keepOffBecause ?? null)) : null;
   }
 
   planSnapshots(guest: Guest, _kind: string, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
@@ -1494,6 +1496,10 @@ export class DockerBackend implements Backend {
 
   providerTask(task: TaskRef): Promise<TaskOutcome> {
     return this.#snapshots.settle(task);
+  }
+
+  labelKept(ref: SnapshotRef, kept: string | null, signal?: AbortSignal): Promise<void> {
+    return this.#snapshots.keep(ref, kept, signal);
   }
 
   async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -1583,6 +1589,32 @@ export class DockerBackend implements Backend {
     const guest: Guest = { ref: name, host: placed.host, address: null, size: sizeOf(container), data: dataOf(container, made.card, made.part) };
     await hooks.claim(guest);
     return guest;
+  }
+
+  async leasedAddressNow(guest: Guest, signal?: AbortSignal): Promise<LeasedAddressNow> {
+    const found = await this.#containerOfBoxNow(guest.ref, this.#boxOf(guest), signal);
+    if (!found) return { power: "gone", leased: null };
+    const address = found.addresses[this.#config.network] ?? null;
+    if (found.status === "running" || found.status === "restarting") return { power: "running", leased: address };
+    if (found.status === "paused") return { power: "suspended", leased: address };
+    return { power: "stopped", leased: null };
+  }
+
+  async boxHasNoGuest(boxId: string, lastKnown: Guest, signal?: AbortSignal): Promise<boolean> {
+    return (await this.#containerOfBoxNow(lastKnown.ref, boxId, signal)) === null;
+  }
+
+  async #containerOfBoxNow(ref: string, boxId: string | null, signal?: AbortSignal): Promise<ContainerInfo | null> {
+    const byRef = await this.#owned(ref, boxId, signal);
+    if (byRef || boxId === null) return byRef;
+    const byLabel = await this.#currentContainers(boxId, "", signal);
+    return byLabel.find((container) => ACTIVE.has(container.status)) ?? byLabel[0] ?? null;
+  }
+
+  async addressesGivenByProvider(guest: Guest, signal?: AbortSignal): Promise<readonly string[]> {
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) throw this.#gone(guest);
+    return found.status === "running" ? Object.values(found.addresses) : [];
   }
 
   async startForForkCheck(guest: Guest, signal: AbortSignal): Promise<void> {

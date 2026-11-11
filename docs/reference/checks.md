@@ -141,6 +141,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `gpu.<gpu>.limit` | GPU &lt;gpu> boxes | A card has no more boxes than the boxes per card. It warns, naming the boxes over the limit, which keep running while no new box goes on the card (071). |
 | `docker.snapshots` | Snapshots | Docker's image store, the space snapshots need and the disk's use. |
 | `docker.snapshot-leftovers` | Snapshot leftovers | Interrupted snapshot tasks and paused boxes waiting for recovery. |
+| `docker.kept-snapshots` | Kept snapshots | What kept snapshots hold on Docker's disk, and until when. Removing the backend is refused while it holds any snapshot. |
 | `docker.snapshot-layers` | Snapshot layers | Box images near Docker's layer limit. A take refuses from 120 layers. |
 | `docker.cli` | docker CLI | The docker CLI runs on BB's server. |
 | `docker.daemon` | Docker daemon | The Docker host answers, runs Linux containers, and its architecture. |

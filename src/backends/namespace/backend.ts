@@ -25,6 +25,7 @@ import {
   type Guest,
   type GuestFact,
   type HeldGuest,
+  type OwnImage,
   type PowerState,
   type ReleaseHooks,
 } from "../types.ts";
@@ -41,9 +42,11 @@ import type { DockerBackendOptions } from "../docker/backend.ts";
 import type { DockerCli } from "../docker/cli.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import { PRODUCT } from "../../brand.ts";
+import { BACKEND_LABEL, INSTALL_LABEL, NamespaceOwner } from "./owner.ts";
 
 export const LABELS = {
-  install: "bbbox-install",
+  install: INSTALL_LABEL,
+  backend: BACKEND_LABEL,
   box: "bbbox-box",
   thread: "bbbox-thread",
   name: "bbbox-name",
@@ -264,6 +267,7 @@ export class NamespaceBackend implements Backend {
   readonly #context: BackendContext;
   readonly #options: NamespaceBackendOptions;
   readonly #api: NamespaceApi;
+  readonly #owner: NamespaceOwner;
   readonly #keyFile = new KeyFile();
   readonly #now: () => number;
   readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -282,15 +286,16 @@ export class NamespaceBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.id = context.id;
-    this.label = "Namespace";
+    this.#owner = new NamespaceOwner(context.id, context.installId);
+    this.label = this.#owner.name ? `Namespace (${this.#owner.name})` : "Namespace";
     this.#api = new NamespaceApi({ token: config.token, region: config.region, ...(context.log ? { log: (line: string) => context.log!(line) } : {}), ...(options.fetch ? { fetch: options.fetch } : {}) });
     this.#now = options.now ?? Date.now;
     this.#sleep = options.sleep ?? sleepFor;
     this.linuxImages = new LinuxImages({
       api: this.#api,
       storage: context.storage,
-      labels: { [LABELS.install]: context.installId },
-      uniqueTag: (target) => `bbbox-${context.installId}-image-${target}`.replace(/[^A-Za-z0-9-]+/g, "-"),
+      owner: this.#owner,
+      label: this.label,
       now: this.#now,
       publicKey: async () => (await this.#keys()).publicKey,
       answers: (instance, signal) => this.#answers(instance, this.#now() + (options.readyTimeoutMs ?? READY_TIMEOUT_MS), signal),
@@ -341,6 +346,7 @@ export class NamespaceBackend implements Backend {
   #namespaceHosts(): NamespaceHosts {
     return new NamespaceHosts({
       installId: this.#context.installId,
+      backendId: this.id,
       storage: this.#context.storage,
       settings: () => this.#config.iosHosts ?? NAMESPACE_IOS_HOSTS_DEFAULTS,
       longestLifeMs: () => this.#config.longestLifeHours * 3600_000,
@@ -353,7 +359,7 @@ export class NamespaceBackend implements Backend {
         return this.#api.create(
           {
             shape: { os: "macos", arch: "arm64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, selectors: { "macos.version": this.#config.macosVersion } },
-            labels: { [LABELS.install]: this.#context.installId, [LABELS.role]: NAMESPACE_HOST_ROLE, [LABELS.created]: String(this.#now()) },
+            labels: { ...this.#owner.labels(), [LABELS.role]: NAMESPACE_HOST_ROLE, [LABELS.created]: String(this.#now()) },
             deadline: this.#now() + KEEP_AHEAD_MS,
             purpose: `${PRODUCT} shared iOS host`,
             uniqueTag: tag,
@@ -392,7 +398,7 @@ export class NamespaceBackend implements Backend {
     const fullFor = concurrency ? workspaceFullFor(shape, concurrency) : null;
     if (fullFor) return { shape, words: fullFor };
     const held = await this.#held(signal);
-    if (held.length + this.#placing.size >= this.#config.machines) return { shape, words: `Namespace has ${held.length} of the ${this.#config.machines} machines ${PRODUCT} may have at once.` };
+    if (held.length + this.#placing.size >= this.#config.machines) return { shape, words: `${this.label} has ${held.length} of the ${this.#config.machines} machines ${PRODUCT} may have at once.` };
     return { shape, words: null };
   }
 
@@ -431,10 +437,10 @@ export class NamespaceBackend implements Backend {
     const made = await this.#api.create(
       {
         shape: { os: "macos", arch: "arm64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, selectors: { "macos.version": this.#config.macosVersion } },
-        labels: { [LABELS.install]: this.#context.installId, [LABELS.role]: MEASURE_ROLE, [LABELS.created]: String(this.#now()) },
+        labels: { ...this.#owner.labels(), [LABELS.role]: MEASURE_ROLE, [LABELS.created]: String(this.#now()) },
         deadline: until,
         purpose: `${PRODUCT} measures what Namespace's Macs offer iOS devices`,
-        uniqueTag: `bbbox-${this.#context.installId}-measure-${this.#now()}`.replace(/[^A-Za-z0-9-]+/g, "-"),
+        uniqueTag: this.#owner.uniqueTag(`measure-${this.#now()}`),
         sshPublicKeys: [publicKey],
       },
       within,
@@ -522,9 +528,9 @@ export class NamespaceBackend implements Backend {
   }
 
   async capacity(kind: string, size: MachineSize, pending: readonly { readonly kind: string; readonly size: MachineSize }[], signal?: AbortSignal): Promise<Capacity> {
-    if (kind === "ios") return { ok: false, message: "Namespace lends ios boxes only as slots on a shared iOS host, each a macOS user with its own device.", warm: null, hosts: [{ host: "Namespace", ok: false, limits: [] }] };
+    if (kind === "ios") return { ok: false, message: "Namespace lends ios boxes only as slots on a shared iOS host, each a macOS user with its own device.", warm: null, hosts: [{ host: this.label, ok: false, limits: [] }] };
     this.#kind(kind);
-    const host = "Namespace";
+    const host = this.label;
     if (isLinuxKind(kind) && !linuxShapeFor(size)) return { ok: false, message: linuxTooBig(size), warm: null, hosts: [{ host, ok: false, limits: [] }] };
     const { concurrency } = isLinuxKind(kind) ? { concurrency: null } : await this.#workspaceLimits(signal);
     const largest = isLinuxKind(kind) ? null : await this.#largestMachine(concurrency);
@@ -545,12 +551,12 @@ export class NamespaceBackend implements Backend {
       if (signal?.aborted) throw error;
       return { ok: false, message: `Namespace did not answer: ${error instanceof Error ? error.message : String(error)}`, warm: null, hosts: [{ host, ok: false, limits: [] }] };
     }
-    held = held.filter((instance) => !instance.labels[LABELS.role]);
+    held = held.filter((instance) => !instance.labels[LABELS.role] && !this.#owner.madeByAnotherBackendOfThisInstall(instance.labels));
     const used = held.length + Math.max(this.#placing.size, pending.length);
     const ok = used < this.#config.machines;
     return {
       ok,
-      message: ok ? null : `Namespace has ${held.length} of the ${this.#config.machines} machines ${PRODUCT} may have at once, counting every ${PRODUCT} install's in the workspace. Release a box, or raise the most machines in BB Box's settings.`,
+      message: ok ? null : `${this.label} has ${held.length} of the ${this.#config.machines} machines ${PRODUCT} may have at once, counting other ${PRODUCT} installs' in the workspace. Release a box, or raise the most machines in BB Box's settings.`,
       warm: null,
       hosts: [{ host, ok, limits: [{ resource: "machines", used, total: this.#config.machines, reserve: 0, unit: "count" }] }],
     };
@@ -806,7 +812,7 @@ export class NamespaceBackend implements Backend {
 
   #labels(box: BoxIdentity, kind: NamespaceKind): Record<string, string> {
     return {
-      [LABELS.install]: this.#context.installId,
+      ...this.#owner.labels(),
       [LABELS.box]: box.boxId,
       [LABELS.thread]: box.threadId,
       [LABELS.name]: box.name,
@@ -821,16 +827,16 @@ export class NamespaceBackend implements Backend {
   }
 
   #tag(boxId: string): string {
-    return `bbbox-${this.#context.installId}-${boxId}`.replace(/[^A-Za-z0-9-]+/g, "-").slice(0, 120);
+    return this.#owner.uniqueTag(boxId).slice(0, 120);
   }
 
   async #held(signal?: AbortSignal): Promise<Instance[]> {
-    return (await this.#api.list({ [LABELS.install]: this.#context.installId }, signal)).filter((instance) => !instance.labels[LABELS.role]);
+    return (await this.#api.list({ [LABELS.install]: this.#context.installId }, signal)).filter((instance) => !instance.labels[LABELS.role] && this.#owner.owns(instance.labels));
   }
 
   async #find(boxId: string, signal?: AbortSignal): Promise<Instance | null> {
     const found = await this.#api.list({ [LABELS.install]: this.#context.installId, [LABELS.box]: boxId }, signal);
-    return found[0] ?? null;
+    return found.find((instance) => this.#owner.owns(instance.labels)) ?? null;
   }
 
   async #mine(guest: Guest, signal?: AbortSignal): Promise<Instance | null> {
@@ -841,7 +847,7 @@ export class NamespaceBackend implements Backend {
       if (error instanceof NamespaceError && error.kind === "gone") return null;
       throw error;
     });
-    return described && described.labels[LABELS.install] === this.#context.installId ? described : null;
+    return described && this.#owner.owns(described.labels) ? described : null;
   }
 
   async #answers(instance: string, deadline: number, signal?: AbortSignal): Promise<void> {
@@ -905,7 +911,7 @@ export class NamespaceBackend implements Backend {
   }
 
   #tailnetHostPrefix(): string {
-    return `bb-box-ns-${tailnetHostname(this.#context.installId)}-`;
+    return this.#owner.tailnetPrefix();
   }
 
   #tailnetHostname(name: string): string {
@@ -934,6 +940,16 @@ export class NamespaceBackend implements Backend {
     if (prepared.exitCode !== 0) throw new Error(`Namespace's machine ${instance} did not get Cua Driver ready: ${prepared.stderr.trim().slice(-400) || `exit ${prepared.exitCode}`}`);
   }
 
+  async ownImages(signal?: AbortSignal): Promise<readonly OwnImage[]> {
+    const images: OwnImage[] = [];
+    for (const [kind, target] of Object.entries(LINUX_IMAGE_TARGETS)) {
+      const record = await this.linuxImages.record(target);
+      const due = record ? await this.linuxImages.whyBuild(target, signal).catch(() => null) : null;
+      images.push({ kind, ref: record?.ref ?? null, builtAt: record?.builtAt ?? null, due, building: this.linuxImages.building(target) });
+    }
+    return images;
+  }
+
   async #linuxImagesCheck(signal?: AbortSignal): Promise<DoctorCheck> {
     const lines: string[] = [];
     for (const target of Object.values(LINUX_IMAGE_TARGETS)) {
@@ -947,7 +963,7 @@ export class NamespaceBackend implements Backend {
       const why = await this.linuxImages.whyBuild(target, signal).catch(() => null);
       lines.push(`${target}: built ${days} day${days === 1 ? "" : "s"} ago${why ? `, due again as ${why}` : ""}${building}`);
     }
-    const builders = (await this.#api.list({ [LABELS.install]: this.#context.installId, [LABELS.role]: "image-build" }, signal).catch(() => [])).map((instance) => {
+    const builders = (await this.linuxImages.buildInstances(signal).catch(() => [])).map((instance) => {
       const age = instance.createdAt === null ? "" : `, ${Math.round((this.#now() - instance.createdAt) / 60_000)} min old`;
       return `${instance.id} (${instance.labels["bbbox-target"] ?? "an image"}${age})`;
     });

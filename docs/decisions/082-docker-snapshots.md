@@ -392,3 +392,69 @@ The hold is in the image, not in the core: the core already starts a fork
 for its check through the backend's `startForForkCheck`, and arms it for its
 boots with `armFork("boot")` after the check. Measured in
 [082 results](082-results.md#a-fork-held-until-its-check).
+
+## Item 5: Keep, as built
+
+Keep is the tag above, `bbbox-kept/<install>/<snapshot>:<yyyy-mm-dd>`, on
+the snapshot's image. Writing a date records the change in the backend's own
+storage, tags the image, then removes any other keep tag of that snapshot,
+then drops the record. The new tag is written before the old one goes, so a
+change cut short never leaves the snapshot without a keep tag, but it can
+leave two for a while. The new tag is the change's point of no return: once
+it is there, listing gives the new date, and the next maintenance removes the
+other tags. A change whose new tag was never written changed nothing, and
+maintenance drops its record. Two keep tags with no record of a change, as
+after the backend's storage is lost, settle on the later date. So one keep
+tag remains after recovery, whatever step was cut short. That later date is
+the safe side, not always the one asked for: a shortening cut short after
+its new tag, with its record lost too, keeps the snapshot to its old, later
+date. It keeps data longer than asked, never deletes it early, and you can
+shorten it again. Stopping keeping
+records the change and removes the tags. A delete removes the keep tag before the snapshot's own tag, so a
+delete cut short leaves an unkept snapshot, never an image held by a keep
+tag alone. Listing reads the keep date from the image's tags, so a lost
+`snapshots.db` loses no keep date.
+
+Three things differ from the package:
+
+- The offer says the snapshots live with the provider, as microsandbox's
+  and boat.dev's do, not on the host with `outlivesGuest`, as Tart's do.
+  Both shapes keep a snapshot as it is past its box's release. The
+  difference is that BB Box asks the provider before it removes the backend,
+  and refuses while the engine holds any of this install's snapshots, kept
+  or not. On a person's own engine, a kept snapshot left there would take
+  its disk with nothing to delete it. The refusal's words now fit a backend
+  that charges nothing: "on its host", not "on its provider's account".
+- A snapshot's image also carries its box's name and thread,
+  `bbbox.snapshot.box-name` and `bbbox.snapshot.thread`, beside its kind.
+  A snapshot found again after a lost `snapshots.db` keeps its box's kind,
+  which a fork after the release needs, and its name. A snapshot taken
+  before this change has its kind only.
+- A plan for a snapshot whose box is gone reads the engine's space and the
+  snapshot alone, so the core can check a fork of a kept snapshot after its
+  box's release.
+
+Hetzner Cloud and Namespace make their Docker engines with Keep off and the
+reason, `keepOffBecause`: a Hetzner Cloud host is deleted when idle, and a
+Namespace machine at its box's release. They offer no snapshots yet, so the
+reason shows once items 7 and 8 pass snapshots through.
+
+The Keep dialog and the doctor's Kept snapshots check say two numbers for a
+kept snapshot. The first is what releasing its box leaves on the engine: the
+snapshot's layers past the longest run of layers another image there shares,
+and its Docker data. The second is its whole size, which it grows to as the
+images it shares layers with are deleted, such as the box's image after a
+refresh. Both come from the image's layers, `docker image history`'s size of
+each, and the other images' layers. With the containerd image store, each
+layer is kept packed as well as unpacked; its packed size is not listed, so
+BB Box counts the image's packed content in proportion to each layer's
+unpacked size. Docker's own count in `docker system df --verbose` is no use
+here: with the containerd store, it counts the packed layers two images share
+as unique to each, 795 MB for a snapshot whose own change was 139 kB. The
+size a snapshot is listed with is a third number: an estimate of its own
+bytes, from its changed layer and Docker data at its take. Measured in [082 results](082-results.md#keep-verified-live).
+
+A fork of a kept snapshot after its box's release can get its source's old
+address, as Docker hands out the lowest free one. Its check then accepts that
+address only as [decision 088](088-a-fork-may-hold-its-gone-sources-address-when-its-provider-gave-it.md)
+says.

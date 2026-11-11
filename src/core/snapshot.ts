@@ -517,6 +517,7 @@ export function pausedWords(taken: { readonly pausedMs?: number | null; readonly
 
 export function sizeWords(size: SnapshotSize | null): string {
   if (!size) return "size unknown";
+  if (size.estimated) return `about ${gbWords(size.bytes)}, estimated when taken`;
   return size.means === "own" ? gbWords(size.bytes) : `${gbWords(size.bytes)}, some shared with its box`;
 }
 

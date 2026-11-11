@@ -379,6 +379,7 @@ export const snapshotImagesSchema = z.array(z.object({
   RepoTags: z.array(z.string()).nullable().transform((tags) => tags ?? []),
   Config: z.object({ Labels: snapshotLabelSchema }),
   RootFS: z.object({ Layers: z.array(z.string()).optional().default([]) }),
+  Size: z.number().optional().default(0),
 }));
 
 export const snapshotVolumesSchema = z.array(z.object({ Name: z.string(), Labels: snapshotLabelSchema }));

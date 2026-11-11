@@ -122,6 +122,7 @@ function harness(options: { report?: MacReport | null; room?: string | null; mea
   let clock = options.now ?? (() => 1_000_000);
   const access: NamespaceHostsAccess = {
     installId: "inst1",
+    backendId: "namespace",
     storage,
     settings: () => ({ on: true, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 }),
     longestLifeMs: () => 4 * 3600_000,
@@ -161,6 +162,35 @@ async function serving(hosts: NamespaceHosts): Promise<NamespaceHostRecord> {
   }
   throw new Error("the host did not serve");
 }
+
+const HOST_RECORD_WRITTEN_BEFORE_SEVERAL_WORKSPACES = {
+  tag: "bbbox-inst1-ios-host-a1b2c3",
+  instance: "ns-1",
+  made: 1_000_000,
+  endsAt: 1_000_000 + 4 * 3600_000,
+  phase: "serving",
+  promised: [],
+  most: 2,
+  ahead: 1,
+  resettingMost: 2,
+  diskReserveGiB: 20,
+  failure: null,
+  startBy: null,
+  startBeat: null,
+  hardware: true,
+} as const;
+
+test("a shared iOS host recorded before several workspaces, with no backend, reads as the first Namespace backend's, whichever backend reads it (#1455)", async () => {
+  for (const backendId of ["namespace", "namespace:team-b"]) {
+    const { hosts, storage } = harness({ access: { backendId } });
+    await storage.set(HOST_RECORD_KEY, HOST_RECORD_WRITTEN_BEFORE_SEVERAL_WORKSPACES);
+
+    const record = await hosts.record();
+
+    assert.deepEqual(record, { ...HOST_RECORD_WRITTEN_BEFORE_SEVERAL_WORKSPACES, backend: "namespace" }, backendId);
+    assert.deepEqual(hosts.known(), record);
+  }
+});
 
 test("Namespace's ios offer comes from its last Mac measured: a model its Xcode makes, its newest runtime, and BB Box's list for it (065, unit 7)", () => {
   const offer = namespaceDeviceOffer(REPORT);

@@ -35,7 +35,7 @@ import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD
 import { DEVICE_CLIPBOARD_MOST, PASTE_REQUEST_SINCE_VERSION } from "../src/core/device.ts";
 import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LANDS_MS, boxKey, macBrowser, pasteShortcut, retryWait } from "../src/app/viewer.ts";
 import { checkWords, forgetResizesAsked } from "../src/app/resize.tsx";
-import { keepOpeningDate } from "../src/app/snapshot-words.ts";
+import { freesWords, keepOpeningDate, snapshotSizeWords } from "../src/app/snapshot-words.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { FieldShell, SideLabelField } from "../src/app/field-shell.tsx";
 import { SettingRow } from "../src/app/settings-parts.tsx";
@@ -8284,10 +8284,12 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
   expect(offersShown([offer, pool, docker, tart], "container", "any").map((shown) => shown.backend)).toEqual(["fake", "docker:1"]);
   expect(offersShown([offer, pool, docker, tart], "physical", "macos").map((shown) => shown.backend)).toEqual(["ssh-pool"]);
   // The name the server made, which `on` takes too (044).
-  expect(providerName({ type: "tart", label: "Tart", hosts: ["mac-mini", "studio"] })).toBe("Tart on 2 Macs");
-  expect(providerName({ type: "tart", label: "Tart (VMs on a Mac)", hosts: ["mac-mini"] })).toBe("Tart on mac-mini");
-  expect(providerName({ type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
-  expect(providerKeys("docker:devpc", { type: "docker", label: "Docker", hosts: ["devpc"] })).toEqual(["docker on devpc", "docker:devpc", "devpc"]);
+  expect(providerName({ id: "tart", label: "Tart", hosts: ["mac-mini", "studio"] })).toBe("Tart on 2 Macs");
+  expect(providerName({ id: "tart", label: "Tart (VMs on a Mac)", hosts: ["mac-mini"] })).toBe("Tart on mac-mini");
+  expect(providerName({ id: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
+  expect(providerKeys({ id: "docker:devpc", label: "Docker", hosts: ["devpc"] })).toEqual(["docker on devpc", "docker:devpc", "devpc"]);
+  expect(providerName({ id: "namespace", label: "Namespace", hosts: [] })).toBe("Namespace");
+  expect(providerKeys({ id: "namespace:team-b", label: "Namespace", hosts: [] })).toEqual(["namespace (team-b)", "namespace:team-b"]);
   // The badge: a Linux kind or box without Docker, not one whose offers differ, nor another OS (041).
   expect([lacksDocker({ os: "linux", docker: false }), lacksDocker({ os: "linux", docker: null }), lacksDocker({ os: "linux", docker: true }), lacksDocker({ os: "windows", docker: false })]).toEqual([true, false, false, false]);
 });
@@ -11659,6 +11661,14 @@ test("Keep on a snapshot already kept opens on its renewal date", async () => {
   const renewal = keepOpeningDate(keptUntil, 30, Date.now());
   expect(date.value).toBe(renewal);
   expect(date.value).not.toBe(new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString().slice(0, 10));
+});
+
+test("a snapshot whose size is an estimate is shown as about that size, and Delete says it frees up to it, less what a fork or another image still uses", () => {
+  const estimated = { bytes: 42_000_000, means: "own" as const, estimated: true };
+
+  expect(snapshotSizeWords(estimated)).toBe("about 42 MB");
+  expect(freesWords(snapshotRow({ size: estimated, host: "docker-1" }), "calm-otter")).toBe("Frees up to about 42 MB on docker-1, less what a fork or another image still uses.");
+  expect(freesWords(snapshotRow({ size: { bytes: 42_000_000, means: "own" }, host: "docker-1" }), "calm-otter")).toBe("Frees 42 MB on docker-1.");
 });
 
 test("a failed restore check says the box cannot be restored, and only offers Close", async () => {

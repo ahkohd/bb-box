@@ -212,6 +212,7 @@ await conformance({
     "computer-use": "the fake microVM has no computer-use driver",
     size: "the fake msb runs commands on the test machine",
     images: "the microsandbox backend builds no images yet",
+    keep: "the fake msb host does not list a snapshot taken by the backend alone yet; microsandbox's Keep is checked in its own snapshot tests",
   },
   timeoutMs: 20_000,
 });

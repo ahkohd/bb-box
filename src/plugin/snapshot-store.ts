@@ -150,6 +150,7 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN fork_safe_why TEXT CHECK(fork_safe_why IS NULL OR fork_safe_why IN ('reset-off', 'unread'))`,
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN gpu TEXT`,
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN paused_ms INTEGER CHECK(paused_ms IS NULL OR paused_ms >= 0)`,
+  `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN size_estimated INTEGER CHECK(size_estimated IS NULL OR size_estimated = 1)`,
 ];
 
 export const PICTURES_HELD_BYTES = 48 * 1024 * 1024;
@@ -212,6 +213,7 @@ interface SnapshotRow {
   excludes: string | null;
   size_bytes: number | null;
   size_means: "own" | "whole" | null;
+  size_estimated: 1 | null;
   price: string | null;
   owner: SnapshotRecord["owner"];
   kept_until: number | null;
@@ -311,7 +313,7 @@ function recordOf(row: SnapshotRow): SnapshotRecord {
     scope: row.scope,
     holds: row.holds,
     excludes: row.excludes,
-    size: row.size_bytes !== null && row.size_means !== null ? { bytes: row.size_bytes, means: row.size_means } : null,
+    size: row.size_bytes !== null && row.size_means !== null ? { bytes: row.size_bytes, means: row.size_means, ...(row.size_estimated === 1 ? { estimated: true } : {}) } : null,
     price: parsed(row.price, null),
     owner: row.owner,
     keptUntil: row.kept_until,
@@ -362,6 +364,7 @@ function rowOf(record: SnapshotRecord): SnapshotRow {
     excludes: record.excludes,
     size_bytes: record.size?.bytes ?? null,
     size_means: record.size?.means ?? null,
+    size_estimated: record.size?.estimated ? 1 : null,
     price: json(record.price),
     owner: record.owner,
     kept_until: record.keptUntil,

@@ -229,6 +229,8 @@ export interface ForkExpected {
   readonly sourceName: string;
   readonly sourceAddresses: readonly string[];
   readonly freedSourceAddresses: readonly string[];
+  readonly sourceGone?: boolean;
+  readonly givenByProvider?: readonly string[];
   readonly ownAddress: string | null;
   readonly boxAddresses: readonly string[];
   readonly held: HeldIdentity | null;
@@ -279,6 +281,10 @@ function clientIdsOf(seen: ForkSeen, expected: ForkExpected): "its own" | "unkno
   return ownIds.some((id) => sourceIds.includes(id)) ? "unproven" : "its own";
 }
 
+function givenAfterItsSourceWent(address: string, expected: ForkExpected): boolean {
+  return expected.sourceGone === true && (expected.givenByProvider ?? []).includes(address);
+}
+
 export function forkVerdict(seen: ForkSeen, expected: ForkExpected): ForkVerdict {
   const refused = (why: string): ForkVerdict => ({ is: "refused", why });
   const status = seen.status;
@@ -300,7 +306,7 @@ export function forkVerdict(seen: ForkSeen, expected: ForkExpected): ForkVerdict
   }
   const held = seen.addresses.find((address) => expected.sourceAddresses.includes(address));
   if (held) return refused(`it holds ${expected.sourceName}'s address ${held}, so it would take what is sent to ${expected.sourceName}`);
-  const freed = seen.addresses.find((address) => expected.freedSourceAddresses.includes(address));
+  const freed = seen.addresses.find((address) => expected.freedSourceAddresses.includes(address) && !givenAfterItsSourceWent(address, expected));
   if (freed) {
     const clientIds = clientIdsOf(seen, expected);
     if (clientIds === "unknown") return { is: "wait", why: `it holds ${expected.sourceName}'s last address ${freed}, and has no DHCP lease on record yet to show that it asked for it as itself` };

@@ -30,7 +30,7 @@ Your Namespace plan sets 2 limits that matter here:
 - **How long a machine can live**: 3 hours on Developer, 5 on Team, up to 24 on Business, for Macs and Linux machines alike. A box ends then, whatever it is doing. Its thread hears an hour before, and the Box panel shows when it ends.
 - **How many Mac cores you can have at once**: 12 on Developer. Namespace's trial allowed 6, which is one box of 6 vCPU. When you have as many as your plan allows, a thread that asks for another Mac box is told there is no room. Linux machines have a limit of their own, 32 cores on the trial.
 
-BB Box also has its own limit, **Most machines**, which is 2 by default.
+BB Box also has its own limit, **Most machines**, which is 2 by default. With more than one workspace, add each as a backend of its own: see [several workspaces](#several-workspaces).
 
 ## Before you start
 
@@ -106,6 +106,28 @@ The doctor checks that Namespace accepts the token, lists the machines BB Box ha
 
 Then make a box from the Box panel, or ask an agent to.
 
+## Several workspaces
+
+Each Namespace workspace can be a backend of its own, with its own token. A plan's limits are per workspace, so 2 workspaces on the Developer plan allow 24 Mac cores at once rather than 12: 4 Mac boxes of 6 vCPU rather than 2.
+
+To add another workspace, make a token in it as in step 2, signed in to that workspace, then add a second Namespace backend with a name of your own, of at most 15 lower-case letters, digits and hyphens:
+
+```sh
+grep '^NSC_TOKEN=' secrets.env | bb box backend add namespace --id team-b --secret token=NSC_TOKEN --secrets-stdin --field longest-life-hours=5
+```
+
+Its ID is `namespace:team-b`. **Add backend**, then **Namespace**, in BB Box's settings adds one too, with the ID `namespace:2`.
+
+- **Each has its own settings**: API token, Most machines, Longest life, Largest machine and shared iOS hosts. Set Longest life to that workspace's plan.
+- **Each is named by its ID.** `bb box kinds`, the Box panel and `box_list` call the second one Namespace (team-b), and `--on`, or an agent's `on`, takes that name or its ID. Without them, a new box goes to the first backend with room.
+- **Each touches only its own machines.** BB Box labels each machine it makes with its backend, `bbbox-backend`, as well as its install, `bbbox-install`. A backend's sweep, upkeep, image builds, doctor and cleanup see only machines with its own label, even when 2 backends use one workspace.
+- **Most machines counts the backend's own machines**, and those of other BB Box installs in its workspace, but not another backend's of this install. The workspace's Mac cores in use, which Namespace reports for the whole workspace, count for each backend on it.
+- **Each builds its own Linux images**, in its workspace's registry. So the first Linux box of each kind on each backend waits for its build, about 4 to 9 minutes. The first backend's images are tagged `bbbox/linux:<version>`; another's carry its name first, as `bbbox/linux:team-b-<version>`. No backend deletes images from a registry. `bb box images list` lists each backend's images, with when each was built.
+- **Each runs its own shared iOS host**, in its own workspace, with its own token. Its record says which backend it is on.
+- **With the tailnet on**, a second backend's machines join it as `bb-box-nsb-`, then the install's ID, the length of the backend's name, the name and the box's name, such as `bb-box-nsb-k3v9q2m7xa-6-team-b-my-box`. So no backend takes another's tailnet devices for its own. A name is at most 15 characters, so that this fits in a tailnet name.
+
+The first Namespace backend, with the ID `namespace`, keeps its ID when you add another, and with it its boxes, machines, iOS host and images. It also looks after machines that carry only the install's label, which versions of BB Box before several workspaces made. No other backend touches them.
+
 ## What a Mac box is like
 
 A Mac box is a Mac virtual machine on Apple silicon, with macOS 26. You use it as `runner`, who is an administrator and can use `sudo`. Xcode and Homebrew are installed.
@@ -155,9 +177,9 @@ nsc list --all
 
 Without `--all`, `nsc list` leaves out machines made through the API, which is how BB Box makes them.
 
-Each machine listed should be a box in BB Box's Boxes page, or, for at most an hour, a machine building a Linux image, with the label `bbbox-role=image-build`. BB Box checks its backends every few minutes, and destroys a machine whose box has gone once BB says the box's thread has ended. `bb box doctor` lists any machine no box claims. If one stays, destroy it with `nsc destroy` followed by its ID.
+Each machine listed should be a box in BB Box's Boxes page, or, for at most an hour, a machine building a Linux image, with the label `bbbox-role=image-build`. Its `bbbox-backend` label says which Namespace backend made it. BB Box checks its backends every few minutes, and destroys a machine whose box has gone once BB says the box's thread has ended. `bb box doctor` lists any machine no box claims. If one stays, destroy it with `nsc destroy` followed by its ID.
 
-The workspace's container registry keeps BB Box's Linux images, under `bbbox/`. They cost nothing but their storage.
+The workspace's container registry keeps BB Box's Linux images, under `bbbox/`. They cost nothing but their storage. To list the machines one backend made, filter on its label, such as `bbbox-backend=namespace-team-b` for `namespace:team-b`.
 
 With the tailnet on, the machines show in Tailscale's admin console, under **Machines**, with the tag `tag:bb-box`. BB Box removes any it no longer has within 15 minutes.
 

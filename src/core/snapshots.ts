@@ -268,6 +268,7 @@ export interface KeepCheck {
   readonly aboutMs: number | null;
   readonly bytes: number | null;
   readonly usedBytes: number | null;
+  readonly unsharedBytes?: number | null;
   readonly host: string | null;
   readonly storage: string | null;
   readonly price: Price | null;
@@ -337,6 +338,7 @@ const SHARES_BLOCKS = new Set(["lvmthin", "zfspool", "rbd", "btrfs"]);
 export function freedWords(snapshot: Pick<SnapshotRecord, "size" | "state" | "storage">): string {
   if (snapshot.state === "failed" || snapshot.state === "lost") return "it held nothing to free";
   if (!snapshot.size) return snapshot.storage && SHARES_BLOCKS.has(snapshot.storage.type) ? "it freed what it no longer shared with its box" : "what it freed is not known";
+  if (snapshot.size.estimated) return `it freed up to about ${gbWords(snapshot.size.bytes)}, an estimate from when it was taken, less what a fork or another image still uses, which stays until they go`;
   return snapshot.size.means === "own" ? `it freed ${gbWords(snapshot.size.bytes)}` : "it freed what it no longer shared with its box";
 }
 
@@ -1227,13 +1229,14 @@ export class Snapshots {
     const offer = this.offerFor(backend, current.box.kind);
     if (offer?.forkWhy) throw new BoxError("unsupported", `${PRODUCT} keeps only a snapshot it can fork after its box's release, and ${offer.forkWhy}. So it does not keep ${quoted(current)}.`);
     const way: KeepsPastRelease = offer?.keepsPastRelease ?? "no";
-    if (!offer || way === "no") throw new BoxError("unsupported", `${backend.label} has no way to keep a snapshot of a ${current.box.kind} box past the box's release, so ${PRODUCT} does not keep ${quoted(current)}.`);
+    if (!offer || way === "no") throw new BoxError("unsupported", `${backend.label} has no way to keep a snapshot of a ${current.box.kind} box past the box's release${offer?.keepWhy ? `: ${offer.keepWhy}` : ""}, so ${PRODUCT} does not keep ${quoted(current)}.`);
     if (!backend.labelKept) throw new BoxError("unsupported", `${backend.label} cannot write a keep date on its snapshots, so ${PRODUCT} does not keep ${quoted(current)}.`);
     this.#forkableAfterRelease(current, backend, offer);
     const gone = current.boxGone !== null;
     let aboutMs: number | null = null;
     let bytes: number | null = null;
     let usedBytes: number | null = null;
+    let unsharedBytes: number | null = null;
     let storage: string | null = null;
     let warning: string | null = null;
     if (current.guest === "held-copy") {
@@ -1256,6 +1259,7 @@ export class Snapshots {
       aboutMs = plan.keep.aboutMs;
       bytes = plan.keep.bytes;
       usedBytes = plan.keep.usedBytes ?? null;
+      unsharedBytes = plan.keep.unsharedBytes ?? null;
       storage = plan.storage.name;
       const room = way === "held-copy" ? this.#copyRoom(guest.host, plan.storage, usedBytes ?? bytes ?? 0, ledger.reservedBytes(plan.storage.key)) : null;
       warning = plan.keep.why ?? (room ? `At today's size, a release would not finish: ${room}.` : null);
@@ -1282,6 +1286,7 @@ export class Snapshots {
       aboutMs,
       bytes,
       usedBytes,
+      unsharedBytes,
       host: current.livesOn.host ?? current.host,
       storage,
       price: current.price,

@@ -73,9 +73,16 @@ The core uses only the two `types.ts` files.
    - `parse`, which turns the backend's part of the configuration into a
      typed config, or problems each at its field;
    - `setup`, the path of its guide and of the scripts it runs, in order;
-   - `several`, for a type with one backend per host, as Docker has: the
-     host a backend's fields name
-     ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md));
+   - `several`, for a type the configuration may have several backends
+     of. For one backend per host, as Docker has, it gives the host a
+     backend's fields name, which no two may share
+     ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)). For
+     backends that label what they make with their own ID, as Namespace's
+     do, it gives null, so any number may share an account
+     ([087](decisions/087-each-namespace-workspace-is-a-backend-that-labels-what-it-makes.md));
+   - `longestName`, the most characters a second backend's name may have,
+     where the backend puts its name in something with a length limit,
+     such as a tailnet name;
    - `create`, which builds the `Backend`. Its context gives the backend's
      ID, its storage, its install ID, and its warm counts, kinds and hosts
      as the configuration has them now, so read them when needed. Where

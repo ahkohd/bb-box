@@ -823,6 +823,11 @@ function readBackend(
     problem(`backends.${index}.id`, `A ${driver.type} backend's ID is "${driver.type}", or "${driver.type}:<name>" with lower-case letters, digits and "-".`);
     return null;
   }
+  const name = match[2];
+  if (name !== undefined && driver.longestName !== undefined && name.length > driver.longestName) {
+    problem(`backends.${index}.id`, `A ${driver.label} backend's name is at most ${driver.longestName} characters, so each of its machines keeps a tailnet name of its own. Give ${id} a shorter name.`);
+    return null;
+  }
   const path = `backends.${id}`;
   const known = new Set(["id", "type", "label", "enabled", "fields", "warm", "hosts"]);
   for (const key of Object.keys(value)) if (!known.has(key)) problem(`${path}.${key}`, `A backend has id, type, label, enabled, fields, warm and hosts, not "${key}".`);
@@ -1045,7 +1050,7 @@ export interface InUse {
   /** Snapshots bb-box records by backend ID (070), with how many there are and their size and price in words. */
   readonly snapshots?: ReadonlyMap<string, { readonly count: number; readonly words: string }>;
   /** Snapshots a provider holds on its account for this install, kept or not, by the ID of a backend being removed (070 unit 11b), or why they could not be listed. */
-  readonly onProvider?: ReadonlyMap<string, { readonly count: number; readonly words: string } | { readonly unread: string }>;
+  readonly onProvider?: ReadonlyMap<string, ({ readonly count: number; readonly words: string } | { readonly unread: string }) & { readonly charges?: boolean }>;
 }
 
 export const NOTHING_IN_USE: InUse = { backends: new Map(), hosts: new Map() };
@@ -1117,12 +1122,12 @@ export function checkDocument(
       else if (!driver.kinds.includes(kind)) problem(`${path}.warm.${kind}`, `${driver.label} makes ${driver.kinds.join(", ")}, not ${kind}.`);
       else if (!isWhole(count, 0, MAX_WARM)) problem(`${path}.warm.${kind}`, `Keep 0 to ${MAX_WARM} warm ${kind} boxes.`);
     }
-    // Drivers name their guests by type, so two of one type would share them, unless each is on a host of its own (042).
     if (driver.several) {
-      const host = `${backend.type} ${driver.several(backend.fields ?? {})}`;
-      const other = hosts.get(host);
-      if (other !== undefined) problem(path, `${backend.id} and ${other} are both ${driver.label} on ${driver.several(backend.fields ?? {}) || "the default host"}. Give each its own host, or remove one.`);
-      else hosts.set(host, backend.id);
+      const own = driver.several(backend.fields ?? {});
+      const host = `${backend.type} ${own}`;
+      const other = own === null ? undefined : hosts.get(host);
+      if (other !== undefined) problem(path, `${backend.id} and ${other} are both ${driver.label} on ${own || "the default host"}. Give each its own host, or remove one.`);
+      else if (own !== null) hosts.set(host, backend.id);
     } else if (types.has(backend.type)) problem(path, `${PRODUCT} runs one ${driver.label} backend for now. Remove ${backend.id}.`);
     types.add(backend.type);
     const names = new Set<string>();
@@ -1148,12 +1153,13 @@ export function checkDocument(
 
   for (const [id, held] of inUse.onProvider ?? []) {
     if (seen.has(id)) continue;
+    const left = leftAfterRemoval(held.charges ?? true);
     if ("unread" in held) {
-      problem(`backends.${id}`, `${PRODUCT} could not list the snapshots backend ${id} holds on its provider's account (${held.unread.replace(/\.$/, "")}), so it does not remove it: one left there would go on costing, with nothing to delete it. Try again once it answers.`);
+      problem(`backends.${id}`, `${PRODUCT} could not list the snapshots backend ${id} holds ${left.where} (${held.unread.replace(/\.$/, "")}), so it does not remove it: one left there ${left.stays}, with nothing to delete it. Try again once it answers.`);
     } else if (held.count > 0) {
       problem(
         `backends.${id}`,
-        `Backend ${id} has ${plural(held.count, "snapshot")} on its provider's account, kept or not, which would go on costing after it is removed, with nothing to delete ${held.count === 1 ? "it" : "them"}: ${held.words}. Delete ${held.count === 1 ? "it" : "them"} first: bb box snapshot delete <box> <snapshot> deletes each one ${PRODUCT} records, as bb box snapshot list --all names them; delete any other in the provider's own dashboard.`,
+        `Backend ${id} has ${plural(held.count, "snapshot")} ${left.where}, kept or not, which ${left.stays} after it is removed, with nothing to delete ${held.count === 1 ? "it" : "them"}: ${held.words}. Delete ${held.count === 1 ? "it" : "them"} first: bb box snapshot delete <box> <snapshot> deletes each one ${PRODUCT} records, as bb box snapshot list --all names them; delete any other ${left.elsewhere}.`,
       );
     }
   }
@@ -1189,6 +1195,12 @@ export function checkDocument(
     }
   }
   return problems;
+}
+
+function leftAfterRemoval(charges: boolean): { readonly where: string; readonly stays: string; readonly elsewhere: string } {
+  return charges
+    ? { where: "on its provider's account", stays: "would go on costing", elsewhere: "in the provider's own dashboard" }
+    : { where: "on its host", stays: "would stay and take its disk", elsewhere: "on the host itself" };
 }
 
 function plural(count: number, word: string): string {

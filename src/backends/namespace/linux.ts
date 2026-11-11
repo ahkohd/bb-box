@@ -22,6 +22,11 @@ const LOCAL_IMAGE: Readonly<Record<LinuxImageKind, string>> = {
 };
 const PULL_TIMEOUT_MS = 15 * 60_000;
 export const CONTAINER_MEMORY_MARGIN_MIB = 512;
+export const NAMESPACE_KEEP_OFF = "each Namespace box is a machine of its own, deleted at its release, so a snapshot cannot outlive its box there yet";
+
+export function instancePartOptions(given: DockerBackendOptions | undefined, cli: DockerCli, ssh: string | null): DockerBackendOptions {
+  return { ...given, ...(ssh ? { ssh } : {}), cliReachingAHostAnotherBackendMade: cli, keepOffBecause: NAMESPACE_KEEP_OFF };
+}
 
 function commandPath(name: string): string {
   if (name.includes("/")) return name;
@@ -105,11 +110,7 @@ export class NamespaceLinux {
     const host = `ssh://${this.#deps.access(instance).user}@${this.#deps.access(instance).host}`;
     const wrappers = this.#deps.dockerCli ? null : await this.#wrapperPaths();
     const cli = this.#deps.dockerCli ? this.#deps.dockerCli(instance) : new DockerCli(host, wrappers!.docker);
-    const part = new DockerBackend({ ...this.#config, host, machine: null }, context, {
-      ...this.#deps.dockerOptions,
-      ...(wrappers ? { ssh: wrappers.ssh } : {}),
-      cliReachingAHostAnotherBackendMade: cli,
-    });
+    const part = new DockerBackend({ ...this.#config, host, machine: null }, context, instancePartOptions(this.#deps.dockerOptions, cli, wrappers?.ssh ?? null));
     this.#parts.set(instance, part);
     return part;
   }

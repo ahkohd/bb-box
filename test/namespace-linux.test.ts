@@ -15,7 +15,7 @@ function setup() {
   const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
   const pulls: string[] = [];
   const hosts = new Map<string, DockerCli>();
-  const backend = new NamespaceBackend(CONFIG, testContext(new MemoryStorage(), "inst1"), {
+  const backend = new NamespaceBackend(CONFIG, testContext(new MemoryStorage(), "inst1", { id: "namespace" }), {
     fetch: fake.fetch,
     sshBinary: FAKE_SSH_BINARY,
     sleep: async () => {},

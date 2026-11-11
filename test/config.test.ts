@@ -1028,6 +1028,31 @@ test("the configuration takes several Docker backends, one per host, and still o
   assert.match(problems([lxc, { ...lxc, id: "proxmox-lxc:two" }])[0]?.message ?? "", /BB Box runs one Proxmox LXC backend for now/);
 });
 
+test("the configuration takes several Namespace backends, even on one workspace with one token, each with its own fields (#1455)", () => {
+  const namespace = (id: string, machines: number) => ({ id, type: "namespace", enabled: true, fields: { token: "nsct_one", machines, "longest-life-hours": 5 } });
+  const { document, secrets, problems } = readDraft({ schema: 1, backends: [namespace("namespace", 2), namespace("namespace:team-b", 4)], kinds: {}, general: {} }, DRIVERS);
+
+  assert.deepEqual(problems, []);
+  assert.deepEqual(checkDocument(document, secrets as Secrets, DRIVERS), []);
+  assert.deepEqual(document.backends.map((backend) => [backend.id, backend.fields.machines]), [["namespace", 2], ["namespace:team-b", 4]]);
+});
+
+test("a Namespace backend's name is at most 15 characters, so each of its machines keeps a tailnet name of its own, whatever the install's ID (#1455)", () => {
+  const namespace = (id: string) => ({ id, type: "namespace", enabled: true, fields: { token: "nsct_one" } });
+  const read = (id: string) => readDraft({ schema: 1, backends: [namespace("namespace"), namespace(id)], kinds: {}, general: {} }, DRIVERS);
+  const docker = (id: string) => readDraft({ schema: 1, backends: [{ id, type: "docker", enabled: true, fields: {} }], kinds: {}, general: {} }, DRIVERS);
+
+  const longest = read(`namespace:${"a".repeat(15)}`);
+  const tooLong = read(`namespace:${"a".repeat(16)}`);
+
+  assert.deepEqual(longest.problems, []);
+  assert.deepEqual(longest.document.backends.map((backend) => backend.id), ["namespace", `namespace:${"a".repeat(15)}`]);
+  assert.deepEqual(tooLong.problems.map((problem) => `${problem.path}: ${problem.message}`), [
+    `backends.1.id: A Namespace backend's name is at most 15 characters, so each of its machines keeps a tailnet name of its own. Give namespace:${"a".repeat(16)} a shorter name.`,
+  ]);
+  assert.deepEqual(docker(`docker:${"a".repeat(40)}`).problems, [], "a type with no limit takes any name the ID allows");
+});
+
 test("files for every box: paths checked, contents kept as secrets only, and never in a problem, an export or the stored document (#455)", () => {
   const SECRET = '{"providers":{"example":{"apiKey":"sk-secret-value"}}}';
   const draft = readDraft(
@@ -1148,7 +1173,7 @@ test("070 unit 11b review, Opus 1: a backend whose snapshots live on its provide
   let held: unknown[] = [
     { id: "snaaaaaaaaaaaa", ref: "earlier01-bxaaaaaaaaaaaa-snaaaaaaaaaaaa", box: "bxaaaaaaaaaaaa", owner: null, guest: { ref: "bbbox-bxaaaaaaaaaaaa", host: "provider", address: null, size: null, data: { box: "bxaaaaaaaaaaaa" } }, where: "current", state: "complete", words: null, holds: "disk", takenAt: null, keptUntil: Date.UTC(2026, 10, 30, 23, 59, 59, 999), storage: null },
   ];
-  backend.snapshotting = () => ({ scope: "box", holds: ["disk"], whileRunning: "live", restore: "new-guest", fork: "copy", keepsPastRelease: "as-is", lives: "provider", price: null, excludes: null });
+  backend.snapshotting = () => ({ scope: "box", holds: ["disk"], whileRunning: "live", restore: "new-guest", fork: "copy", keepsPastRelease: "as-is", lives: "provider", price: { amount: 0.01, currency: "USD", per: "day", known: true }, excludes: null });
   backend.heldSnapshots = async () => {
     lists++;
     if (held === null) throw new Error("the provider did not answer");
@@ -1170,4 +1195,31 @@ test("070 unit 11b review, Opus 1: a backend whose snapshots live on its provide
   held = [];
   const gone = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [] }, revision: 2 });
   assert.ok(gone.ok, JSON.stringify(gone));
+});
+
+test("a backend whose snapshots stay on its own engine at no charge, as Docker's do, cannot be removed while the engine holds any, kept or not, and says how to delete them", async () => {
+  const { rpc, app, world } = await start({ "fake-enabled": true, "enrol-boxes": false });
+  const base = app().configuration.exported();
+  const backend = world.backend! as unknown as Record<string, unknown>;
+  let held: unknown[] | null = [
+    { id: "snaaaaaaaaaaaa", ref: "bbbox-snapshot/test/bxaaaaaaaaaaaa:snaaaaaaaaaaaa", box: "bxaaaaaaaaaaaa", owner: null, guest: { ref: "bbbox-bxaaaaaaaaaaaa", host: null, address: null, size: null, data: { box: "bxaaaaaaaaaaaa" } }, where: "current", state: "complete", words: null, holds: "disk", takenAt: null, keptUntil: Date.UTC(2026, 10, 30, 23, 59, 59, 999), storage: null },
+  ];
+  backend.snapshotting = () => ({ scope: "box", holds: ["disk"], whileRunning: "pauses", restore: "new-guest", fork: "copy", keepsPastRelease: "as-is", lives: "provider", price: null, excludes: null });
+  backend.heldSnapshots = async () => {
+    if (held === null) throw new Error("Docker did not answer");
+    return held;
+  };
+
+  const removed = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [] }, revision: 1 });
+
+  assert.ok(!removed.ok && removed.reason === "problems");
+  assert.equal(
+    removed.problems[0]!.message,
+    "Backend fake has 1 snapshot on its host, kept or not, which would stay and take its disk after it is removed, with nothing to delete it: bbbox-snapshot/test/bxaaaaaaaaaaaa:snaaaaaaaaaaaa, kept until 2026-11-30. Delete it first: bb box snapshot delete <box> <snapshot> deletes each one BB Box records, as bb box snapshot list --all names them; delete any other on the host itself.",
+  );
+
+  held = null;
+  const unread = await rpc<ApplyResult>("config.apply", { draft: { ...base, backends: [] }, revision: 1 });
+  assert.ok(!unread.ok && unread.reason === "problems");
+  assert.match(unread.problems[0]!.message, /^BB Box could not list the snapshots backend fake holds on its host \(Docker did not answer\), so it does not remove it: one left there would stay and take its disk, with nothing to delete it\./);
 });

@@ -136,7 +136,7 @@ export function forkWhyOf(record: SnapshotRecord, offer: Snapshotting | null): s
 
 export function keepWhyOf(record: SnapshotRecord, offer: Snapshotting | null, pinned: string | null): string | null {
   if (offer?.forkWhy) return `${PRODUCT} keeps only what it can fork after a release, and ${offer.forkWhy}`;
-  if (!offer || offer.keepsPastRelease === "no") return "its backend keeps nothing past a release";
+  if (!offer || offer.keepsPastRelease === "no") return offer?.keepWhy ?? "its backend keeps nothing past a release";
   if (record.state !== "ready") return `it is ${record.state === "taking" ? "still being taken" : record.state === "deleting" ? "being deleted" : record.state}`;
   if (pinned) return pinned;
   if (record.scope === "device") return "it holds the device only, which lives in the box";

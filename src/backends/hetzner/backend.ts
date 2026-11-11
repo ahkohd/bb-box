@@ -89,6 +89,11 @@ interface BilledServerOfType extends BilledServer {
 }
 
 const HOST_KEY = "hetznerHost";
+export const HETZNER_KEEP_OFF = "Hetzner Cloud hosts are deleted when they are idle, so a snapshot cannot outlive its box there yet";
+
+export function hostPartOptions(given: Omit<DockerBackendOptions, "cliReachingAHostAnotherBackendMade"> | undefined, cli: DockerCli): DockerBackendOptions {
+  return { ...given, cliReachingAHostAnotherBackendMade: cli, keepOffBecause: HETZNER_KEEP_OFF };
+}
 const BILLED_PREFIX = "billed:";
 const PRICE_CACHE_MS = 3_600_000;
 const MAKE_NEXT_AHEAD_ABOVE = 0.75;
@@ -953,10 +958,7 @@ export class HetznerBackend implements Backend {
       machines: undefined,
     };
     const cli = this.#options.reachHost ? this.#options.reachHost(record) : this.#reach!.cli(record);
-    const docker = new DockerBackend({ ...this.#dockerConfig[architecture], host: `hetzner://${record.serverName}`, machine: null }, context, {
-      ...this.#options.dockerOptions,
-      cliReachingAHostAnotherBackendMade: cli,
-    });
+    const docker = new DockerBackend({ ...this.#dockerConfig[architecture], host: `hetzner://${record.serverName}`, machine: null }, context, hostPartOptions(this.#options.dockerOptions, cli));
     const part = { record, architecture, cli, docker };
     this.#parts.set(record.hostId, part);
     return part;

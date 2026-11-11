@@ -61,7 +61,7 @@ where it is built ahead, which its boxes claim at once (#440). The
 - Ask for `linux-docker` when you need Docker for sure: it skips offers
   without it. A box in Docker runs no systemd, so `systemctl` does not work
   there.
-- Docker snapshots pause the box while copying its disk and Docker data, for about as long as `box_snapshot` with `check` says. They hold no memory or running programs. Take, list, delete, restore and fork are available; Keep is not. A restore makes a new container with the box's ID and name, after an undo, and deletes the old one once the new one runs. A fork is a new container with the fork's own ID, from a snapshot taken with identity reset version 7, or 9 for a desktop, of a box made from an image built with the fork hold, and it has no GPU. Nothing in a fork runs, not even its inner Docker or its desktop, until BB Box's check passes. Release deletes the snapshots. Other writable mounts are refused before pausing.
+- Docker snapshots pause the box while copying its disk and Docker data, for about as long as `box_snapshot` with `check` says. They hold no memory or running programs. Take, list, delete, restore and fork are available, and the person can keep one: it stays on the box's Docker engine after the release, until its date. A restore makes a new container with the box's ID and name, after an undo, and deletes the old one once the new one runs. A fork is a new container with the fork's own ID, from a snapshot taken with identity reset version 7, or 9 for a desktop, of a box made from an image built with the fork hold, and it has no GPU. Nothing in a fork runs, not even its inner Docker or its desktop, until BB Box's check passes. Release deletes the snapshots nobody kept. Other writable mounts are refused before pausing.
 - Docker boxes keep their Docker data in a volume labelled for the box and install. A failed removal is reported. Maintenance retries removal after the container has gone, leaving live boxes and boxes being made alone.
   A held volume does not stop other maintenance.
 - Ask for `linux-vm` when you need a kernel of your own: to load kernel
@@ -158,7 +158,9 @@ where it is built ahead, which its boxes claim at once (#440). The
   is a Mac of its own, ready in about 20 s, or about a minute with its
   desktop, that ends at the plan's longest
   life whatever you do: `box_status` says when ("Ends"), and the thread is
-  told an hour before. Copy out what you need before then.
+  told an hour before. Copy out what you need before then. Where the user
+  has several Namespace workspaces, `box_list` names each, such as
+  Namespace (team-b), and `on` takes that name.
 - Windows boxes have Visual Studio Build Tools (MSVC and the Windows SDK),
   LLVM (`clang`), Rust (`cargo`, `rustc`), Node.js, and the Claude Code,
   Codex and Pi CLIs. They have no GPU: DirectX apps render on WARP,
