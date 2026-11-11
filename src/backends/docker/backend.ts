@@ -19,7 +19,7 @@
 
 import { DockerSnapshotEngine, type RestorableSnapshot } from "./snapshot-engine.ts";
 import { dockerOffer, FORK_HOLD_MISSING, isBoxContainerName, restoredName } from "./snapshots.ts";
-import { RestoreCopies } from "./restore-copies.ts";
+import { RestoreCopies, type CopyFence } from "./restore-copies.ts";
 import type { CopyHooks, ForkArming, GuestIdentity, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
@@ -2311,7 +2311,7 @@ export class DockerBackend implements Backend {
 
     if (checks.some((check) => check.id === "docker.daemon" && check.status === "ok")) {
       try {
-        checks.push(...await this.#snapshots.doctor(signal));
+        checks.push(...await this.#snapshots.doctor(signal, await this.#copies.volumesLeft()));
       } catch (error) {
         push("docker.snapshots", "Snapshots", "warn", message(error), "Check Docker's disk and try the doctor again.");
       }
@@ -2559,34 +2559,50 @@ export class DockerBackend implements Backend {
   }
 
   async #dropDockerVolumeIfUnused(volume: string, containerName: string, signal?: AbortSignal, knownLabels?: Readonly<Record<string, string>>, lateCopies: LateCopies = "waited-for"): Promise<void> {
-    const labels = knownLabels ?? await this.#dockerVolumeLabels(volume, signal);
     const fence = await this.#copies.fenceOf(volume);
-    if (!labels && !fence) return;
-    if (labels && !(fence && !Object.keys(labels).length)) this.#requireOwnVolume(volume, containerName, labels);
+    if (fence) return this.#dropVolumeACopyMayFill(volume, containerName, fence, lateCopies, signal);
 
+    const labels = knownLabels ?? await this.#dockerVolumeLabels(volume, signal);
+    if (!labels) return;
+    this.#requireOwnVolume(volume, containerName, labels);
+    const result = await this.#cli.run(["volume", "rm", volume], { timeoutMs: 60_000, signal });
+    if (result.exitCode === 0 || /no such volume/i.test(result.stderr)) return;
+    const heldByACopy = VOLUME_IN_USE.test(result.stderr) && (await this.#copies.removeCopiesInto(volume, signal)).size > 0;
+    if (heldByACopy) return this.#removeVolumeOnceFree(volume, containerName, signal);
+    throw this.#cli.error("docker volume rm", result);
+  }
+
+  async #removeVolumeOnceFree(volume: string, containerName: string, signal?: AbortSignal): Promise<void> {
+    for (let tries = 1; ; tries++) {
+      const inUse = await this.#removeVolumeOrSayInUse(volume, containerName, signal);
+      if (!inUse) return;
+      if (tries >= VOLUME_IN_USE_TRIES) throw this.#cli.error("docker volume rm", inUse);
+      await pause(VOLUME_IN_USE_PAUSE_MS, undefined, { signal });
+    }
+  }
+
+  async #dropVolumeACopyMayFill(volume: string, containerName: string, fence: CopyFence, lateCopies: LateCopies, signal?: AbortSignal): Promise<void> {
     const removedOps = new Set<string>();
     let inUseTries = 0;
     for (;;) {
       for (const op of await this.#copies.removeCopiesInto(volume, signal)) removedOps.add(op);
-      const inUse = await this.#removeVolumeOrSayInUse(volume, containerName, Boolean(fence) || removedOps.size > 0, signal);
+      const inUse = await this.#removeVolumeOrSayInUse(volume, containerName, signal);
       if (inUse) {
         if (++inUseTries >= VOLUME_IN_USE_TRIES) throw this.#cli.error("docker volume rm", inUse);
         await pause(VOLUME_IN_USE_PAUSE_MS, undefined, { signal });
         continue;
       }
 
-      if (!fence) return;
-      const mayStillAppear = this.#copies.mayStillAppear(fence, removedOps);
-      if (!mayStillAppear) return this.#copies.settle(fence);
+      if (!this.#copies.mayStillAppear(fence, removedOps)) return this.#copies.settle(fence);
       if (lateCopies === "left-to-maintenance") return;
       await pause(LATE_COPY_POLL_MS, undefined, { signal });
     }
   }
 
-  async #removeVolumeOrSayInUse(volume: string, containerName: string, aCopyMayHaveMadeIt: boolean, signal?: AbortSignal): Promise<DockerResult | null> {
+  async #removeVolumeOrSayInUse(volume: string, containerName: string, signal?: AbortSignal): Promise<DockerResult | null> {
     const labels = await this.#dockerVolumeLabels(volume, signal);
     if (!labels) return null;
-    const madeAgainByCopy = aCopyMayHaveMadeIt && !Object.keys(labels).length;
+    const madeAgainByCopy = !Object.keys(labels).length;
     if (!madeAgainByCopy) this.#requireOwnVolume(volume, containerName, labels);
 
     const result = await this.#cli.run(["volume", "rm", volume], { timeoutMs: 60_000, signal });

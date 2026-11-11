@@ -6,7 +6,8 @@ import { test, type TestContext } from "node:test";
 import { DockerBackend } from "../src/backends/docker/backend.ts";
 import { DockerCli } from "../src/backends/docker/cli.ts";
 import { createArgs, labelsOf, type BoxContainerSettings } from "../src/backends/docker/box-container.ts";
-import { commitChanges, snapshotImage } from "../src/backends/docker/snapshots.ts";
+import { commitChanges, COPY_INTO, snapshotImage } from "../src/backends/docker/snapshots.ts";
+import { REMOVALS_FAILED_BEFORE_DOCTOR_WARNS } from "../src/backends/docker/restore-copies.ts";
 import { identity, type BoxRecord } from "../src/core/boxes.ts";
 import type { BackendStorage } from "../src/backends/types.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
@@ -232,6 +233,67 @@ test("Docker's maintenance removes a copy the engine made after its restore was 
 
   assert.deepEqual(copiesInto(fake, volume), [], "maintenance removed the copy");
   assert.equal(volume in volumesOn(fake), false, "and the volume it made again");
+});
+
+async function lateCopyAfterAReleaseThatLostItsNote(t: TestContext) {
+  const killed = await restoreKilledWhileTheEngineMakesItsCopy(t);
+  const docker = dockerOn(killed.fake, new MemoryStorage());
+  await docker.release(killed.claimed, { resetting: async () => {}, timing: () => {} });
+  await untilTheEngineFinishedTheCopyCreate(killed.fake);
+  assert.equal(copiesInto(killed.fake, killed.volume).length, 1, "the late copy came after the release");
+  return { ...killed, docker };
+}
+
+async function snapshotLeftovers(docker: DockerBackend) {
+  return (await docker.doctor()).checks.find((check) => check.id === "docker.snapshot-leftovers");
+}
+
+test("Docker's maintenance keeps the volume a late copy made again until a later sweep removes it, when the first removal fails", KILLS_A_PROCESS_GROUP, async (t) => {
+  const { fake, volume, docker } = await lateCopyAfterAReleaseThatLostItsNote(t);
+  fake.set({ failVolumeRemove: volume });
+
+  await docker.maintain();
+
+  assert.deepEqual(copiesInto(fake, volume), [], "the first sweep removed the copy");
+  assert.equal(volume in volumesOn(fake), true, "but not the volume, whose removal failed");
+
+  fake.set({ failVolumeRemove: null });
+  await docker.maintain();
+
+  assert.equal(volume in volumesOn(fake), false, "a later sweep removed the volume");
+});
+
+test("Docker's doctor names a volume a late copy made again once maintenance has failed to remove it 3 times, until it goes", KILLS_A_PROCESS_GROUP, async (t) => {
+  const { fake, volume, docker } = await lateCopyAfterAReleaseThatLostItsNote(t);
+  fake.set({ failVolumeRemove: volume });
+
+  for (let sweep = 0; sweep < REMOVALS_FAILED_BEFORE_DOCTOR_WARNS; sweep++) await docker.maintain();
+
+  const warned = await snapshotLeftovers(docker);
+  assert.equal(warned?.status, "warn");
+  assert.ok(warned?.detail.includes(`${volume}, after 3 tries`), `the warning names the volume: ${warned?.detail}`);
+  assert.match(warned?.fix ?? "", /docker ps --all --filter volume=/, "and says how to find what holds it");
+
+  fake.set({ failVolumeRemove: null });
+  await docker.maintain();
+
+  assert.equal(volume in volumesOn(fake), false, "the next sweep removed the volume");
+  assert.equal((await snapshotLeftovers(docker))?.status, "ok", "and the warning went with it");
+});
+
+test("Docker releases a box that holds no restore note with one volume list, inspect and removal, and asks Docker nothing about copies", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  const box = await readyBox(state);
+  const before = fake.calls().length;
+
+  await state.boxes.release(THREAD, box.id, "done with it", BY_COMMAND);
+
+  const calls = fake.calls().slice(before);
+  const aboutTheBoxsVolume = calls.filter((args) => args[0] === "volume" && args.some((arg) => arg.includes(box.guest!.ref)));
+  const aboutCopies = calls.filter((args) => args.some((arg) => arg.includes(COPY_INTO)));
+  assert.deepEqual(aboutTheBoxsVolume.map((args) => args.slice(0, 2)), [["volume", "ls"], ["volume", "inspect"], ["volume", "rm"]]);
+  assert.deepEqual(aboutCopies, [], "nothing about copies");
 });
 
 test("Docker releases a restore killed while its copy ran, once the engine has finished that copy, without waiting for it", { ...KILLS_A_PROCESS_GROUP, timeout: 30_000 }, async (t) => {
