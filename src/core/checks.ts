@@ -157,6 +157,7 @@ export const CHECKS = {
   "hetzner.hosts": { name: "Hosts", from: ["hetzner"], what: `Each host ${PRODUCT} made: its state, age, boxes and cost this month.` },
   "hetzner.spend": { name: "This month's spend", from: ["hetzner"], what: "What the hosts cost this month before VAT, against the monthly limit." },
   "hetzner.host.<host>": { name: "Docker on <host>", from: ["hetzner"], what: "A host's Docker, as the Docker backend's checks find it." },
+  "hetzner.snapshots.<host>": { name: "Snapshots on <host>", from: ["hetzner"], what: "On a host where a box took snapshots: Docker's snapshot lines for that host, with how full its disk is, and that Keep is off as a release deletes them." },
   "image.<image>": { name: "Image <image>", from: ["docker", "microsandbox"], what: `An image a kind runs is on the host, built by ${PRODUCT}'s build script, and not too old.` },
 
   // microsandbox.
@@ -174,6 +175,7 @@ export const CHECKS = {
   "namespace.token": { name: "API token", from: ["namespace"], what: "Namespace's API answers to the token in BB Box's settings." },
   "namespace.machines": { name: "Machines", from: ["namespace"], what: `The Namespace machines ${PRODUCT} has, each with its age and when it ends, and any no box claims.` },
   "namespace.limits": { name: "Workspace limits", from: ["namespace"], what: `The Mac cores and memory the workspace allows at once and has in use, read from Namespace, from which ${PRODUCT} refuses a Mac up front; a warning when the token may not read them.` },
+  "namespace.snapshots.<machine>": { name: "Snapshots on <machine>", from: ["namespace"], what: "On a Linux machine where its box took snapshots: Docker's snapshot lines for that machine, and when the machine ends with them." },
   "namespace.images": { name: "Linux images", from: ["namespace"], what: `${PRODUCT}'s Linux images in the workspace's registry: when each was built, whether a new one is due, and whether one is being built.` },
   "boat.api": { name: "boat.dev API", from: ["boat"], what: "boat's API answers to the API key in BB Box's settings, and on which plan." },
   "boat.limits": { name: "Plan limits", from: ["boat"], what: "What the boat plan allows now: sandboxes at once, starts left in each window, the sizes and their prices, and the trial's compute hours left." },

@@ -82,7 +82,8 @@ export type ConformanceCheck =
   | "images"
   | "test-device"
   | "device"
-  | "keep";
+  | "keep"
+  | "snapshots";
 
 const KEEP_DAY = "2099-12-30";
 const LATER_KEEP_DAY = "2099-12-31";
@@ -985,6 +986,37 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
 
           const offer = backend.snapshotting?.(kind.id) ?? null;
           const keeps = skip.keep ?? (offer?.keepsPastRelease === "as-is" && backend.snapshot && backend.labelKept && backend.heldSnapshots && backend.deleteSnapshot ? false : "the kind keeps no snapshot as it is past its box's release");
+          const restoresAsNewGuest = skip.snapshots ?? (offer?.restore === "new-guest" && backend.snapshot && backend.adoptSnapshot && backend.powerOff && backend.start && backend.heldSnapshots && backend.deleteSnapshot ? false : "the kind restores no snapshot as a new guest");
+          const SNAPSHOT_FILE = "conformance-snapshot.txt";
+          const quietly = { submitting: async () => {}, task: async () => {} };
+
+          it("takes a snapshot, makes a new guest of the box from it with what the box held then, puts the box back, and deletes the snapshot", { timeout, skip: restoresAsNewGuest }, async () => {
+            const { guest, command } = need();
+            const id = newSnapshotId((bytes) => randomBytes(bytes));
+            await command.run(`echo A > "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() });
+
+            await backend.snapshot!(guest, { id, box: box.boxId, memory: false, forkSafe: offer?.forkSafeFrom ?? 9 }, quietly, signal());
+            const listed = (await backend.heldSnapshots!(signal())).find((held) => held.id === id);
+            assert.equal(listed?.state, "complete", "the provider lists the snapshot it took, complete");
+            const ref: SnapshotRef = { id, ref: listed.ref, guest: listed.guest };
+            await command.run(`echo B > "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() });
+
+            await backend.powerOff!(guest, signal());
+            const fresh = await backend.adoptSnapshot!(ref, box, { macs: {}, smbios: null }, { ...quietly, claimed: async () => {} }, signal());
+            await backend.start!(fresh, signal());
+            const then = await (await backend.transports(fresh, kind.id)).command!.run(`cat "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() });
+            assert.equal(then.stdout.trim(), "A", "the new guest holds what the box held at the snapshot");
+
+            await backend.release(fresh, releaseHooks().hooks, signal());
+            await backend.start!(guest, signal());
+            const now = await command.run(`cat "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() });
+            assert.equal(now.stdout.trim(), "B", "releasing the new guest put the box back as it was, as a restore that goes back does");
+            assert.equal(await backend.power(guest, signal()), "running");
+
+            await backend.deleteSnapshot!(ref, quietly, signal());
+            assert.equal((await backend.heldSnapshots!(signal())).some((held) => held.id === id), false, "gone once deleted");
+          });
+
           let kept: SnapshotRef | null = null;
           const keptUntil = async (target: Backend, id: string) => (await target.heldSnapshots!(signal())).find((held) => held.id === id)?.keptUntil;
 

@@ -7,6 +7,7 @@ import {
   SnapshotIncomplete,
   type Backend,
   type MachineSize,
+  type ReleaseHooks,
   type CopyHooks,
   type DoctorCheck,
   type Guest,
@@ -447,6 +448,7 @@ const RESTORE_STEP_WORDS: Readonly<Record<RestoreStep, string>> = {
 };
 
 const FLUSH_WAIT_MS = 15_000;
+const RELEASE_THIS_GUEST_ONLY: ReleaseHooks = { resetting: async () => {}, timing: () => {}, scope: "this-guest-only" };
 const UNIX_FLUSH = "sync";
 const WINDOWS_FLUSH = "Get-Volume | Where-Object DriveLetter | ForEach-Object { Write-VolumeCache -DriveLetter $_.DriveLetter }";
 
@@ -1236,8 +1238,8 @@ export class Snapshots {
     const backend = this.#deps.backends.get(current.backend.id);
     if (!backend) throw new BoxError("backend_off", `The ${current.backend.label} backend that holds ${quoted(current)} is not in ${PRODUCT}'s settings, so ${PRODUCT} cannot keep it.`);
     const offer = this.offerFor(backend, current.box.kind);
-    if (offer?.forkWhy) throw new BoxError("unsupported", `${PRODUCT} keeps only a snapshot it can fork after its box's release, and ${offer.forkWhy}. So it does not keep ${quoted(current)}.`);
     const way: KeepsPastRelease = offer?.keepsPastRelease ?? "no";
+    if (offer?.forkWhy && !(way === "no" && offer.keepWhy)) throw new BoxError("unsupported", `${PRODUCT} keeps only a snapshot it can fork after its box's release, and ${offer.forkWhy}. So it does not keep ${quoted(current)}.`);
     if (!offer || way === "no") throw new BoxError("unsupported", `${backend.label} has no way to keep a snapshot of a ${current.box.kind} box past the box's release${offer?.keepWhy ? `: ${offer.keepWhy}` : ""}, so ${PRODUCT} does not keep ${quoted(current)}.`);
     if (!backend.labelKept) throw new BoxError("unsupported", `${backend.label} cannot write a keep date on its snapshots, so ${PRODUCT} does not keep ${quoted(current)}.`);
     this.#forkableAfterRelease(current, backend, offer);
@@ -3380,7 +3382,7 @@ export class Snapshots {
 
   async #confirmGone(backend: Backend, guest: Guest, box: Pick<BoxRecord, "name">): Promise<boolean> {
     try {
-      await backend.release(guest, { resetting: async () => {}, timing: () => {} }, this.#stopping.signal);
+      await backend.release(guest, RELEASE_THIS_GUEST_ONLY, this.#stopping.signal);
       if ((await backend.power(guest, this.#stopping.signal)) !== null) throw new Error(`${backend.label} still lists it after its delete.`);
       return true;
     } catch (cause) {
@@ -3410,7 +3412,7 @@ export class Snapshots {
 
   async #dropOldGuest(box: BoxRecord, backend: Backend, old: Guest): Promise<void> {
     try {
-      await backend.release(old, { resetting: async () => {}, timing: () => {} }, this.#stopping.signal);
+      await backend.release(old, RELEASE_THIS_GUEST_ONLY, this.#stopping.signal);
       this.#deps.log?.(`Deleted guest ${old.ref}, box ${box.name}'s guest before its restore: its snapshots live ${this.#apart(backend).where}, not on it.`);
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;

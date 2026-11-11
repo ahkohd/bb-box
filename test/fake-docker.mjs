@@ -161,6 +161,7 @@ function run(rest) {
     const target = rest.find((arg) => arg.endsWith(":/to"))?.split(":")[0];
     const volumes = read("volumes.json", {});
     if (host.holdRestoreCopy && source.startsWith("bbbox-snapshot-")) waitFor(host.holdRestoreCopy);
+    if (host.holdTakeCopy && !source.startsWith("bbbox-snapshot-")) waitFor(host.holdTakeCopy);
     if (host.failRestoreCopy && source.startsWith("bbbox-snapshot-")) fail("Restore copy failed");
     if (!volumes[source] || !read("volumes.json", {})[target]) fail("Snapshot copy has a missing volume");
     const now = read("volumes.json", {});
@@ -483,6 +484,7 @@ function container(command, rest) {
     case "rm": {
       const ref = rest.filter((arg) => !arg.startsWith("-")).at(-1);
       const found = find(ref) ?? fail(`Error response from daemon: No such container: ${ref}`);
+      if (host.failRemoveMatching && new RegExp(host.failRemoveMatching).test(found.Name.slice(1))) fail(`Error response from daemon: could not remove container ${ref}: device or resource busy`);
       if (rest.includes("--volumes")) {
         const volumes = read("volumes.json", {});
         let changed = false;
