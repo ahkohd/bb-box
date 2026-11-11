@@ -100,7 +100,7 @@ test("Hetzner Cloud takes a snapshot on the box's host, restores it as a new con
 
   const forward = (await state.boxes.find(box.id))!;
   assert.deepEqual(readBoth(fake, forward), ["B", "B"]);
-  assert.match(state.store.record(target.id)!.storage!.name, /^Docker's disk on Hetzner Cloud host /);
+  assert.equal(state.store.record(target.id)!.host, box.guest!.host, "the snapshot is recorded on the box's host");
 });
 
 test("Hetzner Cloud forks a snapshot on the same host, and the fork passes the identity reset check", async () => {
@@ -132,6 +132,12 @@ test("Hetzner Cloud refuses a fork its snapshot's host has no room for, before a
   assert.equal(clouds.api.servers.size, servers, "no host was made");
   assert.deepEqual(fake.containers(), containers, "no container was made");
   assert.equal((await state.boxes.all()).length, boxes, "no box was made");
+});
+
+test("a fork refused for a Hetzner Cloud host's memory gives Docker's reason once, then what to do", () => {
+  const refused = forkRoomRefusal("bbbox-test-hz1", "Docker on bbbox-test-hz1 cannot take this linux box: bbbox-test-hz1 has 3.6 GiB of memory free, less than a box with 4 GiB needs. Ask for less memory or release a box.", { key: "", name: "", type: "", percentFull: 0, metadataPercentFull: null, metadataUnread: null, totalBytes: null, usedBytes: null }, null);
+
+  assert.equal(refused, "a fork goes on the same Hetzner Cloud host as its snapshot, bbbox-test-hz1, and it has no room for one: Docker on bbbox-test-hz1 cannot take this linux box: bbbox-test-hz1 has 3.6 GiB of memory free, less than a box with 4 GiB needs. Release a box there, then try again");
 });
 
 test("a fork's room on a Hetzner Cloud host counts the Docker disk its snapshots fill", () => {

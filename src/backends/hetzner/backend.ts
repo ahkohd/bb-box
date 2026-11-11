@@ -155,16 +155,16 @@ const ARM_KIND_OF: Readonly<Record<string, string>> = { linux: "linux-arm64", "l
 const DOCKER_KIND_OF_ARM: Readonly<Record<string, DockerKind>> = { "linux-arm64": "linux", "linux-arm64-desktop-cpu": "linux-desktop-cpu" };
 const ARCHITECTURE_WORDS: Readonly<Record<Architecture, string>> = { x86: "x86", arm: "Arm" };
 
-export function snapshotStorageOn(serverName: string): string {
-  return `Docker's disk on Hetzner Cloud host ${serverName}`;
-}
-
 export function forkRoomRefusal(serverName: string, noRoomBecause: string | null, storage: SnapshotStorage, forkBytes: number | null): string | null {
   const sameHost = `a fork goes on the same Hetzner Cloud host as its snapshot, ${serverName}`;
-  if (noRoomBecause) return `${sameHost}, and it has no room for one: ${noRoomBecause.replace(/\.$/, "")}. Release a box there, then try again`;
+  if (noRoomBecause) return `${sameHost}, and it has no room for one: ${firstSentence(noRoomBecause)}. Release a box there, then try again`;
   if (storage.totalBytes === null || storage.usedBytes === null || forkBytes === null) return null;
   const free = storage.totalBytes - storage.usedBytes;
   return forkBytes >= free ? `${sameHost}, and its Docker disk has ${gbWords(Math.max(0, free))} free, less than the fork's ${gbWords(forkBytes)}. Delete snapshots or release a box there, then try again` : null;
+}
+
+function firstSentence(text: string): string {
+  return text.split(/\.(?:\s|$)/)[0]!;
 }
 
 function tasksOnHost<Hooks extends SnapshotHooks>(hooks: Hooks, hostId: string): Hooks {
@@ -425,11 +425,10 @@ export class HetznerBackend implements Backend {
   async planSnapshots(guest: Guest, kind: string, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
     const part = await this.#requirePart(guest, signal);
     const plan = await part.docker.planSnapshots(guest, this.#dockerKindOf(kind), target, signal);
-    const storage = { ...plan.storage, name: snapshotStorageOn(part.record.serverName) };
-    if (!plan.fork.ok || !plan.fork.size) return { ...plan, storage };
+    if (!plan.fork.ok || !plan.fork.size) return plan;
     const room = await part.docker.capacity(this.#dockerKindOf(kind), plan.fork.size, [], signal);
     const why = forkRoomRefusal(part.record.serverName, room.ok ? null : room.message, plan.storage, plan.fork.bytes);
-    return { ...plan, storage, fork: why ? { ...plan.fork, ok: false, why } : plan.fork };
+    return { ...plan, fork: why ? { ...plan.fork, ok: false, why } : plan.fork };
   }
 
   async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
@@ -532,8 +531,7 @@ export class HetznerBackend implements Backend {
 
   #heldOn(part: HostPart, held: HeldSnapshot): HeldSnapshot {
     const owner = held.owner && part.architecture === "arm" && held.owner.kind && ARM_KIND_OF[held.owner.kind] ? { ...held.owner, kind: ARM_KIND_OF[held.owner.kind]! } : held.owner;
-    const storage = held.storage ? { ...held.storage, name: snapshotStorageOn(part.record.serverName) } : null;
-    return { ...held, owner, storage, guest: this.#ownedBy(part, held.guest) };
+    return { ...held, owner, guest: this.#ownedBy(part, held.guest) };
   }
 
   async maintain(given?: AbortSignal): Promise<void> {
