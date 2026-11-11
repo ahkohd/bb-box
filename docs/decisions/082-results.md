@@ -380,8 +380,9 @@ A copy is now fenced by its operation:
   or does not, and Docker starts it only when BB Box asks, once the
   create has returned.
 - It removes the container and the note once the copy ends, whether it
-  copied or failed. A request whose client was killed or timed out leaves
-  the note.
+  copied or failed. Docker does not remove a copy by itself, so once
+  Docker has made one, it is there for a release to find. A request whose
+  client was killed or timed out leaves the note.
 - A release removes every copy into the box's Docker volume, by its
   labels, and waits for Docker to remove it. It then removes the volume,
   and tries again, up to 5 times a second apart, while the volume is in

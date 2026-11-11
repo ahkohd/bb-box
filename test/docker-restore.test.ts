@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { DockerBackend } from "../src/backends/docker/backend.ts";
 import { DockerCli } from "../src/backends/docker/cli.ts";
@@ -13,7 +13,7 @@ import { BY_COMMAND } from "../src/core/box-log.ts";
 import { fakeDockerHost, dockerConfig, type FakeDockerHost } from "./fake-docker.ts";
 import { MemoryStorage, tempDir, testContext } from "./helpers.ts";
 import { FileStorage } from "./conformance/file-storage.ts";
-import { interruptStep } from "./conformance/interrupt.ts";
+import { interruptStep, type StepSeen } from "./conformance/interrupt.ts";
 import { COMMAND, THREAD, readyBox, standing, untilHeld, world, type World } from "./snapshot-world.ts";
 
 const RESTORED = /^bbbox-bx[0-9a-z]+-[0-9a-f]{8}$/;
@@ -170,8 +170,20 @@ function volumesOn(fake: FakeDockerHost): Record<string, { readonly Labels: Reco
   return JSON.parse(readFileSync(join(fake.root, "volumes.json"), "utf8"));
 }
 
-function dockerOn(fake: FakeDockerHost, storage: BackendStorage): DockerBackend {
-  return new DockerBackend(dockerConfig(), testContext(storage, "test", { id: "fake" }), { binary: fake.binary, readyTimeoutMs: 2_000 });
+function dockerOn(fake: FakeDockerHost, storage: BackendStorage, now?: () => number): DockerBackend {
+  return new DockerBackend(dockerConfig(), testContext(storage, "test", { id: "fake" }), { binary: fake.binary, readyTimeoutMs: 2_000, ...(now ? { now } : {}) });
+}
+
+async function snapshotRefOf(fake: FakeDockerHost) {
+  const [held] = await dockerOn(fake, new MemoryStorage()).heldSnapshots();
+  return { id: held!.id, ref: held!.ref, guest: held!.guest };
+}
+
+function theEngineFinishesTheCopy(fake: FakeDockerHost, copy: string): void {
+  const config = join(fake.root, "containers", copy, "config.json");
+  const container = JSON.parse(readFileSync(config, "utf8"));
+  if (container.HostConfig.AutoRemove) return rmSync(dirname(config), { recursive: true, force: true });
+  writeFileSync(config, JSON.stringify({ ...container, State: { Status: "exited", Running: false, Paused: false, ExitCode: 0 } }));
 }
 
 async function untilTheEngineFinishedTheCopyCreate(fake: FakeDockerHost): Promise<void> {
@@ -180,9 +192,8 @@ async function untilTheEngineFinishedTheCopyCreate(fake: FakeDockerHost): Promis
 
 async function restoreKilledWhileTheEngineMakesItsCopy(t: TestContext) {
   const fake = fakeDockerHost();
-  const { state, box } = await boxWithSnapshotOfA(fake);
-  const [held] = await dockerOn(fake, new MemoryStorage()).heldSnapshots();
-  const ref = { id: held!.id, ref: held!.ref, guest: held!.guest };
+  const { box } = await boxWithSnapshotOfA(fake);
+  const ref = await snapshotRefOf(fake);
   fake.set({ restoreCopyLandsLate: true });
   t.after(() => writeFileSync(join(fake.root, COPY_MAY_LAND), ""));
   const storage = join(tempDir("docker-restore"), "storage.json");
@@ -221,6 +232,28 @@ test("Docker's maintenance removes a copy the engine made after its restore was 
 
   assert.deepEqual(copiesInto(fake, volume), [], "maintenance removed the copy");
   assert.equal(volume in volumesOn(fake), false, "and the volume it made again");
+});
+
+test("Docker releases a restore killed while its copy ran, once the engine has finished that copy, without waiting for it", { ...KILLS_A_PROCESS_GROUP, timeout: 30_000 }, async (t) => {
+  const fake = fakeDockerHost();
+  const { box } = await boxWithSnapshotOfA(fake);
+  const ref = await snapshotRefOf(fake);
+  const copyMayFinish = join(tempDir("docker-restore"), "copy-may-finish");
+  fake.set({ holdRestoreCopy: copyMayFinish });
+  t.after(() => writeFileSync(copyMayFinish, ""));
+  const storage = join(tempDir("docker-restore"), "storage.json");
+
+  const step = { step: "restore" as const, guest: box.guest!, ref, box: identity(box, box.size!) };
+  const copyRuns = async (seen: StepSeen) => seen.claimed !== null && copiesInto(fake, `${seen.claimed.ref}-docker`).some((copy) => fake.inspect(copy).State.Status === "running");
+  const seen = await interruptStep({ module: MAKES_FAKE_DOCKER_BACKEND, args: [fake.binary] }, storage, "test", step, copyRuns, 30_000);
+  const volume = `${seen.claimed!.ref}-docker`;
+  theEngineFinishesTheCopy(fake, copiesInto(fake, volume)[0]!);
+
+  const beforeTheCopysTimeRunsOut = Date.now();
+  await dockerOn(fake, new FileStorage(storage), () => beforeTheCopysTimeRunsOut).release(seen.claimed!, { resetting: async () => {}, timing: () => {} });
+
+  assert.deepEqual(copiesInto(fake, volume), [], "the finished copy is gone");
+  assert.equal(volume in volumesOn(fake), false, "and so is the part-made guest's volume");
 });
 
 test("Docker puts the old container back when the new one does not start, and removes the new one with its volume", async () => {

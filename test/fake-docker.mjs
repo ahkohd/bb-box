@@ -183,7 +183,7 @@ function registerCopyContainer(rest, status) {
     Image: "copy",
     Config: { Labels: labels, Env: [] },
     State: { Status: status, Running: status === "running", Paused: false, ExitCode: 0 },
-    HostConfig: { Mounts: [{ Type: "volume", Name: source, Source: "", Target: "/from", ReadOnly: true }, { Type: "volume", Name: target, Source: "", Target: "/to", ReadOnly: false }] },
+    HostConfig: { AutoRemove: rest.includes("--rm"), Mounts: [{ Type: "volume", Name: source, Source: "", Target: "/from", ReadOnly: true }, { Type: "volume", Name: target, Source: "", Target: "/to", ReadOnly: false }] },
     NetworkSettings: { Networks: {} },
   };
   save(container);
@@ -219,6 +219,12 @@ function createCopy(rest) {
   console.log(copyContainer(rest, "created").Id);
 }
 
+function endTheCopy(found, exitCode) {
+  if (found.HostConfig.AutoRemove) return rmSync(dir(found.Name.slice(1)), { recursive: true, force: true });
+  found.State = { Status: "exited", Running: false, Paused: false, ExitCode: exitCode };
+  save(found);
+}
+
 function runCopy(found) {
   const name = found.Name.slice(1);
   const source = found.HostConfig.Mounts.find((mount) => mount.Target === "/from").Name;
@@ -228,7 +234,7 @@ function runCopy(found) {
   save(found);
   if (host.holdRestoreCopy && restoring) waitFor(host.holdRestoreCopy);
   if (!existsSync(join(dir(name), "config.json"))) fail("The copy's container was removed while it ran", 137);
-  rmSync(dir(name), { recursive: true, force: true });
+  endTheCopy(found, host.failRestoreCopy && restoring ? 1 : 0);
   if (host.failRestoreCopy && restoring) fail("Restore copy failed");
   const volumes = read("volumes.json", {});
   if (!volumes[source] || !volumes[target]) fail("Snapshot copy has a missing volume");
