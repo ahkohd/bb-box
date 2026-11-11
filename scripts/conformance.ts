@@ -15,7 +15,9 @@ import { resolve } from "node:path";
 import { conformance, slotConformance, type ConformanceCheck } from "../test/conformance/suite.ts";
 import { SLOT_KINDS } from "../src/core/device-host.ts";
 import { MemoryStorage } from "../test/helpers.ts";
-import { liveBackend } from "./live-backend.ts";
+import { liveBackend, liveConfig } from "./live-backend.ts";
+import { dockerDriver } from "../src/backends/docker/index.ts";
+import { dockerRestoreCopyProbe } from "../test/conformance/docker-restore-copy.ts";
 
 const USAGE = "usage: npm run conformance -- --backend <type> --settings <settings.json> [--kind <kind>]... [--skip <check>=<reason>]...";
 
@@ -53,4 +55,5 @@ await conformance({
   timeoutMs: 600_000,
   testDevice: true,
   elsewhere: { module: new URL("./live-backend.ts", import.meta.url).href, args: [driver.type, settings] },
+  restoreCopy: driver.type === dockerDriver.type ? dockerRestoreCopyProbe(liveConfig(dockerDriver, settings)) : undefined,
 });

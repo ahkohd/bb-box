@@ -66,6 +66,7 @@ import type { ByteChannel, CommandTransport, DisplaySize, RunResult } from "../.
 import { MemoryStorage } from "../helpers.ts";
 import { FileStorage } from "./file-storage.ts";
 import { interruptStep, type ElsewhereBackend, type StepSeen } from "./interrupt.ts";
+import type { RestoreCopyProbe } from "./restore-copy-probe.ts";
 
 export type ConformanceCheck =
   | "arch"
@@ -100,6 +101,7 @@ const SLOW_TAKE_MIB = 1024;
 const SLOW_TAKE_FILE = "conformance-slow-take.bin";
 const KILL_AFTER_TASK_MS = 2_000;
 const KILL_AFTER_CLAIM_MS = 1_000;
+const RESTORE_KILL_TRIES = 3;
 const LATER_KEEP_DAY = "2099-12-31";
 
 /** A new Simulator device's first boot is slow (047). */
@@ -156,6 +158,7 @@ export interface ConformanceOptions {
   readonly timeoutMs?: number;
   readonly testDevice?: boolean;
   readonly elsewhere?: ElsewhereBackend;
+  readonly restoreCopy?: RestoreCopyProbe;
 }
 
 const THREAD = "thr_conformance";
@@ -1189,6 +1192,43 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             }
           });
 
+          const undoARestoreThatFinished = async (storage: string, claimed: Guest, guest: Guest) => {
+            const fromItsStorage = await options.create(new FileStorage(storage), CONFORMANCE_INSTALL);
+            others.push(fromItsStorage);
+            await fromItsStorage.release(claimed, releaseHooks().hooks, signal());
+            await fromItsStorage.start!(guest, signal());
+          };
+
+          const restoreKilledInItsPhase = async (guest: Guest, ref: SnapshotRef) => {
+            const copy = options.restoreCopy;
+            const phase = copy ? "while it copied" : "after it named its new guest";
+            for (let tries = 1; tries <= RESTORE_KILL_TRIES; tries++) {
+              const storage = join(mkdtempSync(join(tmpdir(), "bbbox-conformance-")), "storage.json");
+              let claimedAt: number | null = null;
+              const claimedLongEnough = async (claimed: Guest) => {
+                claimedAt ??= Date.now();
+                return Date.now() >= claimedAt + KILL_AFTER_CLAIM_MS || (await backend.power(claimed, signal())) !== null;
+              };
+              let reached = false;
+              const inItsPhase = async (seen: StepSeen) => {
+                if (!seen.claimed || seen.finished) return false;
+                reached = copy ? await copy.copying(seen.claimed, signal()) : await claimedLongEnough(seen.claimed);
+                return reached;
+              };
+
+              const seen = await interruptStep(options.elsewhere!, storage, CONFORMANCE_INSTALL, { step: "restore", guest, ref, box }, inItsPhase, timeout);
+
+              assert.ok(seen.claimed, "the restore named its new guest before it made it");
+              if (reached && !seen.finished) {
+                const madeWhenKilled = (await backend.power(seen.claimed, signal())) !== null;
+                return { storage, claimed: seen.claimed, phase, tries, madeWhenKilled };
+              }
+              console.log(`# ${options.name} ${kind.id}: the restore finished before the suite could kill it ${phase}; trying again`);
+              await undoARestoreThatFinished(storage, seen.claimed, guest);
+            }
+            return assert.fail(`The restore finished before the suite could kill it ${phase}, ${RESTORE_KILL_TRIES} times.`);
+          };
+
           it("recovers a restore whose process was killed part way: the part-made guest goes, and the box starts as it was", { timeout: timeout * 2, skip: recovers }, async () => {
             const { guest, command } = need();
             const inDockerData = capabilities.features.includes("docker");
@@ -1201,29 +1241,20 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             assert.equal(listed?.state, "complete", "the provider lists the snapshot it took, complete");
             const ref: SnapshotRef = { id, ref: listed.ref, guest: listed.guest };
             await command.run(`echo B > "$HOME/${SNAPSHOT_FILE}" && ${asRoot}rm -f "${slowRestoreFile}"`, { timeoutMs: 30_000, signal: signal() });
-            const storage = join(mkdtempSync(join(tmpdir(), "bbbox-conformance-")), "storage.json");
+            const killed = await restoreKilledInItsPhase(guest, ref);
+            console.log(`# ${options.name} ${kind.id}: the restore was killed ${killed.phase}, try ${killed.tries}, its new guest ${killed.madeWhenKilled ? "made" : "not made yet"}`);
 
-            let claimedAt: number | null = null;
-            const partWay = async (seen: StepSeen) => {
-              if (!seen.claimed) return false;
-              claimedAt ??= Date.now();
-              return Date.now() >= claimedAt + KILL_AFTER_CLAIM_MS || (await backend.power(seen.claimed, signal())) !== null;
-            };
-            const seen = await interruptStep(options.elsewhere!, storage, CONFORMANCE_INSTALL, { step: "restore", guest, ref, box }, partWay, timeout);
-            assert.ok(seen.claimed, "the restore named its new guest before it made it");
-            const madeWhenKilled = (await backend.power(seen.claimed, signal())) !== null;
-            console.log(`# ${options.name} ${kind.id}: the restore was ${seen.finished ? "done" : "killed"}, its new guest ${madeWhenKilled ? "made" : "not made yet"}`);
-
-            const restarted = await options.create(new FileStorage(storage), CONFORMANCE_INSTALL);
-            others.push(restarted);
-            await restarted.release(seen.claimed, releaseHooks().hooks, signal());
-            assert.equal(await restarted.power(seen.claimed, signal()), null, "the part-made guest is gone");
-            await restarted.start!(guest, signal());
+            const fromItsStorage = await options.create(new FileStorage(killed.storage), CONFORMANCE_INSTALL);
+            others.push(fromItsStorage);
+            await fromItsStorage.release(killed.claimed, releaseHooks().hooks, signal());
+            assert.equal(await fromItsStorage.power(killed.claimed, signal()), null, "the part-made guest is gone");
+            if (options.restoreCopy) assert.deepEqual(await options.restoreCopy.leftAfterRelease(killed.claimed, new FileStorage(killed.storage), signal()), [], "nothing of the killed restore's copy is left");
+            await fromItsStorage.start!(guest, signal());
 
             assert.equal(await backend.power(guest, signal()), "running", "the box runs again");
             const now = await command.run(`cat "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() });
             assert.equal(now.stdout.trim(), "B", "the box holds what it held before the restore");
-            const ofTheBox = (await restarted.held(signal())).filter((other) => other.owner?.boxId === box.boxId).map((other) => other.ref);
+            const ofTheBox = (await fromItsStorage.held(signal())).filter((other) => other.owner?.boxId === box.boxId).map((other) => other.ref);
             assert.deepEqual(ofTheBox, [guest.ref], "the box has one guest, its own");
             await backend.deleteSnapshot!(ref, quietly, signal());
           });

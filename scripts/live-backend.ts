@@ -1,7 +1,7 @@
 import { DRIVERS } from "../src/backends/index.ts";
 import { backendPart } from "../src/core/document.ts";
 import { defaultSize, kindSizes, presetSizes } from "../src/core/sizes.ts";
-import type { Backend, BackendStorage } from "../src/backends/types.ts";
+import type { Backend, BackendDriver, BackendStorage } from "../src/backends/types.ts";
 import { readSettings, toConfiguration } from "./smoke.ts";
 
 export interface LiveBackend {
@@ -10,19 +10,33 @@ export interface LiveBackend {
   readonly create: (storage: BackendStorage, installId: string) => Backend;
 }
 
-export function liveBackend(type: string, settingsPath: string): LiveBackend {
-  const driver = DRIVERS.find((other) => other.type === type);
-  if (!driver) throw new Error(`No backend is called ${type}. There are ${DRIVERS.map((other) => other.type).join(" and ")}.`);
+interface ParsedBackend<C> {
+  readonly id: string;
+  readonly config: C;
+}
+
+function parsedBackend<C>(driver: BackendDriver<C>, settingsPath: string): ParsedBackend<C> {
   const configuration = toConfiguration(readSettings(settingsPath));
   if (configuration.problems.length) throw new Error(configuration.problems.join(" "));
   const backend = configuration.document.backends.find((other) => other.type === driver.type);
   if (!backend?.enabled) throw new Error(`${driver.label} is off in ${settingsPath}.`);
   const parsed = driver.parse(backendPart(backend, driver, configuration.secrets, configuration.document.backends));
   if (!parsed.ok) throw new Error(`${driver.label}: ${parsed.problems.map((problem) => problem.message).join(" ")}`);
+  return { id: backend.id, config: parsed.config };
+}
+
+export function liveConfig<C>(driver: BackendDriver<C>, settingsPath: string): C {
+  return parsedBackend(driver, settingsPath).config;
+}
+
+export function liveBackend(type: string, settingsPath: string): LiveBackend {
+  const driver = DRIVERS.find((other) => other.type === type);
+  if (!driver) throw new Error(`No backend is called ${type}. There are ${DRIVERS.map((other) => other.type).join(" and ")}.`);
+  const parsed = parsedBackend(driver, settingsPath);
 
   const create = (storage: BackendStorage, installId: string) =>
     driver.create(parsed.config, {
-      id: backend.id,
+      id: parsed.id,
       storage,
       installId,
       warm: () => 0,

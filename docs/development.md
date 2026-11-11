@@ -175,8 +175,11 @@ checks against any backend:
 - a take and a restore run in a second process, which the suite kills part
   way through, as when BB stops: a new instance on that process's storage
   settles the take, releases the restore's part-made guest and starts the
-  box as it was. Only `npm run conformance` makes the second process, so
-  `npm test` skips these two and says why;
+  box as it was. On Docker it kills the restore while its copy of the
+  Docker data runs, trying again up to 3 times if the restore finishes
+  first, and checks that no copy, volume or note of it is left. Only
+  `npm run conformance` makes the second process, so `npm test` skips
+  these two and says why;
 - for each preset: a box of that size, measured as soon as it is ready;
 - interrupted acquires that leave nothing behind, a small image build, two
   installs on one backend that leave each other alone, and a reused
