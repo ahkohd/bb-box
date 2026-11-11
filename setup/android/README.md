@@ -134,6 +134,14 @@ its discovery file under `/run/user/<uid>/avd/running/`. With a token, the
 pinned emulator listens for gRPC on loopback only. Its console, adb and
 adb's server listen on loopback too.
 
+`bb-box-emulator` knows its emulator by its process ID and the time that
+process started. Both stay the same while the launcher replaces itself with
+QEMU, when the process's command line reads empty for up to a millisecond.
+If the emulator ends before Android has booted, `bb-box-emulator start` says
+how it ended, with its exit status or the signal that killed it, then the
+last 20 lines of its log, or that it wrote nothing. The image's check shows
+all of it.
+
 ## A box from the template
 
 bb-box delivers its device server to each android box, as a service of the
