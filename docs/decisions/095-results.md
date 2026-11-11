@@ -1,4 +1,4 @@
-# 093 results: box_grant on a Namespace Mac
+# 095 results: box_grant on a Namespace Mac
 
 Measured on 11 November 2026, on a small Namespace Mac (4 cores, 14 GB
 memory), with macOS 26.3.1, as the user `runner`. The Mac was a `macos`

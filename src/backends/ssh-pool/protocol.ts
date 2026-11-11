@@ -22,7 +22,7 @@ export const EXIT = {
   dirty: 5,
   /** The machine's reset generation moved on. */
   moved: 6,
-  /** A Mac's grant: System Integrity Protection is on, or TCC's database is one bb-box does not know, so it grants nothing (058, 093). */
+  /** A Mac's grant: System Integrity Protection is on, or TCC's database is one bb-box does not know, so it grants nothing (058, 095). */
   protected: 7,
   /** A Mac's grant: the program is not one bb-box grants permissions to (058). */
   refused: 8,

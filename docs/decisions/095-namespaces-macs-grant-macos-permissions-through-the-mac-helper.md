@@ -1,11 +1,11 @@
-# 093: Namespace's Macs grant macOS permissions through the Mac helper
+# 095: Namespace's Macs grant macOS permissions through the Mac helper
 
 Status: accepted
 Date: 11 November 2026
 
 Extends [058](058-a-mac-with-sip-off-grants-its-box-users-macos-permissions.md)
 from pool Macs and Tart's macOS VMs to Namespace's Macs. Measurements are in
-[093-results.md](093-results.md).
+[095-results.md](095-results.md).
 
 ## Context
 

@@ -143,9 +143,30 @@ When the box is released, BB Box takes it off the tailnet and destroys the Mac. 
 
 A Mac cannot outlive your plan's limit. BB Box keeps each Mac's end an hour ahead while its box is held, up to that limit, so a Mac that BB Box loses track of ends within the hour.
 
+### Mac sizes
+
+Namespace names each Mac by its cores and memory, such as 6x14 for 6 cores and 14 GiB of memory. You cannot choose a Mac's disk: it follows the shape, at 48 GiB plus 8 GiB for each core or for each 2 GiB of memory, whichever gives more.
+
+| Mac | Cores | Memory | Disk |
+| --- | --- | --- | --- |
+| 4x7 | 4 | 7 GiB | 80 GiB |
+| 4x14 | 4 | 14 GiB | 104 GiB |
+| 6x14 | 6 | 14 GiB | 104 GiB |
+| 8x14 | 8 | 14 GiB | 112 GiB |
+| 6x28 | 6 | 28 GiB | 160 GiB |
+| 8x28 | 8 | 28 GiB | 160 GiB |
+| 12x28 | 12 | 28 GiB | 160 GiB |
+| 16x28 | 16 | 28 GiB | 176 GiB |
+| 12x56 | 12 | 56 GiB | 272 GiB |
+| 16x56 | 16 | 56 GiB | 272 GiB |
+
+BB Box gives a Mac box the smallest of these with at least the cores, memory and disk its size asks for. A box that asks for more disk gets a larger Mac, so a 6-core box with 14 GiB of memory and 128 GiB of disk needs a 6x28.
+
+If no Mac the workspace allows is large enough, BB Box refuses the box before it asks Namespace. The refusal names each part that is too large, the largest Mac the workspace allows with its disk, and a size that fits. To ask for a smaller disk, give `disk_gib` to the box, or `--disk-gib` on the command line.
+
 ### macOS permissions
 
-Namespace's Macs run with System Integrity Protection off. So, as on Tart's macOS boxes, `box_grant` grants a program in a `macos` or `macos-desktop` box the permissions macOS would ask a person for, with no prompt: Accessibility, Screen Recording, Input Monitoring, the microphone, the camera, the system's audio and Automation of one app ([058](../decisions/058-a-mac-with-sip-off-grants-its-box-users-macos-permissions.md), [093](../decisions/093-namespaces-macs-grant-macos-permissions-through-the-mac-helper.md)). An app is granted by its bundle ID, and a command-line program by its path.
+Namespace's Macs run with System Integrity Protection off. So, as on Tart's macOS boxes, `box_grant` grants a program in a `macos` or `macos-desktop` box the permissions macOS would ask a person for, with no prompt: Accessibility, Screen Recording, Input Monitoring, the microphone, the camera, the system's audio and Automation of one app ([058](../decisions/058-a-mac-with-sip-off-grants-its-box-users-macos-permissions.md), [095](../decisions/095-namespaces-macs-grant-macos-permissions-through-the-mac-helper.md)). An app is granted by its bundle ID, and a command-line program by its path.
 
 - **At each Mac box's start,** in about half a second, BB Box runs its Mac helper on the Mac. It gives `runner` a code-signing identity of its own, "bb-box local code signing", so a program signed with it keeps its grants when it is rebuilt. It also measures whether the Mac can grant: whether SIP is off, and whether macOS's permissions database is one BB Box knows.
 - **The doctor says what it measured.** `bb box doctor` has a check, **macOS permissions on Namespace's Macs**, that says whether `box_grant` worked on the Macs boxes started on most recently, and their macOS. `box_status` lists a box's grants, or says why it cannot grant.
