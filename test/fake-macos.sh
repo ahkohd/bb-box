@@ -182,6 +182,7 @@ case $tool in
         echo "$full" >"$F/users/$user/RealName"
         echo "$home" >"$F/users/$user/NFSHomeDirectory"
         echo /bin/zsh >"$F/users/$user/UserShell"
+        tr a-z A-Z </proc/sys/kernel/random/uuid >"$F/users/$user/GeneratedUID"
         printf '%s\n' "$password" >"$F/secrets/$user"
         ;;
       -deleteUser)
@@ -314,6 +315,7 @@ case $tool in
     # stat -f %Lp <path>: its permission bits, as macOS gives them; stat -f %g: staff's GID, 20, as a home's group is.
     if [ "$2" = %Lp ]; then exec /usr/bin/stat -c %a "$3"; fi
     if [ "$2" = %g ]; then echo 20; exit 0; fi
+    if [ "$2" = %i ]; then exec /usr/bin/stat -c %i "$3"; fi
     # stat -f %u <path>: the UID owners says owns it, else root's.
     if [ "$2" = %u ]; then
       real=$(readlink -f "$3")
@@ -560,6 +562,7 @@ case $tool in
       while read -r pid uid; do echo "$pid $(/bin/ps -o stat= -p "$pid")"; done <"$F/process-uids" >"$F/states-at-clone"
     fi
     if [ -s "$F/flags/stop-during-clone" ]; then kill -STOP $(cat "$F/flags/stop-during-clone"); fi
+    if [ -s "$F/flags/during-clone" ] && F=$F R=$R sh "$F/flags/during-clone" "$1" "$2"; then rm -f "$F/flags/during-clone"; fi
     if [ -s "$F/flags/clone-waits" ]; then : >"$F/cloning" && sleep "$(cat "$F/flags/clone-waits")"; fi
     /bin/cp -R "$1" "$2" || exit 1
     from=$(readlink -f "$1") to=$(readlink -f "$2")

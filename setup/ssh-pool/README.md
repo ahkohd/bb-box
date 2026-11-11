@@ -575,13 +575,16 @@ BB Box runs these helper commands, as root, through the same sudo rule:
 | `machine snapshot start <generation>` | Signs the box user in again where it was signed in, by restarting the login window, or userspace after 30 s; it exits 10 until the user is at the console |
 | `machine snapshot delete <snapshot>` | Deletes a snapshot; again, it succeeds |
 | `machine snapshot fork <snapshot> <user> <uid>` | Makes a new user from a snapshot, without BB's machine files, the access file, BB's launch agent, the login keychain or plists naming the source's home. Only where no other user shares the Mac, and only for a new box user, `bbx-<n>` with UID 70000 plus n modulo 10000, that is not on the Mac or at its console. BB Box does not call it yet |
-| `machine snapshot proof` | On a free Mac: makes a scratch user, `bbbox-probe`, as box users are made, then takes, kills a take during its pause, restores with an undo, forks, aims forks at users already there, and deletes. It checks each, including that processes others stopped stay stopped, removes everything it made, and prints a report |
+| `machine snapshot proof` | On a free Mac: makes a scratch user, `bbbox-probe`, as box users are made, then takes, kills a take during its pause, restores with an undo, forks, aims forks at users already there, and deletes. It checks each, including that processes others stopped stay stopped and that a process above the user's that stops late is resumed, removes only what it made, and prints a report |
 
 A take records the processes it pauses, with when each started, before it
 stops them. It resumes only those, and a root `sudo` above one of them that
-stopped with it. A process stopped before the take, or by anyone else,
-stays stopped. A take killed while it paused the box user is resumed by the
-helper's next command, whichever it is. A release deletes the box user's snapshots before it removes the
+stopped with it. A process stopped before the take stays stopped. The
+record keeps a process above the box user's that has not stopped yet for a
+minute, so a `sudo` that stops itself later than the take's last check is
+resumed by the helper's next command in that minute. A take killed while it
+paused the box user is resumed by the helper's next command, whichever it
+is. A release deletes the box user's snapshots before it removes the
 user, and the reset refuses to lend the Mac while a snapshot of an earlier
 box is left. A restore signs a desktop's user out for a few seconds. When
 the login window does not sign the user in again, the userspace restart
@@ -594,8 +597,15 @@ while no box holds it:
 sudo /usr/local/libexec/bb-box/machine snapshot proof
 ```
 
-It leaves the box user waiting at the console alone, and refuses while a
-box holds the Mac.
+It leaves the box user waiting at the console alone. It takes the helper's
+lock first and holds it until it ends, so no box or iOS slot starts in the
+middle. It refuses with exit 3, changing nothing, while a box holds the
+Mac, its reset runs, an iOS slot is held, being made or promised, or a
+take's pause record is left. It refuses with exit 5, changing nothing,
+where its scratch users, their homes or snapshot stores, or their UIDs,
+79999 and 79998, are on the Mac already, and says how to check them. It
+records what it makes in `/var/db/bb-box/proof-made`, and deletes only
+that: anything else it leaves, with a note.
 
 
 ### Testing on one computer

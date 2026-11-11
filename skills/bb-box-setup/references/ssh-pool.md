@@ -108,6 +108,9 @@ whole take home snapshots where the Mac says its homes clone; Linux
 machines, iOS slots and hooks take none yet, so tell the person what those
 could offer, not that they snapshot. To prove home snapshots on a free Mac,
 have the person run `sudo /usr/local/libexec/bb-box/machine snapshot proof`
-there. A check that warns says what to do: run
+there. It refuses, changing nothing, while a box or an iOS slot uses the
+Mac, or where its scratch users `bbbox-probe` and `bbbox-probe-fork`, or
+UIDs 79999 and 79998, are there already: tell the person what it says
+rather than removing them. A check that warns says what to do: run
 the machine's setup script again when its helper is older, or, when the
 probe could not remove its trial, remove as root what it names.

@@ -456,16 +456,26 @@ section 2, this is what stands:
   start time. The take then stops only the box user's processes in the
   record, in up to 5 rounds to catch processes started meanwhile. It
   resumes only what the record names: the box user's processes, and each
-  process above them that is stopped when the pause ends, again 0.2 s
-  later, as `sudo` stops itself when its command stops. A process stopped
-  before the take, or by anyone else, stays stopped, and a process ID now
-  held by a process with another start time is left alone. The take holds a
-  lock of its own for the pause. At the start of every helper command, a
-  record whose take no longer holds that lock is resumed in the same way and
-  then removed, so a helper killed mid-take does not leave the box, or a
-  `sudo` above it, stopped. A take ended by a signal resumes its record
-  before it exits.
-- **ACLs** are kept as `find -acl` and `ls -le` read them, and put back
+  process above them that is stopped, as `sudo` stops itself when its
+  command stops. It checks again every 0.2 s for 1 s, resuming each
+  recorded process that is stopped, and strikes a process from the record
+  once it runs again after its resume, or has gone. A process above that
+  has not stopped yet stays in the record for a minute after the resume,
+  as `sudo` may stop itself later than the take's last check. Each helper
+  command in that minute resumes it if it has stopped. The record goes once
+  it names nothing, or once that minute has passed. A process stopped
+  before the take stays stopped, and a process ID now held by a process
+  with another start time is left alone. A process that the record names
+  and that someone else stops during the pause, or within that minute, is
+  resumed with the rest: the helper cannot tell that stop from one the
+  pause caused. The take holds a lock of its own for the pause. At the
+  start of every helper command except the proof, a record whose take no
+  longer holds that lock is resumed in the same way, so a helper killed
+  mid-take does not leave the box, or a `sudo` above it, stopped. A take
+  ended by a signal resumes its record before it exits.
+- **ACLs** are read after the resume, so an ACL changed in that moment is
+  kept as it is then, not as at the pause. They are kept as `find -acl` and
+  `ls -le` read them, and put back
   with `chmod +a`, or `chmod +ai` for an inherited entry, which
   `chmod -E` refuses.
 - **The clone** is one `clonefile(2)` call by `clone-tree`, which
@@ -491,12 +501,25 @@ section 2, this is what stands:
   `bbbox-probe-fork`), a user, home or UID already on the Mac, and the
   user at the console. It never repairs or replaces an account to make a
   fork.
-- **The proof** is `machine snapshot proof`, which runs only while no box
-  holds the Mac, on scratch users `bbbox-probe` (UID 79999) and
-  `bbbox-probe-fork` (79998), outside the names the reset and its checks
-  look at, under the helper's lock so no claim comes in the middle. It
-  never touches the user waiting at the console. Its results go in
-  [090-results.md](090-results.md).
+- **The proof** is `machine snapshot proof`, on scratch users
+  `bbbox-probe` (UID 79999) and `bbbox-probe-fork` (79998), outside the
+  names the reset and its checks look at. It takes the helper's lock first
+  and holds it until it ends, so no claim, and no iOS slot claim, promise or
+  make, starts in the middle. Under the lock, it refuses with exit 3,
+  changing nothing, while a box holds the Mac, its reset runs, an iOS slot
+  is held, being given back, being made or promised, or a take's pause
+  record is left; it runs no recovery of its own first. Then it refuses
+  with exit 5, again changing nothing, where either scratch user,
+  `bbbox-probe-stranger`, any of their homes, snapshot stores, password
+  files, `sudo` rules, crontabs or managed preferences, either UID, or any
+  file of either UID is on the Mac already. It never infers from a name
+  that something is its own: it records each user it makes, with its UID,
+  `GeneratedUID` and home's inode, and its snapshot store's inode, in
+  `/var/db/bb-box/proof-made`, and follows the home through its own
+  restores and fork. At the end it deletes only an account, home and store
+  that still match the record, and leaves anything else, with the record
+  and a note on how to check it. It never touches the user waiting at the
+  console. Its results go in [090-results.md](090-results.md).
 - **The snapshot store** takes the new scopes by rebuilding its table with
   the wider check, keeping every record.
 
