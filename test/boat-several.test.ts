@@ -37,6 +37,7 @@ interface BackendOptions {
   readonly storage?: MemoryStorage;
   readonly tailnet?: Tailnet;
   readonly templateLabels?: Record<string, string> | null;
+  readonly logs?: string[];
 }
 
 function account(options: { paid?: boolean } = {}): Account {
@@ -64,7 +65,11 @@ function backendOn(on: Account, id: string, options: BackendOptions = {}): BoatB
     const record: TemplateRecord = { kind: "linux", sandbox: template.id, key: "fp1", builtAt: on.now(), buildMs: 600_000, usedAt: null };
     void storage.set("template/linux", record);
   }
-  const context = { ...testContext(storage, "inst1", { id }), ...(options.tailnet ? { tailnet: () => options.tailnet! } : {}) };
+  const context = {
+    ...testContext(storage, "inst1", { id }),
+    ...(options.tailnet ? { tailnet: () => options.tailnet! } : {}),
+    ...(options.logs ? { log: (line: string) => void options.logs!.push(line) } : {}),
+  };
   return disposed(
     new BoatBackend({ ...CONFIG, ...options.config }, context, {
       fetch: on.fake.fetch,
@@ -147,14 +152,17 @@ test("after the upgrade, a sandbox or template labelled only with the install is
 
 test("a second boat.dev backend builds and forks only its own templates on a shared account, and another install's of the same backend ID", async () => {
   const on = account();
+  const logs: string[] = [];
   const first = backendOn(on, FIRST);
-  const second = backendOn(on, TEAM_B, { templateLabels: null });
+  const second = backendOn(on, TEAM_B, { templateLabels: null, logs });
 
   assert.equal(await second.templates.adoptable("linux"), null, "the first backend's template is not the second's");
 
   const anotherInstalls = plantTemplate(on, new BoatOwner(TEAM_B, "inst2").labels());
   assert.equal((await second.templates.adoptable("linux"))?.id, anotherInstalls.id);
   assert.notEqual((await first.templates.adoptable("linux"))?.id, anotherInstalls.id);
+  assert.equal((await second.templates.keepAdoptable("linux"))?.sandbox, anotherInstalls.id);
+  assert.ok(logs.includes(`boat.dev (team-b): using the linux template ${anotherInstalls.id}, which bb-box built for another install on this account.`), logs.join("\n"));
 });
 
 test("each backend's upkeep deletes only its own old templates and its own abandoned restore sandboxes, even on one account", async () => {

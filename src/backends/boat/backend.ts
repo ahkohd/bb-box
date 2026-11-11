@@ -392,6 +392,7 @@ export class BoatBackend implements Backend {
       api: this.#api,
       storage: context.storage,
       owner: this.#owner,
+      logName: this.#logName,
       labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key, template: LABELS.template },
       publicKey: async () => (await this.#keys()).publicKey,
       reach: async (sandbox, user, signal) => this.#command(sandbox, user, signal),
@@ -411,6 +412,10 @@ export class BoatBackend implements Backend {
     void context.storage.get<SavedAllowance>(ALLOWANCE_KEY).then((kept) => {
       if (kept && !this.#lastAllowance) this.#lastAllowance = kept;
     }, (error: unknown) => context.logError("read boat's saved snapshot allowance", error));
+  }
+
+  get #logName(): string {
+    return this.#owner.takesUnlabelledMachines ? "boat" : this.label;
   }
 
   kinds(): readonly BoxKind[] {
@@ -1086,7 +1091,7 @@ export class BoatBackend implements Backend {
   }
 
   #buildEnded(kind: BoatKind, error: unknown): void {
-    if (error instanceof BuildLeftRunning) this.#context.log?.(`boat: ${kind} template: ${error.message}`);
+    if (error instanceof BuildLeftRunning) this.#context.log?.(`${this.#logName}: ${kind} template: ${error.message}`);
     else this.#context.logError(`build boat's ${kind} template`, error);
   }
 
@@ -1413,7 +1418,7 @@ export class BoatBackend implements Backend {
       if (!kicked && this.#now() >= kickAt) {
         kicked = true;
         await command.run(SETTLE_KICK, { timeoutMs: 60_000, signal, maxOutputBytes: 4096 }).catch(() => undefined);
-        this.#context.log?.(`boat: sandbox ${sandbox} had not run bb-box-boat-ready ${Math.round(SETTLE_KICK_AFTER_MS / 1000)} s after it answered, so bb-box started it.`);
+        this.#context.log?.(`${this.#logName}: sandbox ${sandbox} had not run bb-box-boat-ready ${Math.round(SETTLE_KICK_AFTER_MS / 1000)} s after it answered, so bb-box started it.`);
       }
       await this.#sleep(250, signal);
     }
@@ -1437,7 +1442,7 @@ export class BoatBackend implements Backend {
       if (!kicked && this.#now() >= kickAt) {
         kicked = true;
         await command.run(IDENTITY_KICK, { timeoutMs: 60_000, signal, maxOutputBytes: 4096 }).catch(() => undefined);
-        this.#context.log?.(`boat: sandbox ${sandbox} had not run its identity check ${Math.round(IDENTITY_KICK_AFTER_MS / 1000)} s after it answered, so bb-box started it.`);
+        this.#context.log?.(`${this.#logName}: sandbox ${sandbox} had not run its identity check ${Math.round(IDENTITY_KICK_AFTER_MS / 1000)} s after it answered, so bb-box started it.`);
       }
       await this.#sleep(250, signal);
     }
@@ -1449,7 +1454,7 @@ export class BoatBackend implements Backend {
       await this.#api.waitFor(sandbox, (each) => each.hydrated, deadline, signal);
     } catch (error) {
       if (!(error instanceof BoatError && error.kind === "busy")) throw error;
-      this.#context.log?.(`boat: sandbox ${sandbox} was still restoring its template ${Math.round(RESTORE_WAIT_MS / 1000)} s on, so bb-box goes on before boat has finished, and Cua Driver or the device server may not answer until they start again.`);
+      this.#context.log?.(`${this.#logName}: sandbox ${sandbox} was still restoring its template ${Math.round(RESTORE_WAIT_MS / 1000)} s on, so bb-box goes on before boat has finished, and Cua Driver or the device server may not answer until they start again.`);
     }
   }
 
