@@ -109,6 +109,7 @@ await conformance({
   // The backend's search for a free VMID starts where its storage says.
   reuse: async (storage, ref) => storage.set("next-vmid", Number(ref)),
   skip: {
+    fork: "the fake SSH runs commands on the test machine, which has no identity reset",
     arch: "the fake SSH runs commands on the test machine",
     docker: "the fake SSH runs commands on the test machine",
     display: "the fake Proxmox has no desktop to stream",
@@ -129,6 +130,7 @@ await conformance({
   storage: new MemoryStorage(),
   create: (storage, installId) => new TartBackend(tart, testContext(storage, installId), { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER, fillQuietMs: 0 }),
   skip: {
+    fork: "the fake SSH runs commands on the test machine, which has no identity reset",
     arch: "the fake SSH runs commands on the test machine",
     display: "the fake Mac has no VNC server to stream",
     "computer-use": "the fake VM has no computer-use driver",
@@ -149,6 +151,7 @@ await conformance({
   create: (storage, installId) =>
     new TartBackend(tart, testContext(storage, installId, { warm: { macos: 1, "macos-desktop": 1 } }), { sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, macHelper: FAKE_MAC_HELPER }),
   skip: {
+    fork: "the fake SSH runs commands on the test machine, which has no identity reset",
     arch: "the fake SSH runs commands on the test machine",
     display: "the fake Mac has no VNC server to stream",
     "computer-use": "the fake VM has no computer-use driver",
@@ -168,6 +171,7 @@ await conformance({
   create: (storage, installId) => new DockerBackend(dockerSettings, testContext(storage, installId), { binary: docker.binary, readyTimeoutMs: 20_000, selkiesLauncher: "/bin/sh" }),
   bb: fakeBb(),
   skip: {
+    fork: "the fake docker runs commands on the test machine, which has no identity reset; test/docker-forks.test.ts checks forks",
     arch: "the fake docker runs commands on the test machine",
     docker: "the fake docker runs commands on the test machine",
     display: "the fake Docker host has no desktop to stream",
@@ -186,6 +190,7 @@ await conformance({
   create: (storage, installId) => hetzner.backend(hetznerConfig(), storage, installId),
   bb: fakeBb(),
   skip: {
+    fork: "the fake docker runs commands on the test machine, which has no identity reset",
     arch: "the fake docker runs commands on the test machine",
     docker: "the fake docker runs commands on the test machine",
     display: "the fake Docker host has no desktop to stream",
@@ -206,6 +211,7 @@ await conformance({
   create: (storage, installId) => new MsbBackend(msbSettings, testContext(storage, installId), { dir: msb.dir, script: msb.script, readyTimeoutMs: 20_000 }),
   bb: fakeBb(),
   skip: {
+    fork: "the fake msb runs commands on the test machine, which has no identity reset",
     arch: "the fake msb runs commands on the test machine",
     docker: "the fake msb runs commands on the test machine",
     display: "the fake msb host has no desktop to stream",

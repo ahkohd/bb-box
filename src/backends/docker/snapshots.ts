@@ -8,6 +8,9 @@ export const SNAPSHOT_INSTALL = "bbbox.snapshot.install";
 export const SNAPSHOT_BOX = "bbbox.snapshot.box";
 export const SNAPSHOT_BOX_NAME = "bbbox.snapshot.box-name";
 export const SNAPSHOT_THREAD = "bbbox.snapshot.thread";
+export const COPY_INTO = "bbbox.snapshot.copy-into";
+export const COPY_FOR = "bbbox.snapshot.copy-for";
+export const COPY_OP = "bbbox.snapshot.copy-op";
 export const KEPT_REPOSITORY = "bbbox-kept";
 export const LAYERS_REFUSED_FROM = 120;
 export const RESTORE_START_ABOUT_MS = 5_000;
@@ -79,6 +82,10 @@ export function keepTagsToRemove(tags: readonly string[], install: string, id: s
   if (kept.length <= 1) return [];
   const latest = latestKeepTag(kept);
   return kept.filter((tag) => tag !== latest);
+}
+
+export function copyIntoName(volume: string): string {
+  return `${volume}-copy`;
 }
 
 export function restoredName(boxContainer: string, suffix: string): string {

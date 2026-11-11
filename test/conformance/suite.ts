@@ -35,12 +35,15 @@ import {
   type MachineNature,
   type ReleaseHooks,
   type SnapshotRef,
+  type TaskOutcome,
+  type TaskRef,
 } from "../../src/backends/types.ts";
 import { KIND_INFO } from "../../src/backends/kinds.ts";
 import { endOfUtcDay, newSnapshotId } from "../../src/core/snapshot.ts";
+import { forkVerdict, readForkSafe, readForkSeen, writeIdentityMarker, type ForkExpected, type ForkVerdict, type IdentitySystem } from "../../src/core/identity.ts";
 import { gpuWhenNotAsked } from "../../src/core/gpu.ts";
 import { displayShows } from "../../src/backends/types.ts";
-import type { BoxRecord } from "../../src/core/boxes.ts";
+import { newBoxId, type BoxRecord } from "../../src/core/boxes.ts";
 import { deviceModel, isTestOffer, type DevicePlatform } from "../../src/core/device.ts";
 import { placementOf, type SlotKind } from "../../src/core/device-host.ts";
 import { parseDeviceOffer } from "../../src/core/device-parse.ts";
@@ -49,6 +52,9 @@ import { DeviceLink } from "../../src/core/device-link.ts";
 import { withTestDevice } from "../../src/backends/index.ts";
 import { DeviceServers } from "../../src/plugin/devices.ts";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Computer } from "../../src/core/computer.ts";
 import { DESKTOP_EXITS, command as inBox, driverCommand } from "../../src/core/in-box.ts";
 import { McpSession } from "../../src/core/mcp.ts";
@@ -58,6 +64,9 @@ import { quote } from "../../src/transports/process.ts";
 import { openRoute } from "../../src/transports/route.ts";
 import type { ByteChannel, CommandTransport, DisplaySize, RunResult } from "../../src/transports/types.ts";
 import { MemoryStorage } from "../helpers.ts";
+import { FileStorage } from "./file-storage.ts";
+import { interruptStep, type ElsewhereBackend, type StepSeen } from "./interrupt.ts";
+import type { RestoreCopyProbe } from "./restore-copy-probe.ts";
 
 export type ConformanceCheck =
   | "arch"
@@ -83,9 +92,16 @@ export type ConformanceCheck =
   | "test-device"
   | "device"
   | "keep"
-  | "snapshots";
+  | "snapshots"
+  | "fork"
+  | "snapshot-recovery";
 
 const KEEP_DAY = "2099-12-30";
+const SLOW_TAKE_MIB = 1024;
+const SLOW_TAKE_FILE = "conformance-slow-take.bin";
+const KILL_AFTER_TASK_MS = 2_000;
+const KILL_AFTER_CLAIM_MS = 1_000;
+const RESTORE_KILL_TRIES = 3;
 const LATER_KEEP_DAY = "2099-12-31";
 
 /** A new Simulator device's first boot is slow (047). */
@@ -141,6 +157,8 @@ export interface ConformanceOptions {
   /** For each step that talks to the backend. */
   readonly timeoutMs?: number;
   readonly testDevice?: boolean;
+  readonly elsewhere?: ElsewhereBackend;
+  readonly restoreCopy?: RestoreCopyProbe;
 }
 
 const THREAD = "thr_conformance";
@@ -169,7 +187,7 @@ export function sizeOf(kind: string): MachineSize {
 
 export function identity(kind: string, size = sizeOf(kind)): BoxIdentity {
   const suffix = randomBytes(3).toString("hex");
-  return { boxId: `box_conformance_${suffix}`, threadId: THREAD, name: `conformance-${suffix}`, kind, createdAt: Date.now(), size: { ...size, gpu: gpuWhenNotAsked(kind) } };
+  return { boxId: newBoxId((bytes) => randomBytes(bytes)), threadId: THREAD, name: `conformance-${suffix}`, kind, createdAt: Date.now(), size: { ...size, gpu: gpuWhenNotAsked(kind) } };
 }
 
 /** Checks a size a guest reports, which may be null when the backend cannot read it. */
@@ -258,6 +276,29 @@ async function until(check: () => Promise<boolean>, timeoutMs: number, what: str
   while (!(await check())) {
     if (Date.now() > deadline) assert.fail(`${what} within ${timeoutMs} ms`);
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+const FORK_WAIT_MS = 60_000;
+
+async function forkHandedOver(backend: Backend, fork: Guest, kind: string, expected: ForkExpected, system: IdentitySystem, signal: () => AbortSignal): Promise<ForkVerdict> {
+  const command = backend.forkCheckCommand ? await backend.forkCheckCommand(fork, signal()) : (await backend.transports(fork, kind)).command;
+  assert.ok(command, "the fork runs commands");
+  const deadline = Date.now() + FORK_WAIT_MS;
+  for (;;) {
+    const verdict = forkVerdict(await readForkSeen(command, signal(), system), expected);
+    if (verdict.is !== "wait" || Date.now() > deadline) return verdict;
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+}
+
+async function settled(backend: Backend, task: TaskRef, timeoutMs: number, signal: () => AbortSignal): Promise<TaskOutcome> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const outcome = await backend.providerTask!(task, signal());
+    if (outcome.state !== "running") return outcome;
+    if (Date.now() > deadline) assert.fail(`the new instance settles the take within ${timeoutMs} ms`);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
 }
 
@@ -1043,6 +1084,179 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             others.push(fresh);
             assert.equal(await keptUntil(fresh, id), endOfUtcDay(KEEP_DAY), "the provider holds the date, not the backend's storage");
             kept = ref;
+          });
+
+          const source = backend.identitySource?.(kind.id) ?? null;
+          const identitySystem: IdentitySystem = capabilities.os === "macos" ? "macos" : "linux";
+          const forks =
+            skip.fork ??
+            (offer?.fork !== "copy" || !backend.snapshot || !backend.forkSnapshot || !backend.armFork || !backend.start || !backend.guestIdentity || !backend.heldSnapshots || !backend.deleteSnapshot
+              ? "the kind forks no snapshot into a new box"
+              : !posix
+                ? "the fork check reads Linux and macOS only"
+                : !source
+                  ? "the kind names no identity source for its reset"
+                  : false);
+
+          it("forks a snapshot into a new box that resets its identity, and leaves the box alone", { timeout: timeout * 2, skip: forks }, async () => {
+            const { guest, command } = need();
+            const marked = await writeIdentityMarker(command, box.boxId, source!, signal());
+            if (!marked.written) assert.fail(`the box takes no identity marker: ${marked.why}`);
+            const held = await readForkSafe(command, signal(), source, identitySystem);
+            assert.ok(held.version !== null && held.identity, "the box's identity reset is on and its identity can be read");
+            await command.run(`echo fork > "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() });
+
+            const id = newSnapshotId((bytes) => randomBytes(bytes));
+            await backend.snapshot!(guest, { id, box: box.boxId, memory: false, forkSafe: held.version }, quietly, signal());
+            const listed = (await backend.heldSnapshots!(signal())).find((each) => each.id === id);
+            assert.equal(listed?.state, "complete", "the provider lists the snapshot it took, complete");
+            const ref: SnapshotRef = { id, ref: listed.ref, guest: listed.guest };
+
+            const forkBox = identity(kind.id);
+            const made = await backend.forkSnapshot!(ref, forkBox, null, recordingHooks().hooks, signal());
+            outstanding.set(made.ref, made);
+            await backend.armFork!(made, "network", signal());
+            if (backend.startForForkCheck) await backend.startForForkCheck(made, signal());
+            else await backend.start!(made, signal());
+
+            const forked = await forkHandedOver(backend, made, kind.id, {
+              forkMacs: Object.values((await backend.guestIdentity!(made, signal())).macs),
+              forkValue: (await backend.guestIdentity!(made, signal())).value ?? null,
+              sourceMacs: Object.values((await backend.guestIdentity!(guest, signal())).macs),
+              sourceBox: box.boxId,
+              sourceName: box.name,
+              sourceAddresses: guest.address ? [guest.address] : [],
+              freedSourceAddresses: [],
+              ownAddress: backend.addressIsAnEndpoint ? null : made.address,
+              boxAddresses: backend.boxAddresses?.() ?? [],
+              held: held.identity,
+              safeFrom: offer?.forkSafeFrom ?? 1,
+            }, identitySystem, signal);
+            assert.deepEqual(forked, { is: "ready" }, "the fork gave up the box's identity");
+            await backend.armFork!(made, "boot", signal());
+
+            const inFork = (await backend.transports(made, kind.id)).command!;
+            const copied = await inFork.run(`cat "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() });
+            assert.equal(copied.stdout.trim(), "fork", "the fork holds what the box held at the snapshot");
+            const still = await command.run(`cat "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() });
+            assert.equal(still.stdout.trim(), "fork", "the box still answers as itself");
+            const sourceHeld = (await backend.held(signal())).find((other) => other.ref === guest.ref);
+            assert.equal(sourceHeld?.owner?.boxId, box.boxId, "the box keeps its own guest");
+
+            await release(backend, made);
+            await assertReleased(backend, made);
+            await backend.deleteSnapshot!(ref, quietly, signal());
+            assert.equal((await backend.heldSnapshots!(signal())).some((each) => each.id === id), false, "gone once deleted");
+          });
+
+          const recovers =
+            skip["snapshot-recovery"] ??
+            (!options.elsewhere
+              ? "needs a second process that makes the backend, to kill part way through a step"
+              : !posix
+                ? "the recovery checks write their files with Linux and macOS scripts"
+                : restoresAsNewGuest || (backend.providerTask ? false : "the backend reads no tasks of its own"));
+
+          it("recovers a take whose process was killed part way, with a new instance on its storage", { timeout: timeout * 2, skip: recovers }, async () => {
+            const { guest, command } = need();
+            await command.run(`echo before > "$HOME/${SNAPSHOT_FILE}" && head -c ${SLOW_TAKE_MIB}M /dev/urandom > "$HOME/${SLOW_TAKE_FILE}"`, { timeoutMs: 120_000, signal: signal() });
+            const storage = join(mkdtempSync(join(tmpdir(), "bbbox-conformance-")), "storage.json");
+            const id = newSnapshotId((bytes) => randomBytes(bytes));
+
+            const take = { id, box: box.boxId, memory: false, forkSafe: offer?.forkSafeFrom ?? 9 };
+            let taskSeenAt: number | null = null;
+            const partWay = async (seen: StepSeen) => {
+              if (!seen.task) return false;
+              taskSeenAt ??= Date.now();
+              return Date.now() >= taskSeenAt + KILL_AFTER_TASK_MS;
+            };
+            const seen = await interruptStep(options.elsewhere!, storage, CONFORMANCE_INSTALL, { step: "take", guest, take }, partWay, timeout);
+            assert.ok(seen.task, "the take named its task before it changed the box");
+            assert.equal(seen.finished, false, "the take was killed before it finished");
+            console.log(`# ${options.name} ${kind.id}: killed the take with the box's power reading ${await backend.power(guest, signal())}`);
+
+            const restarted = await options.create(new FileStorage(storage), CONFORMANCE_INSTALL);
+            others.push(restarted);
+            const outcome = await settled(restarted, seen.task, timeout, signal);
+            assert.ok(outcome.state === "ok" || outcome.state === "failed", `the take ends, not ${JSON.stringify(outcome)}`);
+            console.log(`# ${options.name} ${kind.id}: the killed take settled as ${outcome.state === "ok" ? "a complete snapshot" : "failed, its partial copy removed"}`);
+
+            assert.equal(await backend.power(guest, signal()), "running", "the box runs again");
+            const now = await command.run(`cat "$HOME/${SNAPSHOT_FILE}"; rm -f "$HOME/${SLOW_TAKE_FILE}"`, { timeoutMs: 30_000, signal: signal() });
+            assert.equal(now.stdout.trim(), "before", "the box holds what it held");
+            const listed = (await backend.heldSnapshots!(signal())).filter((held) => held.id === id);
+            if (outcome.state === "failed") assert.deepEqual(listed, [], "nothing of the interrupted take is left");
+            else {
+              assert.equal(listed[0]?.state, "complete", "a take that finished is listed complete");
+              await backend.deleteSnapshot!({ id, ref: listed[0].ref, guest: listed[0].guest }, quietly, signal());
+            }
+          });
+
+          const undoARestoreThatFinished = async (storage: string, claimed: Guest, guest: Guest) => {
+            const fromItsStorage = await options.create(new FileStorage(storage), CONFORMANCE_INSTALL);
+            others.push(fromItsStorage);
+            await fromItsStorage.release(claimed, releaseHooks().hooks, signal());
+            await fromItsStorage.start!(guest, signal());
+          };
+
+          const restoreKilledInItsPhase = async (guest: Guest, ref: SnapshotRef) => {
+            const copy = options.restoreCopy;
+            const phase = copy ? "while it copied" : "after it named its new guest";
+            for (let tries = 1; tries <= RESTORE_KILL_TRIES; tries++) {
+              const storage = join(mkdtempSync(join(tmpdir(), "bbbox-conformance-")), "storage.json");
+              let claimedAt: number | null = null;
+              const claimedLongEnough = async (claimed: Guest) => {
+                claimedAt ??= Date.now();
+                return Date.now() >= claimedAt + KILL_AFTER_CLAIM_MS || (await backend.power(claimed, signal())) !== null;
+              };
+              let reached = false;
+              const inItsPhase = async (seen: StepSeen) => {
+                if (!seen.claimed || seen.finished) return false;
+                reached = copy ? await copy.copying(seen.claimed, signal()) : await claimedLongEnough(seen.claimed);
+                return reached;
+              };
+
+              const seen = await interruptStep(options.elsewhere!, storage, CONFORMANCE_INSTALL, { step: "restore", guest, ref, box }, inItsPhase, timeout);
+
+              assert.ok(seen.claimed, "the restore named its new guest before it made it");
+              if (reached && !seen.finished) {
+                const madeWhenKilled = (await backend.power(seen.claimed, signal())) !== null;
+                return { storage, claimed: seen.claimed, phase, tries, madeWhenKilled };
+              }
+              console.log(`# ${options.name} ${kind.id}: the restore finished before the suite could kill it ${phase}; trying again`);
+              await undoARestoreThatFinished(storage, seen.claimed, guest);
+            }
+            return assert.fail(`The restore finished before the suite could kill it ${phase}, ${RESTORE_KILL_TRIES} times.`);
+          };
+
+          it("recovers a restore whose process was killed part way: the part-made guest goes, and the box starts as it was", { timeout: timeout * 2, skip: recovers }, async () => {
+            const { guest, command } = need();
+            const inDockerData = capabilities.features.includes("docker");
+            const asRoot = inDockerData ? "sudo " : "";
+            const slowRestoreFile = inDockerData ? `/var/lib/docker/${SLOW_TAKE_FILE}` : `$HOME/${SLOW_TAKE_FILE}`;
+            await command.run(`echo A > "$HOME/${SNAPSHOT_FILE}" && head -c ${SLOW_TAKE_MIB}M /dev/urandom | ${asRoot}tee "${slowRestoreFile}" >/dev/null`, { timeoutMs: 120_000, signal: signal() });
+            const id = newSnapshotId((bytes) => randomBytes(bytes));
+            await backend.snapshot!(guest, { id, box: box.boxId, memory: false, forkSafe: offer?.forkSafeFrom ?? 9 }, quietly, signal());
+            const listed = (await backend.heldSnapshots!(signal())).find((held) => held.id === id);
+            assert.equal(listed?.state, "complete", "the provider lists the snapshot it took, complete");
+            const ref: SnapshotRef = { id, ref: listed.ref, guest: listed.guest };
+            await command.run(`echo B > "$HOME/${SNAPSHOT_FILE}" && ${asRoot}rm -f "${slowRestoreFile}"`, { timeoutMs: 30_000, signal: signal() });
+            const killed = await restoreKilledInItsPhase(guest, ref);
+            console.log(`# ${options.name} ${kind.id}: the restore was killed ${killed.phase}, try ${killed.tries}, its new guest ${killed.madeWhenKilled ? "made" : "not made yet"}`);
+
+            const fromItsStorage = await options.create(new FileStorage(killed.storage), CONFORMANCE_INSTALL);
+            others.push(fromItsStorage);
+            await fromItsStorage.release(killed.claimed, releaseHooks().hooks, signal());
+            assert.equal(await fromItsStorage.power(killed.claimed, signal()), null, "the part-made guest is gone");
+            if (options.restoreCopy) assert.deepEqual(await options.restoreCopy.leftAfterRelease(killed.claimed, new FileStorage(killed.storage), signal()), [], "nothing of the killed restore's copy is left");
+            await fromItsStorage.start!(guest, signal());
+
+            assert.equal(await backend.power(guest, signal()), "running", "the box runs again");
+            const now = await command.run(`cat "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() });
+            assert.equal(now.stdout.trim(), "B", "the box holds what it held before the restore");
+            const ofTheBox = (await fromItsStorage.held(signal())).filter((other) => other.owner?.boxId === box.boxId).map((other) => other.ref);
+            assert.deepEqual(ofTheBox, [guest.ref], "the box has one guest, its own");
+            await backend.deleteSnapshot!(ref, quietly, signal());
           });
 
           it("a new instance on empty storage with the same install ID names the box's owner", { timeout, skip: skip.recovery ?? false }, async () => {

@@ -125,7 +125,7 @@ export const CHECKS = {
 
   // Docker.
   "docker.snapshots": { name: "Snapshots", from: ["docker"], what: "Docker's image store, the space snapshots need and the disk's use." },
-  "docker.snapshot-leftovers": { name: "Snapshot leftovers", from: ["docker"], what: "Interrupted snapshot tasks and paused boxes waiting for recovery." },
+  "docker.snapshot-leftovers": { name: "Snapshot leftovers", from: ["docker"], what: "Interrupted snapshot tasks and paused boxes waiting for recovery, and Docker volumes a restore's copy left that maintenance could not remove after 3 tries, by name." },
   "docker.kept-snapshots": { name: "Kept snapshots", from: ["docker"], what: "What kept snapshots hold on Docker's disk, and until when. Removing the backend is refused while it holds any snapshot." },
   "docker.snapshot-layers": { name: "Snapshot layers", from: ["docker"], what: "Box images near Docker's layer limit. A take refuses from 120 layers." },
   "docker.cli": { name: "docker CLI", from: ["docker"], what: "The docker CLI runs on BB's server." },

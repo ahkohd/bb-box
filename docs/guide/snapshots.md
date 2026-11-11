@@ -510,7 +510,17 @@ stays as it was taken and can be restored again. Once the new container has star
 deletes the old container and its Docker data. If the new one does not start,
 BB Box deletes it and starts the old one again. If BB Box or BB stops part way,
 its next start finishes the restore or puts the old container back, so the box
-has one container. A restore takes about as long as a take of the box, for its
+has one container. The copy of the Docker data runs as a container of its own,
+named after the new volume with `-copy` on the end, which Docker makes before
+any data moves. BB Box notes each copy before it asks Docker for it. Docker can
+still make that container after BB stops, so a release of the part-made
+container stops and removes its copy, then waits for one Docker may still be
+making, for up to 2 minutes from when it was asked for, and removes that too,
+with any volume it made again. Maintenance removes any copy it finds whose
+restore is not running, and keeps trying to remove a volume such a copy
+made again until it goes. After 3 failed tries, the doctor's Snapshot
+leftovers check names the volume. A release of a box with no copy noted
+removes its Docker volume with no extra step. A restore takes about as long as a take of the box, for its
 undo, plus about 15 seconds for each GB of the snapshot's Docker data and a few
 seconds to start. The box comes back with its programs started afresh: what was
 running and in memory when the snapshot was taken is not there.
