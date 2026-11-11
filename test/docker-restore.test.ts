@@ -1,18 +1,26 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import { DockerBackend } from "../src/backends/docker/backend.ts";
 import { DockerCli } from "../src/backends/docker/cli.ts";
 import { createArgs, labelsOf, type BoxContainerSettings } from "../src/backends/docker/box-container.ts";
 import { commitChanges, snapshotImage } from "../src/backends/docker/snapshots.ts";
-import type { BoxRecord } from "../src/core/boxes.ts";
+import { identity, type BoxRecord } from "../src/core/boxes.ts";
+import type { BackendStorage } from "../src/backends/types.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
 import { fakeDockerHost, dockerConfig, type FakeDockerHost } from "./fake-docker.ts";
 import { MemoryStorage, tempDir, testContext } from "./helpers.ts";
+import { FileStorage } from "./conformance/file-storage.ts";
+import { interruptStep } from "./conformance/interrupt.ts";
 import { COMMAND, THREAD, readyBox, standing, untilHeld, world, type World } from "./snapshot-world.ts";
 
 const RESTORED = /^bbbox-bx[0-9a-z]+-[0-9a-f]{8}$/;
+const MAKES_FAKE_DOCKER_BACKEND = fileURLToPath(new URL("./fake-docker-elsewhere.ts", import.meta.url));
+const COPY_CREATE_SENT = "copy-landing.json";
+const COPY_MAY_LAND = "copy-may-land";
+const COPY_LANDED = "copy-landed";
 
 function dockerWorld(fake: FakeDockerHost): World {
   return world({ markersOn: false, backend: (storage) => new DockerBackend(dockerConfig(), testContext(storage, "test", { id: "fake" }), { binary: fake.binary, readyTimeoutMs: 2_000 }) as never });
@@ -109,15 +117,16 @@ test("Docker kills the box, takes its undo, copies the snapshot's Docker data, m
   const steps = calls.flatMap((args) => {
     if (args[0] === "container" && args[1] === "kill") return ["kill old"];
     if (args[0] === "container" && args[1] === "commit") return ["commit undo"];
-    if (args[0] === "run" && args.some((arg) => arg.startsWith(`${fresh}-docker:`))) return ["copy Docker data"];
+    if (args[0] === "container" && args[1] === "create" && args.includes(`${fresh}-docker:/to`)) return ["copy Docker data"];
+    if (args[0] === "container" && args[1] === "start" && args.includes("--attach")) return [];
     if (args[0] === "container" && args[1] === "create") return ["create new"];
     if (args[0] === "container" && args[1] === "start") return [args.at(-1) === old ? "start old" : "start new"];
     if (args[0] === "container" && args[1] === "rm" && args.includes("--volumes")) return ["remove old"];
     return [];
   });
   assert.deepEqual(steps, ["kill old", "commit undo", "copy Docker data", "create new", "start new", "remove old"]);
-  const create = calls.find((args) => args[0] === "container" && args[1] === "create")!;
-  assert.equal(create[create.indexOf("--name") + 1], fresh);
+  const create = calls.find((args) => args[0] === "container" && args[1] === "create" && args[args.indexOf("--name") + 1] === fresh);
+  assert.ok(create, "the new container is made with its own name");
   assert.equal(create.at(-2), snapshotImage("test", box.id, target.id));
   assert.equal(create[create.indexOf("--restart") + 1], "unless-stopped");
 });
@@ -155,6 +164,63 @@ test("Docker releases a restored container whose Docker data is still being copi
   assert.deepEqual(copiesInto(fake, volume), [], "and so is the copy into it");
   writeFileSync(copyMayFinish, "");
   await restoring;
+});
+
+function volumesOn(fake: FakeDockerHost): Record<string, { readonly Labels: Record<string, string> | null }> {
+  return JSON.parse(readFileSync(join(fake.root, "volumes.json"), "utf8"));
+}
+
+function dockerOn(fake: FakeDockerHost, storage: BackendStorage): DockerBackend {
+  return new DockerBackend(dockerConfig(), testContext(storage, "test", { id: "fake" }), { binary: fake.binary, readyTimeoutMs: 2_000 });
+}
+
+async function untilTheEngineFinishedTheCopyCreate(fake: FakeDockerHost): Promise<void> {
+  for (let i = 0; i < 1000 && !existsSync(join(fake.root, COPY_LANDED)); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+}
+
+async function restoreKilledWhileTheEngineMakesItsCopy(t: TestContext) {
+  const fake = fakeDockerHost();
+  const { state, box } = await boxWithSnapshotOfA(fake);
+  const [held] = await dockerOn(fake, new MemoryStorage()).heldSnapshots();
+  const ref = { id: held!.id, ref: held!.ref, guest: held!.guest };
+  fake.set({ restoreCopyLandsLate: true });
+  t.after(() => writeFileSync(join(fake.root, COPY_MAY_LAND), ""));
+  const storage = join(tempDir("docker-restore"), "storage.json");
+
+  const step = { step: "restore" as const, guest: box.guest!, ref, box: identity(box, box.size!) };
+  const copyCreateSent = async () => existsSync(join(fake.root, COPY_CREATE_SENT));
+  const seen = await interruptStep({ module: MAKES_FAKE_DOCKER_BACKEND, args: [fake.binary] }, storage, "test", step, copyCreateSent, 30_000);
+  assert.ok(seen.claimed, "the restore named its new guest");
+  const volume = `${seen.claimed.ref}-docker`;
+  assert.ok(volume in volumesOn(fake), "the killed restore left its new guest's Docker volume");
+  return { fake, claimed: seen.claimed, storage, volume };
+}
+
+const KILLS_A_PROCESS_GROUP = { skip: process.platform === "win32" && "kills a process group" };
+
+test("Docker releases a restore killed while the engine still made its copy, and removes the copy and the volume it made again", KILLS_A_PROCESS_GROUP, async (t) => {
+  const { fake, claimed, storage, volume } = await restoreKilledWhileTheEngineMakesItsCopy(t);
+
+  await dockerOn(fake, new FileStorage(storage)).release(claimed, { resetting: async () => {}, timing: () => {} });
+  await untilTheEngineFinishedTheCopyCreate(fake);
+
+  assert.equal(existsSync(join(fake.root, COPY_LANDED)), true, "the engine made the copy after the release began");
+  assert.deepEqual(copiesInto(fake, volume), [], "no copy into the released guest's volume is left");
+  assert.equal(volume in volumesOn(fake), false, "nor the volume the late copy made again");
+});
+
+test("Docker's maintenance removes a copy the engine made after its restore was killed and released, and the volume it made again", KILLS_A_PROCESS_GROUP, async (t) => {
+  const { fake, claimed, volume } = await restoreKilledWhileTheEngineMakesItsCopy(t);
+  const withoutTheRestoresStorage = dockerOn(fake, new MemoryStorage());
+  await withoutTheRestoresStorage.release(claimed, { resetting: async () => {}, timing: () => {} });
+  await untilTheEngineFinishedTheCopyCreate(fake);
+  assert.equal(copiesInto(fake, volume).length, 1, "the late copy came after the release");
+  assert.deepEqual(volumesOn(fake)[volume]?.Labels ?? null, null, "and made its volume again, without labels");
+
+  await withoutTheRestoresStorage.maintain();
+
+  assert.deepEqual(copiesInto(fake, volume), [], "maintenance removed the copy");
+  assert.equal(volume in volumesOn(fake), false, "and the volume it made again");
 });
 
 test("Docker puts the old container back when the new one does not start, and removes the new one with its volume", async () => {

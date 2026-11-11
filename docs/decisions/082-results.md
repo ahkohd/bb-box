@@ -343,10 +343,11 @@ ended. The SSH engine and the containerd runs passed, because their copies
 had ended by then.
 
 The copy now runs as a container named after the volume it fills, with
-`-copy` on the end, and labelled with the install and that volume. Before
-it removes a box's Docker volume, at a release or at maintenance, Docker
-stops that install's copy into it. `test/docker-restore.test.ts` releases
-a restored container while the fake Docker host holds its copy. It failed
+`-copy` on the end, and labelled with the install, that volume, the
+container it is for and its own operation ID. Before it removes a box's
+Docker volume, at a release or at maintenance, BB Box removes that
+install's copies into it. `test/docker-restore.test.ts` releases a
+restored container while the fake Docker host holds its copy. It failed
 with the same "volume is in use" before the change, and passes with it.
 The fake Docker host now shows a running copy as a container that holds
 its volumes, as Docker does.
@@ -356,27 +357,82 @@ which the suite requires of every warning. It now says to wait for
 maintenance and what maintenance does. `test/docker-snapshots.test.ts`
 failed on the missing fix before the change.
 
-### Still open
+### A copy Docker made after its restore was killed
 
-On the local containerd engine the killed restore failed twice with "volume
-is in use" for the new guest's Docker volume, after the copy was named.
-The process the suite kills does not take the `docker` commands it started
-with it: BB Box starts them through its spawn helper, so the copy's
-`docker run` carries on as an orphan. When the new instance released the
-guest within milliseconds of the kill, that `docker run` had not yet made
-its copy container, so there was none to stop; the container appeared
-before the volume removal, which then failed. In one run, where the
-removal came first, `docker run` made the volume again, without labels,
-and its container stayed in Docker's Created state. Each time, the run's
-own leftovers were removed by hand.
+The first round left one case open. On the local containerd engine the
+killed restore failed twice with "volume is in use" for the new guest's
+Docker volume. The suite kills the restore's process group, its `docker`
+clients with it, but Docker finishes a request it has already received.
+On the containerd store, making the copy's container from the snapshot's
+image can take a moment, so the container appeared after the new
+instance's release had begun: after it looked for a copy, and in one run
+after it had removed the volume. A container made then makes its volumes
+again, as Docker makes any named volume a container needs, without
+labels, and that one stayed in Docker's Created state.
 
-BB takes seconds to start again after it stops, by which time an orphaned
-`docker run` has made its container, which a release now stops. The
-suite's recovery is quicker than BB's. A fix is to look for the copy
-again when a removal finds its volume in use, and to make the copy's
-container with `docker container create` and a volume that must exist.
-It needs a fake Docker host that can make a container part way through a
-release, so it is left for a later change.
+A copy is now fenced by its operation:
+
+- BB Box writes a note of the copy, with its own operation ID and a time
+  by which Docker must have made it, 2 minutes from the request, before it
+  asks Docker for anything.
+- It makes the copy's container with `docker container create`, then runs
+  it with `docker container start --attach`. The container either exists
+  or does not, and Docker starts it only when BB Box asks, once the
+  create has returned.
+- It removes the container and the note once the copy ends, whether it
+  copied or failed. A request whose client was killed or timed out leaves
+  the note.
+- A release removes every copy into the box's Docker volume, by its
+  labels, and waits for Docker to remove it. It then removes the volume,
+  and tries again, up to 5 times a second apart, while the volume is in
+  use. While the note says Docker may still make that copy, it looks again
+  every 250 ms. When the copy appears, it removes it and the volume it
+  made again. A volume with no labels is removed only when such a note or
+  copy names it.
+- Maintenance removes any copy whose restore this BB Box is not running,
+  with the volume it made again, and drops a note once its copy has been
+  removed or its time has passed. It does not wait for one.
+
+Two tests in `test/docker-restore.test.ts` run a restore in a second
+process against the fake Docker host and kill its process group while the
+fake engine is still making the copy's container. The engine makes it,
+and the volume again, only once the new instance's release has removed
+the volume, as in the failed runs. One releases the guest with the
+restore's own storage, the other without it and then runs maintenance.
+Both failed before the change, with the copy left, and pass with it.
+
+In the fifth local containerd run below, Docker's events show the race
+that failed before, and the release clearing it:
+
+| Time (s) | Event |
+| --- | --- |
+| 0.000 | The killed restore's process made the new guest's Docker volume |
+| 0.219 | The new instance's release removed the volume |
+| 0.273 | Docker, finishing the killed process's request, made the volume again |
+| 0.339 | Docker made the copy's container |
+| 0.550 | The release removed the copy's container |
+| 0.579 | The release removed the volume it made again |
+
+The suite kills a restore 1 s after it names its new guest, which in most
+runs falls before the copy is asked for. To cover the whole window, a
+script killed a restore of a box with 1 GiB of Docker data at set delays
+after its new volume appeared, on the local containerd engine, then
+released the guest with a new instance on the restore's storage:
+
+| Kill after the volume appeared | The copy when killed | Release | Left after the release |
+| --- | --- | --- | --- |
+| 8 ms | not made yet | 0.9 s | nothing |
+| 106 ms | created, not started | 1.2 s | nothing |
+| 107 ms | created, not started | 0.8 s | nothing |
+| 106 ms | not made yet | 1.7 s | nothing |
+| 206 ms | created, not started | 1.7 s | nothing |
+| 410 ms | running | 1.9 s | nothing |
+| 808 ms | running | 2.6 s | nothing |
+| 1,517 ms | running | 2.6 s | nothing |
+
+"Nothing" means no copy container, no volume of the guest and no note
+left. The copies that were not made yet when the restore was killed were
+made by Docker after the kill, and removed by the release.
 
 ### Running it again
 

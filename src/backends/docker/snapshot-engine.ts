@@ -4,7 +4,7 @@ import { endOfUtcDay, gbWords, utcDay } from "../../core/snapshot.ts";
 import { NO_PAUSE, SnapshotFailed, type BoxOwner, type SnapshotStorage, type BackendContext, type DoctorCheck, type Guest, type HeldSnapshot, type MachineSize, type SnapshotHooks, type SnapshotPlan, type SnapshotRef, type SnapshotTake, type SnapshotTaken, type TaskOutcome, type TaskRef } from "../types.ts";
 import type { z } from "zod";
 import { DockerCli, LABELS, snapshotContainersSchema, snapshotImagesSchema, snapshotVolumesSchema, snapshotStoreSchema } from "./cli.ts";
-import { commitChanges, COPY_INTO, copyIntoName, FORK_HOLD_MISSING, holdsForks, keepTagsToRemove, keptTag, keptTagsOf, keptUntilWith, KILL_ABOUT_MS, type KeepChange, layerRefusal, mountRefusal, pauseEstimate, pausedTooLong, restoreAboutMs, retainedOnEngine, sizeFromLabels, sizeTakenAt, snapshotImage, snapshotLabels, snapshotVolume, SNAPSHOT_BOX_NAME, SNAPSHOT_INSTALL, SNAPSHOT_THREAD, takePause, type ImageStore, type RetainedOnEngine } from "./snapshots.ts";
+import { commitChanges, FORK_HOLD_MISSING, holdsForks, keepTagsToRemove, keptTag, keptTagsOf, keptUntilWith, KILL_ABOUT_MS, type KeepChange, layerRefusal, mountRefusal, pauseEstimate, pausedTooLong, restoreAboutMs, retainedOnEngine, sizeFromLabels, sizeTakenAt, snapshotImage, snapshotLabels, snapshotVolume, SNAPSHOT_BOX_NAME, SNAPSHOT_INSTALL, SNAPSHOT_THREAD, takePause, type ImageStore, type RetainedOnEngine } from "./snapshots.ts";
 
 interface TakeState {
   readonly id: string;
@@ -253,17 +253,6 @@ export class DockerSnapshotEngine {
 
   async #retainedIfKept(snapshot: RestorableSnapshot, signal?: AbortSignal): Promise<RetainedOnEngine | null> {
     return this.#keepOffBecause ? null : this.#retained(snapshot.image, signal);
-  }
-
-  async copyDockerData(snapshot: RestorableSnapshot, into: string, signal?: AbortSignal): Promise<void> {
-    if (!snapshot.volume) return;
-    await this.#cli.ok([
-      "run", "--rm", "--name", copyIntoName(into), "--pull", "never", "--privileged", "--network", "none",
-      "--label", `${SNAPSHOT_INSTALL}=${this.#context.installId}`, "--label", `bbbox.snapshot=${snapshot.id}`, "--label", `${COPY_INTO}=${into}`,
-      "--entrypoint", "cp",
-      "--volume", `${snapshot.volume}:/from:ro`, "--volume", `${into}:/to`,
-      snapshot.image, "-a", "--reflink=auto", "/from/.", "/to/",
-    ], { signal, timeoutMs: 15 * 60_000 });
   }
 
   #key(id: string): string { return `docker-snapshot-take:${id}`; }

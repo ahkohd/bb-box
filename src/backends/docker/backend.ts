@@ -18,7 +18,8 @@
 //   one whose labels name this install and the box (018).
 
 import { DockerSnapshotEngine, type RestorableSnapshot } from "./snapshot-engine.ts";
-import { COPY_INTO, copyIntoName, dockerOffer, FORK_HOLD_MISSING, isBoxContainerName, restoredName, SNAPSHOT_INSTALL } from "./snapshots.ts";
+import { dockerOffer, FORK_HOLD_MISSING, isBoxContainerName, restoredName } from "./snapshots.ts";
+import { RestoreCopies } from "./restore-copies.ts";
 import type { CopyHooks, ForkArming, GuestIdentity, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
@@ -27,6 +28,7 @@ import { randomBytes } from "node:crypto";
 import { hostname as localHostname } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { setTimeout as pause } from "node:timers/promises";
 import { LEFT_TO_STREAM_SERVER, MIN_DESKTOP, type BoxPointer, type Display, type DisplaySize } from "../../transports/types.ts";
 import {
   type GuestOs,
@@ -76,7 +78,7 @@ import {
 import { sizesCheck } from "../fit.ts";
 import { endpointOf } from "../../host/relay.ts";
 import { ATTACH_PING, forwarderReason, isLocalhost, readAfterHalfClose } from "./attach.ts";
-import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo } from "./cli.ts";
+import { DockerCli, LABELS, NO_SUCH, abortable, sshReuse, type ContainerInfo, type DockerInfo, type DockerResult } from "./cli.ts";
 import { BOX_START, boxVolumeName, createArgs, dockerVolumeCreateArgs, dockerVolumesOfArgs, hostnameOf, VOLUME_OF, type FirstStart } from "./box-container.ts";
 import { containerLxcfsProbeArgs, lxcfsFromContainerProbe, lxcfsFromProbe, lxcfsProbeArgs, type LxcfsOnHost } from "./lxcfs.ts";
 import { allotCpus, cpusBothAllow, cpusToPinTo, daemonCpusFromRefusal, formatCpuList, hostCpusFromProbe, movesOntoFreeCpus, resizeCpus, type CpuList } from "./cpus.ts";
@@ -156,6 +158,13 @@ const MiB_PER_GiB = 1024;
 /** Statuses in which a container holds its memory. */
 const ACTIVE = new Set(["running", "paused", "restarting"]);
 const HOST_CPUS_KEPT_FOR_MS = 10 * 60_000;
+const VOLUME_IN_USE_TRIES = 5;
+const VOLUME_IN_USE_PAUSE_MS = 1_000;
+const LATE_COPY_POLL_MS = 250;
+const VOLUME_IN_USE = /volume is in use/i;
+
+type LateCopies = "waited-for" | "left-to-maintenance";
+
 const PROBES_REFRESHED_AFTER_MS = 6 * 60_000;
 const CPUS_NOT_AVAILABLE = /Requested CPUs are not available|for cpuset cpus/i;
 
@@ -629,6 +638,7 @@ export class DockerBackend implements Backend {
   #lastProbed: readonly ProbedCard[] | null = null;
 
   readonly #snapshots: DockerSnapshotEngine;
+  readonly #copies: RestoreCopies;
 
   constructor(config: DockerConfig, context: BackendContext, options: DockerBackendOptions = {}) {
     this.id = context.id;
@@ -650,6 +660,7 @@ export class DockerBackend implements Backend {
         })
       : new DockerCli(config.host, options.binary));
     this.#snapshots = new DockerSnapshotEngine(this.#cli, context, () => this.#now(), options.keepOffBecause ?? null);
+    this.#copies = new RestoreCopies(this.#cli, context, () => this.#now());
     void this.#recallName();
   }
 
@@ -1222,6 +1233,8 @@ export class DockerBackend implements Backend {
         }
       }
 
+      await this.#copies.sweep(new Set(state.placing.map((placing) => placing.name)), (volume) => this.#dropVolumeMadeAgain(volume, signal), signal)
+        .catch((error) => this.#context.logError("removing copies of snapshots' Docker data", error));
       await this.#removeOrphanVolumes(state, signal);
     }, signal);
   }
@@ -1661,7 +1674,7 @@ export class DockerBackend implements Backend {
     const dockerVolume = privileged ? boxVolumeName(name) : null;
     if (dockerVolume) {
       await this.#ensureDockerVolume(name, dockerVolume, signal);
-      await this.#snapshots.copyDockerData(snapshot, dockerVolume, signal);
+      await this.#copies.copy(snapshot, dockerVolume, name, signal);
     }
 
     await this.#cli.ok(
@@ -2545,20 +2558,48 @@ export class DockerBackend implements Backend {
     return labels;
   }
 
-  async #dropDockerVolumeIfUnused(volume: string, containerName: string, signal?: AbortSignal, knownLabels?: Readonly<Record<string, string>>): Promise<void> {
+  async #dropDockerVolumeIfUnused(volume: string, containerName: string, signal?: AbortSignal, knownLabels?: Readonly<Record<string, string>>, lateCopies: LateCopies = "waited-for"): Promise<void> {
     const labels = knownLabels ?? await this.#dockerVolumeLabels(volume, signal);
-    if (!labels) return;
-    this.#requireOwnVolume(volume, containerName, labels);
-    await this.#stopCopyInto(volume, signal);
-    const result = await this.#cli.run(["volume", "rm", volume], { timeoutMs: 60_000, signal });
-    if (result.exitCode !== 0 && !/no such volume/i.test(result.stderr)) throw this.#cli.error("docker volume rm", result);
+    const fence = await this.#copies.fenceOf(volume);
+    if (!labels && !fence) return;
+    if (labels && !(fence && !Object.keys(labels).length)) this.#requireOwnVolume(volume, containerName, labels);
+
+    const removedOps = new Set<string>();
+    let inUseTries = 0;
+    for (;;) {
+      for (const op of await this.#copies.removeCopiesInto(volume, signal)) removedOps.add(op);
+      const inUse = await this.#removeVolumeOrSayInUse(volume, containerName, Boolean(fence) || removedOps.size > 0, signal);
+      if (inUse) {
+        if (++inUseTries >= VOLUME_IN_USE_TRIES) throw this.#cli.error("docker volume rm", inUse);
+        await pause(VOLUME_IN_USE_PAUSE_MS, undefined, { signal });
+        continue;
+      }
+
+      if (!fence) return;
+      const mayStillAppear = this.#copies.mayStillAppear(fence, removedOps);
+      if (!mayStillAppear) return this.#copies.settle(fence);
+      if (lateCopies === "left-to-maintenance") return;
+      await pause(LATE_COPY_POLL_MS, undefined, { signal });
+    }
   }
 
-  async #stopCopyInto(volume: string, signal?: AbortSignal): Promise<void> {
-    const [copy] = await this.#cli.inspect([copyIntoName(volume)], signal);
-    if (!copy || copy.labels[SNAPSHOT_INSTALL] !== this.#context.installId || copy.labels[COPY_INTO] !== volume) return;
-    const result = await this.#cli.run(["container", "rm", "--force", copy.id], { timeoutMs: 60_000, signal });
-    if (result.exitCode !== 0 && !NO_SUCH.test(result.stderr) && !/already in progress/i.test(result.stderr)) throw this.#cli.error("docker container rm", result);
+  async #removeVolumeOrSayInUse(volume: string, containerName: string, aCopyMayHaveMadeIt: boolean, signal?: AbortSignal): Promise<DockerResult | null> {
+    const labels = await this.#dockerVolumeLabels(volume, signal);
+    if (!labels) return null;
+    const madeAgainByCopy = aCopyMayHaveMadeIt && !Object.keys(labels).length;
+    if (!madeAgainByCopy) this.#requireOwnVolume(volume, containerName, labels);
+
+    const result = await this.#cli.run(["volume", "rm", volume], { timeoutMs: 60_000, signal });
+    if (result.exitCode === 0 || /no such volume/i.test(result.stderr)) return null;
+    if (VOLUME_IN_USE.test(result.stderr)) return result;
+    throw this.#cli.error("docker volume rm", result);
+  }
+
+  async #dropVolumeMadeAgain(volume: string, signal?: AbortSignal): Promise<void> {
+    const labels = await this.#dockerVolumeLabels(volume, signal);
+    if (!labels || Object.keys(labels).length) return;
+    const result = await this.#cli.run(["volume", "rm", volume], { timeoutMs: 60_000, signal });
+    if (result.exitCode !== 0 && !/no such volume/i.test(result.stderr)) throw this.#cli.error("docker volume rm", result);
   }
 
   async #removeOrphanVolumes(state: HostState, signal?: AbortSignal): Promise<void> {
@@ -2571,7 +2612,7 @@ export class DockerBackend implements Backend {
         if (!name || labels?.[LABELS.install] !== this.#context.installId || making.has(name)) continue;
         const containers = await this.#cli.inspect([name], signal);
         if (containers.length) continue;
-        await this.#dropDockerVolumeIfUnused(volume, name, signal, labels);
+        await this.#dropDockerVolumeIfUnused(volume, name, signal, labels, "left-to-maintenance");
       } catch (error) {
         this.#context.logError(`removing orphan Docker volume ${volume}`, error);
       }
@@ -2586,9 +2627,10 @@ export class DockerBackend implements Backend {
       .split("\n")
       .map((line) => line.trim())
       .filter((name) => /^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(name));
-    if (!names.length) return;
-
     for (const name of names) await this.#dropDockerVolumeIfUnused(name, containerName, signal);
+
+    const copiedInto = boxVolumeName(containerName);
+    if (!names.includes(copiedInto) && await this.#copies.fenceOf(copiedInto)) await this.#dropDockerVolumeIfUnused(copiedInto, containerName, signal);
   }
 
   /** The network bb-box keeps its boxes on, made the first time, on which they cannot reach each other. */
