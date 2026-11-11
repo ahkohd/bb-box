@@ -323,7 +323,7 @@ VNC viewer on the Mac, at the address the script prints.
 | `--edition`, `--product-key` | `Windows 11 Pro`, Microsoft's generic key for it | The edition to install, and its key. The generic key installs without activating |
 | `--reserve-gib` | 50 | The disk space the build leaves free. It stops rather than leave less |
 | `--delete-iso` | off | Delete the ISO once Setup has copied Windows from it |
-| `--replace` | off | Build an image of that name again. Boxes made from the old build keep it |
+| `--replace` | off | Build an image of that name again. Boxes made from the old build keep it, and it stays as the rollback. The new build waits up to 10 minutes for a restore or image refresh on the Mac to end before it becomes current |
 | `--keep` | off | Keep a failed build's directory, to boot and look at |
 
 ### 4. Configure bb-box
@@ -516,8 +516,11 @@ snapshot. Nothing is installed for them on the Mac; they use the Mac's
   build while a VM, a snapshot or a restore cut short stands on it, and
   every build when it cannot read a VM's or snapshot's `config`. A restore
   whose build is gone anyway is refused and says so. Restores, image
-  refreshes and the removal of builds take turns through a lock on
+  refreshes, the removal of builds and `prepare-windows-image.sh`'s
+  publication of a build take turns through a lock on
   `~/.bb-box/turn.lock`, held with Perl's `flock`, which macOS includes.
+  A refresh keeps any install's build until that install makes it current
+  or removes it, and never removes a build still being made.
   Do not delete older builds by hand: a snapshot may stand on one no VM
   uses. `~/.tart/vms` must be
   on the same volume as `~/.bb-box`, as the clones need, and bb-box makes

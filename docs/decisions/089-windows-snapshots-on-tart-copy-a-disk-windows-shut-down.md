@@ -53,9 +53,31 @@ identity reset in bb-box, so a copy must never come up beside its source.
   `~/.bb-box/turn.lock`, held with `flock` through the shell's own file
   descriptor. The kernel lets one holder have it at a time and frees it when
   the last process holding the descriptor ends, the shell's children
-  included, so no lock is ever cleared by hand. A task waits at most 60 s
-  for its turn, then refuses and says to try again; one that cannot open the
-  lock refuses at once.
+  included, so no lock is ever cleared by hand. A task tries for its turn
+  600 times, 0.1 s apart, then refuses and says to try again: about 60 s on
+  Linux and 66 s on a macOS 27 VM, where each pause runs a little long. One
+  that cannot open the lock refuses at once.
+- The shell opens the lock with a plain `exec 9>>`, once a subshell has
+  shown that the file opens. `command exec` would keep a failed open from
+  ending the script, but macOS's `/bin/sh`, bash 3.2.57, crashes or spins
+  after `command exec` opens a descriptor in a function: when a calling
+  function returns, or when the script exits.
+- The operator's `prepare-windows-image.sh` takes the same turn to publish
+  its build: it moves the build into place, points `rollback` at the build
+  that was current and `current` at the new one, all in its turn. It waits
+  up to 10 minutes for the turn, saying so, as it has an hour's work to
+  keep.
+- An image refresh prunes only published builds that are neither current
+  nor the rollback, have no owner file, and that nothing stands on. A build
+  with an owner file awaits its install's promotion, whichever install that
+  is, and a folder ending `.new` is a build still being made, by the
+  operator's script or a refresh's capture. Neither is ever pruned.
+- A refresh's build that is never promoted goes through its own install
+  alone: the refresh removes what it made when it fails, and that install's
+  next images run removes builds of its own that a run left, while none of
+  its runs is going. Both remove through the build's removal, which checks
+  the owner and the build's use in its turn. A build of an install that never
+  runs again stays until it is removed by hand.
 - An image refresh takes its turn before it reads which build is current,
   and keeps it through the promotion and the pruning. A removal checks the
   build's owner, that it is not current and that nothing stands on it in
@@ -84,5 +106,12 @@ identity reset in bb-box, so a copy must never come up beside its source.
 - A scan that cannot read a VM's or snapshot's `config` keeps every build
   until it can, so a damaged folder can hold disk until it is fixed or
   removed.
-- Tasks on one Mac wait for each other's turns, which are seconds long: a
-  refresh's pruning, a restore's swap, a recovery.
+- Tasks on one Mac wait for each other's turns: a refresh's pruning, a
+  restore's swap, a recovery, a new VM's overlay, an operator's publication.
+  The wait is bounded, the turn is not: it lasts as long as its work, often
+  seconds and longer when a prune deletes large builds, and a child process
+  that outlives its script keeps the turn until it ends. A task refused
+  after its wait changes nothing and can be tried again once the other has
+  ended.
+- A crash or power cut part way through an operator's build or a refresh's
+  capture leaves a folder ending `.new`, which no refresh removes.

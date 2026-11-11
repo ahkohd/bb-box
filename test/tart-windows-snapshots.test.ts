@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { after, afterEach, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
-import { TURN_LOCK, turnSh } from "../src/backends/tart/host.ts";
+import { TURN_LOCK, script, turnSh } from "../src/backends/tart/host.ts";
 import { qemuCloneScript, qemuRemoveBuildScript, qemuReplaceScript, qemuScript } from "../src/backends/tart/qemu.ts";
 import { SNAPSHOTS_FOLDER, WINDOWS_NO_FORKS, parseTaskRef, taskRef, tartOffer } from "../src/backends/tart/snapshots.ts";
 import { BackendError, SnapshotFailed, type AcquireHooks, type BoxIdentity, type Guest, type MachineSize, type ReleaseHooks, type SnapshotHooks, type TaskRef } from "../src/backends/types.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
+import { quote } from "../src/transports/process.ts";
 import { FAKE_MAC, FAKE_WINDOWS_IMAGE, addImage, addWindowsImage, fakeMacTools, fakeQemu, tartConfig } from "./fake-mac.ts";
 import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
 import { COMMAND, THREAD, rejection, standing, untilHeld, world } from "./snapshot-world.ts";
@@ -555,6 +557,37 @@ function currentBuild(mac: string): string {
   return readlinkSync(join(imageDir(mac), "current"));
 }
 
+function rollbackBuild(mac: string): string {
+  return readlinkSync(join(imageDir(mac), "rollback"));
+}
+
+function awaitingPromotion(mac: string, build: string, installId: string): void {
+  writeFileSync(join(imageDir(mac), build, "owner"), `install=${installId}\nimage-build=standard\n`);
+}
+
+function stagedBuild(mac: string, folder: string): void {
+  mkdirSync(join(imageDir(mac), folder), { recursive: true });
+  writeFileSync(join(imageDir(mac), folder, "disk.qcow2"), "operator's disk");
+  writeFileSync(join(imageDir(mac), folder, "vars.fd"), "variables");
+}
+
+const PREPARE_WINDOWS_IMAGE = fileURLToPath(new URL("../setup/tart/prepare-windows-image.sh", import.meta.url));
+
+function prepareScriptFunction(name: string): string {
+  const found = new RegExp(`^${name}\\(\\) \\{(?: [^\\n]*\\}\\n|\\n[\\s\\S]*?\\n\\}\\n)`, "m").exec(readFileSync(PREPARE_WINDOWS_IMAGE, "utf8"));
+  assert.ok(found, `prepare-windows-image.sh has ${name}`);
+  return found[0];
+}
+
+function operatorPublication(mac: string, build: string): string {
+  const functions = ["step", "lock_opens", "hold_turn", "free_turn", "publish_build"].map(prepareScriptFunction).join("");
+  return `set -eu
+${functions}export PATH=${quote(macTools(mac))}:"$PATH"
+images=${quote(imageDir(mac))}; build=${quote(build)}; d="$images/$build.new"
+publish_build
+`;
+}
+
 function brokenFolder(folder: string, config: string): void {
   mkdirSync(folder, { recursive: true });
   writeFileSync(join(folder, "disk.qcow2"), "overlay");
@@ -622,11 +655,13 @@ test("an image refresh waits for its turn while a restore holds it, and lets go 
   assert.equal(again.stdout.trim(), "replaced", again.stderr);
 });
 
-test("two image refreshes take turns, so the later one never removes the build the earlier made current", async () => {
+test("two installs' image refreshes take turns, and each keeps the other's build awaiting promotion, so both promotions succeed", async () => {
   const { mac } = setup();
   buildsOnMac(mac, "2", "2", "3", "4");
+  awaitingPromotion(mac, "3", "install-1");
+  awaitingPromotion(mac, "4", "install-2");
   countTurnAttempts(mac);
-  const pause = pauseFirst(mac, "rm");
+  const pause = pauseFirst(mac, "ln");
 
   const first = runOnMac(mac, qemuReplaceScript(FAKE_WINDOWS_IMAGE, "3"), pause.env);
   await pause.arrived();
@@ -636,11 +671,85 @@ test("two image refreshes take turns, so the later one never removes the build t
   const [one, two] = [await first.done, await second.done];
 
   assert.equal(one.stdout.trim(), "replaced", one.stderr);
-  assert.equal(currentBuild(mac), "3");
-  assert.ok(existsSync(join(imageDir(mac), "3", "disk.qcow2")), "the current build stays");
-  assert.ok(existsSync(join(imageDir(mac), "2", "disk.qcow2")), "the rollback stays");
-  assert.equal(two.status, 1);
-  assert.match(two.stderr, /The image has no build 4\./);
+  assert.equal(two.stdout.trim(), "replaced", two.stderr);
+  assert.equal(currentBuild(mac), "4");
+  assert.equal(rollbackBuild(mac), "3");
+  assert.ok(existsSync(join(imageDir(mac), "4", "disk.qcow2")), "the current build stays");
+  assert.ok(existsSync(join(imageDir(mac), "3", "disk.qcow2")), "the rollback stays");
+});
+
+test("an image refresh keeps another install's build awaiting promotion that nothing stands on, which only its own install removes", () => {
+  const { mac } = setup();
+  buildsOnMac(mac, "2", "2", "3", "4");
+  awaitingPromotion(mac, "4", "install-2");
+
+  const refresh = onMac(mac, qemuReplaceScript(FAKE_WINDOWS_IMAGE, "3"));
+  const notOurs = onMac(mac, qemuRemoveBuildScript(FAKE_WINDOWS_IMAGE, "4", "install-1"));
+
+  assert.equal(refresh.stdout.trim(), "replaced", refresh.stderr);
+  assert.ok(existsSync(join(imageDir(mac), "4", "disk.qcow2")), "build 4 waits for its own install's promotion");
+  assert.equal(notOurs.status, 1);
+  assert.match(notOurs.stderr, /Build 4 of the image is not a refresh's build of this install's\./);
+
+  const ours = onMac(mac, qemuRemoveBuildScript(FAKE_WINDOWS_IMAGE, "4", "install-2"));
+
+  assert.equal(ours.stdout.trim(), "removed", ours.stderr);
+  assert.ok(!existsSync(join(imageDir(mac), "4")));
+});
+
+test("an image refresh never removes a build still being made, by an operator's build or a refresh's capture", () => {
+  const { mac } = setup();
+  buildsOnMac(mac, "2", "2", "3");
+  stagedBuild(mac, "build.20261111-040000.new");
+  stagedBuild(mac, "build.20261111-050000.new");
+
+  const refresh = onMac(mac, qemuReplaceScript(FAKE_WINDOWS_IMAGE, "3"));
+
+  assert.equal(refresh.stdout.trim(), "replaced", refresh.stderr);
+  assert.ok(existsSync(join(imageDir(mac), "build.20261111-040000.new", "disk.qcow2")));
+  assert.ok(existsSync(join(imageDir(mac), "build.20261111-050000.new", "disk.qcow2")));
+});
+
+test("an operator's build of the Windows image waits for a refresh's turn to publish, so the refresh never removes the build it makes current", async () => {
+  const { mac } = setup();
+  buildsOnMac(mac, "2", "2", "3");
+  awaitingPromotion(mac, "3", "install-1");
+  const operatorBuild = "build.20261111-040000";
+  stagedBuild(mac, `${operatorBuild}.new`);
+  countTurnAttempts(mac);
+  const pause = pauseFirst(mac, "ln");
+
+  const refresh = runOnMac(mac, qemuReplaceScript(FAKE_WINDOWS_IMAGE, "3"), pause.env);
+  await pause.arrived();
+  const publication = runOnMac(mac, operatorPublication(mac, operatorBuild));
+  await waitingForTurn(mac, 2, publication);
+
+  assert.ok(existsSync(join(imageDir(mac), `${operatorBuild}.new`, "disk.qcow2")), "the operator's build waits, staged, for its turn");
+  pause.go();
+  const [refreshed, published] = [await refresh.done, await publication.done];
+
+  assert.equal(refreshed.stdout.trim(), "replaced", refreshed.stderr);
+  assert.equal(published.status, 0, published.stderr);
+  assert.match(published.stdout, /waiting up to 10 minutes for BB Box's restore or image refresh on this Mac to end/);
+  assert.equal(currentBuild(mac), operatorBuild);
+  assert.equal(rollbackBuild(mac), "3");
+  assert.ok(existsSync(join(imageDir(mac), operatorBuild, "disk.qcow2")), "the build the operator made current stays");
+  assert.ok(existsSync(join(imageDir(mac), "3", "disk.qcow2")), "the rollback stays");
+});
+
+test("an operator's build of the Windows image that cannot open the turn's lock is not published and says why", { skip: process.getuid?.() === 0 ? "root writes every file" : false }, () => {
+  const { mac } = setup();
+  const operatorBuild = "build.20261111-040000";
+  stagedBuild(mac, `${operatorBuild}.new`);
+  writeFileSync(join(mac, TURN_LOCK), "");
+  chmodSync(join(mac, TURN_LOCK), 0o444);
+
+  const publication = onMac(mac, operatorPublication(mac, operatorBuild));
+
+  assert.equal(publication.status, 1);
+  assert.match(publication.stderr, /could not open .*turn\.lock, which BB Box's restores and image refreshes on this Mac take turns by\. Check that \S+ can write to it\./);
+  assert.equal(currentBuild(mac), "1");
+  assert.ok(existsSync(join(imageDir(mac), `${operatorBuild}.new`, "disk.qcow2")));
 });
 
 test("an image refresh waits for a build's removal to end, and never makes current a build that removal deletes", async () => {
@@ -725,7 +834,6 @@ test("a second reader of a Windows restore cut short re-reads its record in its 
 test("an image refresh and a build's removal keep every build when a VM's or snapshot's config does not say which build it stands on", async () => {
   const { mac, qemu, snaps } = setup();
   buildsOnMac(mac, "2", "2", "3");
-  writeFileSync(join(imageDir(mac), "1", "owner"), "install=install-1\n");
   brokenFolder(join(qemu, "vms", "bb-box-broken"), `image=${FAKE_WINDOWS_IMAGE}\nbuild=\n`);
 
   const refresh = onMac(mac, qemuReplaceScript(FAKE_WINDOWS_IMAGE, "3"));
@@ -735,6 +843,7 @@ test("an image refresh and a build's removal keep every build when a VM's or sna
   assert.ok(existsSync(join(imageDir(mac), "1", "disk.qcow2")));
 
   rmSync(join(qemu, "vms", "bb-box-broken"), { recursive: true });
+  awaitingPromotion(mac, "1", "install-1");
   brokenFolder(join(snaps, "snbroken", "vm"), `image=${FAKE_WINDOWS_IMAGE}\n`);
   const removal = onMac(mac, qemuRemoveBuildScript(FAKE_WINDOWS_IMAGE, "1", "install-1"));
 
@@ -809,6 +918,12 @@ test("an image refresh that cannot open the turn's lock refuses at once, says wh
   assert.equal(refresh.status, 1);
   assert.match(refresh.stderr, /BB Box could not open \S+\/\.bb-box\/turn\.lock on the Mac, which restores and image refreshes take turns by\. Check that \S+ can write to it\./);
   assert.equal(currentBuild(mac), "2");
+});
+
+test("no script for the Mac opens the turn's lock with command exec, which crashes macOS's bash 3.2 once a calling function returns", () => {
+  const scripts = [script(""), qemuReplaceScript(FAKE_WINDOWS_IMAGE, "2"), readFileSync(PREPARE_WINDOWS_IMAGE, "utf8")];
+
+  for (const text of scripts) assert.doesNotMatch(text, /command exec/);
 });
 
 test("a task waits for its turn only as long as its limit, then says to try again", async () => {

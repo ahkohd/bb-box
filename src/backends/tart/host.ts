@@ -87,11 +87,13 @@ const TAKE_TURN_PL = String.raw`open(my $h, ">&=", 9) or exit 2; for (1 .. $ARGV
 
 export function turnSh(waitTenths: number): string {
   return String.raw`turn_lock="$HOME/${TURN_LOCK}"
+lock_opens() { mkdir -p "$(dirname "$1")" 2>/dev/null && (: >>"$1") 2>/dev/null; }
 hold_turn() {
-  mkdir -p "$(dirname "$turn_lock")" && { command exec 9>>"$turn_lock"; } 2>/dev/null || {
+  lock_opens "$turn_lock" || {
     echo "${PRODUCT} could not open $turn_lock on the Mac, which restores and image refreshes take turns by. Check that $(id -un) can write to it." >&2
     return 1
   }
+  exec 9>>"$turn_lock"
   perl -MFcntl=:flock -e '${TAKE_TURN_PL}' ${waitTenths} && return 0
   exec 9>&-
   echo "Another ${PRODUCT} task on the Mac, a restore or an image refresh, has kept this one waiting for ${waitTenths / 10} s. Try again once it has ended." >&2

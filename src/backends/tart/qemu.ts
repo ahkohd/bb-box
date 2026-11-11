@@ -55,6 +55,11 @@ folders_on_bases() {
     if readable_folder "$_fb_f"; then printf '%s\n' "$_fb_f/vm"; else printf '%s\n' "$_fb_f"; fi
   done
 }
+published_build() {
+  case $(basename "$1") in current | rollback | *.new) return 1 ;; esac
+  [ -d "$1" ] && [ ! -L "$1" ] && [ -f "$1/disk.qcow2" ]
+}
+awaits_promotion() { [ -e "$1/owner" ]; }
 build_in_use() {
   [ -d "$tart_vms" ] || mkdir -p "$tart_vms" || return ${BASE_USE_UNKNOWN}
   _bu_s=$(snaps_dir) || return ${BASE_USE_UNKNOWN}
@@ -610,7 +615,8 @@ rm -f "$im/$b/owner"
 rb=$(cd "$im/rollback" 2>/dev/null && pwd -P) && rb=$(basename "$rb")
 unsure=
 for o in "$im"/*; do
-  n=$(basename "$o"); [ "$n" != current ] && [ "$n" != rollback ] && [ "$n" != "$b" ] && [ "$n" != "$rb" ] && [ -d "$o" ] && [ ! -L "$o" ] && [ -f "$o/disk.qcow2" ] || continue
+  n=$(basename "$o")
+  published_build "$o" && ! awaits_promotion "$o" && [ "$n" != "$b" ] && [ "$n" != "$rb" ] || continue
   build_in_use "$image" "$n"
   case $? in ${BASE_IN_USE}) continue ;; ${BASE_UNUSED}) ;; *) unsure="$unsure $n"; continue ;; esac
   chmod -R u+w "$o"; rm -rf "$o"
