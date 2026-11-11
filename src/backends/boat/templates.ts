@@ -8,6 +8,7 @@ import type { BackendStorage } from "../types.ts";
 import type { RunResult } from "../../transports/types.ts";
 import { BoatError, isRunning, isStarting, isStopped, type BoatApi, type Sandbox, type SandboxSize } from "./api.ts";
 import { BOAT_TEMPLATE_KINDS, type BoatKind } from "./config.ts";
+import type { BoatOwner } from "./owner.ts";
 import { PRODUCT } from "../../brand.ts";
 
 export const TEMPLATE_ROLE = "template";
@@ -159,7 +160,8 @@ export interface Reached {
 export interface TemplateDeps {
   readonly api: BoatApi;
   readonly storage: BackendStorage;
-  readonly installId: string;
+  readonly owner: BoatOwner;
+  readonly logName: string;
   readonly labelKeys: TemplateLabels;
   readonly publicKey: () => Promise<string>;
   readonly reach: (sandbox: string, user: "user" | "box", signal?: AbortSignal) => Promise<Reached>;
@@ -364,7 +366,7 @@ export class BoatTemplates {
     const labels = this.#deps.labelKeys;
     return (
       (await this.#deps.api.list({ [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: this.key() }, signal))
-        .filter((sandbox) => sandbox.state === "archived" && sandbox.dataExpiredAt === null && sandbox.name === templateName(kind, "ready") && !this.#buildSandboxes.has(sandbox.id))
+        .filter((sandbox) => this.#deps.owner.madeByThisBackendId(sandbox.labels) && sandbox.state === "archived" && sandbox.dataExpiredAt === null && sandbox.name === templateName(kind, "ready") && !this.#buildSandboxes.has(sandbox.id))
         .sort(newestFirst)[0] ?? null
     );
   }
@@ -377,10 +379,10 @@ export class BoatTemplates {
     const labels = this.#deps.labelKeys;
     const recorded = await this.current();
     const kinds = Object.keys(TEMPLATE_STEP) as BoatKind[];
-    return (await this.#deps.api.list({ [labels.install]: this.#deps.installId, [labels.role]: TEMPLATE_ROLE, [labels.key]: this.key() }, signal))
+    return (await this.#deps.api.list({ [labels.install]: this.#deps.owner.installId, [labels.role]: TEMPLATE_ROLE, [labels.key]: this.key() }, signal))
       .filter((sandbox) => {
         const kind = kinds.find((each) => each === sandbox.labels[labels.kind]);
-        return kind !== undefined && !recorded.has(sandbox.id) && !this.#buildSandboxes.has(sandbox.id) && followable(sandbox, kind);
+        return kind !== undefined && this.#deps.owner.owns(sandbox.labels) && !recorded.has(sandbox.id) && !this.#buildSandboxes.has(sandbox.id) && followable(sandbox, kind);
       })
       .sort(newestFirst);
   }
@@ -392,10 +394,9 @@ export class BoatTemplates {
   }
 
   async #adopt(kind: BoatKind, signal?: AbortSignal): Promise<TemplateRecord | null> {
-    const labels = this.#deps.labelKeys;
     const found = await this.adoptable(kind, signal);
     if (!found) return null;
-    this.#deps.log(`boat: using the ${kind} template ${found.id}, which bb-box built ${found.labels[labels.install] === this.#deps.installId ? "before" : "for another install on this account"}.`);
+    this.#deps.log(`${this.#deps.logName}: using the ${kind} template ${found.id}, which bb-box built ${this.#deps.owner.owns(found.labels) ? "before" : "for another install on this account"}.`);
     let devices: readonly unknown[] | null = null;
     if (TEMPLATE_STEP[kind] === "android") {
       const text = await this.#deps.api.latestSnapshotFile(found.id, ANDROID_DEVICES_FILE, signal).catch(() => null);
@@ -491,8 +492,8 @@ export class BoatTemplates {
       if (left) throw new BuildLeftRunning(`boat leaves the Android template build ${left.id} until it expires, because the Android SDK's licence is not accepted.`);
       throw new Error("boat's Android template needs the Android SDK's licence accepted in BB Box's settings first.");
     }
-    if (left) log(`boat: following the ${kind} template build ${left.id}, which ${PRODUCT} started before it restarted, rather than build another.`);
-    else log(`boat: building the ${kind} template, as ${why}.`);
+    if (left) log(`${this.#deps.logName}: following the ${kind} template build ${left.id}, which ${PRODUCT} started before it restarted, rather than build another.`);
+    else log(`${this.#deps.logName}: building the ${kind} template, as ${why}.`);
     const made = left ?? (await this.#create(kind, key, size));
     const since = Math.min(left?.createdAt ?? started, started);
     this.#buildSandboxes.add(made.id);
@@ -505,14 +506,14 @@ export class BoatTemplates {
       const previous = await this.record(kind);
       await this.#deps.storage.set(`${RECORD}${kind}`, record);
       if (previous && previous.sandbox !== made.id) await this.#retire(previous.sandbox);
-      log(`boat: the ${kind} template ${made.id} is ready, built in ${Math.round(record.buildMs / 60_000)} minutes.`);
+      log(`${this.#deps.logName}: the ${kind} template ${made.id} is ready, built in ${Math.round(record.buildMs / 60_000)} minutes.`);
       return record;
     } catch (error) {
       if (this.#leaving(error)) throw error instanceof BuildLeftRunning ? error : new BuildLeftRunning(`${PRODUCT} is stopping, so it leaves boat's template build ${made.id} to the ${PRODUCT} that starts next; its last step ended so: ${error instanceof Error ? error.message : String(error)}`);
       if (await this.#templateStays(made.id, kind)) this.#failureLeft.set(kind, made.id);
       else {
         await this.#deps.forget(made.id);
-        await api.delete(made.id).catch((cause) => log(`boat: could not delete the failed build ${made.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
+        await api.delete(made.id).catch((cause) => log(`${this.#deps.logName}: could not delete the failed build ${made.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
       }
       throw error;
     } finally {
@@ -526,7 +527,7 @@ export class BoatTemplates {
       .create({
         size,
         ttlSeconds: BUILD_TTL_SECONDS,
-        labels: { [labels.install]: this.#deps.installId, [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: key },
+        labels: { ...this.#deps.owner.labels(), [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: key },
         name: templateName(kind, "building"),
       })
       .catch((error: unknown) => {
@@ -570,7 +571,7 @@ export class BoatTemplates {
     this.#stillHere();
     const staged = await (await this.#deps.reach(id, "user")).run(`sudo -n sh -c ${quote(stageScript(kind, files))}`, { stdin: archive, timeoutMs: STAGE_WITHIN_MS });
     if (staged.exitCode === IN_HAND_ELSEWHERE) {
-      this.#deps.log(`boat: another bb-box is staging or running the ${kind} template build in ${id}, so this one follows it.`);
+      this.#deps.log(`${this.#deps.logName}: another bb-box is staging or running the ${kind} template build in ${id}, so this one follows it.`);
       return false;
     }
     if (staged.exitCode !== 0) throw new Error(`boat's template build could not stage its scripts in ${id}: ${staged.stderr.trim().slice(-400) || `exit ${staged.exitCode}`}`);
@@ -592,10 +593,10 @@ export class BoatTemplates {
   async #tryAFork(template: string, kind: BoatKind, size: SandboxSize): Promise<void> {
     const { api, now, log } = this.#deps;
     const labels = this.#deps.labelKeys;
-    const trialLabels = { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: template };
-    const left = (await api.list(trialLabels)).filter((sandbox) => !this.#buildSandboxes.has(sandbox.id) && (isRunning(sandbox.state) || isStarting(sandbox.state))).sort(newestFirst)[0] ?? null;
+    const trialLabels = { ...this.#deps.owner.labels(), [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: template };
+    const left = (await this.#ownTrials(kind, template)).filter((sandbox) => !this.#buildSandboxes.has(sandbox.id) && (isRunning(sandbox.state) || isStarting(sandbox.state))).sort(newestFirst)[0] ?? null;
     this.#stillHere();
-    if (left) log(`boat: checking the ${kind} template ${template} in its trial fork ${left.id}, which ${PRODUCT} made before it restarted.`);
+    if (left) log(`${this.#deps.logName}: checking the ${kind} template ${template} in its trial fork ${left.id}, which ${PRODUCT} made before it restarted.`);
     const trial = left ?? (await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: trialLabels, name: `bb-box ${kind} template trial` }));
     this.#buildSandboxes.add(trial.id);
     let leftRunning = false;
@@ -623,7 +624,7 @@ export class BoatTemplates {
       this.#buildSandboxes.delete(trial.id);
       if (!leftRunning) {
         await this.#deps.forget(trial.id);
-        await api.delete(trial.id).catch((cause) => log(`boat: could not delete the template's trial fork ${trial.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
+        await api.delete(trial.id).catch((cause) => log(`${this.#deps.logName}: could not delete the template's trial fork ${trial.id}: ${cause instanceof Error ? cause.message : String(cause)}`));
       }
     }
   }
@@ -632,10 +633,15 @@ export class BoatTemplates {
     if ((await this.record(kind))?.sandbox === id) return true;
     const sandbox = await this.#deps.api.get(id).catch(() => null);
     if (sandbox?.name === templateName(kind, "ready")) return true;
-    const labels = this.#deps.labelKeys;
-    const trials = await this.#deps.api.list({ [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: id }).catch(() => []);
+    const trials = await this.#ownTrials(kind, id).catch(() => []);
     if (trials.some((trial) => (isRunning(trial.state) || isStarting(trial.state)) && !this.#buildSandboxes.has(trial.id))) return true;
     return this.#buildStillHoldsItsLock(id);
+  }
+
+  async #ownTrials(kind: BoatKind, template: string): Promise<Sandbox[]> {
+    const labels = this.#deps.labelKeys;
+    const trials = await this.#deps.api.list({ [labels.install]: this.#deps.owner.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: template });
+    return trials.filter((trial) => this.#deps.owner.owns(trial.labels));
   }
 
   async #progress(id: string): Promise<{ readonly build: GuestBuild | null; readonly complaint: string }> {
@@ -672,7 +678,7 @@ export class BoatTemplates {
   }
 
   async #rename(id: string, name: string): Promise<void> {
-    await this.#deps.api.rename(id, name).catch((cause) => this.#deps.log(`boat: could not name the template sandbox ${id} "${name}": ${cause instanceof Error ? cause.message : String(cause)}`));
+    await this.#deps.api.rename(id, name).catch((cause) => this.#deps.log(`${this.#deps.logName}: could not name the template sandbox ${id} "${name}": ${cause instanceof Error ? cause.message : String(cause)}`));
   }
 
   async #stop(id: string): Promise<void> {
@@ -718,7 +724,7 @@ export class BoatTemplates {
       unanswered = 0;
       this.#buildWasRunning.set(id, build.running);
       const step = build.tail.filter((line) => /^\d\d:\d\d:\d\d {2}/.test(line)).pop();
-      if (step && step !== said) log(`boat: ${kind} template: ${(said = step).slice(10)}`);
+      if (step && step !== said) log(`${this.#deps.logName}: ${kind} template: ${(said = step).slice(10)}`);
       const next = guestStep(build);
       if (next === "finished") return;
       if (next === "customize-failed") {
@@ -739,7 +745,7 @@ export class BoatTemplates {
 
   async #logBuildLog(id: string, kind: BoatKind): Promise<void> {
     const read = await (await this.#deps.reach(id, "user")).run(`sudo -n tail -n ${FAILED_BUILD_LOG_LINES} ${BUILD_DIR}/log`, { timeoutMs: 30_000 }).catch(() => null);
-    if (read?.stdout.trim()) this.#deps.log(`boat: ${kind} template build failed; the last ${FAILED_BUILD_LOG_LINES} lines of its log, from sandbox ${id}, which bb-box deletes now:\n${read.stdout.trimEnd()}`);
+    if (read?.stdout.trim()) this.#deps.log(`${this.#deps.logName}: ${kind} template build failed; the last ${FAILED_BUILD_LOG_LINES} lines of its log, from sandbox ${id}, which bb-box deletes now:\n${read.stdout.trimEnd()}`);
   }
 
   async #retire(sandbox: string): Promise<void> {
@@ -777,7 +783,7 @@ export class BoatTemplates {
       if (keep.has(sandbox.id)) continue;
       if (sandbox.createdAt !== null && now() - sandbox.createdAt < LEFT_BUILD_GRACE_MS) continue;
       await api.delete(sandbox.id, signal);
-      log(`boat: deleted ${sandbox.labels[labels.role] === TEMPLATE_ROLE && isStopped(sandbox.state) ? "an old template" : "a template build or trial that nothing follows"}, ${sandbox.id}.`);
+      log(`${this.#deps.logName}: deleted ${sandbox.labels[labels.role] === TEMPLATE_ROLE && isStopped(sandbox.state) ? "an old template" : "a template build or trial that nothing follows"}, ${sandbox.id}.`);
     }
     const listed = new Set(templates.map((sandbox) => sandbox.id));
     await this.#deps.storage.set(RETIRED, retired.filter((each) => keep.has(each.sandbox) && listed.has(each.sandbox)));

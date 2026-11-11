@@ -78,8 +78,11 @@ The core uses only the two `types.ts` files.
      backend's fields name, which no two may share
      ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)). For
      backends that label what they make with their own ID, as Namespace's
-     do, it gives null, so any number may share an account
-     ([087](decisions/087-each-namespace-workspace-is-a-backend-that-labels-what-it-makes.md));
+     and boat.dev's do, it gives null, so any number may share an account
+     ([087](decisions/087-each-namespace-workspace-is-a-backend-that-labels-what-it-makes.md),
+     [093](decisions/093-each-boat-dev-account-is-a-backend-that-labels-what-it-makes.md)).
+     `src/backends/labelled-owner.ts` holds what such backends share: their
+     labels, which backend owns what, and their tailnet names;
    - `longestName`, the most characters a second backend's name may have,
      where the backend puts its name in something with a length limit,
      such as a tailnet name;

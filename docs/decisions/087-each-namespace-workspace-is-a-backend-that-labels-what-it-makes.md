@@ -60,7 +60,9 @@ under the same tag and unique tag.
   in a tailnet name of 63 characters even with the longest install ID, 32
   characters. A longer prefix would be cut short, and 2 backends could
   then share a tailnet name. A driver sets this limit with `longestName`,
-  and the configuration refuses a longer name.
+  and the configuration refuses a longer name. [094](094-a-tailnet-name-too-long-is-shortened-with-a-code.md)
+  extends this: a box's tailnet name that would still be too long is
+  shortened with a code, so 2 boxes never share one.
 - A shared iOS host's record, and a device host read from storage, that
   has no backend was written before this change and is the backend
   `namespace`'s. Reading it never makes it another backend's.
@@ -77,9 +79,8 @@ under the same tag and unique tag.
 - The first Linux box of each kind on each Namespace backend waits for its
   own image build, about 4 to 9 minutes, even where another backend shares
   its workspace.
-- boat.dev can follow the same pattern: a `several` that names no host, a
-  label or name for what each backend makes that the first backend keeps
-  as it was, and templates per backend.
+- boat.dev follows the same pattern, in
+  [093](093-each-boat-dev-account-is-a-backend-that-labels-what-it-makes.md).
 - A backend removed while its machines still run leaves them to their
   deadline, at most an hour away, as before. A machine without a backend
   label is no one's once the backend with the ID `namespace` is gone.

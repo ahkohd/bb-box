@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { sshPoolDriver } from "../src/backends/ssh-pool/index.ts";
 import { tartDriver } from "../src/backends/tart/index.ts";
+import { boatDriver } from "../src/backends/boat/index.ts";
 import type { BackendDriver } from "../src/backends/types.ts";
 import { withoutSecretVersions } from "../src/core/document.ts";
 import { INSTALL_ID_KEY } from "../src/core/install.ts";
@@ -29,7 +30,7 @@ test.afterEach(async () => {
   for (const dispose of disposals.splice(0)) await dispose().catch(() => {});
 });
 
-async function start(options: { failDoctor?: () => string | undefined } = {}) {
+async function start(options: { failDoctor?: () => string | undefined; boat?: boolean } = {}) {
   const root = tempDir("config-cli");
   const threads = new Map([[THREAD, makeThreadResponse({ id: THREAD, projectId: "prj_cli", environmentId: "env_cli" })]]);
   const { bb, harness } = createFakePluginHost({
@@ -54,7 +55,7 @@ async function start(options: { failDoctor?: () => string | undefined } = {}) {
       return backend;
     },
   };
-  const app: BbBox = await setup(bb, { drivers: [failing, sshPoolDriver, tartDriver], daemonParent: join(root, "no-daemon") });
+  const app: BbBox = await setup(bb, { drivers: [failing, sshPoolDriver, tartDriver, ...(options.boat ? [boatDriver] : [])], daemonParent: join(root, "no-daemon") });
   disposals.push(() => harness.lifecycle.dispose());
   const seen: string[] = [];
   const cli = async (args: string[], cwd?: string): Promise<Ran> => {
@@ -104,6 +105,25 @@ test("backend add saves through config.apply with an operation and receipt, take
   assert.equal(twice.exitCode, 1);
   assert.match(twice.stderr ?? "", /There is a backend fake already\./);
   assertNoSecret(seen);
+});
+
+test("backend add takes a second boat.dev backend with its own API key, Most boxes and auto-stop, and either may be kept for a project (#1455)", async () => {
+  const { cli, dir, app, document } = await start({ boat: true });
+  writeFileSync(join(dir, "boat.env"), "BOAT_ONE=boat_madeUpFirstAccount01\nBOAT_TWO=boat_madeUpSecondAccount02\n");
+
+  const first = await cli(["backend", "add", "boat", "--off", "--secret", "api-key=BOAT_ONE", "--secrets-file", "boat.env", "--no-doctor"], dir);
+  const second = await cli(["backend", "add", "boat", "--id", "team-b", "--off", "--field", "most-boxes=4", "--field", "lease-minutes=45", "--secret", "api-key=BOAT_TWO", "--secrets-file", "boat.env", "--projects", "client work", "--no-doctor"], dir);
+
+  assert.equal(first.exitCode, 0, first.stderr);
+  assert.equal(second.exitCode, 0, second.stderr);
+  const boats = document().backends.filter((backend) => backend.type === "boat");
+  assert.deepEqual(boats.map((backend) => [backend.id, backend.fields["most-boxes"] ?? null, backend.fields["lease-minutes"] ?? null, backend.projects ?? null]), [
+    ["boat", null, null, null],
+    ["boat:team-b", 4, 45, ["prj_cli"]],
+  ]);
+  assert.equal(app.configuration.secrets.boat?.["api-key"], "boat_madeUpFirstAccount01");
+  assert.equal(app.configuration.secrets["boat:team-b"]?.["api-key"], "boat_madeUpSecondAccount02");
+  for (const ran of [first, second]) assert.ok(!`${ran.stdout}${ran.stderr}`.includes("boat_madeUp"), "no key is printed");
 });
 
 test("the same operation ID again answers with its receipt; with another change it is refused, as config.apply refuses it", async () => {

@@ -169,7 +169,8 @@ be forked there or start a child thread.
   life whatever you do: `box_status` says when ("Ends"), and the thread is
   told an hour before. Copy out what you need before then. Where the user
   has several Namespace workspaces, `box_list` names each, such as
-  Namespace (team-b), and `on` takes that name.
+  Namespace (team-b), and `on` takes that name. Several boat.dev accounts
+  are named the same way, such as boat.dev (team-b).
 - Windows boxes have Visual Studio Build Tools (MSVC and the Windows SDK),
   LLVM (`clang`), Rust (`cargo`, `rustc`), Node.js, and the Claude Code,
   Codex and Pi CLIs. They have no GPU: DirectX apps render on WARP,

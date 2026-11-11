@@ -832,7 +832,7 @@ function readBackend(
   }
   const name = match[2];
   if (name !== undefined && driver.longestName !== undefined && name.length > driver.longestName) {
-    problem(`backends.${index}.id`, `A ${driver.label} backend's name is at most ${driver.longestName} characters, so each of its machines keeps a tailnet name of its own. Give ${id} a shorter name.`);
+    problem(`backends.${index}.id`, `A ${driver.label} backend's name is at most ${driver.longestName} characters, so its tailnet names have room for each box's own name. Give ${id} a shorter name.`);
     return null;
   }
   const path = `backends.${id}`;
