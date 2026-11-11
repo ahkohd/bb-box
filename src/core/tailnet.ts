@@ -8,7 +8,7 @@ export const KEY_LIFETIME_SECONDS = 600;
 const TOKEN_EARLY_RENEWAL_MS = 60_000;
 const ATTEMPT_TIMEOUT_MS = 15_000;
 const DESCRIPTION_LIMIT = 50;
-const HOSTNAME_LIMIT = 63;
+export const HOSTNAME_LIMIT = 63;
 
 export interface TailnetResponse {
   readonly ok: boolean;

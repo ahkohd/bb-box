@@ -110,7 +110,7 @@ Then make a box from the Box panel, or ask an agent to.
 
 Each Namespace workspace can be a backend of its own, with its own token. A plan's limits are per workspace, so 2 workspaces on the Developer plan allow 24 Mac cores at once rather than 12: 4 Mac boxes of 6 vCPU rather than 2.
 
-To add another workspace, make a token in it as in step 2, signed in to that workspace, then add a second Namespace backend with a name of your own:
+To add another workspace, make a token in it as in step 2, signed in to that workspace, then add a second Namespace backend with a name of your own, of at most 15 lower-case letters, digits and hyphens:
 
 ```sh
 grep '^NSC_TOKEN=' secrets.env | bb box backend add namespace --id team-b --secret token=NSC_TOKEN --secrets-stdin --field longest-life-hours=5
@@ -124,7 +124,7 @@ Its ID is `namespace:team-b`. **Add backend**, then **Namespace**, in BB Box's s
 - **Most machines counts the backend's own machines**, and those of other BB Box installs in its workspace, but not another backend's of this install. The workspace's Mac cores in use, which Namespace reports for the whole workspace, count for each backend on it.
 - **Each builds its own Linux images**, in its workspace's registry. So the first Linux box of each kind on each backend waits for its build, about 4 to 9 minutes. The first backend's images are tagged `bbbox/linux:<version>`; another's carry its name first, as `bbbox/linux:team-b-<version>`. No backend deletes images from a registry. `bb box images list` lists each backend's images, with when each was built.
 - **Each runs its own shared iOS host**, in its own workspace, with its own token. Its record says which backend it is on.
-- **With the tailnet on**, a second backend's machines join it as `bb-box-nsb-`, then the install's ID, a short code for the backend and the box's name.
+- **With the tailnet on**, a second backend's machines join it as `bb-box-nsb-`, then the install's ID, the length of the backend's name, the name and the box's name, such as `bb-box-nsb-k3v9q2m7xa-6-team-b-my-box`. So no backend takes another's tailnet devices for its own. A name is at most 15 characters, so that this fits in a tailnet name.
 
 The first Namespace backend, with the ID `namespace`, keeps its ID when you add another, and with it its boxes, machines, iOS host and images. It also looks after machines that carry only the install's label, which versions of BB Box before several workspaces made. No other backend touches them.
 

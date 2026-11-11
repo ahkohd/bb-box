@@ -16,6 +16,7 @@ import { DEVICE_HOST_EXITS, claimantInput, helperCommand, parseHostStatus, slotD
 import { BackendError, type AcquireHooks, type BackendStorage, type BoxIdentity, type BoxTransports, type DoctorCheck, type Guest, type HeldGuest, type PowerState } from "../types.ts";
 import type { Instance, InstanceStatus } from "./api.ts";
 import type { MacShape } from "./config.ts";
+import { FIRST_NAMESPACE_BACKEND_ID } from "./owner.ts";
 import { PRODUCT } from "../../brand.ts";
 
 export const NAMESPACE_HOST_ROLE = "device-host";
@@ -44,7 +45,7 @@ export interface NamespaceIosHostsConfig {
 }
 
 export interface NamespaceHostRecord {
-  readonly backend?: string;
+  readonly backend: string;
   readonly tag: string;
   readonly instance: string | null;
   readonly made: number;
@@ -67,6 +68,12 @@ interface PreparedMac {
   readonly machineUp: number;
   readonly hardware: boolean | null;
   readonly setUpSaid: string;
+}
+
+type StoredHostRecord = Omit<NamespaceHostRecord, "backend"> & { readonly backend?: string };
+
+function withItsBackend(stored: StoredHostRecord): NamespaceHostRecord {
+  return { ...stored, backend: stored.backend ?? FIRST_NAMESPACE_BACKEND_ID };
 }
 
 export interface NamespaceHostsAccess {
@@ -226,7 +233,8 @@ export class NamespaceHosts implements SlotLender {
   }
 
   async record(): Promise<NamespaceHostRecord | null> {
-    this.#known = (await this.#access.storage.get<NamespaceHostRecord>(HOST_RECORD_KEY)) ?? null;
+    const stored = await this.#access.storage.get<StoredHostRecord>(HOST_RECORD_KEY);
+    this.#known = stored ? withItsBackend(stored) : null;
     return this.#known;
   }
 

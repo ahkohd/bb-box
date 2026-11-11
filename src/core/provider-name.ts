@@ -1,13 +1,7 @@
-// A provider's name for people: "Proxmox LXC on pve1", "Docker on devpc",
-// "Tart on 2 Macs", "SSH host pool", "Namespace (team-b)" (044). The pane
-// shows it, box_list prints it, and `on` takes it, so one function makes it.
-
 export interface ProviderWords {
   /** The driver's label, as settings names the backend: "Proxmox LXC", "Tart". */
   readonly label: string;
-  /** Where its boxes run, by name; empty for a pool, a local Docker daemon and a cloud account. */
   readonly hosts: readonly string[];
-  /** The backend's ID, for "Macs" against "hosts" and for the name of a second backend of a type that names no host. */
   readonly id: string;
 }
 
@@ -21,7 +15,6 @@ export function backendIdName(id: string): string | null {
   return at < 0 ? null : id.slice(at + 1) || null;
 }
 
-/** The provider's name: its label, and its host or how many hosts it spans, or its name for a second backend with no host. */
 export function providerName({ label, hosts, id }: ProviderWords): string {
   const name = shortLabel(label);
   if (hosts.length === 1) return `${name} on ${hosts[0]}`;

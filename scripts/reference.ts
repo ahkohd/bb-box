@@ -35,7 +35,12 @@ function severalWords(): string {
   const byAccount = several.filter((driver) => driver.several!({}) === null).map((driver) => driver.label);
   const list = (labels: readonly string[]) => (labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}` : (labels[0] ?? ""));
   const parts = [byHost.length ? `${list(byHost)} take one backend per host` : "", byAccount.length ? `${list(byAccount)} one per account, and 2 may share an account` : ""].filter(Boolean);
-  return parts.length ? `${parts.join("; ")}. Every other type takes one.` : "Every type takes one backend.";
+  return parts.length ? `${parts.join("; ")}. Every other type takes one.${nameLimitWords()}` : "Every type takes one backend.";
+}
+
+function nameLimitWords(): string {
+  const limited = DRIVERS.filter((driver) => driver.longestName !== undefined);
+  return limited.map((driver) => ` A ${driver.label} backend's name is at most ${driver.longestName} characters.`).join("");
 }
 
 /** A table cell: one line, with its pipes escaped. */

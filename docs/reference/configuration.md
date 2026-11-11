@@ -82,7 +82,7 @@ Each kind's entry, by its ID. A kind with no entry has its defaults, in the [kin
 
 ## backends
 
-Each backend's entry, in the order acquire tries them. Its ID is its type, or `<type>:<name>` for another backend of the type. Docker and microsandbox take one backend per host; Namespace one per account, and 2 may share an account. Every other type takes one. A backend keeps at most 20 warm boxes of a kind, and only of the kinds it keeps warm, as [Each backend's fields](#each-backends-fields) lists them; a count for another kind is kept but does nothing.
+Each backend's entry, in the order acquire tries them. Its ID is its type, or `<type>:<name>` for another backend of the type. Docker and microsandbox take one backend per host; Namespace one per account, and 2 may share an account. Every other type takes one. A Namespace backend's name is at most 15 characters. A backend keeps at most 20 warm boxes of a kind, and only of the kinds it keeps warm, as [Each backend's fields](#each-backends-fields) lists them; a count for another kind is kept but does nothing.
 
 | Key | Type | Default | What it is |
 | --- | --- | --- | --- |

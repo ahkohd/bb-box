@@ -823,6 +823,11 @@ function readBackend(
     problem(`backends.${index}.id`, `A ${driver.type} backend's ID is "${driver.type}", or "${driver.type}:<name>" with lower-case letters, digits and "-".`);
     return null;
   }
+  const name = match[2];
+  if (name !== undefined && driver.longestName !== undefined && name.length > driver.longestName) {
+    problem(`backends.${index}.id`, `A ${driver.label} backend's name is at most ${driver.longestName} characters, so each of its machines keeps a tailnet name of its own. Give ${id} a shorter name.`);
+    return null;
+  }
   const path = `backends.${id}`;
   const known = new Set(["id", "type", "label", "enabled", "fields", "warm", "hosts"]);
   for (const key of Object.keys(value)) if (!known.has(key)) problem(`${path}.${key}`, `A backend has id, type, label, enabled, fields, warm and hosts, not "${key}".`);
@@ -1117,7 +1122,6 @@ export function checkDocument(
       else if (!driver.kinds.includes(kind)) problem(`${path}.warm.${kind}`, `${driver.label} makes ${driver.kinds.join(", ")}, not ${kind}.`);
       else if (!isWhole(count, 0, MAX_WARM)) problem(`${path}.warm.${kind}`, `Keep 0 to ${MAX_WARM} warm ${kind} boxes.`);
     }
-    // Drivers name their guests by type, so two of one type would share them, unless each is on a host of its own (042) or labels its guests with its ID (#1455).
     if (driver.several) {
       const own = driver.several(backend.fields ?? {});
       const host = `${backend.type} ${own}`;

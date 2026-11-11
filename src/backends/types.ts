@@ -985,6 +985,9 @@ export interface OwnImage {
   readonly building: boolean;
 }
 
+export type HostNoTwoBackendsShare = string;
+export type EachLabelsWhatItMakes = null;
+
 export type Holds = "disk" | "disk-and-memory";
 export type WhileRunning = "live" | "pauses" | "suspends" | "stopped-only";
 export type KeepsPastRelease = "as-is" | "held-copy" | "no";
@@ -1607,13 +1610,8 @@ export interface BackendDriver<C = unknown> {
    * here, so a connection is never part one backend's and part the other's.
    */
   readonly inherits?: { readonly from: string; readonly sets: readonly (readonly string[])[] };
-  /**
-   * For a type the configuration may have several backends of: the host its
-   * fields name, which no two of them may share, since each lists its guests
-   * on its host (042); or null where each labels what it makes with its own
-   * ID, so any number may share an account (#1455).
-   */
-  readonly several?: (fields: Readonly<Record<string, unknown>>) => string | null;
+  readonly several?: (fields: Readonly<Record<string, unknown>>) => HostNoTwoBackendsShare | EachLabelsWhatItMakes;
+  readonly longestName?: number;
   /**
    * Paths in bb-box's repository. The guide is the entry point: the settings
    * page links it first, then the scripts in the order the guide runs them.

@@ -68,7 +68,7 @@ namespace`, ready in about 20 s, and release it.
 
 A person with more than one Namespace workspace adds each as a backend of its
 own, with its own token, made while signed in to that workspace, and its own
-`--id`:
+`--id` of at most 15 characters:
 
 ```sh
 grep '^NSC_TOKEN_B=' "$BB_THREAD_STORAGE/bb-box.env" | \

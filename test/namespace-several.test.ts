@@ -5,7 +5,7 @@ import { HOST_RECORD_KEY, NAMESPACE_HOST_ROLE, type NamespaceHostRecord } from "
 import { NamespaceOwner } from "../src/backends/namespace/owner.ts";
 import type { NamespaceConfig } from "../src/backends/namespace/config.ts";
 import { reportKey, PROBE_VERSION, type MacReport } from "../src/core/mac-capabilities.ts";
-import { Tailnet, isInstallDevice } from "../src/core/tailnet.ts";
+import { Tailnet, isInstallDevice, tailnetHostname } from "../src/core/tailnet.ts";
 import type { AcquireHooks, BackendStorage, BoxIdentity, Guest } from "../src/backends/types.ts";
 import { ImageJobs } from "../src/plugin/images.ts";
 import { ownImageLines } from "../src/plugin/views.ts";
@@ -184,32 +184,80 @@ test("each backend builds its own Linux images, labelled and tagged with its ID,
   assert.deepEqual([firsts.status, older.status], ["DESTROYED", "DESTROYED"]);
 });
 
-test("each backend's upkeep removes only its own machines' stale tailnet devices, and the doctor counts both as the install's", async () => {
-  const secondPrefix = new NamespaceOwner(TEAM_B, "inst1").tailnetPrefix();
-  const devices = [
-    { nodeId: "first-gone", hostname: "bb-box-ns-inst1-gone-box", tags: ["tag:bb-box"], lastSeen: "2020-01-01T00:00:00Z" },
-    { nodeId: "second-gone", hostname: `${secondPrefix}gone-box`, tags: ["tag:bb-box"], lastSeen: "2020-01-01T00:00:00Z" },
-  ];
+interface StaleDevice {
+  readonly nodeId: string;
+  readonly hostname: string;
+}
+
+function tailnetOf(devices: readonly StaleDevice[]): { readonly tailnet: Tailnet; readonly removed: string[] } {
   const removed: string[] = [];
+  const listed = () => devices.filter((device) => !removed.includes(device.nodeId)).map((device) => ({ ...device, tags: ["tag:bb-box"], lastSeen: "2020-01-01T00:00:00Z" }));
   const tailnet = new Tailnet({
     credentials: { clientId: "id", clientSecret: "secret" },
     fetch: async (url) => {
       const path = new URL(url).pathname;
       const reply = (body: unknown) => ({ ok: true, status: 200, text: async () => JSON.stringify(body) });
       if (path === "/api/v2/oauth/token") return reply({ access_token: "tok", expires_in: 3600 });
-      if (path === "/api/v2/tailnet/-/devices") return reply({ devices: devices.filter((device) => !removed.includes(device.nodeId)) });
+      if (path === "/api/v2/tailnet/-/devices") return reply({ devices: listed() });
       if (path.startsWith("/api/v2/device/")) return removed.push(path.split("/").at(-1)!), reply({});
       return { ok: false, status: 404, text: async () => "{}" };
     },
   });
+  return { tailnet, removed };
+}
+
+function tailnetNameOf(backendId: string, installId: string, box: string): string {
+  return tailnetHostname(`${new NamespaceOwner(backendId, installId).tailnetPrefix()}${box}`);
+}
+
+test("each backend's upkeep removes only its own machines' stale tailnet devices, and the doctor counts both as the install's", async () => {
+  const secondPrefix = new NamespaceOwner(TEAM_B, "inst1").tailnetPrefix();
+  const devices = [
+    { nodeId: "first-gone", hostname: "bb-box-ns-inst1-gone-box" },
+    { nodeId: "second-gone", hostname: `${secondPrefix}gone-box` },
+  ];
+  const { tailnet, removed } = tailnetOf(devices);
   const fake = workspace();
 
-  assert.match(secondPrefix, /^bb-box-nsb-inst1-[0-9a-f]{6}-$/);
+  assert.equal(secondPrefix, "bb-box-nsb-inst1-6-team-b-");
   assert.ok(devices.every((device) => isInstallDevice(device.hostname, "inst1")));
   await backendOn(fake, TEAM_B, { tailnet }).maintain();
   assert.deepEqual(removed, ["second-gone"]);
   await backendOn(fake, FIRST, { tailnet }).maintain();
   assert.deepEqual(removed, ["second-gone", "first-gone"]);
+});
+
+test("namespace:team-339 and namespace:team-3245, whose earlier tailnet codes matched, each remove only their own stale devices (#1455)", async () => {
+  const devices = [
+    { nodeId: "belongs-to-339", hostname: tailnetNameOf("namespace:team-339", "inst1", "gone-box") },
+    { nodeId: "belongs-to-3245", hostname: tailnetNameOf("namespace:team-3245", "inst1", "gone-box") },
+  ];
+  const { tailnet, removed } = tailnetOf(devices);
+  const fake = workspace();
+
+  await backendOn(fake, "namespace:team-339", { tailnet }).maintain();
+  assert.deepEqual(removed, ["belongs-to-339"]);
+
+  await backendOn(fake, "namespace:team-3245", { tailnet }).maintain();
+  assert.deepEqual(removed, ["belongs-to-339", "belongs-to-3245"]);
+});
+
+test("no Namespace backend's tailnet names start with another's prefix, for names that look alike and the longest install ID and name (#1455)", () => {
+  const names = ["a", "a-1", "1-a", "1", "11", "1-1", "a1", "1a", "team-339", "team-3245", "team-b", "team-bb", "b-team", "10-x", "x-10", "a".repeat(14), "a".repeat(15), `${"a".repeat(14)}b`];
+  const ids = [FIRST, ...names.map((name) => `namespace:${name}`)];
+
+  for (const installId of ["inst1", "x".repeat(32)]) {
+    for (const mine of ids) {
+      const prefix = new NamespaceOwner(mine, installId).tailnetPrefix();
+      assert.ok(prefix.length <= 63, `${mine}'s prefix fits a tailnet name on install ${installId}`);
+      for (const theirs of ids.filter((id) => id !== mine)) {
+        for (const box of ["", "b", "gone-box", "z".repeat(63)]) {
+          const theirName = tailnetNameOf(theirs, installId, box);
+          assert.ok(!theirName.startsWith(prefix), `${mine} would take ${theirs}'s ${theirName} on install ${installId}`);
+        }
+      }
+    }
+  }
 });
 
 test("two Namespace backends on two workspaces each start a shared iOS host with their own token, labelled with the backend and recorded as on it", async () => {

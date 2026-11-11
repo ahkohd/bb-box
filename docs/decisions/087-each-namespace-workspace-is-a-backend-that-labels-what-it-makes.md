@@ -49,10 +49,21 @@ under the same tag and unique tag.
   its ID, and the host's machine carries its label. Slots, hand-over, the
   last hour and cleanup go through that backend and its token.
 - Another backend's machines join the tailnet as `bb-box-nsb-`, the
-  install's ID, the first 6 hex digits of the SHA-256 of the backend's ID,
-  then the box's name. That prefix never starts with the first backend's,
-  `bb-box-ns-`, nor with another's, so each backend removes only its own
-  stale devices.
+  install's ID, the length of the backend's name, the name, then the box's
+  name, each followed by `-`, such as `bb-box-nsb-<install>-6-team-b-`.
+  The length says where the name ends, so no backend's prefix starts
+  another's tailnet name, and the first backend's, `bb-box-ns-`, starts
+  none of theirs. Each backend so removes only its own stale devices. A
+  short hash of the ID could not promise that: `namespace:team-339` and
+  `namespace:team-3245` share the first 6 hex digits of their SHA-256.
+- A Namespace backend's name is at most 15 characters, so its prefix fits
+  in a tailnet name of 63 characters even with the longest install ID, 32
+  characters. A longer prefix would be cut short, and 2 backends could
+  then share a tailnet name. A driver sets this limit with `longestName`,
+  and the configuration refuses a longer name.
+- A shared iOS host's record, and a device host read from storage, that
+  has no backend was written before this change and is the backend
+  `namespace`'s. Reading it never makes it another backend's.
 - A provider with no host, whose backend ID has a name, is called by its
   driver's label and that name in brackets, such as Namespace (team-b).
   `on` tries a name whole before it drops what follows in brackets, one

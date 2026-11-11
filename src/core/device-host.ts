@@ -306,6 +306,12 @@ function text(value: unknown, path: string): string {
   return value;
 }
 
+const BACKEND_OF_HOSTS_FROM_BEFORE_SEVERAL_WORKSPACES = "namespace";
+
+function backendOrTheFirst(value: unknown, path: string): string {
+  return value === undefined ? BACKEND_OF_HOSTS_FROM_BEFORE_SEVERAL_WORKSPACES : text(value, path);
+}
+
 function bool(value: unknown, path: string): boolean {
   if (typeof value !== "boolean") refuse(path, `must be true or false, not ${shown(value)}.`);
   return value;
@@ -410,7 +416,7 @@ function deviceHostOf(value: unknown, path: string): DeviceHost {
   if (on === "pool-mac") return { ...common, on, machine: text(read.machine, `${path}.machine`), state: poolMacStateOf(read.state, `${path}.state`) };
   const state = hostStateOf(read.state, `${path}.state`, settings.most);
   if (on === "tart") return { ...common, on, mac: text(read.mac, `${path}.mac`), vm: text(read.vm, `${path}.vm`), state };
-  return { ...common, on, backend: text(read.backend, `${path}.backend`), instance: text(read.instance, `${path}.instance`), endsAt: time(read.endsAt, `${path}.endsAt`), state };
+  return { ...common, on, backend: backendOrTheFirst(read.backend, `${path}.backend`), instance: text(read.instance, `${path}.instance`), endsAt: time(read.endsAt, `${path}.endsAt`), state };
 }
 
 const IOS_MODEL_NAMES: readonly IosModelName[] = deviceModels("ios").map((model) => model.name as IosModelName);

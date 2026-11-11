@@ -1,11 +1,10 @@
-import { createHash } from "node:crypto";
-import { tailnetHostname } from "../../core/tailnet.ts";
+import { HOSTNAME_LIMIT, tailnetHostname } from "../../core/tailnet.ts";
+import { LONGEST_INSTALL_ID } from "../../core/install.ts";
 import { backendIdName } from "../../core/provider-name.ts";
 
 export const INSTALL_LABEL = "bbbox-install";
 export const BACKEND_LABEL = "bbbox-backend";
-const FIRST_NAMESPACE_BACKEND_ID = "namespace";
-const TAILNET_HASH_LENGTH = 6;
+export const FIRST_NAMESPACE_BACKEND_ID = "namespace";
 
 type Labels = Readonly<Record<string, string>>;
 
@@ -56,10 +55,19 @@ export class NamespaceOwner {
   tailnetPrefix(): string {
     const install = tailnetHostname(this.installId);
     if (this.takesUnlabelledMachines) return `bb-box-ns-${install}-`;
-    return `${namespaceSiblingTailnetPrefix(install)}${createHash("sha256").update(this.backendId).digest("hex").slice(0, TAILNET_HASH_LENGTH)}-`;
+    return `${namespaceSiblingTailnetPrefix(install)}${lengthThenName(this.name ?? this.backendMark)}-`;
   }
 }
 
-export function namespaceSiblingTailnetPrefix(install: string): string {
+function namespaceSiblingTailnetPrefix(install: string): string {
   return `bb-box-nsb-${install}-`;
 }
+
+function lengthThenName(name: string): string {
+  return `${name.length}-${name}`;
+}
+
+const LONGEST_LENGTH_DIGITS_AND_SEPARATORS = "99--".length;
+
+export const LONGEST_NAMESPACE_BACKEND_NAME =
+  HOSTNAME_LIMIT - namespaceSiblingTailnetPrefix("x".repeat(LONGEST_INSTALL_ID)).length - LONGEST_LENGTH_DIGITS_AND_SEPARATORS;
