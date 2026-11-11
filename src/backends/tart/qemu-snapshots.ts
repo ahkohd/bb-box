@@ -1,7 +1,7 @@
 import { quote } from "../../transports/process.ts";
 import { PRODUCT } from "../../brand.ts";
 import { NO_PAUSE, type MachineSize, type SnapshotPlan, type Snapshotting, type TakePause } from "../types.ts";
-import { parseFields, sections } from "./host.ts";
+import { ROLLBACK_BASE_GONE, parseFields, sections } from "./host.ts";
 import { parseQemuVm, qemuScript, type QemuVm } from "./qemu.ts";
 import { SNAPSHOT_SH, labelText, parseLabel, roomShort, storageOf, type SnapshotLabel } from "./snapshots.ts";
 
@@ -24,7 +24,7 @@ const QEMU_SNAPSHOT_SH = String.raw`copy_windows_files() {
 base_of() { printf '%s/images/%s/%s/disk.qcow2' "$q" "$(label_of "$1" image)" "$(label_of "$1" build)"; }
 has_base() { [ -n "$(label_of "$1" image)" ] && [ -n "$(label_of "$1" build)" ] && [ -f "$(base_of "$1")" ]; }
 base_gone() {
-  echo "Snapshot $(label_of "$1" snapshot) stands on build $(label_of "$1" build) of the Windows image $(label_of "$1" image), which the Mac no longer has: an image refresh removed it once no VM used it. Delete the snapshot." >&2
+  echo "Snapshot $(label_of "$1" snapshot) stands on build $(label_of "$1" build) of the Windows image $(label_of "$1" image), which the Mac no longer has. Delete the snapshot." >&2
 }
 config_val() { sed -n "s/^$2=//p" "$1/config" 2>/dev/null | head -n 1; }
 `;
@@ -94,19 +94,22 @@ has_base "$sd" || { base_gone "$sd"; exit ${BASE_GONE_EXIT}; }
 same_volume "$v" "$snaps" || { other_volume "$snaps" "$q/vms"; exit 6; }
 room_for_copy "$snaps" ${minFreeGiB} || exit 7
 journal "$vm" "copying $id $try $(this_shell)" || exit 1
-undone() { rm -rf "$r"; journal "$vm" "undone $id $try"; echo "$1" >&2; exit "$2"; }
+undone() { free_bases; rm -rf "$r"; journal "$vm" "undone $id $try${"$"}{3:+ $3}"; echo "$1" >&2; exit "$2"; }
 rm -rf "$r" "$a"
 copy_windows_files "$sd/vm" "$r" || undone "The copy of snapshot $id failed, and $vm is as it was." 1
 { grep -v -e '^ssh=' -e '^vnc=' "$r/config"; grep -e '^ssh=' -e '^vnc=' "$v/config"; } > "$r/config.new" && mv -f "$r/config.new" "$r/config" || undone "${PRODUCT} could not keep the ports of $vm, so it put nothing in its place." 1
 : > "$r/.complete"
 ! qrunning "$vm" || undone "$vm started while ${PRODUCT} copied snapshot $id, so it put nothing in its place." 5
 qvideostop "$vm"
+hold_bases || undone "${PRODUCT} put nothing in the place of $vm." 1
+base_present_for "$r" || undone "Snapshot $id stands on $(base_disk_of "$r"), which the Mac no longer has, so ${PRODUCT} put nothing in the place of $vm. Delete the snapshot." ${BASE_GONE_EXIT} ${ROLLBACK_BASE_GONE}
 journal "$vm" "swapping $id $try $(this_shell)" || undone "${PRODUCT} could not record the swap, so it put nothing in the place of $vm." 1
 if mv "$v" "$a"; then
   mv "$r" "$v" || { mv "$a" "$v"; undone "${PRODUCT} could not put snapshot $id in the place of $vm, so it put the VM back." 1; }
 else
   undone "${PRODUCT} could not move $vm aside, so it put nothing in its place." 1
 fi
+free_bases
 rm -f "$v/.complete"
 rm -rf "$a"
 journal "$vm" "done $id $try"
@@ -192,7 +195,7 @@ export function parseWindowsPlanRead(stdout: string): WindowsPlanRead {
 
 export function baseGoneWords(host: string, label: SnapshotLabel | null): string {
   const build = label?.build ? `build ${label.build} of the Windows image ${label.image ?? ""}`.trimEnd() : "a build of the Windows image";
-  return `it stands on ${build}, which ${host} no longer has: an image refresh removed it once no VM used it. Delete the snapshot`;
+  return `it stands on ${build}, which ${host} no longer has. Delete the snapshot`;
 }
 
 function stopFirstMs(power: string | null): number {

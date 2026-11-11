@@ -2402,7 +2402,7 @@ export class TartBackend implements Backend {
     if (kind === "rollback") {
       const engine = this.#engineOf(guest);
       const said = (await this.#run(host, this.#rollbackRecord(engine, guest.ref), { timeoutMs: 30_000, signal })).stdout.trim().split("\n").at(-1) ?? "";
-      const found = /^(?:copying|swapping|done|undone) (sn[a-z2-7]{12}) ([a-z0-9]{8,32})\b/.exec(said);
+      const found = /^(?:copying|swapping|done|undone|failed) (sn[a-z2-7]{12}) ([a-z0-9]{8,32})\b/.exec(said);
       return found ? [{ ref: taskRef({ kind: "rollback", engine, vm: guest.ref, id: found[1]!, attempt: found[2]! }), host: host.name }] : [];
     }
     if (kind !== "take") return [];

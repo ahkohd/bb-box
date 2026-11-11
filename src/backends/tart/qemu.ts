@@ -30,6 +30,33 @@ import { named, parseFields, script, sections } from "./host.ts";
 const FIRST_PORT = 42000;
 const LAST_PORT = 42999;
 
+const BASES_LOCK_WAIT_TENTHS = 600;
+
+const BASES_SH = String.raw`bases_lock="$q/.bases-lock"
+hold_bases() {
+  mkdir -p "$q" || return 1
+  _hb_me=$(this_shell) _hb_i=0
+  until ln -s "$_hb_me" "$bases_lock" 2>/dev/null; do
+    _hb_was=$(readlink "$bases_lock" 2>/dev/null)
+    if [ -n "$_hb_was" ] && ! runs_still "${"$"}{_hb_was%% *}" "${"$"}{_hb_was#* }"; then
+      [ "$(readlink "$bases_lock" 2>/dev/null)" != "$_hb_was" ] || rm -f "$bases_lock"
+      continue
+    fi
+    _hb_i=$((_hb_i + 1))
+    [ "$_hb_i" -lt ${BASES_LOCK_WAIT_TENTHS} ] || { echo "Another task on the Mac has held the Windows image's builds for ${BASES_LOCK_WAIT_TENTHS / 10} s. Try again once it has ended." >&2; return 1; }
+    sleep 0.1
+  done
+}
+free_bases() { [ "$(readlink "$bases_lock" 2>/dev/null)" != "$(this_shell)" ] || rm -f "$bases_lock"; }
+base_disk_of() { printf '%s/images/%s/%s/disk.qcow2' "$q" "$(sed -n 's/^image=//p' "$1/config" 2>/dev/null | head -n 1)" "$(sed -n 's/^build=//p' "$1/config" 2>/dev/null | head -n 1)"; }
+base_present_for() { grep -q '^image=.' "$1/config" 2>/dev/null && grep -q '^build=.' "$1/config" && [ -f "$(base_disk_of "$1")" ]; }
+build_in_use() {
+  grep -qsx "build=$1" "$q"/vms/*/config && return 0
+  _bu_s=$(snaps_dir) || return 1
+  grep -qsx "build=$1" "$_bu_s"/.restore-*/config "$_bu_s"/.replaced-*/config "$_bu_s"/*/vm/config
+}
+`;
+
 /**
  * The start of every QEMU script, after host.ts's: where VMs are, and
  * functions to tell a VM's state and drive its QEMU over QMP. QMP is reached
@@ -90,7 +117,7 @@ qvideostop() {
 }
 # Whether QMP's answer $1 has "$2": "$3", however QEMU spaces it.
 qhas() { printf '%s' "$1" | tr -d ' ' | grep -qF "\"$2\":\"$3\""; }
-`;
+${BASES_SH}`;
 
 function qemu(body: string): string {
   return script(`${LIBRARY}${body}`);
@@ -270,6 +297,7 @@ if rollback_running "$vm"; then echo "BB Box is putting a snapshot in the place 
 heal_rollback "$vm" "$v" || { echo "The folder of $vm is missing after a restore cut short, and the Mac has nothing whole to put back." >&2; exit 1; }
 [ -f "$v/config" ] || { echo "There is no VM $vm." >&2; exit 1; }
 if qrunning "$vm"; then echo running; exit 0; fi
+base_present_for "$v" || { echo "The disk of $vm stands on $(base_disk_of "$v"), which the Mac no longer has, so QEMU cannot start it. Release the box." >&2; exit 1; }
 command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "QEMU is not installed, or not on the PATH of $(id -un)'s SSH sessions." >&2; exit 1; }
 fw="$(qshare)/edk2-aarch64-code.fd"
 [ -f "$fw" ] || { echo "QEMU's firmware $fw is missing." >&2; exit 1; }
@@ -551,9 +579,9 @@ echo captured
  * in one rename, and it is no refresh's build any more. The build that was
  * current stays, named by the link "rollback", until the next replace,
  * whatever VMs use it: going back is pointing "current" at it, where a new
- * build from the ISO takes the operator's ISO and an hour. Other builds no
- * VM is an overlay on, the rollback before among them, then go. Prints
- * "replaced".
+ * build from the ISO takes the operator's ISO and an hour. Other builds that
+ * no VM, snapshot or restore cut short stands on, the rollback before among
+ * them, then go, while restores wait. Prints "replaced".
  */
 export function qemuReplaceScript(image: string, build: string): string {
   return qemu(String.raw`im="$q/images/"${quote(image)}; b=${quote(build)}
@@ -563,23 +591,27 @@ if [ -n "$was" ] && [ "$was" != "$b" ] && [ -f "$im/$was/disk.qcow2" ]; then ln 
 ln -sfn "$b" "$im/current" || exit 1
 rm -f "$im/$b/owner"
 rb=$(cd "$im/rollback" 2>/dev/null && pwd -P) && rb=$(basename "$rb")
+hold_bases || exit 1
 for o in "$im"/*; do
   n=$(basename "$o"); [ "$n" != current ] && [ "$n" != rollback ] && [ "$n" != "$b" ] && [ "$n" != "$rb" ] && [ -d "$o" ] && [ ! -L "$o" ] && [ -f "$o/disk.qcow2" ] || continue
-  grep -qx "build=$n" "$q"/vms/*/config 2>/dev/null && continue
+  build_in_use "$n" && continue
   chmod -R u+w "$o"; rm -rf "$o"
 done
+free_bases
 echo replaced
 `);
 }
 
-/** Removes a refresh's build of a Windows image that is not current and no VM is an overlay on (049). Prints "removed" or "kept". */
+/** Removes a refresh's build of a Windows image that is not current and no VM, snapshot or restore cut short stands on (049). Prints "removed" or "kept". */
 export function qemuRemoveBuildScript(image: string, build: string, installId: string): string {
   return qemu(String.raw`im="$q/images/"${quote(image)}; b=${quote(build)}
 [ -d "$im/$b" ] || { echo removed; exit 0; }
 grep -qx "install="${quote(installId)} "$im/$b/owner" 2>/dev/null || { echo "Build $b of the image is not a refresh's build of this install's." >&2; exit 1; }
 [ "$(cd "$im/current" 2>/dev/null && pwd -P)" != "$(cd "$im/$b" && pwd -P)" ] || { echo "Build $b is the image's current build." >&2; exit 1; }
-if grep -qx "build=$b" "$q"/vms/*/config 2>/dev/null; then echo kept; exit 0; fi
+hold_bases || exit 1
+if build_in_use "$b"; then free_bases; echo kept; exit 0; fi
 chmod -R u+w "$im/$b"; rm -rf "$im/$b"
+free_bases
 echo removed
 `);
 }

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, afterEach, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
+import { qemuRemoveBuildScript, qemuReplaceScript } from "../src/backends/tart/qemu.ts";
 import { SNAPSHOTS_FOLDER, WINDOWS_NO_FORKS, parseTaskRef, taskRef, tartOffer } from "../src/backends/tart/snapshots.ts";
 import { BackendError, SnapshotFailed, type AcquireHooks, type BoxIdentity, type Guest, type MachineSize, type ReleaseHooks, type SnapshotHooks, type TaskRef } from "../src/backends/types.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
@@ -293,7 +294,7 @@ test("a snapshot whose image build is gone is not restored, and the plan and the
   const refused = backend.rollbackSnapshot(guest, { id: SNAP, ref: SNAP, guest }, recorder().hooks, signal());
 
   assert.equal(plan.restore.way, "none");
-  assert.match(plan.restore.why ?? "", /it stands on build 1 of the Windows image bb-box-windows, which mac1 no longer has: an image refresh removed it once no VM used it\. Delete the snapshot\./);
+  assert.match(plan.restore.why ?? "", /it stands on build 1 of the Windows image bb-box-windows, which mac1 no longer has\. Delete the snapshot\./);
   await assert.rejects(refused, (error: unknown) => error instanceof SnapshotFailed && /stands on build 1 of the Windows image/.test(error.message));
   assert.equal(fileOnDisk(qemu, guest), "B", "the VM is as it was");
   assert.ok(existsSync(join(snaps, SNAP)));
@@ -440,4 +441,155 @@ test("through BB Box: a restart while a Windows restore waits after its undo fin
   const restore = state.store.operations({ box: box.id, kind: "restore" }).at(-1);
   assert.equal(restore?.state, "done", restore?.error ?? "");
   await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+});
+
+function onMac(mac: string, script: string): { status: number | null; stdout: string; stderr: string } {
+  return spawnSync("/bin/sh", ["-c", script], { encoding: "utf8", env: { PATH: `${join(mac, "bin")}:${process.env.PATH}`, HOME: mac, USER: "admin" }, timeout: 60_000 });
+}
+
+function imageDir(mac: string): string {
+  return join(mac, ".bb-box", "qemu", "images", FAKE_WINDOWS_IMAGE);
+}
+
+function buildsOnMac(mac: string, current: string, ...builds: string[]): void {
+  for (const build of builds) addWindowsImage(mac, build);
+  rmSync(join(imageDir(mac), "current"));
+  symlinkSync(current, join(imageDir(mac), "current"));
+}
+
+function removeBuild(mac: string, build: string): void {
+  chmodSync(join(imageDir(mac), build, "disk.qcow2"), 0o644);
+  rmSync(join(imageDir(mac), build), { recursive: true });
+}
+
+function standOn(folder: string, build: string): void {
+  writeFileSync(join(folder, "config"), readFileSync(join(folder, "config"), "utf8").replace(/^build=.*$/m, `build=${build}`));
+}
+
+function holdBases(mac: string): void {
+  symlinkSync(`${process.pid} ${startedAt(process.pid)}`, join(mac, ".bb-box", "qemu", ".bases-lock"));
+}
+
+test("an image refresh while a Windows restore is cut short between its renames keeps the build both disks stand on, and the restore then finishes and boots on it", async () => {
+  const made = await stoppedWithSnapshot();
+  const { backend, mac, qemu, guest, build } = made;
+  buildsOnMac(mac, "2", "2", "3");
+  const task = cutShort(made, guest, "swapping", { restore: "whole", aside: true });
+
+  const refresh = onMac(mac, qemuReplaceScript(FAKE_WINDOWS_IMAGE, "3"));
+  const healed = await backend.providerTask(task, signal());
+  await backend.start(guest, signal());
+
+  assert.equal(refresh.stdout.trim(), "replaced", refresh.stderr);
+  assert.ok(existsSync(join(build, "disk.qcow2")), "build 1, which both the VM's own disk and the snapshot's copy stand on, stays");
+  assert.deepEqual(healed, { state: "ok" });
+  assert.equal(fileOnDisk(qemu, guest), "A");
+  assert.equal(await backend.power(guest, signal()), "running");
+  await backend.release(guest, releasing, signal());
+});
+
+test("an image refresh keeps a build a snapshot or a restore's staged folder alone stands on, and removes it once nothing does", async () => {
+  const made = await stoppedWithSnapshot();
+  const { backend, mac, qemu, snaps, guest, build } = made;
+  buildsOnMac(mac, "2", "2", "3", "4");
+  writeFileSync(join(imageDir(mac), "4", "owner"), "install=install-1\n");
+  standOn(vmDir(qemu, guest), "3");
+  cutShort(made, guest, "swapping", { restore: "whole", aside: true });
+  standOn(join(snaps, `.replaced-${guest.ref}`), "4");
+
+  const first = onMac(mac, qemuReplaceScript(FAKE_WINDOWS_IMAGE, "3"));
+  const removal = onMac(mac, qemuRemoveBuildScript(FAKE_WINDOWS_IMAGE, "4", "install-1"));
+
+  assert.deepEqual([first.stdout.trim(), removal.stdout.trim()], ["replaced", "kept"], `${first.stderr}${removal.stderr}`);
+  assert.ok(existsSync(join(build, "disk.qcow2")), "the snapshot and the restore's copy stand on build 1");
+  assert.ok(existsSync(join(imageDir(mac), "4", "disk.qcow2")), "the VM's folder set aside stands on build 4");
+
+  await backend.deleteSnapshot({ id: SNAP, ref: SNAP, guest }, recorder().hooks, signal());
+  await backend.release(guest, releasing, signal());
+  const second = onMac(mac, qemuReplaceScript(FAKE_WINDOWS_IMAGE, "3"));
+  const later = onMac(mac, qemuRemoveBuildScript(FAKE_WINDOWS_IMAGE, "4", "install-1"));
+
+  assert.deepEqual([second.stdout.trim(), later.stdout.trim()], ["replaced", "removed"]);
+  assert.ok(!existsSync(build), "nothing stands on build 1 once the box and its snapshots are gone");
+});
+
+test("an image refresh waits while a restore holds the image's builds, and a hold whose shell has ended is cleared", async () => {
+  const { mac } = await stoppedWithSnapshot();
+  buildsOnMac(mac, "2", "2", "3");
+  const lock = join(mac, ".bb-box", "qemu", ".bases-lock");
+  holdBases(mac);
+
+  const refresh = spawn("/bin/sh", ["-c", qemuReplaceScript(FAKE_WINDOWS_IMAGE, "3")], { env: { PATH: `${join(mac, "bin")}:${process.env.PATH}`, HOME: mac, USER: "admin" } });
+  const ended = new Promise<number | null>((resolve) => refresh.on("exit", resolve));
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+
+  assert.equal(refresh.exitCode, null, "the refresh waits for the hold");
+  assert.ok(existsSync(join(imageDir(mac), "2", "disk.qcow2")));
+  rmSync(lock);
+  assert.equal(await ended, 0);
+  assert.ok(!existsSync(lock), "the refresh lets go of the builds");
+
+  symlinkSync(DEAD_SHELL, lock);
+  const again = onMac(mac, qemuReplaceScript(FAKE_WINDOWS_IMAGE, "2"));
+  assert.equal(again.stdout.trim(), "replaced", again.stderr);
+  assert.throws(() => readlinkSync(lock));
+});
+
+test("a Windows restore cut short between its renames whose snapshot's build is gone puts the VM's own folder back and says why", async () => {
+  const made = await stoppedWithSnapshot();
+  const { backend, mac, qemu, snaps, guest } = made;
+  buildsOnMac(mac, "2", "2");
+  const task = cutShort(made, guest, "swapping", { restore: "whole", aside: true });
+  standOn(join(snaps, `.replaced-${guest.ref}`), "2");
+  removeBuild(mac, "1");
+
+  const answer = await backend.providerTask(task, signal());
+
+  assert.equal(answer.state, "failed");
+  assert.equal(answer.state === "failed" && answer.unchanged, true);
+  assert.match(answer.state === "failed" ? answer.words : "", /the build of the Windows image that the snapshot's disk stands on is gone from the Mac, so the Mac put the VM's own folder back as it was/);
+  assert.equal(fileOnDisk(qemu, guest), "B");
+  assert.deepEqual(readdirSync(snaps).filter((entry) => entry.startsWith(".re")), []);
+  await backend.start(guest, signal());
+  assert.equal(await backend.power(guest, signal()), "running");
+  await backend.release(guest, releasing, signal());
+});
+
+test("a Windows restore found in place on a build that is gone, with nothing set aside, is not reported done, and the box does not start", async () => {
+  const made = await stoppedWithSnapshot();
+  const { backend, mac, qemu, snaps, guest } = made;
+  const task = cutShort(made, guest, "swapping", { restore: "whole", aside: true });
+  renameSync(join(snaps, `.restore-${guest.ref}`), vmDir(qemu, guest));
+  rmSync(join(snaps, `.replaced-${guest.ref}`), { recursive: true });
+  removeBuild(mac, "1");
+
+  const answer = await backend.providerTask(task, signal());
+
+  assert.deepEqual(answer, { state: "failed", words: "the build of the Windows image that the snapshot's disk stands on is gone from the Mac, and the Mac has no folder of the VM's own to put back. Release the box" });
+  await assert.rejects(backend.start(guest, signal()), /stands on \S+\/images\/bb-box-windows\/1\/disk\.qcow2, which the Mac no longer has, so QEMU cannot start it\. Release the box\./);
+  assert.deepEqual((await backend.findTasks(guest, "rollback", 0, signal())).map((one) => one.ref), [task.ref]);
+});
+
+test("a Windows restore checks the build its copy stands on while it holds the image's builds, and puts nothing in place when it is gone", async () => {
+  const { backend, qemu, snaps, guest } = await stoppedWithSnapshot();
+  standOn(join(snaps, SNAP, "vm"), "7");
+
+  const refused = backend.rollbackSnapshot(guest, { id: SNAP, ref: SNAP, guest }, recorder().hooks, signal());
+
+  await assert.rejects(refused, (error: unknown) => error instanceof SnapshotFailed && /cannot restore snapshot snaaaaaaaaaaaa: Snapshot snaaaaaaaaaaaa stands on \S+\/images\/bb-box-windows\/7\/disk\.qcow2, which the Mac no longer has, so BB Box put nothing in the place of \S+\. Delete the snapshot\./.test(error.message));
+  assert.equal(fileOnDisk(qemu, guest), "B");
+  assert.match(readFileSync(join(snaps, ".rollbacks", guest.ref), "utf8"), /^undone snaaaaaaaaaaaa \S+ base-gone$/m);
+});
+
+test("a Windows restore waits to swap its folders while an image refresh holds the image's builds", async () => {
+  const { backend, mac, qemu, guest } = await stoppedWithSnapshot();
+  holdBases(mac);
+
+  const restore = backend.rollbackSnapshot(guest, { id: SNAP, ref: SNAP, guest }, recorder().hooks, signal());
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+
+  assert.equal(fileOnDisk(qemu, guest), "B", "nothing is swapped while the builds are held");
+  rmSync(join(mac, ".bb-box", "qemu", ".bases-lock"));
+  await restore;
+  assert.equal(fileOnDisk(qemu, guest), "A");
 });

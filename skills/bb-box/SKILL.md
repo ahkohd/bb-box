@@ -258,6 +258,7 @@ has shut down: a take shuts Windows down and starts it again, in about
 take of a stopped box leaves it stopped. A restore boots Windows afresh,
 with an undo. Fork and Keep refuse: Windows has no identity reset. A
 restore refuses when the Windows image build the snapshot stands on is gone.
+An image refresh keeps every build a box or a snapshot stands on.
 
 An Android box on Proxmox QEMU snapshots its whole VM disk while running,
 including Android data and Linux host files. Restore uses a snapshot undo

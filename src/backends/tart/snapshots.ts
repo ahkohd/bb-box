@@ -2,7 +2,7 @@ import { quote } from "../../transports/process.ts";
 import { PRODUCT } from "../../brand.ts";
 import { NO_PAUSE, type BoxOwner, type Guest, type HeldSnapshot, type HeldSnapshotState, type Holds, type MachineSize, type SnapshotPlan, type SnapshotStorage, type Snapshotting, type TakePause, type TaskOutcome } from "../types.ts";
 import { IOS_IMAGE_KIND } from "./config.ts";
-import { named, parseConfig, parseFields, script, sections, type VmConfig } from "./host.ts";
+import { ROLLBACK_BASE_GONE, named, parseConfig, parseFields, script, sections, type VmConfig } from "./host.ts";
 
 export const SNAPSHOTS_FOLDER = "bb-box-snapshots";
 export const MACOS_FORK_SAFE_FROM = 3;
@@ -419,11 +419,18 @@ export function rollbackOutcome(task: Extract<TartTask, { kind: "rollback" }>, s
   const lines = said.trim().split("\n");
   if (lines[0] === "running") return { state: "running" };
   if (lines[0] === "unhealed") return { state: "failed", words: "the VM's folder is missing, and the Mac has neither the snapshot's whole copy nor the VM's own folder set aside to put back" };
-  const [phase, id, attempt] = (lines.at(-1) ?? "").trim().split(/\s+/);
+  const [phase, id, attempt, why] = (lines.at(-1) ?? "").trim().split(/\s+/);
   const ours = id === task.id && attempt === task.attempt;
   if (ours && phase === "done") return { state: "ok" };
+  if (ours && why === ROLLBACK_BASE_GONE) return baseGoneOutcome(phase === "undone");
   if (ours && phase === "undone") return { state: "failed", unchanged: true, words: `${PRODUCT} stopped before it finished putting the snapshot's copy in the VM's place, and the Mac put the VM's own folder back as it was` };
   return { state: "failed", unchanged: true, words: "the Mac has no record of putting this snapshot back for this restore, so it did not begin, and the VM is as it was" };
+}
+
+function baseGoneOutcome(putBack: boolean): TaskOutcome {
+  const gone = "the build of the Windows image that the snapshot's disk stands on is gone from the Mac";
+  if (putBack) return { state: "failed", unchanged: true, words: `${gone}, so the Mac put the VM's own folder back as it was. Delete the snapshot` };
+  return { state: "failed", words: `${gone}, and the Mac has no folder of the VM's own to put back. Release the box` };
 }
 
 export function rollbackRecordScript(vm: string): string {

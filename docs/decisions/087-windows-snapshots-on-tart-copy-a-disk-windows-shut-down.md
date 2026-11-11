@@ -39,8 +39,19 @@ identity reset in bb-box, so a copy must never come up beside its source.
   leaves no `state`, so the next start boots Windows from the restored disk
   and never resumes stale memory.
 - A snapshot's label names the image and build its overlay stands on. An
-  image refresh never waits for snapshots: it keeps a build while a VM's
-  config names it. A restore whose build is gone is refused and says so.
+  image refresh, and the removal of a refresh's build, keep every build that
+  a VM, a snapshot, or a restore cut short stands on: they read the `config`
+  of each VM, of each snapshot, and of both folders a restore stages, the
+  snapshot's copy and the VM's own folder set aside. A restore swaps those
+  folders, and a recovery puts them right, only while it holds the image's
+  builds, and pruning holds them too, so a folder is never between two
+  places while pruning reads them. The hold is a link naming the shell that
+  holds it, and one whose shell has ended is cleared.
+- A restore checks, while it holds the builds, that its copy's build is
+  there. A recovery that finds the build of the disk it would put in place
+  gone puts the VM's own folder back, or, with none to put back, records the
+  restore as failed and says why. It never records it as done, and a start
+  of a VM whose build is gone is refused and says so.
 
 ## Consequences
 
@@ -50,3 +61,7 @@ identity reset in bb-box, so a copy must never come up beside its source.
 - Restores after a restart of bb-box are put right from the same journal as
   a macOS VM's, by `heal_rollback` given the QEMU VM's folder.
 - Forks and Keep wait for a Windows identity reset.
+- An old build of the Windows image stays on the Mac while a snapshot
+  stands on it, which can be until the box is released, so a refresh frees
+  less disk while old snapshots remain. Deleting the snapshots frees it at
+  the next refresh.

@@ -78,6 +78,8 @@ note_disk_gb() {
   mkdir -p "$d/disks" && printf '%s\n' "$2" > "$d/disks/$_id.new" && mv -f "$d/disks/$_id.new" "$d/disks/$_id"
 }`;
 
+export const ROLLBACK_BASE_GONE = "base-gone";
+
 /**
  * The start of every script: the PATH to find tart, no automatic pruning of
  * Tart's caches (a clone would otherwise delete the operator's other images
@@ -104,15 +106,12 @@ heal_rollback() {
   read -r _rb_phase _rb_id _rb_try _rb_pid _rb_start < "$_rb_j" || return 0
   case $_rb_phase in copying | swapping) ;; *) return 0 ;; esac
   ! runs_still "$_rb_pid" "$_rb_start" || return 0
-  _rb_v=${"$"}{2:-$tart_vms/$1} _rb_r="$_rb_s/.restore-$1" _rb_a="$_rb_s/.replaced-$1" _rb_to=undone
+  _rb_v=${"$"}{2:-$tart_vms/$1} _rb_r="$_rb_s/.restore-$1" _rb_a="$_rb_s/.replaced-$1" _rb_to=undone _rb_why=
   if [ "$_rb_phase" = swapping ]; then
-    if [ ! -e "$_rb_v" ]; then
-      if [ -f "$_rb_r/.complete" ]; then mv "$_rb_r" "$_rb_v" || return 1; _rb_to=done
-      elif [ -d "$_rb_a" ]; then mv "$_rb_a" "$_rb_v" || return 1
-      else return 1
-      fi
-    elif [ -f "$_rb_v/.complete" ] || [ -d "$_rb_a" ]; then _rb_to=done
-    fi
+    hold_bases || return 1
+    heal_swap; _rb_healed=$?
+    free_bases
+    [ "$_rb_healed" = 0 ] || return 1
   fi
   rm -f "$_rb_v/.complete"
   if [ "$_rb_to" = done ] && [ -z "$2" ]; then
@@ -120,8 +119,24 @@ heal_rollback() {
     grep -E '^(macos|tart)=' "$_rb_s/$_rb_id/label" 2>/dev/null > "$d/run/$1.saved-under" || :
   fi
   rm -rf "$_rb_r" "$_rb_a"
-  printf '%s %s %s\n' "$_rb_to" "$_rb_id" "$_rb_try" > "$_rb_j.new" && mv -f "$_rb_j.new" "$_rb_j"
+  printf '%s %s %s%s\n' "$_rb_to" "$_rb_id" "$_rb_try" "${"$"}{_rb_why:+ $_rb_why}" > "$_rb_j.new" && mv -f "$_rb_j.new" "$_rb_j"
 }
+heal_swap() {
+  if [ ! -e "$_rb_v" ]; then
+    if [ -f "$_rb_r/.complete" ] && base_present_for "$_rb_r"; then mv "$_rb_r" "$_rb_v" || return 1; _rb_to=done
+    elif [ -d "$_rb_a" ]; then mv "$_rb_a" "$_rb_v" || return 1; [ ! -f "$_rb_r/.complete" ] || _rb_why=${ROLLBACK_BASE_GONE}
+    else return 1
+    fi
+  elif [ -f "$_rb_v/.complete" ] || [ -d "$_rb_a" ]; then
+    if base_present_for "$_rb_v"; then _rb_to=done
+    elif [ -d "$_rb_a" ]; then rm -rf "$_rb_r" && mv "$_rb_v" "$_rb_r" && mv "$_rb_a" "$_rb_v" || return 1; _rb_why=${ROLLBACK_BASE_GONE}
+    else _rb_to=failed _rb_why=${ROLLBACK_BASE_GONE}
+    fi
+  fi
+}
+hold_bases() { :; }
+free_bases() { :; }
+base_present_for() { :; }
 `;
 
 const PRELUDE = String.raw`export PATH="${PATHS.join(":")}:$PATH" TART_NO_AUTO_PRUNE=1
