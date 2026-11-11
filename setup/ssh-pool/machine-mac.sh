@@ -21,7 +21,7 @@
 #
 #   machine vm-ready <user>       the user's signing identity, the microphone and
 #                                 camera for its commands, and screen capture's
-#                                 approvals; says signing=
+#                                 approvals; says sip=, tcc=, macos= and signing=
 #   machine vm-grant <user>       stdin: program, permission (repeated), target
 #   machine vm-granted <user>     as granted
 #   machine init
@@ -847,9 +847,19 @@ leftovers() {
 # databases can be written, so the helper grants the box user's programs
 # what macOS would ask a person for, and the reset removes it again.
 sip_off() { csrutil status 2>/dev/null | grep -q 'status: disabled'; }
-# The columns of TCC's access table that this helper writes, as on macOS 27.
-TCC_COLUMNS="service client client_type auth_value auth_reason auth_version csreq policy_id indirect_object_identifier_type indirect_object_identifier indirect_object_code_identity flags last_modified pid pid_version boot_uuid last_reminded one_time_reprompt_eligible reminder_count"
-tcc_known() { [ "$(sqlite3 "$1" 'PRAGMA table_info(access);' 2>/dev/null | cut -d '|' -f 2 | paste -sd ' ' -)" = "$TCC_COLUMNS" ]; }
+# The columns of TCC's access table that this helper writes, as on macOS 26 and 27.
+TCC_COLUMNS_MACOS_26="service client client_type auth_value auth_reason auth_version csreq policy_id indirect_object_identifier_type indirect_object_identifier indirect_object_code_identity flags last_modified pid pid_version boot_uuid last_reminded"
+TCC_COLUMNS_MACOS_27="$TCC_COLUMNS_MACOS_26 one_time_reprompt_eligible reminder_count"
+tcc_known() {
+  columns=$(sqlite3 "$1" 'PRAGMA table_info(access);' 2>/dev/null | cut -d '|' -f 2 | paste -sd ' ' -)
+  [ "$columns" = "$TCC_COLUMNS_MACOS_26" ] || [ "$columns" = "$TCC_COLUMNS_MACOS_27" ]
+}
+UNKNOWN_TCC="TCC's database on this Mac has columns bb-box does not know, as a newer macOS may have, so it writes nothing there. A person grants permissions in System Settings, or a newer bb-box may know them."
+grant_state() {
+  if sip_off; then echo sip=0; else echo sip=1; fi
+  if tcc_known "$ROOT$TCC"; then echo tcc=1; else echo tcc=0; fi
+  echo "macos=$(sw_vers -productVersion 2>/dev/null)"
+}
 # User $1's TCC.db, which macOS 27 keeps outside the home: its tccd has it open.
 user_tcc() {
   pid=$(pgrep -u "$1" -x tccd 2>/dev/null | head -n 1)
@@ -1041,7 +1051,7 @@ grant() {
     user=$(field "$STATE/owner" user)
   fi
   sip_off || quit 7 "System Integrity Protection is on, so macOS lets no program grant permissions. A person grants them in System Settings, or the Mac's owner turns SIP off in recovery (058)."
-  tcc_known "$ROOT$TCC" || fail "TCC's database is not as bb-box knows it on macOS 27, so it writes nothing there."
+  tcc_known "$ROOT$TCC" || quit 7 "$UNKNOWN_TCC"
   home=$(attribute "$user" NFSHomeDirectory)
   [ -n "$home" ] || fail "Box user $user has no home."
   case $program in
@@ -1442,7 +1452,8 @@ display() {
   printf 'user=%s\npassword=%s\n' "$user" "$password"
 }
 
-# The box's grants (058), for box_status: sip=0 or 1, signing=1 when the box
+# The box's grants (058), for box_status: sip=0 or 1, tcc=1 when TCC's
+# database is one bb-box knows, macos=, signing=1 when the box
 # user has its signing identity, then a line
 # grant=<permission> TAB <client> TAB <target> for each, oldest first.
 granted() {
@@ -1453,7 +1464,7 @@ granted() {
   [ -e "$STATE/owner" ] || quit 4 "No box holds the Mac."
   [ "$(field "$STATE/owner" install)" = "$install" ] && [ "$(field "$STATE/owner" box)" = "$box" ] &&
     [ "$(field "$STATE/owner" generation)" = "$expected" ] || quit 4 "Another box holds the Mac."
-  if sip_off; then echo sip=0; else echo sip=1; fi
+  grant_state
   if [ "$(cat "$STATE/signing" 2>/dev/null)" = "$(field "$STATE/owner" user)" ]; then echo signing=1; else echo signing=0; fi
   [ ! -f "$STATE/grants" ] || awk '!seen[$0]++ { print "grant=" $0 }' "$STATE/grants"
 }
@@ -1470,12 +1481,13 @@ vm_ready() { # user
   if [ -n "$home" ] && screen_approvals "$ROOT$home"; then
     chown -R "$(id -u "$1"):20" "$ROOT$home/Library/Group Containers/group.com.apple.replayd"
   fi
+  grant_state
   if [ "$(cat "$STATE/signing" 2>/dev/null)" = "$1" ]; then echo signing=1; else echo signing=0; fi
 }
 
 # A VM's grants, for box_status, as granted gives them.
 vm_granted() { # user
-  if sip_off; then echo sip=0; else echo sip=1; fi
+  grant_state
   if [ "$(cat "$STATE/signing" 2>/dev/null)" = "$1" ]; then echo signing=1; else echo signing=0; fi
   [ ! -f "$STATE/grants" ] || awk '!seen[$0]++ { print "grant=" $0 }' "$STATE/grants"
 }

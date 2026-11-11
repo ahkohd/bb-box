@@ -271,7 +271,7 @@ test("a macOS box grants its programs macOS permissions through the Mac helper i
   const flags = join(ssh.home(guest.address!), ".bb-box-state", "flags");
   const request = { program: "/Users/admin/Applications/Probe.app", permissions: ["accessibility", "screen-recording"] as const };
   await assert.rejects(backend.grant!(guest, request), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && /^System Integrity Protection is on/.test(error.message));
-  assert.deepEqual(await backend.grants!(guest), { canGrant: false, signingIdentity: true, grants: [] });
+  assert.deepEqual(await backend.grants!(guest), { blockedBy: "sip-on", signingIdentity: true, grants: [] });
   mkdirSync(flags, { recursive: true });
   writeFileSync(join(flags, "sip-off"), "");
   assert.deepEqual(await backend.grant!(guest, request), { client: "dev.example.probe", granted: ["accessibility", "screen-recording"], refused: [] });

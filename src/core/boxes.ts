@@ -4107,7 +4107,7 @@ export class Boxes {
     const box = await this.get(threadId, ref);
     if (inSlot(box)) throw new BoxError("unsupported", grantRefusal(box.kind));
     const backend = this.#backend(box);
-    if (!backend.grant) throw new BoxError("unsupported", `${box.backendLabel} cannot grant macOS permissions: only Tart's macOS boxes and Macs of the SSH host pool with SIP off can.`);
+    if (!backend.grant) throw new BoxError("unsupported", `${box.backendLabel} cannot grant macOS permissions: only macOS boxes on Tart and Namespace, and Macs of the SSH host pool with SIP off, can.`);
     this.#require(box, "ready");
     try {
       return { box, answer: await backend.grant(box.guest!, request, signal) };

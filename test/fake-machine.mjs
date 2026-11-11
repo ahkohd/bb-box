@@ -181,16 +181,33 @@ function grant() {
  * machine-mac.sh's commands for a Mac VM that is the box, as a Tart backend
  * runs them: no owner marker. Grants need sip-off, as on a pool Mac.
  */
+function grantState() {
+  return `sip=${flag("sip-off") !== null ? 0 : 1}\ntcc=${flag("tcc-unknown") !== null ? 0 : 1}\nmacos=26.3.1\nsigning=${flag("no-signing") !== null ? 0 : 1}`;
+}
+
+const STALL_POLL_MS = 50;
+const LONGEST_STALL_MS = 120_000;
+
+function stallWhileFlagged(name) {
+  const until = Date.now() + LONGEST_STALL_MS;
+  while (flag(name) !== null && Date.now() < until) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, STALL_POLL_MS);
+}
+
 function vm(verb) {
-  if (verb === "vm-ready") return console.log(`signing=${flag("no-signing") !== null ? 0 : 1}`);
+  if (verb === "vm-ready") {
+    stallWhileFlagged("vm-ready-stalls");
+    return console.log(grantState());
+  }
   if (verb === "vm-granted") {
-    console.log(`sip=${flag("sip-off") !== null ? 0 : 1}\nsigning=${flag("no-signing") !== null ? 0 : 1}`);
+    if (flag("vm-granted-fails") !== null) quit(EXIT.failed, "sudo: a password is required");
+    console.log(grantState());
     for (const line of (read("grants") ?? "").split("\n").filter(Boolean)) console.log(`grant=${line}`);
     return;
   }
   const lines = readFileSync(0, "utf8").split("\n");
   const program = lines.find((line) => line.startsWith("program="))?.slice("program=".length) ?? "";
   if (flag("sip-off") === null) quit(EXIT.protected, "System Integrity Protection is on, so macOS lets no program grant permissions.");
+  if (flag("tcc-unknown") !== null) quit(EXIT.protected, "TCC's database on this Mac has columns bb-box does not know, as a newer macOS may have, so it writes nothing there.");
   if (!/^\/(Users|Applications)\//.test(program)) quit(EXIT.refused, `${program} is not in the box user's home or /Applications.`);
   const client = program.endsWith(".app") ? `dev.example.${program.split("/").pop().slice(0, -4).toLowerCase()}` : program;
   for (const permission of lines.filter((line) => line.startsWith("permission=")).map((line) => line.slice("permission=".length))) {
