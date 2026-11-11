@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { KEEP_AHEAD_MS, LABELS, MAC_CUA, MEASURE_AGAIN_AFTER_MS, MEASURE_LIFE_MS, MEASURE_ROLE, NamespaceBackend, macShapeFor } from "../src/backends/namespace/backend.ts";
+import { KEEP_AHEAD_MS, LABELS, MAC_CUA, MEASURE_AGAIN_AFTER_MS, MEASURE_LIFE_MS, MEASURE_ROLE, MACOS_SHAPES, NamespaceBackend, macDiskGiB, macShapeFor } from "../src/backends/namespace/backend.ts";
 import { MACHINES_KEPT_PER_CHIP, NamespaceMacReports } from "../src/backends/namespace/mac-reports.ts";
 import { CUA_SHA256, CUA_VERSION } from "../src/backends/tart/backend.ts";
 import { parseNamespacePart, type NamespaceConfig } from "../src/backends/namespace/config.ts";
@@ -85,7 +85,7 @@ test("a workspace's largest Mac, set or learned from Namespace's refusal, is ref
   const set = setup({ config: { largestMachine: { cores: 6, memoryGB: 14 } } });
   const refused = await set.backend.capacity("macos", medium, []);
   assert.equal(refused.ok, false);
-  assert.equal(refused.message, "Namespace's workspace allows Macs of at most 6 cores and 14 GB of memory, and 6 cores and 16 GiB needs its 6x28 Mac. Ask for at most 6 cores and 14 GiB, which gets its 6x14 Mac, or use another backend.");
+  assert.equal(refused.message, "The largest Mac Namespace's workspace allows is its 6x14 Mac, with 6 cores, 14 GiB of memory and 104 GiB of disk: less than the 16 GiB of memory asked for, which needs its 6x28 Mac. Ask for at most 6 cores and 14 GiB of memory, which gets its 6x14 Mac, or use another backend.");
   assert.equal((await set.backend.capacity("macos", { cores: 6, memoryMiB: 14336, diskGiB: null }, [])).ok, true);
   assert.equal(set.fake.calls.filter((call) => call.method === "CreateInstance").length, 0);
 
@@ -95,11 +95,81 @@ test("a workspace's largest Mac, set or learned from Namespace's refusal, is ref
   learned.fake.failNext("CreateInstance", "invalid_argument", "requesting more machine resources than workspace quota allows (requesting 6x28, maximum 6x14)");
   const error = await learned.backend.acquire(box("b1", medium), null, hooks().hooks, new AbortController().signal).catch((thrown: unknown) => thrown);
   assert.ok(error instanceof BackendError && error.code === "no_capacity");
-  assert.match(error.message, /at most 6 cores and 14 GB/);
+  assert.match(error.message, /Ask for at most 6 cores and 14 GiB of memory/);
   assert.equal((await learned.backend.capacity("macos", medium, [])).ok, false, "refused up front from then on");
   assert.equal((await learned.backend.capacity("macos", { cores: 4, memoryMiB: 8192, diskGiB: null }, [])).ok, true);
   assert.equal(parseNamespacePart({ fields: { token: FAKE_NAMESPACE_TOKEN, "largest-machine": "6 x 14" } } as never).ok, true);
   assert.equal(parseNamespacePart({ fields: { token: FAKE_NAMESPACE_TOKEN, "largest-machine": "big" } } as never).ok, false);
+});
+
+const SUGGESTION = /Ask for at most (\d+) cores(?:,| and) (\d+) GiB of memory(?: and (\d+) GiB of disk)?/;
+
+function suggestedSize(message: string): { cores: number; memoryMiB: number; diskGiB: number | null } {
+  const match = SUGGESTION.exec(message);
+  assert.ok(match, `the refusal suggests a size: ${message}`);
+  return { cores: Number(match[1]), memoryMiB: Number(match[2]) * 1024, diskGiB: match[3] === undefined ? null : Number(match[3]) };
+}
+
+test("the Namespace guide's Mac sizes give each Mac's disk as BB Box reckons it", () => {
+  const guide = readFileSync(new URL("../docs/guide/namespace.md", import.meta.url), "utf8");
+  const rows = [...guide.matchAll(/^\| (\d+)x(\d+) \| (\d+) \| (\d+) GiB \| (\d+) GiB \|$/gm)].map((row) => row.slice(1).map(Number));
+
+  assert.deepEqual(
+    rows.map(([cores, memoryGB, , , diskGiB]) => ({ cores, memoryGB, diskGiB })).sort((a, b) => a.cores - b.cores || a.memoryGB - b.memoryGB),
+    MACOS_SHAPES.map((shape) => ({ ...shape, diskGiB: macDiskGiB(shape) })).sort((a, b) => a.cores - b.cores || a.memoryGB - b.memoryGB),
+  );
+});
+
+test("a Mac too big for the workspace only by its disk is refused with the disk named, the largest disk the workspace's largest Mac has, and how to ask for it", async () => {
+  const { backend } = setup({ config: { largestMachine: { cores: 6, memoryGB: 14 } } });
+
+  for (const memoryGiB of [12, 13, 14]) {
+    const asked = { cores: 6, memoryMiB: memoryGiB * 1024, diskGiB: 128 };
+    const refused = await backend.capacity("macos", asked, []);
+
+    assert.equal(refused.ok, false);
+    assert.equal(
+      refused.message,
+      `The largest Mac Namespace's workspace allows is its 6x14 Mac, with 6 cores, 14 GiB of memory and 104 GiB of disk: less than the 128 GiB of disk asked for, which needs its 6x28 Mac. Ask for at most 6 cores, 14 GiB of memory and 104 GiB of disk, which gets its 6x14 Mac, or use another backend. Give the disk with disk_gib, or --disk-gib on the command line.`,
+    );
+    assert.doesNotMatch(refused.message!, /\bGB\b/);
+    assert.equal((await backend.capacity("macos", { ...asked, diskGiB: 104 }, [])).ok, true);
+  }
+
+  const smallMacLargeDisk = await backend.capacity("macos", { cores: 4, memoryMiB: 7168, diskGiB: 128 }, []);
+  assert.match(smallMacLargeDisk.message!, /Ask for at most 4 cores, 14 GiB of memory and 104 GiB of disk, which gets its 4x14 Mac/, "the largest disk the workspace allows, not the disk of the Mac the cores and memory alone need");
+});
+
+test("a Mac too big for the workspace is refused with every limit it is over, and the size it suggests is one the workspace accepts", async () => {
+  const workspaces = [{ cores: 4, memoryGB: 14 }, { cores: 6, memoryGB: 14 }, { cores: 8, memoryGB: 28 }, null];
+  const sizes = [4, 6, 8, 12, 16, 20].flatMap((cores) => [7, 12, 14, 16, 28, 56, 64].flatMap((memoryGiB) => [null, 80, 104, 128, 200, 256].map((diskGiB) => ({ cores, memoryMiB: memoryGiB * 1024, diskGiB }))));
+  let refusals = 0;
+
+  for (const largestMachine of workspaces) {
+    const { fake, backend } = setup({ config: { largestMachine } });
+    fake.usageGranted = false;
+
+    for (const asked of sizes) {
+      const refused = await backend.capacity("macos", asked, []);
+      if (refused.ok) continue;
+      refusals += 1;
+
+      const message = refused.message!;
+      assert.doesNotMatch(message, /\bGB\b/, message);
+      const largest = /with (\d+) cores, (\d+) GiB of memory and (\d+) GiB of disk:/.exec(message);
+      assert.ok(largest, message);
+      const [, cores, memoryGiB, diskGiB] = largest.map(Number);
+      if (asked.cores > cores!) assert.match(message, new RegExp(`the ${asked.cores} cores[^.]*asked for`), message);
+      if (asked.memoryMiB > memoryGiB! * 1024) assert.match(message, new RegExp(`the [^.]*${asked.memoryMiB / 1024} GiB of memory[^.]*asked for`), message);
+      if (asked.diskGiB !== null && asked.diskGiB > diskGiB!) assert.match(message, new RegExp(`${asked.diskGiB} GiB of disk asked for.*--disk-gib`), message);
+
+      const suggested = suggestedSize(message);
+      if (asked.diskGiB !== null) assert.notEqual(suggested.diskGiB, null, message);
+      assert.equal((await backend.capacity("macos", suggested, [])).ok, true, `the suggestion in "${message}" fits`);
+    }
+  }
+
+  assert.ok(refusals > 100, `${refusals} refusals checked`);
 });
 
 test("with the usage grant, capacity reads the workspace's Mac limits from Namespace: the largest Mac it allows, and whether its cores are taken, before asking for one", async () => {
@@ -109,7 +179,7 @@ test("with the usage grant, capacity reads the workspace's Mac limits from Names
   const limited = disposed(new NamespaceBackend(CONFIG, testContext(new MemoryStorage(), "inst1", { id: "namespace" }), { fetch: workspace.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }));
   const medium = await limited.capacity("macos", { cores: 6, memoryMiB: 16384, diskGiB: null }, []);
   assert.equal(medium.ok, false);
-  assert.match(medium.message!, /at most 6 cores and 14 GB of memory, and 6 cores and 16 GiB needs its 6x28 Mac/);
+  assert.match(medium.message!, /its 6x14 Mac, with 6 cores, 14 GiB of memory and 104 GiB of disk: less than the 16 GiB of memory asked for, which needs its 6x28 Mac/);
   assert.equal((await limited.capacity("macos", small, [])).ok, true);
   await limited.acquire(box("b1", small), null, hooks().hooks, new AbortController().signal);
   const full = await limited.capacity("macos", small, []);
