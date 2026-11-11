@@ -46,14 +46,14 @@ Known gaps, in plain words:
   forks always reset. A copy made with a provider's own tools, such as a
   fork in boat.dev's dashboard, gets its source's identity value, so its
   reset does not run.
-- **A node's reboot (G16) was run in [093](093-proxmox-restores-recover-from-a-nodes-restart.md).**
+- **A node's reboot (G16) was run in part in [093](093-proxmox-restores-recover-from-a-nodes-restart.md).**
   Held copies and earlier guests stayed stopped through a reboot and a hard
-  reset, and restores cut short by one end at the snapshot with their undo
-  or as they were. A hard reset can lose an undo made in the last 30 s or
-  so, and on LVM-thin a restart in the middle of Proxmox's rollback needs
-  root: see [093's results](093-results.md). Unit 8 made G16 a condition
-  before production's Keep on Proxmox is turned on; that stays the owner's
-  call.
+  reset, and the restores a reboot cut short ended at the snapshot with
+  their undo or as they were, some after root's steps on the node. A power
+  cut can lose a recent undo, with no safe wait or recovery proved, and on
+  LVM-thin a restart in the middle of Proxmox's rollback needs root: see
+  [093's results](093-results.md). Unit 8 made G16 a condition before
+  production's Keep on Proxmox is turned on; that stays the owner's call.
 - **ZFS restores of Linux VMs stay off.** Proxmox LXC boxes restore on ZFS
   since [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md), with
   G4 run on a test ZFS pool; see [ZFS restores on Proxmox LXC](#zfs-restores-on-proxmox-lxc).
@@ -4588,7 +4588,7 @@ Found, not changed:
 
 ### Not proved
 
-- **G16's node reboot** was not run here. It was run later, on a node
+- **G16's node reboot** was not run here. It was run in part later, on a node
   nested in a VM: see [093's results](093-results.md). Arming the identity
   reset, which a held copy needs, stays the owner's call.
 - **Expiry and Keep on ZFS** were not run live. The tests run G4's expiry

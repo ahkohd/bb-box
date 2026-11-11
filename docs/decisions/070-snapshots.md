@@ -9,6 +9,16 @@ rounds of two independent reviews; every finding of each round is answered
 in [What changed after the reviews](#what-changed-after-the-reviews). See
 [How it is built](#13-how-it-is-built) and its [gates](#gated-in-unit-n).
 
+G16's node reboot was run in part, on a nested node, in
+[093](093-proxmox-restores-recover-from-a-nodes-restart.md). 093
+supersedes G16's condition only for what that run proves: a restore
+through a graceful reboot at the steps it ran, and held copies and
+earlier guests that stay stopped through a reboot and a hard reset. A
+power cut can still lose a recent undo, and G16 still holds for unit 8's
+Keep. 093 also supersedes "a rollback task that failed leaves the box
+stopped", from G6's tests, for a rollback cut short by its node's restart
+only: such a rollback is rolled back again once.
+
 Research: [Snapshots of boxes](../research/box-snapshots.md), with its
 measurements on Proxmox LXC and QEMU, Docker, Tart, microsandbox, boat.dev,
 Hetzner, Namespace and device boxes. This note does not repeat them; it

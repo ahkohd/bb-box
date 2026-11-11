@@ -12,8 +12,9 @@ restores on with G16 unproved on both LVM-thin and ZFS, to be run on a
 Proxmox node nested in a VM.
 
 That run is in [093's results](093-results.md). A node was rebooted, and
-reset hard, at each step a restore journals, on LVM-thin and on ZFS. It
-showed four things BB Box did wrong:
+reset hard, at steps a restore journals, on LVM-thin and on ZFS. Some
+cells needed root on the node before BB Box could go on, and a ZFS take
+cut short was not run. It showed four things BB Box did wrong:
 
 - A node starts its boxes at its boot. A box BB Box had stopped for a
   restore was running again when BB Box went on, so BB Box took an undo of
@@ -38,28 +39,50 @@ clears it.
   disk, first reads whether the box runs. If it does, it was started again,
   as a node starts its boxes at its boot. BB Box restores nothing, takes no
   undo, and says so: the box stays as it is.
-- The Proxmox backends read a task Proxmox has no record of, under either
-  answer, as lost when the node started after the task began, by the
-  node's own clock: its uptime and its time. A lost task is not running.
-  BB Box then settles the take or undo by what the guest holds: a whole
-  snapshot is ready, a part-made one incomplete, and none means it was not
-  taken. A task Proxmox has no record of that began after the node's boot
-  is still missing, and still left unknown, as 070 decided.
-- A rollback whose task failed, or was lost, is rolled back again to the
-  same snapshot, once. While Proxmox refuses, as when it left the guest
-  locked, the restore stays open: the box stays stopped and held, and BB
-  Box says what to run on the node, such as `pct unlock 9901`, and rolls
-  back again at each sweep until it can. A second failed rollback leaves
-  the box stopped, as before, and says so.
+- The Proxmox backends say a node restarted after a task began only on the
+  node's own evidence, never on wall-clock times. Proxmox's task ID holds
+  its worker's start, in clock ticks since the node's boot. If the node's
+  uptime now, read from the node the task ran on, is less than that, the
+  worker belonged to an earlier boot. Anything else, such as an uptime that
+  cannot be read or is not a whole number of seconds above zero, proves
+  nothing.
+- A task Proxmox has no record of, under Proxmox VE 9's "no such task"
+  answer or the older HTTP 500 one, is lost when the node restarted after
+  it began. A lost task is not running. BB Box then settles the take or
+  undo by what the guest holds: a whole snapshot is ready, a part-made one
+  incomplete, and none means it was not taken. A task Proxmox has no record
+  of with no such evidence is still missing, and still left unknown, as 070
+  decided. No other HTTP 400 answer reads as no task.
+- A rollback is rolled back again, to the same snapshot, only when its task
+  was lost, or failed, and the node restarted after it began. Each rollback
+  Proxmox accepts is journaled with its task, and a restore rolls back
+  again once at most, across BB Box's restarts. While Proxmox refuses, as
+  when it left the guest locked, the restore stays open: the box stays
+  stopped and held, BB Box says what to run on the node, and tries again at
+  each sweep. A refusal does not count as a try. On LVM-thin, the refusal
+  for a guest locked by a rollback also gives the `lvs` check and the
+  `lvcreate` command that makes its volume again from the snapshot.
+- Once a rollback may have changed the disk, BB Box never starts the box as
+  it was. If the undo is gone, or the guard refuses, when it would roll
+  back again, or the second rollback fails or is lost, the restore fails
+  with the box stopped. BB Box says its disk may be part-restored, and to
+  restore it again before use.
+- With no such restart, a rollback goes as 070 built it: a task that failed
+  leaves the box stopped, and a missing one stays unknown.
 
-This supersedes 070's "a rollback task that failed leaves the box
-stopped", from G6's tests, for a first failure.
+This supersedes, for a rollback cut short by its node's restart only,
+070's "a rollback task that failed leaves the box stopped", from G6's
+tests.
 
 ## Consequences
 
-- A restore that a node's restart cuts short ends at the snapshot with its
-  undo, or as it was with the restore reported as not done. Where Proxmox
-  left a lock, it ends so once root unlocks the guest.
+- A restore that a node's graceful reboot cuts short ends at the snapshot
+  with its undo, or as it was with the restore reported as not done, where
+  the run showed it. Where Proxmox left a lock, it ends so once root
+  unlocks the guest.
+- A node whose uptime has passed a task's worker start since its restart
+  gives no evidence. A task lost then stays unknown, as 070 decided, and
+  `bb box doctor` names it.
 - Two cases still need root on the node, and the guide gives the commands:
   - On LVM-thin, Proxmox rolls back by removing the box's volume, then
     making it again from the snapshot. A restart between the two leaves the
@@ -68,11 +91,12 @@ stopped", from G6's tests, for a first failure.
     widened it to prove it.
   - A copy cut short by a hard reset can leave its volume with no guest.
     The token cannot see or delete it.
-- A hard reset, as in a power cut, is not covered in full. Proxmox keeps
-  `/etc/pve` in SQLite with `synchronous=NORMAL`, and Linux writes dirty
-  pages back after 30 s, so the node can lose about the last 30 s of guest
-  configuration. In the run it lost a held copy made 41 s before the reset,
-  which was the restore's undo. BB Box lists such an undo as lost at its
-  second listing, 10 minutes later. A graceful reboot lost nothing.
+- A hard reset, as in a power cut, is not covered. Proxmox keeps
+  `/etc/pve` in SQLite with `synchronous=NORMAL`, and Linux writes such
+  changes to disk in the background, so a power cut can lose recent guest
+  configuration. No wait is known to make a change safe. In the run, the
+  reset lost a held copy made 41 s before it, which was the restore's undo.
+  BB Box listed that undo as ready until a later listing found it gone. No
+  recovery of a lost undo is proved.
 - Held copies and earlier guests stayed stopped, with their links down,
   through a reboot and a hard reset.

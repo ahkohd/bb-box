@@ -1120,7 +1120,7 @@ export interface TaskRef {
 export type TaskOutcome =
   | { readonly state: "running" }
   | { readonly state: "ok" }
-  | { readonly state: "failed"; readonly words: string; readonly unchanged?: boolean }
+  | { readonly state: "failed"; readonly words: string; readonly unchanged?: boolean; readonly nodeRestarted?: boolean }
   | { readonly state: "missing"; readonly words: string }
   | { readonly state: "lost"; readonly words: string };
 

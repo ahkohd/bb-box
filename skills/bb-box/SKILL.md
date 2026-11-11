@@ -307,10 +307,13 @@ BB Box starts an Android model cold when its unsaved marker is present. A snapsh
   with the same identity, and its other snapshots then fork only.
 - A Proxmox node that restarts during a restore can leave the box's guest
   locked. The restore then stays open and the box stopped, and BB Box says
-  the command to run on the node, such as `pct unlock 214`. Only root on
-  the node can run it: tell the person, and do not restore the box again.
-  BB Box finishes the restore at its next sweep once the guest is
-  unlocked.
+  the commands to run on the node, such as `pct unlock 214`, and on
+  LVM-thin how to make the box's volume again first. Only root on the node
+  can run them: tell the person, and do not restore the box again. BB Box
+  finishes the restore at its next sweep once the guest is unlocked.
+- A restore that fails saying the box's disk may be part-restored leaves
+  the box stopped. Tell the person; restoring it to a snapshot again, or
+  releasing it, is their call.
 - `box_snapshots` lists what you may see of a box's snapshots. Delete your
   own with `box_snapshot_delete` once they are no longer needed. A box holds 5 unless the person set otherwise; when you take one
   past that, BB Box deletes the oldest one an agent of this thread took.

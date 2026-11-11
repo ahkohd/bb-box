@@ -62,7 +62,6 @@ export class FakeSnapshots {
   restoreWhy: string | null = null;
   newer = 0;
   rollback: RollbackOutcome = "ok";
-  rollbacksFailing = 0;
   powerOffFault: Error | null = null;
   readonly order: string[] = [];
   readonly sizes = new Map<string, MachineSize>();
@@ -289,9 +288,8 @@ export class FakeSnapshots {
       this.order.push(`rollback ${ref.id}`);
       if ((await backend.power(guest)) === "running") throw new SnapshotFailed(`Guest ${guest.ref} is running, and BB Box restores a guest only once it has stopped.`);
       if (!this.held.has(ref.id)) throw new SnapshotFailed(`Guest ${guest.ref} has no snapshot bb${ref.id}.`);
-      const outcome = this.rollbacksFailing > 0 ? "failed" : this.rollback;
-      if (this.rollbacksFailing > 0) this.rollbacksFailing--;
-      else this.rollback = "ok";
+      const outcome = this.rollback;
+      this.rollback = "ok";
       await hooks.submitting();
       if (outcome === "refused") throw new SnapshotFailed("CT is locked (backup)");
       const result: TaskOutcome = outcome === "failed" ? { state: "failed", words: "rollback interrupted" } : { state: "ok" };

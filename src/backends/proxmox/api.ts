@@ -43,22 +43,30 @@ export interface ProxmoxOptions {
 /** Between tries at a guest whose lock another task holds. Proxmox itself waits 10 s for the lock on each. */
 const LOCK_RETRY_MS = 1_000;
 
-const STATUSES_PROXMOX_ANSWERS_A_LOST_TASK_WITH = new Set([400, 500]);
+const PROXMOX_VE_9_NO_SUCH_TASK = { status: 400, field: "upid", words: "no such task" } as const;
 
 function isNoSuchTask(error: ProxmoxError): boolean {
-  return error.status === 404 || (STATUSES_PROXMOX_ANSWERS_A_LOST_TASK_WITH.has(error.status) && /no such task|unable to parse worker upid/i.test(error.message));
+  if (error.status === 404) return true;
+  if (error.status === 500) return /no such task|unable to parse worker upid/i.test(error.message);
+  return error.status === PROXMOX_VE_9_NO_SUCH_TASK.status && error.fields[PROXMOX_VE_9_NO_SUCH_TASK.field] === PROXMOX_VE_9_NO_SUCH_TASK.words;
+}
+
+function wholeSecondsSinceBoot(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
 export class ProxmoxError extends Error {
   readonly status: number;
   readonly method: string;
   readonly path: string;
-  constructor(method: string, path: string, status: number, message: string) {
+  readonly fields: Readonly<Record<string, string>>;
+  constructor(method: string, path: string, status: number, message: string, fields: Readonly<Record<string, string>> = {}) {
     super(`Proxmox ${method} ${path} failed (${status}): ${message}`);
     this.name = "ProxmoxError";
     this.status = status;
     this.method = method;
     this.path = path;
+    this.fields = fields;
   }
 
   get alreadyExists(): boolean {
@@ -295,12 +303,9 @@ export class Proxmox {
     return { memoryTotal: total, memoryAvailable: available, cpus: Number.isInteger(cpus) && cpus > 0 ? cpus : null };
   }
 
-  async bootedAtSeconds(signal?: AbortSignal): Promise<number | null> {
-    const status = await this.#request<{ uptime?: unknown }>("GET", `/nodes/${enc(this.node)}/status`, undefined, signal);
-    const clock = await this.#request<{ time?: unknown }>("GET", `/nodes/${enc(this.node)}/time`, undefined, signal);
-    const uptime = Number(status?.uptime);
-    const now = Number(clock?.time);
-    return Number.isFinite(uptime) && Number.isFinite(now) && uptime >= 0 ? now - uptime : null;
+  async uptimeSeconds(node: string, signal?: AbortSignal): Promise<number | null> {
+    const status = await this.#request<{ uptime?: unknown }>("GET", `/nodes/${enc(node)}/status`, undefined, signal);
+    return wholeSecondsSinceBoot(status?.uptime);
   }
 
   async storageStatus(storage: string, signal?: AbortSignal): Promise<StorageStatus> {
@@ -826,10 +831,15 @@ export class Proxmox {
           : "",
       ].filter(Boolean);
       const unique = [...new Set(details)].join(" - ") || "request failed";
-      throw new ProxmoxError(method, path, response.status, unique.slice(0, 500));
+      throw new ProxmoxError(method, path, response.status, unique.slice(0, 500), fieldErrors(parsed?.errors));
     }
     return parsed?.data as T;
   }
+}
+
+function fieldErrors(errors: unknown): Record<string, string> {
+  if (!errors || typeof errors !== "object" || Array.isArray(errors)) return {};
+  return Object.fromEntries(Object.entries(errors).flatMap(([field, words]) => (typeof words === "string" ? [[field, words.trim()]] : [])));
 }
 
 function clientClosed(error: unknown): boolean {

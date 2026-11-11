@@ -37,14 +37,32 @@ const CLONE_PRIVILEGE = "VM.Clone";
 const LXC_FORK_SAFE_FROM = 7;
 const QEMU_FORK_SAFE_FROM = 5;
 const TASK_TYPES: Readonly<Record<TaskKind, string>> = { take: "snapshot", delete: "delsnapshot", rollback: "rollback", copy: "clone" };
-const UPID_START_FIELD = 4;
+const UPID_NODE_FIELD = 1;
+const UPID_WORKER_START_FIELD = 3;
+const UPID_WORKER_START_SHAPE = /^[0-9A-Fa-f]{8,9}$/;
+const LINUX_CLOCK_TICKS_PER_SECOND = 100;
 
-function taskStartSeconds(upid: string): number | null {
-  const field = upid.split(":")[UPID_START_FIELD] ?? "";
-  const seconds = /^[0-9A-Fa-f]{8}$/.test(field) ? Number.parseInt(field, 16) : NaN;
-  return Number.isFinite(seconds) ? seconds : null;
+interface TaskWorker {
+  readonly node: string;
+  readonly startTicksSinceBoot: number;
 }
 
+function workerOf(upid: string): TaskWorker | null {
+  const fields = upid.split(":");
+  const node = fields[UPID_NODE_FIELD] ?? "";
+  const start = fields[UPID_WORKER_START_FIELD] ?? "";
+  if (fields[0] !== "UPID" || !node || !UPID_WORKER_START_SHAPE.test(start)) return null;
+  const ticks = Number.parseInt(start, 16);
+  return ticks > 0 ? { node, startTicksSinceBoot: ticks } : null;
+}
+
+function bootEndedSinceItStarted(worker: TaskWorker, uptimeSeconds: number): boolean {
+  const mostTicksSinceBoot = (uptimeSeconds + 1) * LINUX_CLOCK_TICKS_PER_SECOND;
+  return mostTicksSinceBoot <= worker.startTicksSinceBoot;
+}
+
+const ROLLBACK_LOCK = "rollback";
+const LVM_THIN = "lvmthin";
 const LOCKS_A_TASK_LEAVES = new Set(["snapshot", "snapshot-delete", "rollback", "backup", "clone", "create", "disk", "migrate", "copy"]);
 
 const CLONE_WAIT_LEAST_MS = 180_000;
@@ -168,6 +186,10 @@ function percent(used: number, total: number): number {
 
 export function storageOfVolume(value: unknown): string | null {
   return /^([A-Za-z][A-Za-z0-9_.-]*):/.exec(String(value ?? ""))?.[1] ?? null;
+}
+
+function volumeNameOf(value: unknown): string | null {
+  return /^[A-Za-z][A-Za-z0-9_.-]*:(?:[A-Za-z0-9_.+-]+\/)?([A-Za-z0-9_.+-]+)(?:,|$)/.exec(String(value ?? ""))?.[1] ?? null;
 }
 
 function memoryMiBOf(config: Record<string, unknown>): number {
@@ -586,7 +608,8 @@ export class ProxmoxSnapshotting {
       const lock = typeof config.lock === "string" && config.lock ? config.lock : null;
       if (lock) {
         const words = await this.#lockWords(api, vmid, lock, signal);
-        throw new SnapshotFailed(words.running ?? `Proxmox has guest ${vmid} locked (${lock}), so it cannot restore the snapshot.${words.fix ? ` ${words.fix}` : ""}`);
+        const remake = words.fix && lock === ROLLBACK_LOCK ? await this.#remakeAfterACutRollback(api, config, name, signal) : null;
+        throw new SnapshotFailed(words.running ?? `Proxmox has guest ${vmid} locked (${lock}), so it cannot restore the snapshot.${remake ? ` ${remake}` : ""}${words.fix ? ` ${words.fix}` : ""}`);
       }
       await hooks.submitting();
       upid = await api.startRollback(vmid, name, signal);
@@ -597,6 +620,22 @@ export class ProxmoxSnapshotting {
     await hooks.task({ ref: upid, host: api.node });
     const failure = await this.#waited(api, upid, signal);
     if (failure) throw new RestoreChanged(`Proxmox's rollback task failed: ${failure.replace(/\.$/, "")}.`);
+  }
+
+  async #remakeAfterACutRollback(api: Proxmox, config: Record<string, unknown>, snapshot: string, signal?: AbortSignal): Promise<string | null> {
+    const disk = this.#guests.rootDisk(config);
+    const value = disk ? config[disk] : null;
+    const storageName = storageOfVolume(value);
+    const volume = volumeNameOf(value);
+    if (!storageName || !volume) return null;
+    const configs = await api.storageConfigs(signal).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return null;
+    });
+    const storage = configs?.get(storageName);
+    if (storage?.type !== LVM_THIN || !storage.vgname) return null;
+    const group = storage.vgname;
+    return `A rollback cut short on LVM-thin can leave the guest with no volume, and Proxmox cannot roll it back again then. If \`lvs ${group}/${volume}\` on ${api.node} finds none, first make it again from the snapshot: \`lvcreate -kn -n ${volume} -s ${group}/snap_${volume}_${snapshot}\`.`;
   }
 
   async outsideRollbacks(since: number, signal?: AbortSignal): Promise<OutsideRollback[]> {
@@ -686,17 +725,26 @@ export class ProxmoxSnapshotting {
   async task(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
     const api = await this.#guests.client();
     const status = await api.taskStatus(task.ref, signal);
-    if (!status) return (await this.#lostInRestart(api, task.ref, signal)) ?? { state: "missing", words: `Proxmox has no task ${task.ref}.` };
+    if (!status) {
+      const restarted = await this.#nodeRestartedSince(api, task.ref, signal);
+      if (!restarted) return { state: "missing", words: `Proxmox has no task ${task.ref}.` };
+      return { state: "lost", words: `${restarted} restarted after Proxmox began task ${task.ref}, and kept no record of it, so it is not running.` };
+    }
     if (status.running) return { state: "running" };
     const exit = status.exit ?? "";
-    return exit === "OK" || /^WARNINGS: \d+$/.test(exit) ? { state: "ok" } : { state: "failed", words: exit || "the task failed" };
+    if (exit === "OK" || /^WARNINGS: \d+$/.test(exit)) return { state: "ok" };
+    const words = exit || "the task failed";
+    return (await this.#nodeRestartedSince(api, task.ref, signal)) ? { state: "failed", words, nodeRestarted: true } : { state: "failed", words };
   }
 
-  async #lostInRestart(api: Proxmox, upid: string, signal?: AbortSignal): Promise<TaskOutcome | null> {
-    const began = taskStartSeconds(upid);
-    const booted = await api.bootedAtSeconds(signal).catch(() => null);
-    if (began === null || booted === null || began >= booted) return null;
-    return { state: "lost", words: `${api.node} restarted after Proxmox began task ${upid}, and kept no record of it, so it is not running.` };
+  async #nodeRestartedSince(api: Proxmox, upid: string, signal?: AbortSignal): Promise<string | null> {
+    const worker = workerOf(upid);
+    if (!worker) return null;
+    const uptime = await api.uptimeSeconds(worker.node, signal).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return null;
+    });
+    return uptime !== null && bootEndedSinceItStarted(worker, uptime) ? worker.node : null;
   }
 
   async findTasks(guest: Guest, operation: TaskKind, since: number, signal?: AbortSignal): Promise<TaskRef[]> {

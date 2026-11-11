@@ -65,52 +65,102 @@ Measured with bb-box's token on pve-1:
 - `DELETE` of an orphan volume on `local-zfs`: "Permission check failed
   (/storage/local-zfs, Datastore.Allocate)". The storage's content list
   does not show it either.
-- `GET /nodes/pve-1/time` and `GET /nodes/pve-1/status`: allowed, by
+- `GET /nodes/pve-1/status`, which holds the node's uptime: allowed, by
   `Sys.Audit` on `/nodes/pve-1`, which the token has.
 
-## Why a hard reset loses an undo
+## Why a hard reset can lose an undo
 
 `pmxcfs` keeps `/etc/pve` in SQLite with `PRAGMA journal_mode=WAL` and
-`PRAGMA synchronous=NORMAL`, read from its binary, and pve-1 had
-`vm.dirty_expire_centisecs = 3000`. So a commit can wait about 30 s for the
-disk, and a power cut loses it. The reset lost the held copy's config, and
-both tasks that made it, while the ZFS rollback, which waits for its
+`PRAGMA synchronous=NORMAL`, read from its binary. In that mode SQLite does
+not wait for the disk at each commit, so a power cut can lose commits that
+other readers already saw. Linux writes such changes back in the
+background; pve-1's `vm.dirty_expire_centisecs = 3000` says when a page may
+be written, not when it will have been. So no wait is known that makes a
+change safe. The reset lost the held copy's config, made 41 s before it,
+and both tasks that made it, while the ZFS rollback, which waits for its
 transaction group, was kept.
 
-## Tests that failed first
+This run shows the risk. It does not measure a window, and it proves no way
+to bring a lost undo back. A graceful reboot lost nothing here.
 
-Each failed on main, for the reason the live run showed, before the change:
+## Tests that fail without the change
 
-- "a task the node lost in a hard restart is lost, not running, though
-  Proxmox VE 9 answers 400 for it": the fake node answers a lost task as
-  Proxmox VE 9.2 does.
+Run with the tests and fakes of this change against main's source
+(`73d24449`), against this branch's first head (`8665a516`), and against
+this change. 110 tests in `proxmox-lxc-snapshots`, `restore-recovery` and
+`restore`: 21 fail on main, 15 on the first head, none on this change.
+
+Fail on main and pass on this change:
+
 - "G16 by rollback", "on ZFS storage" and "by the live-check switch: a node
   that restarts after the stop starts the box at its boot, and recovery then
   takes no undo and restores nothing".
-- "G16: a take whose task the node lost, leaving no snapshot on the guest,
-  did not happen", and the same for an undo.
-- "G16: a rollback cut short rolls back again; while the host refuses, the
-  restore stays open with the host's words, then finishes with its undo".
+- "G16: a take whose task the node lost, leaving a whole snapshot on the
+  guest, is settled by it", and the same for an undo.
+- "G16: a rollback lost by its node is rolled back again once", and "a
+  rollback failed as its node rebooted".
+- The tests of the lost task's evidence, the HTTP 400 answers, the LVM-thin
+  lock's command, the undo gone, the guard, the second rollback and the
+  refusals, below.
 
-Two tests changed with the rule: a failed rollback task is now rolled back
-again ("Opus 8 and G16: restarts mid-task"), and a rollback task that fails
-twice leaves the box stopped, as one that failed once did.
+Fail on the first head and pass on this change:
+
+- "G16: a task Proxmox has no log of stays missing while the node has not
+  restarted, though its clock moved on or its uptime reads wrong": the
+  first head read a node clock set forward by 250 s, and an uptime of
+  `null`, as a restart.
+- "G16: a task the node lost in a hard restart is lost ... whatever the
+  node's clock did": the first head missed the restart once the node's
+  clock was set back.
+- "G16: a task that failed as its node rebooted says the node restarted".
+- "G16: only Proxmox VE 9's no-such-task answer from the task's status
+  reads as no task": the first head read "unable to parse worker upid" as
+  no task.
+- "G16: a guest a cut rollback left locked on LVM-thin is refused with how
+  to make its volume again before the unlock".
+- "G16: a rollback cut short whose undo, a snapshot, is then gone leaves
+  the box stopped", and the same for a held copy: the first head started
+  the box as if nothing on its disk had changed.
+- "G16: a rollback cut short is not rolled back again once the guard
+  refuses".
+- "G16: a restore rolls back again only once, across BB Box's restarts",
+  when the second rollback fails and when it is lost: the first head rolled
+  back a third time.
+- "G16: a delete whose task the node lost, with the snapshot still on the
+  guest, is deleted again", and "a rollback made outside BB Box whose task
+  the node lost is not logged": the first head failed the delete, and
+  logged the rollback as failed.
+- "with no node restart, a rollback task that failed is not rolled back
+  again", "Opus 8: restarts mid-task", and main's "a rollback task that
+  fails leaves it stopped": the first head rolled back again with no
+  restart.
+
+Pass on all three, as checks that settling is unchanged: a take or undo
+whose task was lost, leaving a part-made snapshot or none.
 
 ## Live after the change
 
-With bb-box from this branch, at its restart: a restore held after its stop
-on LVM-thin, then a reboot, settled as "Box lvm-a started again before BB
-Box restored it, as a node that restarts starts its boxes. Nothing on its
-disk changed", with B on the box and no undo taken; the take above settled
-as not taken; the restore cut short during its held copy settled as not done; the
-ZFS rollback cut short stayed open until `pct unlock`, then finished, and
-its undo restored B. `bb box doctor` then said 0 operations not settled.
+With bb-box from this branch's first head, at its restart: a restore held
+after its stop on LVM-thin, then a reboot, settled as "Box lvm-a started
+again before BB Box restored it, as a node that restarts starts its boxes.
+Nothing on its disk changed", with B on the box and no undo taken; the take
+above settled as not taken; the restore cut short during its held copy
+settled as not done; the ZFS rollback cut short stayed open until
+`pct unlock`, then finished, and its undo restored B. `bb box doctor` then
+said 0 operations not settled.
+
+The second change, to the lost task's evidence and the rollback's journal,
+was not run again on the node. Both live rollbacks cut short read back
+after the reboot as failed tasks, "received interrupt", whose worker began
+before the boot: the case the change rolls back again.
 
 ## Not proved
 
-- **A hard reset within about 30 s of a change on the node.** Proxmox can
-  lose the change. An undo made then can be lost, and a copy's volume left
-  with no guest.
+- **A hard reset soon after a change on the node.** Proxmox can lose the
+  change. An undo made then can be lost, and a copy's volume left with no
+  guest. No safe wait is known, and no recovery of the undo is proved.
 - **LVM-thin's rollback between its two steps.** Only root can put the
   volume back.
 - A take on ZFS cut short was not run; it is the same code as on LVM-thin.
+- The run did not repeat every cell after each fix: the LVM-thin rollback
+  cut short records the failure before the fix and root's repair.
