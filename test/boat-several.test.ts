@@ -38,6 +38,7 @@ interface BackendOptions {
   readonly tailnet?: Tailnet;
   readonly templateLabels?: Record<string, string> | null;
   readonly logs?: string[];
+  readonly kinds?: readonly ("linux" | "linux-desktop-cpu" | "android")[];
 }
 
 function account(options: { paid?: boolean } = {}): Account {
@@ -82,7 +83,7 @@ function backendOn(on: Account, id: string, options: BackendOptions = {}): BoatB
       settledScript: "true",
       cuaReadyScript: "true",
       identityBootScript: "echo boot=kept",
-      kinds: ["linux"],
+      kinds: options.kinds ?? ["linux"],
       templates: { fingerprint: () => "fp1", setupArchive: async () => Buffer.from("") },
     }),
   );
@@ -321,4 +322,15 @@ test("bb box images list shows each boat.dev backend's own templates, by backend
     [TEAM_B, [secondTemplate]],
   ]);
   assert.match(ownImageLines(own[1]!, on.now()).join("\n"), new RegExp(`^boat:team-b/linux \\(linux\\): ${secondTemplate}, built today; not due; boat\\.dev \\(team-b\\) builds and refreshes it by itself\\.$`));
+});
+
+test("bb box images list leaves out the Android template while the Android SDK's licence is off, as no backend builds it then", async () => {
+  const on = account();
+  const kinds = ["linux", "android"] as const;
+
+  const off = await backendOn(on, TEAM_B, { kinds }).ownImages();
+  const accepted = await backendOn(on, TEAM_B, { kinds, config: { androidLicence: true } }).ownImages();
+
+  assert.deepEqual(off.map((image) => image.kind), ["linux"]);
+  assert.deepEqual(accepted.map((image) => image.kind), ["linux", "android"]);
 });

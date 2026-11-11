@@ -747,12 +747,16 @@ export class BoatBackend implements Backend {
 
   async ownImages(): Promise<readonly OwnImage[]> {
     const images: OwnImage[] = [];
-    for (const kind of this.#offered()) {
+    for (const kind of this.#templatesItMayBuild()) {
       const record = await this.templates.record(kind);
       const due = record ? await this.templates.whyBuild(kind) : null;
       images.push({ kind, ref: record?.sandbox ?? null, builtAt: record?.builtAt ?? null, due, building: this.templates.building(kind) });
     }
     return images;
+  }
+
+  #templatesItMayBuild(): readonly BoatKind[] {
+    return this.#offered().filter((kind) => kind !== "android" || this.#config.androidLicence);
   }
 
   async #keepAllowance(allowance: SavedAllowance): Promise<void> {
