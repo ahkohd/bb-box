@@ -360,6 +360,12 @@ fi
 # `status xcode` notes Xcode's runtimes, which plain status, and so the pool, reads.
 status=$("$ROOT$LIBEXEC/machine" status xcode) || warn "The helper could not list Xcode's Simulator runtimes. Check that sudo xcrun simctl list runtimes works, then run setup-mac.sh again."
 value() { printf '%s\n' "$status" | sed -n "s/^$1=//p" | head -n 1; }
+snapshots=$("$ROOT$LIBEXEC/machine" snapshot probe 2>&1) || {
+  warn "The helper's snapshot probe failed: $(printf '%s\n' "$snapshots" | tail -n 1). bb box doctor probes it again."
+  snapshots=''
+}
+probed() { printf '%s\n' "$snapshots" | sed -n "s/^snapshot\.$1=//p" | head -n 1; }
+[ -z "$(probed left)" ] || warn "The snapshot probe could not remove its trial, which leaves $(probed left | sed 's/ /, /g'). As root, delete each file there with rm, then its folder with rmdir."
 generation=$(value generation)
 
 # What BB's installer and a box's GitHub access need.
@@ -421,6 +427,10 @@ if [ "$xcode" = no ]; then
 fi
 if [ "$(value console)" != "$(value autologin)" ]; then
   echo "$step. Restart the Mac, so that it signs in the first box user, $(value autologin)."
+fi
+if [ -n "$snapshots" ]; then
+  echo
+  echo "For snapshots, which bb-box does not take on pool machines yet, it reported: box homes on $(probed filesystem) under $(probed homes), home snapshots $(probed home), snapshot hook $(probed hook). bb box doctor shows what each machine could offer."
 fi
 if [ -n "$warnings" ]; then
   echo

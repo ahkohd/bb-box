@@ -94,4 +94,6 @@ which records still stand as written. The current design as a whole is in
 | [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md) | Proxmox LXC boxes restore on ZFS in ZFS's order | Accepted; supersedes 070's "ZFS restores ship off" for Proxmox LXC; G16's node reboot is still unproved |
 | [087](087-each-namespace-workspace-is-a-backend-that-labels-what-it-makes.md) | Each Namespace workspace is a backend that labels what it makes | Accepted; extends 042's several backends of a type to backends with no host |
 | [088](088-a-fork-may-hold-its-gone-sources-address-when-its-provider-gave-it.md) | A fork may hold its gone source's address when its provider gave it | Accepted; extends 070's fork check |
-| [089](089-a-backend-can-be-kept-for-bb-projects.md) | A backend can be kept for BB projects | Accepted |
+| [089](089-windows-snapshots-on-tart-copy-a-disk-windows-shut-down.md) | Windows snapshots on Tart copy a disk Windows shut down | Accepted; extends 070 to Windows on Tart; fork and Keep wait for a Windows identity reset; image refreshes keep every build a box, snapshot or restore cut short stands on |
+| [090](090-pool-machines-say-whether-they-snapshot.md) | Pool machines say whether they snapshot: home folders where they clone, or an operator's hook | Accepted, unit 1 of 5 built: machines report, and no pool snapshot is taken yet; extends 070 for the SSH host pool |
+| [091](091-a-backend-can-be-kept-for-bb-projects.md) | A backend can be kept for BB projects | Accepted |

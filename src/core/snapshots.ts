@@ -66,6 +66,8 @@ import {
   nameProblem,
   newOperationId,
   newSnapshotId,
+  notForkedForScope,
+  notKeptForScope,
   noteProblem,
   NOT_THE_AGENTS,
   operationWords,
@@ -321,6 +323,12 @@ function seconds(ms: number): string {
 
 function quoted(snapshot: Pick<SnapshotRecord, "name">): string {
   return `"${snapshot.name}"`;
+}
+
+function noSnapshotsWords(backend: Backend, box: BoxRecord, guest: Guest): string {
+  const machineWhy = backend.noSnapshotsWhy?.(guest, box.kind) ?? null;
+  if (machineWhy) return `${box.backendLabel} takes no snapshot of box ${box.name}: ${machineWhy.replace(/\.$/, "")}.`;
+  return `${box.backendLabel} takes no snapshots of its ${box.kind} boxes.`;
 }
 
 function copiesGuests(backend: Backend): boolean {
@@ -997,7 +1005,7 @@ export class Snapshots {
     if (!backend) throw new BoxError("backend_off", `The ${box.backendLabel} backend that holds box ${box.name} is not in ${PRODUCT}'s settings, so it takes no snapshot of it.`);
     await this.readBill(backend);
     const offer = this.offerFor(backend, box.kind);
-    if (!offer || !backend.snapshot || !backend.planSnapshots) throw new BoxError("unsupported", `${box.backendLabel} takes no snapshots of its ${box.kind} boxes.`);
+    if (!offer || !backend.snapshot || !backend.planSnapshots) throw new BoxError("unsupported", noSnapshotsWords(backend, box, box.guest));
     const memory = asked ?? !offer.holds.includes("disk");
     if (memory && !offer.holds.includes("disk-and-memory")) throw new BoxError("unsupported", `${box.backendLabel} takes snapshots of a ${box.kind} box's disk only, so a snapshot of box ${box.name} cannot hold its memory. Leave memory out.`);
     if (!memory && !offer.holds.includes("disk")) throw new BoxError("unsupported", `Every snapshot ${box.backendLabel} takes of a ${box.kind} box holds its memory too, so a snapshot of box ${box.name} cannot leave it out. Take it with its memory.`);
@@ -1225,7 +1233,8 @@ export class Snapshots {
     const verdict = eligible(current, "keep", { pin: ledger.pins().get(current.id) ?? null, now });
     if (!verdict.ok) throw new BoxError(current.state === "taking" ? "try_again" : "in_use", verdict.why);
     const keptUntil = this.#keepDate(current, input, now);
-    if (current.scope !== "box") throw new BoxError("unsupported", `${quoted(current)} holds box ${current.box.name}'s device only, and lives in the box, so ${PRODUCT} cannot keep it past the box's release.`);
+    const notKept = notKeptForScope(current.scope, current.box.name);
+    if (notKept) throw new BoxError("unsupported", `${PRODUCT} cannot keep ${quoted(current)} past box ${current.box.name}'s release: ${notKept}.`);
     const backend = this.#deps.backends.get(current.backend.id);
     if (!backend) throw new BoxError("backend_off", `The ${current.backend.label} backend that holds ${quoted(current)} is not in ${PRODUCT}'s settings, so ${PRODUCT} cannot keep it.`);
     const offer = this.offerFor(backend, current.box.kind);
@@ -2647,7 +2656,8 @@ export class Snapshots {
     const keptAsIs = this.offerFor(this.#deps.backends.get(target.backend.id), source?.kind ?? target.box.kind)?.keepsPastRelease === "as-is" && target.keptUntil !== null;
     if ((!source || target.boxGone) && !heldCopy && !keptAsIs) throw new BoxError("released", `Box ${name} was released, and ${quoted(target)} has no held copy, so ${PRODUCT} cannot fork it.`);
     if (target.state !== "ready") throw new BoxError(target.state === "taking" ? "try_again" : "unsupported", `Snapshot ${quoted(target)} is ${stateWords(target)}, so ${PRODUCT} does not fork it.`);
-    if (target.scope !== "box") throw new BoxError("unsupported", `Snapshot ${quoted(target)} holds ${name}'s device only, so it does not fork.`);
+    const notForked = notForkedForScope(target.scope, name);
+    if (notForked) throw new BoxError("unsupported", `${PRODUCT} does not fork snapshot ${quoted(target)}: ${notForked}.`);
     if (!forksOn(target.box.system)) throw new BoxError("unsupported", `${FORKS_ONLY}. Box ${name} runs ${target.box.system}.`);
     const targetOffer = this.offerFor(this.#deps.backends.get(target.backend.id), source?.kind ?? target.box.kind);
     if (targetOffer?.forkWhy) throw new BoxError("unsupported", `${PRODUCT} does not fork ${quoted(target)}: ${targetOffer.forkWhy}.`);

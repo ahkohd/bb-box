@@ -82,7 +82,7 @@ export function snapshotCommands(app: BbBox) {
   return {
     "snapshot take": cliCommand({
       summary:
-        "Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it, then says how long it paused the box. Run it with --check first to see how long it would pause the box. A box holds as many as Settings, Snapshots allows, 5 unless set.",
+        "Take a snapshot of a thread's box, or with --machine one of your machines: its disk, or with --memory its disk and its memory where its backend can. Waits until the backend confirms it, then says how long it paused the box. Run it with --check first to see how long it would pause the box: a Windows desktop on arm64 shuts Windows down for it and starts it again. A box holds as many as Settings, Snapshots allows, 5 unless set.",
       positionals: [{ name: "box", description: "The box's name or ID.", required: true }],
       options: {
         ...threadOption,

@@ -463,9 +463,56 @@ export function restoreRoute(caller: Caller, rules: RestoreRules, restore: Resto
   return { ok: true, through: "restore" };
 }
 
+const NARROWER_SCOPE_HOLDS: Readonly<Record<Exclude<SnapshotScope, "box">, string>> = {
+  device: "device",
+  home: "home folder",
+  machine: "whole machine's disk",
+};
+
 export function holdsWords(snapshot: Pick<SnapshotRecord, "holds" | "scope">): string {
-  if (snapshot.scope === "device") return "device";
+  if (snapshot.scope !== "box") return NARROWER_SCOPE_HOLDS[snapshot.scope];
   return snapshot.holds === "disk" ? "disk" : "disk and memory";
+}
+
+export function scopeHoldsWords(scope: SnapshotScope, holds: Holds): string {
+  return holdsWords({ scope, holds });
+}
+
+export function scopeFootnote(scope: Exclude<SnapshotScope, "box">, boxName: string): string {
+  switch (scope) {
+    case "device":
+      return `Snapshots hold the device: its disk and memory, the apps open on it. A restore puts back the device only, not the rest of ${boxName}.`;
+    case "home":
+      return `Snapshots hold ${boxName}'s home folder: its files, settings and keychain. Not apps installed on the machine, files outside the home, or anything running.`;
+    case "machine":
+      return `Snapshots hold the whole machine's disk, by its operator's snapshot hook. Not its memory or anything running.`;
+  }
+}
+
+export function notKeptForScope(scope: SnapshotScope, boxName: string): string | null {
+  switch (scope) {
+    case "box":
+      return null;
+    case "device":
+      return `it holds box ${boxName}'s device only, and lives in the box`;
+    case "home":
+      return `it holds box ${boxName}'s home folder only, on a machine ${PRODUCT} lends to other boxes after the release`;
+    case "machine":
+      return `it holds the whole machine box ${boxName} was lent, which ${PRODUCT} lends to other boxes after the release`;
+  }
+}
+
+export function notForkedForScope(scope: SnapshotScope, boxName: string): string | null {
+  switch (scope) {
+    case "box":
+      return null;
+    case "device":
+      return `it holds ${boxName}'s device only`;
+    case "home":
+      return `it holds ${boxName}'s home folder only, and ${PRODUCT} does not fork home folders`;
+    case "machine":
+      return `it holds the whole machine ${boxName} holds alone, which no other box can share`;
+  }
 }
 
 export function byWords(by: Actor): string {
@@ -593,8 +640,13 @@ export function snapshotLine(snapshot: SnapshotRecord): string {
   return parts.join(" · ");
 }
 
-export function snapshottingWords(holds: readonly Holds[], whileRunning: string): string {
-  const what = holds.includes("disk-and-memory") ? (holds.includes("disk") ? "its disk, or its disk and memory" : "its disk and memory") : "its disk";
+const SCOPE_OFFER_WORDS: Readonly<Partial<Record<SnapshotScope, string>>> = {
+  home: "its home folder",
+  machine: "the whole machine's disk",
+};
+
+export function snapshottingWords(holds: readonly Holds[], whileRunning: string, scope: SnapshotScope = "box"): string {
+  const what = SCOPE_OFFER_WORDS[scope] ?? (holds.includes("disk-and-memory") ? (holds.includes("disk") ? "its disk, or its disk and memory" : "its disk and memory") : "its disk");
   const when = whileRunning === "live" ? "while it runs" : whileRunning === "pauses" ? "pausing it for a moment" : whileRunning === "suspends" ? "suspending it for a few seconds" : "only while it is stopped";
   return `${what}, ${when}`;
 }

@@ -126,6 +126,12 @@ generation=$(printf '%s\n' "$status" | sed -n 's/^generation=//p')
 warnings=''
 warn() { warnings="$warnings
 - $*"; }
+snapshots=$("$LIBEXEC/machine" snapshot probe 2>&1) || {
+  warn "The helper's snapshot probe failed: $(printf '%s\n' "$snapshots" | tail -n 1). bb box doctor probes it again."
+  snapshots=''
+}
+probed() { printf '%s\n' "$snapshots" | sed -n "s/^snapshot\.$1=//p" | head -n 1; }
+[ -z "$(probed left)" ] || warn "The snapshot probe could not remove its trial, which leaves $(probed left | sed 's/ /, /g'). As root, delete each subvolume there with btrfs subvolume delete, then its folder with rmdir."
 sshd=$(command -v sshd || echo /usr/sbin/sshd)
 config=$("$sshd" -T 2>/dev/null || true)
 if [ -z "$config" ]; then
@@ -187,6 +193,10 @@ for file in /etc/ssh/ssh_host_*_key.pub; do
   [ -f "$file" ] || continue
   printf '  %s %s\n' "$known" "$(cut -d' ' -f1,2 "$file")"
 done
+if [ -n "$snapshots" ]; then
+  echo
+  echo "For snapshots, which bb-box does not take on pool machines yet, it reported: box homes on $(probed filesystem) under $(probed homes), home snapshots $(probed home), snapshot hook $(probed hook). bb box doctor shows what each machine could offer."
+fi
 if [ -n "$warnings" ]; then
   echo
   echo "Check these before you add it:$warnings"

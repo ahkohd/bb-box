@@ -262,6 +262,14 @@ memory snapshot. Fork and Keep refuse, because a Windows box has no identity
 reset BB Box has checked. On ZFS, take and delete work, and restore refuses
 for that reason.
 
+A Windows desktop on arm64, on Tart, snapshots its disk only once Windows
+has shut down: a take shuts Windows down and starts it again, in about
+20 s, so save open work first and expect its apps closed. A
+take of a stopped box leaves it stopped. A restore boots Windows afresh,
+with an undo. Fork and Keep refuse: Windows has no identity reset. A
+restore refuses when the Windows image build the snapshot stands on is gone.
+An image refresh keeps every build a box or a snapshot stands on.
+
 An Android box on Proxmox QEMU snapshots its whole VM disk while running,
 including Android data and Linux host files. Restore uses a snapshot undo
 on LVM-thin, Ceph RBD, BTRFS and qcow2; ZFS refuses restore. Memory, fork
@@ -271,6 +279,11 @@ An iOS box with `dedicated` on Tart snapshots its whole macOS VM with its
 memory, so a restore brings its device back booted, with the device, apps
 and data it had when the snapshot was taken. A fork boots the device
 afresh. A shared iOS box takes no snapshots: it has no VM of its own.
+
+A box on the SSH host pool takes no snapshots yet. A take is refused with
+its machine's own reason, such as its box homes being on a filesystem that
+neither clones nor snapshots. Tell the person that reason; do not try
+again on the same box.
 
 BB Box starts an Android model cold when its unsaved marker is present. A snapshot taken while that model runs keeps the marker, as does an undo taken after a hard stop. A clean emulator save removes the marker, so a matching quick-boot save can still load after a host restart. New boxes can use the image's quick-boot saves. Wait for Android to finish booting before running adb commands.
 

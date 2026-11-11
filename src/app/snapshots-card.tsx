@@ -35,6 +35,7 @@ import {
   keepDay,
   keepOpeningDate,
   keepWords,
+  narrowerScopeHoldsLine,
   otherLosses,
   requestId,
   restoreWhyNot,
@@ -447,8 +448,8 @@ export function TakeSnapshotDialog({ box, view, now, onClose, onChanged, returnT
   };
   const where = check ? `${check.host ? `${check.host}'s ` : ""}${check.storage}` : null;
   const holdsLine =
-    offer.scope === "device"
-      ? `It holds the device: its disk and memory, with the apps open on it. The rest of ${box.name} is not in it.`
+    offer.scope !== "box"
+      ? narrowerScopeHoldsLine(offer.scope, box.name)
       : memory
         ? `It holds the disk and the memory: a restore brings back its running apps, and the credentials in them.${check?.memory ? ` Up to ${gibWords(check.memory.addsBytes)} more on ${where}.` : ""}`
         : "It holds the disk: files, installed apps and settings.";

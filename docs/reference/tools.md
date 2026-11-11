@@ -231,7 +231,7 @@ Run a shell script in a box, as its user, and wait for it. You get the exit code
 
 ## box_snapshot
 
-Take a snapshot of a box: its disk, or with memory its disk and running apps where its backend can, so you can restore it if a change goes wrong. Take one before a change you cannot undo, such as a migration, an upgrade, a deletion or a change to the system, and when the person asks; never on a schedule of your own. A take can pause the box: call it with check first to see for how long, and tell the person before a pause of more than a few seconds. Its answer says how long it paused the box.
+Take a snapshot of a box: its disk, or with memory its disk and running apps where its backend can, so you can restore it if a change goes wrong. Take one before a change you cannot undo, such as a migration, an upgrade, a deletion or a change to the system, and when the person asks; never on a schedule of your own. A take can pause the box: call it with check first to see for how long, and tell the person before a pause of more than a few seconds. A Windows desktop on arm64 shuts Windows down for it and starts it again, closing its apps. Its answer says how long it paused the box.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
