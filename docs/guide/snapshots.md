@@ -373,7 +373,9 @@ A Proxmox node that restarts part way through a restore starts its boxes again a
 - **During the rollback**: BB Box rolls the box back again to the same snapshot, once, when the node shows it restarted after the rollback began. Proxmox often leaves the guest locked then, and only root on the node can unlock it. Until then the restore stays open, the box stays stopped, and `bb box doctor` and the box's notice give the command to run, such as `pct unlock 214`. BB Box tries again at each sweep, and finishes once it can.
 - **After the rollback**: BB Box finishes the restore, and the box has the snapshot's disk. After a reboot its undo is there too. After a power cut the undo can be lost, as above.
 
-BB Box leaves the box stopped, and says its disk may be part-restored, when the rollback cut short cannot be finished: its undo is gone, the restore's guard refuses, or the second rollback fails too. Restore the box to a snapshot again before you use it, or release it.
+BB Box leaves the box stopped, and says its disk may be part-restored, when the rollback cut short cannot be finished: its undo is gone, the restore's guard refuses, or the second rollback fails too. If the node started the box at its boot, BB Box stops it first. If it cannot stop it, the restore stays open and the box held, and BB Box tries again at each sweep. Restore the box to a snapshot again before you use it, or release it.
+
+BB Box records each rollback before it asks Proxmox for it. If it never hears back from the second, and cannot find its task, it does not roll back a third time: the restore stays open, with the box stopped, and BB Box looks for the task again at each sweep. Restore the box again, or release it, if it stays so.
 
 BB Box rolls back again only on the node's own evidence of its restart: the node's uptime is less than it was when the rollback's task began. Without it, a rollback whose task failed leaves the box stopped, and one whose task Proxmox no longer has stays unknown, as for a restart of BB Box alone.
 

@@ -547,14 +547,23 @@ function cutShortByARestart(task: TaskSeen): boolean {
   return task?.state === "lost" || (task?.state === "failed" && task.nodeRestarted === true);
 }
 
-function rollbacksSubmitted(operation: Pick<SnapshotOperation, "attempts">): number {
-  return (operation.attempts ?? []).filter((attempt) => attempt.task !== null).length;
+function rollbacksBegun(operation: Pick<SnapshotOperation, "attempts">): number {
+  return (operation.attempts ?? []).length;
+}
+
+function unresolvedRetry(operation: Pick<SnapshotOperation, "attempts">): boolean {
+  const attempts = operation.attempts ?? [];
+  return attempts.length >= ROLLBACKS_A_RESTORE_SUBMITS && attempts.at(-1)?.task === null;
 }
 
 function withAttemptBegun(attempts: readonly CopyAttempt[] | null | undefined, at: number): CopyAttempt[] {
+  return [...(attempts ?? []), { at, task: null }];
+}
+
+function withUnresolvedAttemptReleased(attempts: readonly CopyAttempt[] | null | undefined): CopyAttempt[] {
   const all = [...(attempts ?? [])];
   if (all.at(-1)?.task === null) all.pop();
-  return [...all, { at, task: null }];
+  return all;
 }
 
 function withAttemptJournaled(attempts: readonly CopyAttempt[] | null | undefined, task: TaskRef | null): readonly CopyAttempt[] {
@@ -573,6 +582,13 @@ function cutShortWords(task: Exclude<TaskSeen, null>): string {
 
 function rollBackAgainRefusedWords(backendLabel: string, refusal: string): string {
   return `Its rollback was cut short when its node restarted, so its disk may be part-restored, and ${backendLabel} refused to roll it back again: ${refusal} ${PRODUCT} rolls it back again at each sweep until it can, and keeps it stopped until then.`;
+}
+
+const PART_RESTORED_AFTER_A_RESTART = "Its rollback was cut short when its node restarted, so its disk may be part-restored.";
+
+function unresolvedRetryWords(backendLabel: string, notStopped: string | null): string {
+  const box = notStopped ? `Its disk may be part-restored, and ${notStopped}` : "It keeps the box stopped.";
+  return `It was rolling back again after its node restarted, and ${PRODUCT} cannot tell whether ${backendLabel} accepted that rollback, so it does not roll it back a third time. ${box} It looks for the rollback's task again at each sweep.`;
 }
 
 function rolledBackAgainFailedWords(words: string): string {
@@ -3071,7 +3087,7 @@ export class Snapshots {
         await this.#deps.hold?.(operation, "stopped", signal);
         await admitted(box, "stopped");
       }
-      const rollingBackAgain = !context.swap && rollbacksSubmitted(ledger.operation(operation.id) ?? operation) > 0;
+      const rollingBackAgain = !context.swap && rollbacksBegun(ledger.operation(operation.id) ?? operation) > 0;
       const resumedBeforeTheDiskChanged = from !== "planned" && reach < stepAt(context.swap ? "adopt-claimed" : "rollback-submitting") && !rollingBackAgain;
       if (resumedBeforeTheDiskChanged && (await this.#runsNow(backend, guest, signal))) {
         return await this.#putBack(context, box, from, `Box ${box.name} started again before ${PRODUCT} restored it, as a node that restarts starts its boxes.`);
@@ -3154,9 +3170,13 @@ export class Snapshots {
         } catch (error) {
           if (signal.aborted) throw error;
           const words = sentence(message(error));
-          if (error instanceof SnapshotFailed && rollingBackAgain) throw this.#restoreUnsure(context, box, "rollback-submitting", rollBackAgainRefusedWords(backend.label, words));
+          if (error instanceof SnapshotFailed && rollingBackAgain) {
+            ledger.updateOperation(operation.id, { attempts: withUnresolvedAttemptReleased(ledger.operation(operation.id)?.attempts) });
+            throw this.#restoreUnsure(context, box, "rollback-submitting", rollBackAgainRefusedWords(backend.label, words));
+          }
           if (error instanceof SnapshotFailed) return await this.#putBack(context, box, "rollback-submitting", `${backend.label} refused the rollback: ${words}`);
-          if (error instanceof RestoreChanged) return await this.#leftStopped(context, box, "rollback-task", rollingBackAgain ? rolledBackAgainFailedWords(words) : words, false, rollingBackAgain ? RESTORE_AGAIN_BEFORE_USE : "");
+          if (error instanceof RestoreChanged && rollingBackAgain) return await this.#leftStoppedPartRestored(context, box, "rollback-task", rolledBackAgainFailedWords(words));
+          if (error instanceof RestoreChanged) return await this.#leftStopped(context, box, "rollback-task", words, false);
           throw this.#restoreUnsure(context, box, "rollback-task", words);
         }
         at("rolled-back");
@@ -3489,10 +3509,38 @@ export class Snapshots {
   }
 
   async #stillSafeToRollBackAgain(context: Restoring, box: BoxRecord, undo: SnapshotRecord | null): Promise<void> {
+    await this.#keptStoppedWhilePartRestored(context, box, "rollback-submitting");
     const late = await this.#stillAdmitted(context, box);
-    if (late) await this.#leftStopped(context, box, "rollback-submitting", `Its rollback was cut short when its node restarted, and ${PRODUCT} did not roll it back again: ${late}`, false, RESTORE_AGAIN_BEFORE_USE);
+    if (late) await this.#leftStoppedPartRestored(context, box, "rollback-submitting", `Its rollback was cut short when its node restarted, and ${PRODUCT} did not roll it back again: ${late}`);
     const gone = undo ? await this.#undoGone(context, box, undo) : null;
-    if (gone) await this.#leftStopped(context, box, "undo-ready", `Its rollback was cut short when its node restarted, and its undo "${undo!.name}" was not there when ${PRODUCT} went to roll it back again: ${gone}.`, false, RESTORE_AGAIN_BEFORE_USE);
+    if (gone) await this.#leftStoppedPartRestored(context, box, "undo-ready", `Its rollback was cut short when its node restarted, and its undo "${undo!.name}" was not there when ${PRODUCT} went to roll it back again: ${gone}.`);
+  }
+
+  async #leftStoppedPartRestored(context: Restoring, box: BoxRecord, step: RestoreStep, words: string): Promise<never> {
+    await this.#keptStoppedWhilePartRestored(context, box, step, words);
+    return this.#leftStopped(context, box, step, words, false, RESTORE_AGAIN_BEFORE_USE);
+  }
+
+  async #keptStoppedWhilePartRestored(context: Restoring, box: BoxRecord, step: RestoreStep, words = PART_RESTORED_AFTER_A_RESTART): Promise<void> {
+    const notStopped = await this.#stoppedIfItRuns(context.backend, box);
+    if (notStopped) throw this.#restoreUnsure(context, box, step, `${words.replace(/\.$/, "")}, and ${notStopped} ${PRODUCT} keeps the restore open, so nothing starts it, and tries again at its next sweep.`);
+  }
+
+  async #stoppedIfItRuns(backend: Backend, box: BoxRecord): Promise<string | null> {
+    const signal = this.#stopping.signal;
+    const guest = box.guest!;
+    const power = await backend.power(guest, signal).catch(() => "unknown" as const);
+    if (power === "stopped" || power === null) return null;
+    if (power === "unknown") return `${PRODUCT} could not read whether it runs.`;
+    try {
+      await backend.powerOff!(guest, signal);
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return `its node started it again, and ${PRODUCT} could not stop it: ${sentence(message(error))}`;
+    }
+    this.#deps.log?.(`Stopped box ${box.name}, which its node started again while its disk may be part-restored.`);
+    const after = await backend.power(guest, signal).catch(() => "unknown" as const);
+    return after === "stopped" || after === null ? null : `its node started it again, and ${PRODUCT} could not confirm it stopped.`;
   }
 
   async #undoGone(context: Restoring, box: BoxRecord, undo: SnapshotRecord): Promise<string | null> {
@@ -3743,8 +3791,8 @@ export class Snapshots {
       if (task?.state === "running") return unsure(`It was rolling back, and Proxmox's rollback was still running when ${PRODUCT} looked.`);
       if (task?.state === "ok") return settle(() => this.#runRestore(context, "rolled-back"));
       const journal = ledger.operation(operation.id) ?? operation;
-      const first = rollbacksSubmitted(journal) <= 1;
-      const mayRollBackAgain = rollbacksSubmitted(journal) < ROLLBACKS_A_RESTORE_SUBMITS;
+      const first = rollbacksBegun(journal) <= 1;
+      const mayRollBackAgain = rollbacksBegun(journal) < ROLLBACKS_A_RESTORE_SUBMITS;
       const rollBackAgain = () => settle(() => this.#runRestore(context, undo?.guest === "held-copy" ? "copy-ready" : "undo-ready"));
       if (task?.state === "failed" && task.unchanged && first) return settle(() => this.#putBack(context, box, "rollback-task", `The rollback on ${backend.label} did not happen: ${sentence(task.words).replace(/\.$/, "")}.`));
       if (task && cutShortByARestart(task) && mayRollBackAgain) {
@@ -3753,8 +3801,14 @@ export class Snapshots {
         return rollBackAgain();
       }
       if (task?.state === "failed" && first) return settle(() => this.#leftStopped(context, box, "rollback-task", `The rollback on ${backend.label} failed: ${sentence(task.words).replace(/\.$/, "")}.`, false));
-      if (task && (task.state === "failed" || task.state === "lost")) return settle(() => this.#leftStopped(context, box, "rollback-task", rolledBackAgainFailedWords(task.words), false, RESTORE_AGAIN_BEFORE_USE));
-      if (task === null && step === "rollback-submitting") return rollBackAgain();
+      if (task && (task.state === "failed" || task.state === "lost")) return settle(() => this.#leftStoppedPartRestored(context, box, "rollback-task", rolledBackAgainFailedWords(task.words)));
+      if (task === null && step === "rollback-submitting" && unresolvedRetry(journal)) {
+        return unsure(unresolvedRetryWords(backend.label, await this.#stoppedIfItRuns(backend, box)));
+      }
+      if (task === null && step === "rollback-submitting") {
+        ledger.updateOperation(operation.id, { attempts: withUnresolvedAttemptReleased(journal.attempts) });
+        return rollBackAgain();
+      }
       return unsure(`It was rolling back, and Proxmox no longer has the rollback's task, so ${PRODUCT} cannot tell how it ended.`);
     }
     return settle(() => this.#runRestore(context, step));

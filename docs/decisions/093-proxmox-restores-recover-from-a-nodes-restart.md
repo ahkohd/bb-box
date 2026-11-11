@@ -45,7 +45,9 @@ clears it.
   uptime now, read from the node the task ran on, is less than that, the
   worker belonged to an earlier boot. Anything else, such as an uptime that
   cannot be read or is not a whole number of seconds above zero, proves
-  nothing.
+  nothing. So does a task ID that does not match Proxmox's own grammar in
+  every field, from its node name to its closing colon, though older
+  Proxmox answers it as a task it has no record of.
 - A task Proxmox has no record of, under Proxmox VE 9's "no such task"
   answer or the older HTTP 500 one, is lost when the node restarted after
   it began. A lost task is not running. BB Box then settles the take or
@@ -54,16 +56,28 @@ clears it.
   of with no such evidence is still missing, and still left unknown, as 070
   decided. No other HTTP 400 answer reads as no task.
 - A rollback is rolled back again, to the same snapshot, only when its task
-  was lost, or failed, and the node restarted after it began. Each rollback
-  Proxmox accepts is journaled with its task, and a restore rolls back
-  again once at most, across BB Box's restarts. While Proxmox refuses, as
-  when it left the guest locked, the restore stays open: the box stays
-  stopped and held, BB Box says what to run on the node, and tries again at
-  each sweep. A refusal does not count as a try. On LVM-thin, the refusal
+  was lost, or failed, and the node restarted after it began. A restore
+  rolls back again once at most, across BB Box's restarts.
+- BB Box journals each rollback before it sends the request, then adds its
+  task when Proxmox answers. A rollback whose answer never came counts as
+  sent. For the first rollback, BB Box looks for its task and, finding
+  none, sends it again, as 070 built it. For the second, it does not: the
+  restore stays open, with the box stopped and held, and BB Box looks for
+  the task again at each sweep. Only a definite refusal, such as the guest
+  being locked, frees a rollback's place. While Proxmox refuses, the
+  restore stays open: the box stays stopped and held, BB Box says what to
+  run on the node, and tries again at each sweep. On LVM-thin, the refusal
   for a guest locked by a rollback also gives the `lvs` check and the
   `lvcreate` command that makes its volume again from the snapshot.
+- A rollback stays BB Box's own after it rolls back again. BB Box reads
+  every journaled rollback as its own, so the first is never reported as a
+  restore made outside BB Box.
 - Once a rollback may have changed the disk, BB Box never starts the box as
-  it was. If the undo is gone, or the guard refuses, when it would roll
+  it was, and does not leave it running. A node starts its boxes at its
+  boot, so before BB Box rolls back again or gives up, it stops the guest
+  if it runs. If it cannot stop it, or cannot read whether it runs, the
+  restore stays open and the box held, and BB Box tries again at each
+  sweep. If the undo is gone, or the guard refuses, when it would roll
   back again, or the second rollback fails or is lost, the restore fails
   with the box stopped. BB Box says its disk may be part-restored, and to
   restore it again before use.
@@ -83,6 +97,13 @@ tests.
 - A node whose uptime has passed a task's worker start since its restart
   gives no evidence. A task lost then stays unknown, as 070 decided, and
   `bb box doctor` names it.
+- A second rollback whose answer and task log were both lost leaves the
+  restore open, with the box stopped, until its task is found or a person
+  restores the box again or releases it. BB Box cannot tell whether that
+  rollback ran.
+- The first rollback whose answer never came, and whose task cannot be
+  found, is still sent again, as 070 built it, so a node that restarts
+  during that first request can still see two rollbacks before the retry.
 - Two cases still need root on the node, and the guide gives the commands:
   - On LVM-thin, Proxmox rolls back by removing the box's volume, then
     making it again from the snapshot. A restart between the two leaves the

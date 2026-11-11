@@ -138,6 +138,41 @@ Fail on the first head and pass on this change:
 Pass on all three, as checks that settling is unchanged: a take or undo
 whose task was lost, leaving a part-made snapshot or none.
 
+## Tests of the third change
+
+The third change journals each rollback before its request, stops a guest
+its node started when its disk may be part-restored, reads a task ID as
+evidence only in Proxmox's whole grammar, and keeps a retried restore's
+first rollback BB Box's own. Its tests were run against the second head
+(`47c7689e`), then with each part of the change put back in turn.
+
+Fail on the second head and pass on this change, 9 tests:
+
+- "G16: a second rollback Proxmox accepted, whose answer and task were
+  both lost, is the one retry": the second head rolled back a third time.
+- "G16: a rollback cut short whose undo, a snapshot, is gone, and whose
+  guest the node started at its boot, is stopped again and left stopped",
+  the same for a held copy, "... when the guard then refuses", and "a
+  second rollback lost too, whose guest the node then started": the second
+  head left the box ready and running.
+- "G16: a rollback cut short, whose guest the node started and BB Box
+  cannot stop, keeps its restore open and the box held": the second head
+  refused to roll back a running guest and said it kept it stopped.
+- "G16: only a task ID whole in Proxmox's own form is evidence of a
+  restart", and "a malformed task ID that failed is not said to be cut
+  short by a restart": the second head read
+  `UPID:pve:NOTHEX00:000F4240:FFFFFFFF:vzrollback:7000:root@pam:` as lost.
+- "G16: a first rollback cut short by a restart is still BB Box's own after
+  its retry": the second head logged it as a failed restore made outside
+  BB Box.
+
+With one part put back at a time, each fails only its own tests: the
+strict task ID 2, the ownership lookup 1, the third rollback's refusal 1,
+the stop of a running guest 6, the refusal freeing its place 1 ("a refusal
+spends no try"), and the first rollback asked again as before 1 ("with no
+node restart, a first rollback whose answer never came ... as before",
+which passes on main and on the second head).
+
 ## Live after the change
 
 With bb-box from this branch's first head, at its restart: a restore held
@@ -149,8 +184,9 @@ settled as not done; the ZFS rollback cut short stayed open until
 `pct unlock`, then finished, and its undo restored B. `bb box doctor` then
 said 0 operations not settled.
 
-The second change, to the lost task's evidence and the rollback's journal,
-was not run again on the node. Both live rollbacks cut short read back
+The second and third changes, to the lost task's evidence, the
+rollback's journal and the stop of a node-started guest, were not run
+again on the node. Both live rollbacks cut short read back
 after the reboot as failed tasks, "received interrupt", whose worker began
 before the boot: the case the change rolls back again.
 

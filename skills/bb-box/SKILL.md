@@ -312,8 +312,10 @@ BB Box starts an Android model cold when its unsaved marker is present. A snapsh
   can run them: tell the person, and do not restore the box again. BB Box
   finishes the restore at its next sweep once the guest is unlocked.
 - A restore that fails saying the box's disk may be part-restored leaves
-  the box stopped. Tell the person; restoring it to a snapshot again, or
-  releasing it, is their call.
+  the box stopped, and BB Box stops it first if its node started it. Tell
+  the person; restoring it to a snapshot again, or releasing it, is their
+  call. The same holds for a restore that stays open because BB Box cannot
+  tell whether its second rollback ran.
 - `box_snapshots` lists what you may see of a box's snapshots. Delete your
   own with `box_snapshot_delete` once they are no longer needed. A box holds 5 unless the person set otherwise; when you take one
   past that, BB Box deletes the oldest one an agent of this thread took.

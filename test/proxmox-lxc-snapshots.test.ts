@@ -329,6 +329,58 @@ test("G16: a lost task stays missing when the node's uptime cannot be read, or t
   assert.deepEqual(await state.backend.providerTask(noWorkerStart), missing(noWorkerStart));
 });
 
+const WHOLE_TASK_IDS = [
+  { form: "an 8-digit worker start", ref: "UPID:pve:00001F40:000F4240:6745A1B2:vzrollback:7000:root@pam:" },
+  { form: "a 9-digit worker start", ref: "UPID:pve:00001F40:1000F4240:6745A1B2:vzrollback:7000:root@pam:" },
+  { form: "a lower-case worker start and an empty ID", ref: "UPID:pve:00001f40:000f4240:6745a1b2:vzrollback::root@pam:" },
+];
+
+const MALFORMED_TASK_IDS = [
+  { fault: "a process ID that is not hex", ref: "UPID:pve:NOTHEX00:000F4240:FFFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "a process ID of 9 digits", ref: "UPID:pve:000001F40:000F4240:FFFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "a node name with an underscore", ref: "UPID:pve_1:00001F40:000F4240:FFFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "a node name ending in a hyphen", ref: "UPID:pve-:00001F40:000F4240:FFFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "a wall time of 7 digits", ref: "UPID:pve:00001F40:000F4240:FFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "a wall time that is not hex", ref: "UPID:pve:00001F40:000F4240:NOTHEX00:vzrollback:7000:root@pam:" },
+  { fault: "a worker start of 10 digits", ref: "UPID:pve:00001F40:00000F4240:FFFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "no user and no end", ref: "UPID:pve:00001F40:000F4240:FFFFFFFF:vzrollback:7000" },
+  { fault: "no closing colon", ref: "UPID:pve:00001F40:000F4240:FFFFFFFF:vzrollback:7000:root@pam" },
+  { fault: "a field too many", ref: "UPID:pve:00001F40:000F4240:FFFFFFFF:vzrollback:7000:root@pam:extra:" },
+  { fault: "a slash in its type", ref: "UPID:pve:00001F40:000F4240:FFFFFFFF:vz/rollback:7000:root@pam:" },
+];
+
+function unableToParse(): FetchResponse {
+  return { ok: false, status: 500, statusText: "unable to parse worker upid", text: async () => JSON.stringify({ data: null }) };
+}
+
+test("G16: only a task ID whole in Proxmox's own form is evidence of a restart; a malformed one stays missing, though older Proxmox answers it as no task", async () => {
+  const state = world();
+  await taskOnABox(state);
+  state.proxmox.hardResetLosingTaskLogs();
+
+  for (const { form, ref } of WHOLE_TASK_IDS) {
+    const task = { ref, host: "pve" };
+    assert.equal((await state.backend.providerTask(task)).state, "lost", form);
+  }
+
+  state.proxmox.intercept = (call) => (call.path.includes("/tasks/") ? unableToParse() : undefined);
+  for (const { fault, ref } of MALFORMED_TASK_IDS) {
+    const task = { ref, host: "pve" };
+    assert.deepEqual(await state.backend.providerTask(task), missing(task), fault);
+  }
+});
+
+test("G16: a malformed task ID that failed is not said to be cut short by a restart", async () => {
+  const state = world();
+  await taskOnABox(state);
+  state.proxmox.hardResetLosingTaskLogs();
+
+  state.proxmox.intercept = (call) => (call.path.includes("/tasks/") ? { ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify({ data: { status: "stopped", exitstatus: "unexpected status" } }) } : undefined);
+  for (const { fault, ref } of MALFORMED_TASK_IDS) {
+    assert.deepEqual(await state.backend.providerTask({ ref, host: "pve" }), { state: "failed", words: "unexpected status" }, fault);
+  }
+});
+
 test("G16: a task that failed as its node rebooted says the node restarted; one that failed with no reboot does not", async () => {
   let rebootAtPoll = false;
   const state = world((proxmox) => {

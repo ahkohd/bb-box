@@ -37,9 +37,7 @@ const CLONE_PRIVILEGE = "VM.Clone";
 const LXC_FORK_SAFE_FROM = 7;
 const QEMU_FORK_SAFE_FROM = 5;
 const TASK_TYPES: Readonly<Record<TaskKind, string>> = { take: "snapshot", delete: "delsnapshot", rollback: "rollback", copy: "clone" };
-const UPID_NODE_FIELD = 1;
-const UPID_WORKER_START_FIELD = 3;
-const UPID_WORKER_START_SHAPE = /^[0-9A-Fa-f]{8,9}$/;
+const PROXMOX_UPID = /^UPID:(?<node>[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?):[0-9A-Fa-f]{8}:(?<workerStart>[0-9A-Fa-f]{8,9}):[0-9A-Fa-f]{8}:[^:\s/]+:[^:\s/]*:[^:\s/]+:$/;
 const LINUX_CLOCK_TICKS_PER_SECOND = 100;
 
 interface TaskWorker {
@@ -48,12 +46,10 @@ interface TaskWorker {
 }
 
 function workerOf(upid: string): TaskWorker | null {
-  const fields = upid.split(":");
-  const node = fields[UPID_NODE_FIELD] ?? "";
-  const start = fields[UPID_WORKER_START_FIELD] ?? "";
-  if (fields[0] !== "UPID" || !node || !UPID_WORKER_START_SHAPE.test(start)) return null;
-  const ticks = Number.parseInt(start, 16);
-  return ticks > 0 ? { node, startTicksSinceBoot: ticks } : null;
+  const fields = PROXMOX_UPID.exec(upid)?.groups;
+  if (!fields?.node || !fields.workerStart) return null;
+  const ticks = Number.parseInt(fields.workerStart, 16);
+  return ticks > 0 ? { node: fields.node, startTicksSinceBoot: ticks } : null;
 }
 
 function bootEndedSinceItStarted(worker: TaskWorker, uptimeSeconds: number): boolean {
@@ -724,9 +720,10 @@ export class ProxmoxSnapshotting {
 
   async task(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
     const api = await this.#guests.client();
+    const worker = workerOf(task.ref);
     const status = await api.taskStatus(task.ref, signal);
     if (!status) {
-      const restarted = await this.#nodeRestartedSince(api, task.ref, signal);
+      const restarted = await this.#nodeRestartedSince(api, worker, signal);
       if (!restarted) return { state: "missing", words: `Proxmox has no task ${task.ref}.` };
       return { state: "lost", words: `${restarted} restarted after Proxmox began task ${task.ref}, and kept no record of it, so it is not running.` };
     }
@@ -734,11 +731,10 @@ export class ProxmoxSnapshotting {
     const exit = status.exit ?? "";
     if (exit === "OK" || /^WARNINGS: \d+$/.test(exit)) return { state: "ok" };
     const words = exit || "the task failed";
-    return (await this.#nodeRestartedSince(api, task.ref, signal)) ? { state: "failed", words, nodeRestarted: true } : { state: "failed", words };
+    return (await this.#nodeRestartedSince(api, worker, signal)) ? { state: "failed", words, nodeRestarted: true } : { state: "failed", words };
   }
 
-  async #nodeRestartedSince(api: Proxmox, upid: string, signal?: AbortSignal): Promise<string | null> {
-    const worker = workerOf(upid);
+  async #nodeRestartedSince(api: Proxmox, worker: TaskWorker | null, signal?: AbortSignal): Promise<string | null> {
     if (!worker) return null;
     const uptime = await api.uptimeSeconds(worker.node, signal).catch((error: unknown) => {
       if (signal?.aborted) throw error;

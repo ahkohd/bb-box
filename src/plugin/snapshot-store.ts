@@ -536,7 +536,8 @@ export class SnapshotStore implements SnapshotLedger {
 
   operationWithTask(task: string): SnapshotOperation | null {
     if (this.#file.problem) return null;
-    const row = this.#file.db().prepare(`SELECT * FROM ${this.#table("snapshot_operations")} WHERE json_extract(task, '$.ref') = ? LIMIT 1`).get(task) as OperationRow | undefined;
+    const anAttemptsTask = `EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(attempts) THEN attempts ELSE '[]' END) WHERE json_extract(value, '$.task.ref') = ?)`;
+    const row = this.#file.db().prepare(`SELECT * FROM ${this.#table("snapshot_operations")} WHERE json_extract(task, '$.ref') = ? OR ${anAttemptsTask} LIMIT 1`).get(task, task) as OperationRow | undefined;
     return row ? operationOf(row) : null;
   }
 
