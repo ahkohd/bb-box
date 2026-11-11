@@ -1121,7 +1121,8 @@ export type TaskOutcome =
   | { readonly state: "running" }
   | { readonly state: "ok" }
   | { readonly state: "failed"; readonly words: string; readonly unchanged?: boolean }
-  | { readonly state: "missing"; readonly words: string };
+  | { readonly state: "missing"; readonly words: string }
+  | { readonly state: "lost"; readonly words: string };
 
 export type TaskKind = "take" | "delete" | "rollback" | "copy";
 export type RestoreWay = "rollback" | "rollback-newest-only" | "new-guest" | "none";

@@ -536,6 +536,27 @@ interface PuttingBack {
   readonly words: string;
 }
 
+function rollbackCutShortOf(operation: Pick<SnapshotOperation, "consent">): string | null {
+  const words = (operation.consent as { rollbackCutShort?: unknown } | null)?.rollbackCutShort;
+  return typeof words === "string" ? words : null;
+}
+
+function withRollbackCutShort(operation: Pick<SnapshotOperation, "consent">, words: string): object {
+  return { ...((operation.consent as object | null) ?? {}), rollbackCutShort: words };
+}
+
+function endedWell(task: TaskSeen): boolean {
+  return task?.state === "ok" || task?.state === "lost";
+}
+
+function lostTaskWords(taskWords: string, where: string): string {
+  return `${sentence(taskWords)} ${where} has no such snapshot, so it was not taken.`;
+}
+
+function rollBackAgainRefusedWords(cutShort: string, backendLabel: string, refusal: string): string {
+  return `${cutShort.replace(/\.$/, "")}, so its disk may be part-restored, and ${backendLabel} refused to roll it back again: ${refusal} ${PRODUCT} rolls it back again at each sweep until it can, and keeps it stopped until then.`;
+}
+
 function puttingBackOf(operation: Pick<SnapshotOperation, "consent">): PuttingBack | null {
   const back = (operation.consent as { putBack?: Partial<PuttingBack> } | null)?.putBack;
   if (!back || typeof back.words !== "string" || typeof back.step !== "string" || !RESTORE_STEPS.includes(back.step)) return null;
@@ -3025,6 +3046,10 @@ export class Snapshots {
         await this.#deps.hold?.(operation, "stopped", signal);
         await admitted(box, "stopped");
       }
+      const resumedBeforeTheDiskChanged = from !== "planned" && reach < stepAt(context.swap ? "adopt-claimed" : "rollback-submitting") && !rollbackCutShortOf(ledger.operation(operation.id) ?? operation);
+      if (resumedBeforeTheDiskChanged && (await this.#runsNow(backend, guest, signal))) {
+        return await this.#putBack(context, box, from, `Box ${box.name} started again before ${PRODUCT} restored it, as a node that restarts starts its boxes.`);
+      }
       if (undo && undo.guest === "current" && reach < stepAt("undo-ready")) {
         at("undo-submitting");
         const takenAt = this.#now();
@@ -3093,15 +3118,25 @@ export class Snapshots {
       }
       if (!context.swap && reach < stepAt("rolled-back")) {
         await this.#recordedClaim(context, guest, signal);
-        at("rollback-submitting");
-        try {
-          await backend.rollbackSnapshot!(guest, { id: target.id, ref: target.ref ?? "", guest }, this.#stepHooks(operation, "rollback"), signal);
-        } catch (error) {
-          if (signal.aborted) throw error;
-          const words = sentence(message(error));
-          if (error instanceof SnapshotFailed) return await this.#putBack(context, box, "rollback-submitting", `${backend.label} refused the rollback: ${words}`);
-          if (error instanceof RestoreChanged) return await this.#leftStopped(context, box, "rollback-task", words, false);
-          throw this.#restoreUnsure(context, box, "rollback-task", words);
+        let cutShort = rollbackCutShortOf(ledger.operation(operation.id) ?? operation);
+        for (;;) {
+          at("rollback-submitting");
+          try {
+            await backend.rollbackSnapshot!(guest, { id: target.id, ref: target.ref ?? "", guest }, this.#stepHooks(operation, "rollback"), signal);
+            break;
+          } catch (error) {
+            if (signal.aborted) throw error;
+            const words = sentence(message(error));
+            if (error instanceof SnapshotFailed && cutShort) throw this.#restoreUnsure(context, box, "rollback-task", rollBackAgainRefusedWords(cutShort, backend.label, words));
+            if (error instanceof SnapshotFailed) return await this.#putBack(context, box, "rollback-submitting", `${backend.label} refused the rollback: ${words}`);
+            if (error instanceof RestoreChanged && !cutShort) {
+              cutShort = words;
+              ledger.updateOperation(operation.id, { consent: withRollbackCutShort(ledger.operation(operation.id) ?? operation, words) });
+              continue;
+            }
+            if (error instanceof RestoreChanged) return await this.#leftStopped(context, box, "rollback-task", words, false);
+            throw this.#restoreUnsure(context, box, "rollback-task", words);
+          }
         }
         at("rolled-back");
         await this.#deps.hold?.(operation, "rolled-back", signal);
@@ -3312,6 +3347,10 @@ export class Snapshots {
       backend.dropGpuCard?.(operation.box);
       this.#running.delete(operation.id);
     }
+  }
+
+  async #runsNow(backend: Backend, guest: Guest, signal: AbortSignal): Promise<boolean> {
+    return (await backend.power(guest, signal).catch(() => null)) === "running";
   }
 
   async #recordedClaim(context: Restoring, guest: Guest, signal: AbortSignal): Promise<GpuHandoff | null> {
@@ -3615,7 +3654,7 @@ export class Snapshots {
       const found = byId.get(undo.id) ?? null;
       if (task?.state === "unreadable") return unsure(`${PRODUCT} could not read the undo's task on ${where(target)}: ${sentence(task.words)}`);
       if (task?.state === "running" || found?.state === "in-progress") return unsure(`The undo's task on ${where(target)} was still running when ${PRODUCT} looked.`);
-      if (found?.state === "complete" && task?.state === "ok") {
+      if (found?.state === "complete" && endedWell(task)) {
         const now = this.#now();
         ledger.updateRecord(undo.id, { state: "ready", ref: found.ref, holds: found.holds, capturedAt: found.takenAt ?? undo.takenAt, stateAt: now, error: null });
         ledger.updateOperation(operation.id, { step: "undo-ready" });
@@ -3625,7 +3664,7 @@ export class Snapshots {
       if (!found && task === null && step === "undo-submitting") return settle(() => this.#runRestore(context, "stopped"));
       if (!found && task?.state === "missing") return unsure(`Proxmox no longer has the undo's task, and ${where(target)} has no such snapshot, so ${PRODUCT} cannot tell how it ended.`);
       if (found?.state === "complete" && task?.state !== "failed") return unsure(`${where(target)} has the undo, but ${PRODUCT} cannot find the task that took it, so it cannot confirm it complete.`);
-      const words = found ? sentence(found.words ?? `${where(target)} left part of the undo`) : task?.state === "failed" ? sentence(task.words) : `The undo's task on ${where(target)} ended, but the guest has no such snapshot.`;
+      const words = found ? sentence(found.words ?? `${where(target)} left part of the undo`) : task?.state === "failed" ? sentence(task.words) : task?.state === "lost" ? lostTaskWords(task.words, where(target)) : `The undo's task on ${where(target)} ended, but the guest has no such snapshot.`;
       ledger.updateRecord(undo.id, { state: found ? "incomplete" : "failed", ref: found?.ref ?? undo.ref, error: words, stateAt: this.#now() });
       return settle(() => this.#putBack(context, box, "undo-task", `${PRODUCT} could not take the undo "${undo.name}": ${words}`));
     }
@@ -3675,10 +3714,16 @@ export class Snapshots {
       if (task?.state === "unreadable") return unsure(`It was rolling back, and ${PRODUCT} could not read the rollback's task: ${sentence(task.words)}`);
       if (task?.state === "running") return unsure(`It was rolling back, and Proxmox's rollback was still running when ${PRODUCT} looked.`);
       if (task?.state === "ok") return settle(() => this.#runRestore(context, "rolled-back"));
-      if (task?.state === "failed" && task.unchanged) return settle(() => this.#putBack(context, box, "rollback-task", `The rollback on ${backend.label} did not happen: ${sentence(task.words).replace(/\.$/, "")}.`));
-      if (task?.state === "failed") return settle(() => this.#leftStopped(context, box, "rollback-task", `The rollback on ${backend.label} failed: ${sentence(task.words).replace(/\.$/, "")}.`, false));
-      if (task === null && step === "rollback-submitting") return settle(() => this.#runRestore(context, undo?.guest === "held-copy" ? "copy-ready" : "undo-ready"));
-      return unsure(`It was rolling back, and Proxmox no longer has the rollback's task, so ${PRODUCT} cannot tell how it ended.`);
+      const cutShort = rollbackCutShortOf(operation);
+      const rollBackAgain = () => settle(() => this.#runRestore(context, undo?.guest === "held-copy" ? "copy-ready" : "undo-ready"));
+      if (task?.state === "failed" && task.unchanged && !cutShort) return settle(() => this.#putBack(context, box, "rollback-task", `The rollback on ${backend.label} did not happen: ${sentence(task.words).replace(/\.$/, "")}.`));
+      if (task === null && step === "rollback-submitting" && !cutShort) return rollBackAgain();
+      if (task?.state === "missing") return unsure(`It was rolling back, and Proxmox no longer has the rollback's task, so ${PRODUCT} cannot tell how it ended.`);
+      if (!cutShort) {
+        const words = task?.state === "failed" ? `The rollback on ${backend.label} failed: ${sentence(task.words).replace(/\.$/, "")}.` : `${sentence(task?.words ?? `${backend.label} has no record of the rollback's task`).replace(/\.$/, "")}, so ${PRODUCT} cannot tell how far it went.`;
+        ledger.updateOperation(operation.id, { consent: withRollbackCutShort(operation, words) });
+      }
+      return rollBackAgain();
     }
     return settle(() => this.#runRestore(context, step));
   }
@@ -3820,7 +3865,7 @@ export class Snapshots {
     if (task?.state === "running" || found?.state === "in-progress") return unsure(`Its task on ${where(record)} was still running when ${PRODUCT} looked.`);
     const after = `after ${PRODUCT} restarted`;
     if (operation.kind === "take") {
-      if (found?.state === "complete" && task?.state === "ok") {
+      if (found?.state === "complete" && endedWell(task)) {
         const evicting = consentOf(operation).evicts !== null;
         const updated = ledger.transaction(() => {
           const ready = ledger.updateRecord(record.id, { state: "ready", ref: found.ref, holds: found.holds, capturedAt: found.takenAt ?? record.takenAt, stateAt: now, error: null });
@@ -3840,7 +3885,9 @@ export class Snapshots {
           : sentence(found.words ?? `${where(record)} left part of it`)
         : task?.state === "failed"
           ? sentence(task.words)
-          : task?.state === "ok"
+          : task?.state === "lost"
+            ? lostTaskWords(task.words, where(record))
+            : task?.state === "ok"
             ? `Its task on ${where(record)} ended, but the guest has no such snapshot.`
             : operation.step === "planned"
               ? `${PRODUCT} restarted before the take began, and ${where(record)} has no such snapshot.`

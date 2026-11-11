@@ -65,12 +65,18 @@ piece of work.
 ## Consequences
 
 - G4 on ZFS ran on a test ZFS storage: [results](070-results.md#zfs-restores-on-proxmox-lxc).
-- G16's node reboot is still unproved, on ZFS and on LVM-thin. A held
-  copy is disarmed and a template, which Proxmox does not start, and one
-  cut short before it is a template is deleted and made again at bb-box's
-  start, but no node was rebooted with one on it. A held copy is made only on a backend whose
+- G16 was run on 11 November 2026, on a node nested in a VM, on ZFS and on
+  LVM-thin: see [093](093-proxmox-restores-recover-from-a-nodes-restart.md)
+  and [its results](093-results.md). With 093's fixes, a reboot at each
+  step ends at the snapshot with a working undo, or as it was with the
+  restore reported as not done; where Proxmox leaves a lock, once root
+  unlocks the guest. Held copies and earlier guests stayed stopped through
+  a reboot and a hard reset. What remains: on LVM-thin a restart between
+  Proxmox's removal of the volume and its remaking needs root, and a hard
+  reset can lose an undo made in the last 30 s or so, as Proxmox can lose
+  that much of `/etc/pve`. A held copy is made only on a backend whose
   identity reset is armed (`general.identityResetBackends`), which is the
-  owner's call, as it is for Keep. The guide says the reboot is unproved.
+  owner's call, as it is for Keep.
 - The undo of a restore on ZFS is a full copy: about the box's disk size on
   the storage, a VMID from the box range, and about as long as copying the
   disk. The restore's check and dialog say the time and space first.

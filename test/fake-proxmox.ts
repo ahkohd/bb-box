@@ -75,6 +75,9 @@ export class FakeProxmox {
   /** The VNC proxies opened, oldest first. */
   readonly consoles: { vmid: number; port: number; ticket: string; password?: string }[] = [];
   readonly #tasks = new Map<string, FakeTask>();
+  readonly #lostInRestart = new Set<string>();
+  #bootedAt = Math.floor(Date.now() / 1000) - 100;
+  #nodeClockAheadSeconds = 0;
   #taskCounter = 0;
   /**
    * Exit status for the next task of this type, for example "WARNINGS: 1" or
@@ -199,9 +202,21 @@ export class FakeProxmox {
     return this.#route(call);
   };
 
+  #nodeNow(): number {
+    return Math.floor(Date.now() / 1000) + this.#nodeClockAheadSeconds;
+  }
+
+  restartLosingTasks(): void {
+    for (const upid of this.#tasks.keys()) this.#lostInRestart.add(upid);
+    this.#tasks.clear();
+    this.#nodeClockAheadSeconds = 2;
+    this.#bootedAt = Math.floor(Date.now() / 1000) + 1;
+  }
+
   #task(type: string, id: number | string, exit?: string): string {
-    const upid = `UPID:${this.node}:0000${++this.#taskCounter}:00:00:${type}:${id}:bb-box@pve!plugin:`;
-    this.#tasks.set(upid, { exitstatus: exit ?? this.nextTaskExit.get(type) ?? "OK", pollsLeft: this.taskPolls, start: Math.floor(Date.now() / 1000) });
+    const start = Math.floor(Date.now() / 1000);
+    const upid = `UPID:${this.node}:0000${++this.#taskCounter}:00:${start.toString(16).toUpperCase().padStart(8, "0")}:${type}:${id}:bb-box@pve!plugin:`;
+    this.#tasks.set(upid, { exitstatus: exit ?? this.nextTaskExit.get(type) ?? "OK", pollsLeft: this.taskPolls, start });
     this.nextTaskExit.delete(type);
     return upid;
   }
@@ -230,9 +245,11 @@ export class FakeProxmox {
       return ok({
         memory: { total: this.memory.total, used, free: this.memory.available / 2, available: this.memory.available },
         cpuinfo: { cpus: this.cpus, cores: this.cpus / 2, sockets: 1 },
-        uptime: 100,
+        uptime: this.#nodeNow() - this.#bootedAt,
       });
     }
+
+    if (method === "GET" && (match = /^\/nodes\/([^/]+)\/time$/.exec(path))) return ok({ time: this.#nodeNow(), timezone: "UTC" });
 
     if (method === "GET" && (match = /^\/nodes\/[^/]+\/storage\/([^/]+)\/status$/.exec(path))) {
       const storage = this.storage.get(decodeURIComponent(match[1]!));
@@ -376,6 +393,7 @@ export class FakeProxmox {
     if ((match = /^\/nodes\/([^/]+)\/tasks\/([^/]+)\/status$/.exec(path)) && method === "GET") {
       const upid = decodeURIComponent(match[2]!);
       const task = this.#tasks.get(upid);
+      if (this.#lostInRestart.has(upid)) return respond(400, "Parameter verification failed.", { data: null, errors: { upid: "no such task" } });
       if (!task) return respond(500, "no such task", { data: null });
       if (task.pollsLeft > 0) {
         task.pollsLeft--;

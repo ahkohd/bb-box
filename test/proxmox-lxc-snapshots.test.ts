@@ -271,9 +271,21 @@ test("a take is complete only when its task succeeded; the provider is told befo
   assert.deepEqual(submitted, [0], "submitting came before any task was recorded");
   assert.deepEqual((await state.backend.findTasks(guest, "take", since)).map((task) => task.ref), [seen[0]!.ref]);
   assert.deepEqual(await state.backend.findTasks(guest, "delete", since), []);
-  assert.deepEqual(await state.backend.providerTask({ ref: "UPID:pve:00000000:0:0:vzsnapshot:7000:x:", host: "pve" }), { state: "missing", words: "Proxmox has no task UPID:pve:00000000:0:0:vzsnapshot:7000:x:." });
+  const sinceBoot = `UPID:pve:00000000:0:${Math.floor(Date.now() / 1000).toString(16).toUpperCase()}:vzsnapshot:7000:x:`;
+  assert.deepEqual(await state.backend.providerTask({ ref: sinceBoot, host: "pve" }), { state: "missing", words: `Proxmox has no task ${sinceBoot}.` });
 });
 
+
+test("a task the node lost in a hard restart is lost, not running, though Proxmox VE 9 answers 400 for it", async () => {
+  const state = world();
+  const { guest, id } = await box(state);
+  const { hooks, seen } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+
+  state.proxmox.restartLosingTasks();
+
+  assert.deepEqual(await state.backend.providerTask(seen[0]!), { state: "lost", words: `pve restarted after Proxmox began task ${seen[0]!.ref}, and kept no record of it, so it is not running.` });
+});
 
 test("a restore's plan: rollback to any snapshot on LVM-thin, the size it goes back to from the snapshot's own config, how many are newer, and why it cannot", async () => {
   const state = world();

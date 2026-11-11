@@ -201,7 +201,7 @@ test("G5: the guard refuses a box threads run on for everyone, and while a perso
   assert.equal(runsOn.code, "not_found", "an agent on the box it runs on sees no snapshot it did not take");
 });
 
-test("a failed undo, a refused rollback or a failed stop leaves the disk as it was and starts the box again; a rollback task that fails leaves it stopped", async () => {
+test("a failed undo, a refused rollback or a failed stop leaves the disk as it was and starts the box again; a rollback task that fails twice leaves it stopped", async () => {
   const state = world();
   const box = await readyBox(state);
   write(state, box, "work.txt", "then");
@@ -220,7 +220,7 @@ test("a failed undo, a refused rollback or a failed stop leaves the disk as it w
   state.provider.powerOffFault = new Error("the guest would not stop");
   assert.match((await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"))).message, /the guest would not stop\. Nothing on its disk changed/);
   assert.equal(read(state, box, "work.txt"), "now");
-  state.provider.rollback = "failed";
+  state.provider.rollbacksFailing = 2;
   const failed = await rejection(state.snapshots.restore(COMMAND, box, standing(box), "one"));
   assert.match(failed.message, /could not finish restoring box \S+ to "one": Proxmox's rollback task failed: rollback interrupted\. The box is stopped, and its disk may be part-restored\. Its undo "before the restore at 10:42 \(\d\)" holds its disk as it was before\.$/);
   const stopped = await current(state, box);

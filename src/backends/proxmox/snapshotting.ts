@@ -37,6 +37,14 @@ const CLONE_PRIVILEGE = "VM.Clone";
 const LXC_FORK_SAFE_FROM = 7;
 const QEMU_FORK_SAFE_FROM = 5;
 const TASK_TYPES: Readonly<Record<TaskKind, string>> = { take: "snapshot", delete: "delsnapshot", rollback: "rollback", copy: "clone" };
+const UPID_START_FIELD = 4;
+
+function taskStartSeconds(upid: string): number | null {
+  const field = upid.split(":")[UPID_START_FIELD] ?? "";
+  const seconds = /^[0-9A-Fa-f]{8}$/.test(field) ? Number.parseInt(field, 16) : NaN;
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
 const LOCKS_A_TASK_LEAVES = new Set(["snapshot", "snapshot-delete", "rollback", "backup", "clone", "create", "disk", "migrate", "copy"]);
 
 const CLONE_WAIT_LEAST_MS = 180_000;
@@ -678,10 +686,17 @@ export class ProxmoxSnapshotting {
   async task(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
     const api = await this.#guests.client();
     const status = await api.taskStatus(task.ref, signal);
-    if (!status) return { state: "missing", words: `Proxmox has no task ${task.ref}.` };
+    if (!status) return (await this.#lostInRestart(api, task.ref, signal)) ?? { state: "missing", words: `Proxmox has no task ${task.ref}.` };
     if (status.running) return { state: "running" };
     const exit = status.exit ?? "";
     return exit === "OK" || /^WARNINGS: \d+$/.test(exit) ? { state: "ok" } : { state: "failed", words: exit || "the task failed" };
+  }
+
+  async #lostInRestart(api: Proxmox, upid: string, signal?: AbortSignal): Promise<TaskOutcome | null> {
+    const began = taskStartSeconds(upid);
+    const booted = await api.bootedAtSeconds(signal).catch(() => null);
+    if (began === null || booted === null || began >= booted) return null;
+    return { state: "lost", words: `${api.node} restarted after Proxmox began task ${upid}, and kept no record of it, so it is not running.` };
   }
 
   async findTasks(guest: Guest, operation: TaskKind, since: number, signal?: AbortSignal): Promise<TaskRef[]> {

@@ -389,7 +389,7 @@ test("Opus 8: restarts mid-task: an undo's task still running stays unknown, the
   assert.equal((await current(state, box)).state, "ready");
 });
 
-test("Opus 8: restarts mid-task: a rollback's task ended OK finishes; one that failed leaves the box stopped", async () => {
+test("Opus 8 and G16: restarts mid-task: a rollback's task ended OK finishes; one that failed is rolled back again, and finishes", async () => {
   const state = world();
   const box = await targetBox(state);
   await heldAt(state, box, "task", "target", { undo: false });
@@ -403,8 +403,9 @@ test("Opus 8: restarts mid-task: a rollback's task ended OK finishes; one that f
   const second = state.store.unsettled()[0]!;
   state.provider.tasks.set(second.task!.ref, { state: "failed", words: "rollback interrupted" });
   assert.equal(await state.snapshots.recover(), 1);
-  assert.equal(state.store.operation(second.id)!.state, "failed");
-  assert.equal((await current(state, box)).state, "stopped");
+  assert.equal(state.store.operation(second.id)!.state, "done");
+  assert.equal(readIn(state, box, "work.txt"), "target");
+  assert.equal((await current(state, box)).state, "ready");
 });
 
 for (const order of ZFS_ORDERS) test(`Opus 8: restarts mid-task in ZFS's order ${order.name}: a copy whose task began is deleted and made again`, async () => {
@@ -448,4 +449,91 @@ test("an agent's restore is refused where a person's would go with --force, at e
   const box = await targetBox(state);
   state.guard = { threads: [], threadsUnread: null, control: false, terminals: 1 };
   assert.equal((await rejection(state.snapshots.restore(AGENT, box, standing(box), "target"))).code, "in_use");
+});
+
+async function bootStarts(state: World, box: BoxRecord): Promise<void> {
+  await state.backend.start!((await current(state, box)).guest!);
+}
+
+function undosOf(state: World, box: BoxRecord) {
+  return state.store.records({ box: box.id }).filter((record) => record.undoOf);
+}
+
+for (const order of [{ name: "by rollback", enter: (_state: World) => {} }, ...ZFS_ORDERS]) test(`G16 ${order.name}: a node that restarts after the stop starts the box at its boot, and recovery then takes no undo and restores nothing`, async () => {
+  const state = armedWorld();
+  order.enter(state);
+  const box = await targetBox(state);
+  await heldAt(state, box, "stopped");
+  const operation = state.store.unsettled()[0]!;
+
+  await bootStarts(state, box);
+  assert.equal(await state.snapshots.recover(), 1);
+
+  assert.equal(state.store.operation(operation.id)!.state, "failed");
+  assert.match(state.store.operation(operation.id)!.error!, /started again before BB Box restored it/);
+  assert.deepEqual(undosOf(state, box), []);
+  assert.equal(readIn(state, box, "work.txt"), "latest");
+  assert.equal((await current(state, box)).state, "ready");
+});
+
+test("G16: a take whose task the node lost, leaving no snapshot on the guest, did not happen", async () => {
+  const state = world();
+  const box = await readyBox(state);
+  state.holds.step = "task";
+  const held = state.snapshots.take(COMMAND, box, standing(box), { name: "lost" }).catch((error: unknown) => error);
+  await untilHeld(state, held);
+  await state.restart();
+  await held;
+  const operation = state.store.unsettled()[0]!;
+
+  state.provider.tasks.set(operation.task!.ref, { state: "lost", words: "pve-1 restarted after its task began, and kept no record of it." });
+  state.provider.held.delete(operation.snapshots[0]!);
+  assert.equal(await state.snapshots.recover(), 1);
+
+  assert.equal(state.store.operation(operation.id)!.state, "failed");
+  assert.equal(state.store.record(operation.snapshots[0]!)!.state, "failed");
+  assert.equal(state.store.unsettled().length, 0);
+});
+
+test("G16: an undo whose task the node lost, leaving no snapshot, puts the box back as it was", async () => {
+  const state = world();
+  const box = await targetBox(state);
+  await heldAt(state, box, "task");
+  const operation = state.store.unsettled()[0]!;
+  assert.equal(operation.step, "undo-task");
+
+  state.provider.tasks.set(operation.task!.ref, { state: "lost", words: "pve-1 restarted after its task began, and kept no record of it." });
+  state.provider.held.delete(operation.undo!);
+  assert.equal(await state.snapshots.recover(), 1);
+
+  assert.equal(state.store.operation(operation.id)!.state, "failed");
+  assert.equal(readIn(state, box, "work.txt"), "latest");
+  assert.equal((await current(state, box)).state, "ready");
+});
+
+test("G16: a rollback cut short rolls back again; while the host refuses, the restore stays open with the host's words, then finishes with its undo", async () => {
+  const state = world();
+  const box = await targetBox(state);
+  state.provider.rollback = "failed";
+  await state.snapshots.restore(COMMAND, box, standing(box), "target");
+  const once = state.store.operations({ box: box.id, kind: "restore" }).at(-1)!;
+  assert.equal(once.state, "done", "the restore rolled back again at once");
+  assert.equal(readIn(state, box, "work.txt"), "target");
+
+  writeIn(state, box, "work.txt", "latest");
+  state.provider.rollback = "unknown";
+  await rejection(state.snapshots.restore(COMMAND, box, standing(box), "target"));
+  const cut = state.store.unsettled()[0]!;
+  assert.equal(cut.step, "rollback-task");
+  state.provider.tasks.set(cut.task!.ref, { state: "lost", words: "pve-1 restarted after its task began, and kept no record of it." });
+  state.provider.rollback = "refused";
+  assert.equal(await state.snapshots.recover(), 0);
+  assert.equal(state.store.operation(cut.id)!.state, "unknown");
+  assert.match(state.store.operation(cut.id)!.error!, /CT is locked \(backup\)/);
+  assert.equal((await current(state, box)).state, "stopped");
+
+  assert.equal(await state.snapshots.recover(), 1);
+  assert.equal(state.store.operation(cut.id)!.state, "done");
+  assert.equal(readIn(state, box, "work.txt"), "target");
+  assert.equal(state.store.record(cut.undo!)!.state, "ready");
 });

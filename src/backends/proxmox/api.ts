@@ -43,6 +43,12 @@ export interface ProxmoxOptions {
 /** Between tries at a guest whose lock another task holds. Proxmox itself waits 10 s for the lock on each. */
 const LOCK_RETRY_MS = 1_000;
 
+const STATUSES_PROXMOX_ANSWERS_A_LOST_TASK_WITH = new Set([400, 500]);
+
+function isNoSuchTask(error: ProxmoxError): boolean {
+  return error.status === 404 || (STATUSES_PROXMOX_ANSWERS_A_LOST_TASK_WITH.has(error.status) && /no such task|unable to parse worker upid/i.test(error.message));
+}
+
 export class ProxmoxError extends Error {
   readonly status: number;
   readonly method: string;
@@ -287,6 +293,14 @@ export class Proxmox {
     const available = Number(memory.available ?? memory.free ?? Math.max(0, total - Number(memory.used ?? total)));
     const cpus = Number(data?.cpuinfo?.cpus);
     return { memoryTotal: total, memoryAvailable: available, cpus: Number.isInteger(cpus) && cpus > 0 ? cpus : null };
+  }
+
+  async bootedAtSeconds(signal?: AbortSignal): Promise<number | null> {
+    const status = await this.#request<{ uptime?: unknown }>("GET", `/nodes/${enc(this.node)}/status`, undefined, signal);
+    const clock = await this.#request<{ time?: unknown }>("GET", `/nodes/${enc(this.node)}/time`, undefined, signal);
+    const uptime = Number(status?.uptime);
+    const now = Number(clock?.time);
+    return Number.isFinite(uptime) && Number.isFinite(now) && uptime >= 0 ? now - uptime : null;
   }
 
   async storageStatus(storage: string, signal?: AbortSignal): Promise<StorageStatus> {
@@ -593,7 +607,7 @@ export class Proxmox {
       const data = await this.#request<{ status?: string; exitstatus?: string }>("GET", `/nodes/${enc(node)}/tasks/${enc(upid)}/status`, undefined, signal);
       return { running: data?.status !== "stopped", exit: data?.status === "stopped" ? String(data.exitstatus ?? "") : null };
     } catch (error) {
-      if (error instanceof ProxmoxError && (error.status === 404 || (error.status === 500 && /no such task|unable to parse worker upid/i.test(error.message)))) return null;
+      if (error instanceof ProxmoxError && isNoSuchTask(error)) return null;
       throw error;
     }
   }
