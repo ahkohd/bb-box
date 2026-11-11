@@ -134,3 +134,55 @@ made no snapshot store and left no record.
 | A holder of the helper's lock, which wrote the owner marker 2 s after the proof started waiting, then let go | 3 | a box holds the Mac |
 | A box that holds the Mac, by the helper's `claim` | 3 | a box holds the Mac |
 | The reset after that box's release, which could not sign the next user in with the admin user at the console | 3 | the Mac's reset is running |
+
+## After the third independent review
+
+The third review found 4 more faults. The proof's scan for files of its
+scratch UIDs admitted it when the scan could not finish. Its clean-up swept
+every file of a scratch UID, so it could delete another account's files
+once that account held the UID, and it deleted a `sudo` rule's staging file
+it had not made. An iOS slot claim sent before the proof could become held
+while it ran. A second take dropped the first take's record of a process
+above the box user's, and a recovery cut short after the minute could lose
+a stopped process from the record before it resumed it.
+
+The proof was made simpler instead: new scratch users each run, no scan,
+clean-up only by its record, and the device host's lock held for the whole
+run (see the decision). The self-contained proof script, version 4, was run
+on 11 November 2026 on a test pool Mac: a Tart VM, 4 cores, 8 GiB memory,
+macOS 27.0 (26A428), APFS, FileVault and System Integrity Protection off,
+the Mac's admin user at the console, made a pool Mac by the helper's
+`init`, with box user `bbx-0`.
+
+It passed all 52 checks in 15 s; version 3 took 162 s, most of it the
+scans and sweeps of the Data volume. Users with a UID of 500 or more were
+the same before and after, and no snapshot store or record was left. Each
+run left, as its note says, 2 empty temporary folders under
+`/private/var/folders` and a Spotlight message folder, owned by the scratch
+UIDs, which macOS made outside what the proof recorded.
+
+| Step | Time |
+| --- | --- |
+| Take, in all, with 1 s of checks after the resume | 1,457 ms |
+| The scratch user's processes paused | 71 ms |
+| Stop, ending the scratch user's processes | 1,194 ms |
+| Restore, the swap | 145 ms |
+| Fork into a second scratch user | 2,230 ms |
+
+Its refusals and recovery were checked on the same Mac. The iOS slot states
+were written by hand, and a process holding the device host's lock stood in
+for a slot command, as the VM has no iOS slots.
+
+| The Mac had | Exit | What happened |
+| --- | --- | --- |
+| A box that holds the Mac, by the helper's `claim` | 3 | a box holds the Mac; users as before, no record |
+| An iOS slot held by a box | 3 | an iOS slot is held by a box, with its state file |
+| A slot command holding the device host's lock, which made its slot held 5 s later and let go | 3 | the proof waited 5 s for the lock, then saw the slot held |
+| A slot command holding the device host's lock for 70 s | 3 | after 60 s: another command held the slots' lock |
+| A slot command trying the device host's lock while the proof ran | 0 | the command could not take the lock; the proof passed and the slot stayed ready |
+| A proof killed with `kill -9` after its first take | 0 | the next run removed what the record proved: 9 recorded processes, the scratch user, its home, password file and store; then it passed, and every user of the earlier record was gone |
+| A record naming an account whose `GeneratedUID` is not the recorded one | 5 | the account, its file and the record stayed |
+
+A run killed in the moment it starts its killed-take step leaves that
+step's clone, a root `sleep 120` that the record does not name yet, which
+ends by itself within 2 minutes.
