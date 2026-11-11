@@ -508,9 +508,9 @@ iOS Simulator.
 
 ### What each machine reports for snapshots
 
-A box lent a Mac whole takes snapshots of its home folder, where the Mac
-reports that its homes clone. Linux machines, iOS slots and an operator's
-snapshot hook take none yet. Each machine says what it could offer, so you
+A box lent a Mac whole, and a box in one of its iOS slots, takes snapshots
+of its home folder, where the Mac reports that its homes clone. Linux
+machines and an operator's snapshot hook take none yet. Each machine says what it could offer, so you
 can see which will take them as the later parts are built
 ([decision 090](../../docs/decisions/090-pool-machines-say-whether-they-snapshot.md)).
 
@@ -562,17 +562,19 @@ read, with the home's access control lists beside it. `setup-mac.sh`
 builds `clone-tree`, which clones a home in one call to `clonefile`, with
 the Command Line Tools' `clang`; without it the helper clones with
 `ditto --clone`, which pauses the box longer. A Mac needs helper version 3,
-from this BB Box's `setup-mac.sh`.
+from this BB Box's `setup-mac.sh`, and version 4, with the iOS slots' helper
+version 8, for boxes in its iOS slots.
 
 BB Box runs these helper commands, as root, through the same sudo rule:
 
 | Command | What it does |
 | --- | --- |
-| `machine snapshot take <generation> <snapshot>` | Pauses the box user's running processes, clones the home, resumes what it paused, then keeps the home's ACLs |
+| `machine snapshot take <holder> <snapshot>` | Pauses the box user's running processes, clones the home, resumes what it paused, then keeps the home's ACLs. A holder is the Mac's generation for a box lent it whole, or `slot-<n>` for a box in iOS slot n |
 | `machine snapshot list` | This install's snapshots on the Mac, and the free space under `/Users` |
-| `machine snapshot stop <generation>` | Ends the box user's session for a restore, after clearing the automatic login |
-| `machine snapshot restore <generation> <snapshot> <operation>` | Puts a clone of the snapshot in the home's place, with its ACLs, and clears what the user made in its temporary and cache folders: the user's own files, made since macOS made the user. Asked again with the same operation, it finishes a restore cut short, or changes nothing |
-| `machine snapshot start <generation>` | Signs the box user in again where it was signed in, by restarting the login window, or userspace after 30 s; it exits 10 until the user is at the console |
+| `machine snapshot stop <holder>` | Ends the box user's session for a restore, after clearing the automatic login. For a slot, stops the slot through its helper: its daemons, its device, then every process of its user |
+| `machine snapshot restore <holder> <snapshot> <operation>` | Puts a clone of the snapshot in the home's place, with its ACLs, and clears what the user made in its temporary and cache folders: the user's own files, made since macOS made the user. Asked again with the same operation, it finishes a restore cut short, or changes nothing |
+| `machine snapshot start <holder>` | Signs the box user in again where it was signed in, by restarting the login window, or userspace after 30 s; it exits 10 until the user is at the console. For a slot, starts its daemons and boots its device again |
+| `machine snapshot forget-slot <slot>` | Run by the iOS slots' helper as it removes a released slot's user: deletes the slot's snapshots and store, and only where every snapshot's record names the slot's user, its UID, the install that held it and the moment the slot was made. Otherwise it deletes nothing, and the slot's removal fails until a person checks the store |
 | `machine snapshot delete <user> <snapshot>` | Deletes a snapshot in that box user's store, and only one whose record names this install and that user; again, it succeeds. It deletes nothing while either of the snapshot's folders has no such record |
 | `machine snapshot fork <source user> <snapshot> <user> <uid>` | Makes a new user from a snapshot in the source user's store, without BB's machine files, the access file, BB's launch agent, the login keychain or plists naming the source's home. Only where no other user shares the Mac, and only for a new box user, `bbx-<n>` with UID 70000 plus n modulo 10000, that is not on the Mac or at its console. BB Box does not call it yet |
 | `machine snapshot proof` | On a free Mac: makes new scratch users, `bbbox-probe-` and 8 random hexadecimal digits, as box users are made, then takes, kills a take during its pause, restores with an undo, forks, aims forks at users already there, and deletes. It checks each, including that processes others stopped before a take stay stopped and that a process above the user's that stops late is resumed, removes only what it recorded making, and prints a report |
@@ -592,7 +594,29 @@ only on folders and on files with one link. A hard link to a file outside
 is unlinked as it is; where that fails, it stays, the helper names it, and
 the removal fails. A release deletes the box user's snapshots before it removes the
 user, and the reset refuses to lend the Mac while a snapshot of an earlier
-box is left. A restore signs a desktop's user out for a few seconds. When
+box is left.
+
+### Home snapshots in iOS slots
+
+A box in an iOS slot is the slot's user, `bbd-<n>`, and its Simulator
+device lives in its home, so its snapshots hold the device too. A take or a
+restore of a slot holds the slot's lock, which the iOS slots' helper,
+`device-host`, holds for the slot's claim, release and reset, so none of
+those runs in the middle. For a restore, the slots' helper's `stop <slot>`
+unloads the slot's device server and BB's daemon, shuts its device down and
+ends every process of the slot's user, once it has checked that the slot's
+user is the one it made, with the slot's UID. It marks the slot as stopped,
+so its box reads as stopped and BB's daemon is not taken over there. Its
+`start <slot>` boots the device and starts the daemons again, as when the
+slot was lent. Neither touches another slot or the Mac's own box user.
+
+When a released slot's user is removed, the slots' helper first runs
+`machine snapshot forget-slot`, which deletes the slot's snapshots by their
+records. A store of a slot the Mac still has does not count as an earlier
+box's leftovers; a store of a slot it no longer has keeps the Mac from being
+lent whole until it is removed. Forks of a slot's snapshots stay off: a new
+slot user can need a userspace restart to be signed in, which ends every
+session on the Mac. A restore signs a desktop's user out for a few seconds. When
 the login window does not sign the user in again, the userspace restart
 ends every SSH session on the Mac.
 
@@ -602,6 +626,16 @@ while no box holds it:
 ```sh
 sudo /usr/local/libexec/bb-box/machine snapshot proof
 ```
+
+On a Mac that lends iOS slots, it also makes a scratch user for a slot,
+with no console session, and a Simulator device for it from the slots'
+`devices.tsv` and `runtimes.tsv`. It boots the device, writes a setting in
+it, takes a snapshot with the device booted, changes the setting and makes a
+second device, then stops the user, restores with an undo, and checks that
+`simctl` lists the device as at the take and not the second, that the device
+boots and that its setting is as at the take. It then restores the undo,
+checks the second device and the changed setting are back, and deletes what
+it made by its record.
 
 It takes about 2 to 3 minutes. It notes the user at the console before it
 starts and fails if another is there before its last step. It takes the

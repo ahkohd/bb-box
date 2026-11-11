@@ -1,9 +1,10 @@
 # 090: Pool machines say whether they snapshot
 
 Status: accepted, 11 November 2026, with the owner's build order (see
-Build order). Units 1 and 2 are built: each machine reports whether it can
-snapshot, and boxes lent a Mac whole take home snapshots and restore them
-with an undo. Forks of them are refused for now (see Unit 2 as built).
+Build order). Units 1 to 3 are built: each machine reports whether it can
+snapshot, and boxes lent a Mac whole and boxes in its iOS slots take home
+snapshots and restore them with an undo. Forks of them are refused for now
+(see Unit 2 as built and Unit 3 as built).
 Extends [070](070-snapshots.md), whose table says the SSH host pool takes
 no snapshots, and follows [065](065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md)'s
 pattern: each machine says what it offers, measured on the machine.
@@ -422,7 +423,7 @@ The owner chose this order on 11 November 2026. Each is a unit:
    Unit 2 as built).
 3. **Shared iOS slots.** Take and restore. Forks stay off until a user can
    be signed in without a userspace restart, which ends every SSH session
-   on the Mac.
+   on the Mac. Built (see Unit 3 as built).
 4. **Linux homes on btrfs.** New homes as subvolumes, with the pool's
    reset fixed so that no snapshot is left behind.
 5. **The hook contract and the machine scope.** The helper's runner,
@@ -622,6 +623,63 @@ section 2, this is what stands:
     it changed. Its results go in [090-results.md](090-results.md).
 - **The snapshot store** takes the new scopes by rebuilding its table with
   the wider check, keeping every record.
+
+### Unit 3 as built
+
+Built on 11 November 2026, for boxes in iOS slots on pool Macs, on unit 2's
+helper. Where it differs from section 2 or unit 2, this is what stands:
+
+- **A slot is a holder of its own.** The helper's `take`, `stop`,
+  `restore` and `start` take `slot-<n>` where a Mac lent whole gives its
+  generation. The helper checks, from the iOS slots' helper's own records,
+  that the slot is held by this install's box, and that its user is the
+  one the slots' helper made for it: `bbd-<n>`, UID 80000 plus n, with its
+  slot and user-made records, and that UID in the Mac's directory. A
+  snapshot's record also names the slot and the moment it was made. Helper
+  version 4 and the iOS slots' helper, `device-host`, version 8 have the
+  commands; older ones are refused with what to run.
+- **The slot's lock, not the Mac's.** A take and a restore of a slot hold
+  the slot's own lock, the one `device-host` holds for the slot's claim,
+  making, release and reset, and never the Mac's lock. So no claim,
+  release, reset or top-up of that slot runs in the middle, and other slots
+  and the whole-Mac box user are not held up. A delete of a slot user's
+  snapshot takes the Mac's lock, then the slot's.
+- **Stop and start through the slots' helper.** `device-host stop <slot>`
+  marks the slot as stopped, unloads its device server and BB's daemon,
+  shuts its devices down and ends every process of the slot's user, under
+  the slot's lock, once the slot's user is the one it made. `device-host
+  start <slot>` boots the slot's device and loads its daemons again, as
+  when the slot was lent, then clears the mark. While the mark is there,
+  the box reads as stopped, BB's daemon is not taken over and the device
+  server is not restarted. A restore of a slot is refused unless the slot
+  is marked as stopped as well as its session ended, so a slot started
+  again outside the restore is not restored under running daemons. The
+  restore ends every process of the slot's user again before it swaps the
+  home. Ending every process of a slot user's UID is unit 2's one
+  exception, for a user BB Box made whose identity matches; it touches no
+  other slot's user and not the Mac's box user.
+- **Release.** When `device-host` removes a released slot's user, it first
+  runs `machine snapshot forget-slot <slot>`, still holding the slot's
+  lock. That resumes what a take's pause record names, then refuses unless
+  the slot is being removed and every snapshot in the store has a record
+  naming the slot's user, its UID, the moment the slot was made and the
+  install that held it. The helper's own working files there are removed by
+  path. Otherwise it deletes nothing, and the slot's removal fails until a
+  person checks the store, so the sweep never leaves part of a snapshot. A
+  store of a slot the Mac still has is not an earlier box's leftovers; a
+  store of one it no longer has keeps the Mac from being lent whole.
+- **Forks** of a slot's snapshots are refused, with the reason that a new
+  slot user can need a userspace restart to be signed in, which ends every
+  session on the Mac. Keep stays off. A macOS box in a slot takes the same
+  snapshots; its slot has no device to boot.
+- **The proof, version 7,** also makes a scratch user for a slot, with no
+  console session, and a Simulator device for it from the slots'
+  `devices.tsv` and `runtimes.tsv`, on a Mac that lends slots. It takes
+  with the device booted, restores with an undo, checks that `simctl` lists
+  the device as at the take and not one made after it, that the device
+  boots and its setting is as at the take, restores the undo, and deletes
+  what it made by its record. It runs under the same admission as before,
+  so it never touches a slot of the Mac's.
 
 ### History: the spike's fork rule
 

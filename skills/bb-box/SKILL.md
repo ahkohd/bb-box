@@ -279,7 +279,9 @@ and Keep are refused because memory restore and identity reset are unproved.
 An iOS box with `dedicated` on Tart snapshots its whole macOS VM with its
 memory, so a restore brings its device back booted, with the device, apps
 and data it had when the snapshot was taken. A fork boots the device
-afresh. A shared iOS box takes no snapshots: it has no VM of its own.
+afresh. A shared iOS box on a Namespace or Tart host takes no snapshots: it
+has no VM of its own. One in an iOS slot on the SSH host pool's Mac does,
+of its home folder, as below.
 
 A box lent a Mac whole on the SSH host pool takes snapshots of its home
 folder only: its files, settings, keychain and browser profiles, not apps
@@ -289,8 +291,13 @@ such as `sudo`, that stopped with them: a process you stopped yourself
 before the take stays stopped, but one of the box's processes, or a
 process above one, that you stop during the pause or in the minute after
 it is resumed with the rest. A restore ends the box user's session and signs it in again, so its
-desktop goes for a few seconds. These snapshots do not fork or Keep, and go
-when the box is released. Other pool boxes take none yet: a take is refused
+desktop goes for a few seconds. A box in an iOS slot on a pool Mac takes
+the same snapshots of its slot user's home, which holds its Simulator
+device: the device's apps, data and settings come back with it. Its
+restore shuts the device down and ends the slot user's processes, then
+boots the device again, in about 15 s, without touching the Mac's other
+slots. These snapshots do not fork or Keep, and go when the box is
+released. Other pool boxes take none yet: a take is refused
 with the machine's own reason, such as its box homes being on a filesystem
 that neither clones nor snapshots. Tell the person that reason; do not try
 again on the same box.

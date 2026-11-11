@@ -1,4 +1,4 @@
-# 090: results of unit 2, home snapshots on Macs lent whole
+# 090: results of units 2 and 3, home snapshots on Macs lent whole and in iOS slots
 
 Measured on 11 November 2026 on a test pool Mac: a Tart VM, 4 cores,
 8 GiB memory, macOS 27.0 (26A428), APFS, FileVault off, System Integrity
@@ -299,3 +299,72 @@ same before and after, and no snapshot store or record left.
 A cut-short claim was also made on a fake device host, by killing the
 device host's claim between linking its claim and writing its held state:
 the proof refused with exit 3 and made no record.
+
+## Unit 3: home snapshots in iOS slots
+
+Measured on 11 November 2026 on a test pool Mac: a Tart VM, 8 cores,
+32 GiB memory, macOS 27.0 (26A428), Xcode 27.0 with iOS 27.0 (24A434),
+APFS, FileVault and System Integrity Protection off, set up with this
+unit's `setup-mac.sh` as a pool Mac named `mac-test` that lends iOS slots
+of the iPhone 18 Pro. Its Xcode was at `/Applications/Xcode_27.app`, so a
+link named `/Applications/Xcode.app` was made for `setup-mac.sh` to find
+it, and Homebrew's `node@24` was reinstalled after `setup-mac.sh`'s
+Homebrew upgrades left it without its `simdjson` library. A fresh BB 0.49.0
+ran on the same Mac with bb-box from this unit's branch, its SSH host pool
+reaching the Mac at `127.0.0.1`. Two ios boxes, `glad-badger` in slot 1 and
+`neat-valley` in slot 2, each held a booted device, and the Mac's box user
+for whole boxes, `bbx-0`, was signed in at the console.
+
+### Through BB Box on the test Mac
+
+Each restore was checked with an app's data, a file in Safari's data
+container on the device, a setting written inside the device with
+`defaults`, the device's appearance set with `simctl ui`, and a file in the
+slot user's home.
+
+| What | How | Result |
+| --- | --- | --- |
+| Take, the device booted | `bb box snapshot take` | 3.5 s; the box paused 666 ms; the device ran on |
+| Restore with undo | `bb box snapshot restore --replace` | 15.7 s in all. `simctl` listed the device as at the take and not a device made after it; the device booted; its appearance, setting, Safari's data and the home file were as at the take |
+| Restore the undo | the same | 18.6 s; the device made after the take, the later appearance, setting and data were back |
+| Fork | `bb box snapshot fork` | refused: "a fork would be a new slot user on the same Mac, and signing a new user in can need a userspace restart, which ends every session on the Mac, so BB Box forks no snapshots of iOS slots" |
+| Take and restore from the panel | the box page's Take snapshot and Restore, in headless Chromium | taken "by you", paused 738 ms; the dialog said "Its device shuts down and every process of its user ends, then the device boots again"; the restore put the device's state and the home file back |
+| BB restarted during a restore | BB's server stopped once the restore had taken its undo, with the slot stopped: its device shut down and its daemons unloaded | BB Box's recovery finished the restore after the start: the home as at the take, the device booted, the daemons loaded and the slot no longer marked as stopped; it deleted the oldest undo, as a box keeps two |
+| Release | `bb box release` | the slots' helper deleted the slot's 3 snapshots and its store before it removed `bbd-1`; its sweep then found 18 paths of UID 80001 and left 0; BB Box listed no snapshot of the box; the Mac's helper reported no leftovers while slot 2's store was still there |
+
+The other slot and the whole-Mac user were watched every 0.25 s through
+every operation: a `sleep` of the other slot's user and one of `bbx-0`
+stayed running, never stopped, the other slot's device stayed booted, and
+the count of `bbx-0`'s processes held. The only stopped sample was the
+taken slot's own process during its own take, which ran again 0.25 s
+later.
+
+The tool, `box_snapshot`, was not called live: the fresh BB had no agent to
+call it, and BB's own install is not used for live checks. It calls the
+same core as the command and the panel, which the unit's tests run.
+
+### The helper's proof, version 7
+
+The self-contained proof script, version 7, refused with exit 3, changing
+nothing, while slot 1 was being removed. Once both slots were released and
+swept, with slot 3 an idle spare, it passed all 74 checks in 147 s. Users
+with a UID of 500 or more were the same before and after, and no snapshot
+store or record was left.
+
+| Step | Time |
+| --- | --- |
+| Take, in all, with 1 s of checks after the resume | 1,601 ms |
+| The scratch user's processes paused | 186 ms |
+| Stop, ending the scratch user's processes | 1,328 ms |
+| Restore, the swap | 288 ms |
+| Fork into a second scratch user | 2,221 ms |
+| The scratch slot user's device, first boot | 26 s |
+| Take of the slot user's home, its device booted, in all | 16,252 ms |
+| The slot user's processes paused, its device's with them | 1,943 ms |
+| Stop, shutting the device down and ending the slot user's processes | 11,058 ms |
+| Restore of the slot user's home, the swap | 2,590 ms |
+| The device's boot after the restore | 18 s |
+
+After the restore, `simctl` listed the device as at the take and not the
+device made after it, the device booted, and its setting read as at the
+take. The undo put the later device and setting back.

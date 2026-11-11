@@ -104,11 +104,14 @@ resets the machine, which takes a few seconds on Linux and longer on a Mac.
 Each machine's `snapshots` check says what snapshots it could offer: home
 snapshots where its box homes are on APFS, btrfs or ZFS, and machine
 snapshots where an operator installed a snapshot hook. Boxes lent a Mac
-whole take home snapshots where the Mac says its homes clone; Linux
-machines, iOS slots and hooks take none yet, so tell the person what those
-could offer, not that they snapshot. To prove home snapshots on a free Mac,
+whole, and boxes in its iOS slots, take home snapshots where the Mac says
+its homes clone; slots need helper version 4 and the slots' helper version
+8, from this BB Box's `setup-mac.sh`. Linux machines and hooks take none
+yet, so tell the person what those could offer, not that they snapshot. To prove home snapshots on a free Mac,
 have the person run `sudo /usr/local/libexec/bb-box/machine snapshot proof`
-there. It takes about 2 to 3 minutes on new scratch users, and iOS slot
+there. On a Mac that lends iOS slots it also checks a scratch slot user's
+Simulator device through a take and a restore. It takes about 2 to 3
+minutes on new scratch users, and iOS slot
 commands wait for it, then go on. It refuses, changing nothing, while a box
 uses the Mac or any iOS slot is not idle, a slot whose claim was cut short
 included. Where an earlier proof was cut short, it first checks

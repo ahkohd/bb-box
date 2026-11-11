@@ -22,7 +22,8 @@ You take, restore, rename and delete snapshots on a box's page, in its [Snapshot
 | Hetzner Cloud, Linux | as Docker, on the box's [host](#hetzner-cloud-and-namespace) | as Docker | as Docker, on the same host | as Docker, on the same host, refused before anything is made when the host has no room | none: a release deletes the box's snapshots, and BB Box never keeps a host running to hold one |
 | Namespace, Linux | as Docker, on the box's [machine](#hetzner-cloud-and-namespace) | as Docker; refused when the machine would end first | as Docker, on the same machine; refused when the machine would end first | none yet: a fork needs a machine of its own, and BB Box cannot carry a snapshot to one yet | none: the snapshots end with the machine, at the box's release or the machine's deadline |
 | SSH host pool, a Mac lent whole | the box user's [home folder](#the-ssh-host-pools-macs), with its files, settings, keychain and browser profiles | pauses the box user's processes while APFS clones the home: about 0.3 s for 20,000 files, about 4 s for 220,000 | in place: BB Box ends the box user's session, takes the undo, puts a clone of the snapshot in the home's place and signs the user in again where it was signed in | none yet: a fork's new box user would need a userspace restart to be signed in, which ends its source's session | none: the snapshot lives on the Mac, which BB Box lends to the next box after the release |
-| Namespace's Macs, the SSH host pool's Linux machines and iOS slots, iOS boxes in a slot on a shared host | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
+| SSH host pool, a box in an iOS slot | the slot user's [home folder](#ios-slots-on-a-pool-mac), with its files, keychain, and its Simulator device's apps, data and settings | pauses the slot user's processes, its booted device's with them, while APFS clones the home | in place: BB Box shuts the device down, stops the slot's daemons and ends the slot user's processes, takes the undo, puts a clone of the snapshot in the home's place, then starts the daemons and boots the device again | none: a fork's new slot user can need a userspace restart to be signed in, which ends every session on the Mac | none: the snapshot lives on the Mac, which lends the slot again after the release |
+| Namespace's Macs, the SSH host pool's Linux machines, iOS boxes in a slot on a Namespace or Tart shared host | no snapshots yet: see [what is not built yet](#what-is-not-built-yet) | | | | |
 
 Linux desktops need an image built with identity reset version 9 or later. Older images refuse forks and Keep, saying why. Refresh the image and make the box again; an image rebuild does not update existing boxes or snapshots.
 
@@ -38,10 +39,27 @@ A restore ends the box user's session first: it clears the Mac's automatic login
 
 A release deletes the box's snapshots, and the Mac's reset refuses to lend the Mac again while any snapshot of an earlier box is left. Snapshots stay off for:
 
-- A box in an iOS slot on a pool Mac: its take is refused with the reason, until slots take snapshots.
 - A Mac whose helper is older than version 3: the refusal says to run `setup-mac.sh` on it again.
 - Forks: a fork would be a new box user beside its source on the same Mac, and signing a new user in needs a userspace restart there, which ends the source box's session and every SSH session on the Mac. The Mac's helper can already make such a user from a snapshot, and its proof checks it, but BB Box refuses forks with that reason until a later change signs a fork's user in without the restart.
 - Keep: the snapshot lives on the Mac, which BB Box lends to the next box after the release.
+
+### iOS slots on a pool Mac
+
+A box in an iOS slot on a pool Mac is a macOS user too, `bbd-<n>`, with no console session, so its snapshots hold its home folder, `/Users/bbd-<n>`, as a whole box's do. Its Simulator device lives in that home, in `~/Library/Developer/CoreSimulator`, so a snapshot holds the device as well: the apps installed on it, their data and the device's settings. The device's slimming record, which the Mac's helper keeps outside the home, stays as it is, and nothing that ran comes back.
+
+A take pauses the slot user's running processes, with its booted device, while APFS clones the home, as for a whole box, and the device runs on after it. It never pauses, stops or touches another slot's user or the Mac's own box user. A take waits for the slot's lock, which the slot's claim, release and reset hold too, so none of them runs in the middle of it.
+
+A restore, under the slot's lock:
+
+1. stops the slot: its device server and BB's daemon, the device, and then every process of the slot user, after checking that the user is the one the Mac made for that slot
+2. takes the undo, then puts a clone of the snapshot in the home's place, as for a whole box
+3. starts the slot's daemons again and boots its device, as when the slot was lent
+
+On a test Mac, a restore took about 16 s in all, and the device was back as at the take: `simctl` listed it and not a device made after the take, it booted, and its setting, appearance and an app's data were as at the take. A take paused the slot for 0.7 s with its device booted. While a slot is stopped for its restore, its box reads as stopped, and BB's daemon is not taken over there. If BB Box or the Mac's helper stops in the middle, BB Box finishes the same restore, as for a whole box.
+
+A release deletes the slot's snapshots and its store before the slot's user is removed. The removal deletes a snapshot only where its record names the slot's user, its UID, this install and the moment the slot was made; anything else in the store stays, the removal fails and says what to check. The Mac is not lent whole while a slot it no longer has left a snapshot behind. The Mac's other slots, and its box user for the next whole box, are never paused, stopped or changed.
+
+Forks of a slot's snapshots stay off: a fork would be a new slot user, and signing a new user in can need a userspace restart, which ends every session on the Mac, every slot's included. Keep stays off too: the snapshot lives on the Mac, which lends the slot to the next box after the release.
 
 ### Tart
 
@@ -87,8 +105,8 @@ Keep is off on both, and says why: a kept snapshot could not outlive its box the
 - **An Android device's own snapshots are planned for later**: the emulator's snapshot of the device alone. Until then, Android boxes on boat.dev and Proxmox QEMU take snapshots of the whole VM.
 - **A Windows desktop on Proxmox QEMU takes no snapshot of its memory yet**, and it does not fork or Keep until a Windows identity reset is checked. A restore on ZFS stays off for that reason.
 - **A Windows box on Tart takes no snapshot of its memory**, and it does not fork or Keep until a Windows identity reset is checked.
-- **iOS boxes in a slot on a Namespace or Tart shared host take no snapshots**, and none are planned yet. A shared iOS box there has no VM of its own to copy: a take, restore or fork of one is refused and says so. For now its Snapshots card and its status still say what Tart takes of an iOS box in a VM of its own, and Take snapshot gives the reason only when you try it.
-- **On the SSH host pool, only Macs lent whole take snapshots so far, and they do not fork or Keep.** iOS slots on pool Macs come next, then Linux homes on btrfs, then machine snapshots by an operator's hook. Each machine says what it could offer, and `bb box doctor` shows each machine's report. A take on a box whose machine offers none is refused with that machine's reason, such as "for a home snapshot, ext4 under /home, which neither clones nor snapshots". A home snapshot will never hold what a box with root changes outside its home, so machines whose boxes have root (reset=machine) will offer machine snapshots only. [Decision 090](../decisions/090-pool-machines-say-whether-they-snapshot.md) has the design.
+- **iOS boxes in a slot on a Namespace or Tart shared host take no snapshots**, and none are planned yet; slots on the SSH host pool's Macs take [home snapshots](#ios-slots-on-a-pool-mac). A shared iOS box there has no VM of its own to copy: a take, restore or fork of one is refused and says so. For now its Snapshots card and its status still say what Tart takes of an iOS box in a VM of its own, and Take snapshot gives the reason only when you try it.
+- **On the SSH host pool, only Macs take snapshots so far, for boxes lent them whole and boxes in their iOS slots, and they do not fork or Keep.** Linux homes on btrfs come next, then machine snapshots by an operator's hook. Each machine says what it could offer, and `bb box doctor` shows each machine's report. A take on a box whose machine offers none is refused with that machine's reason, such as "for a home snapshot, ext4 under /home, which neither clones nor snapshots". A home snapshot will never hold what a box with root changes outside its home, so machines whose boxes have root (reset=machine) will offer machine snapshots only. [Decision 090](../decisions/090-pool-machines-say-whether-they-snapshot.md) has the design.
 
 ## On a box's page
 
