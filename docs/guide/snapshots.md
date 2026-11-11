@@ -370,14 +370,16 @@ Each step is recorded before it runs, with Proxmox's task once it begins. When B
 A Proxmox node that restarts part way through a restore starts its boxes again at its boot. When BB Box goes on:
 
 - **Before the rollback**: a box the node started again is left as it is. BB Box restores nothing, takes no undo, and says the box started again before it was restored.
-- **During the rollback**: BB Box rolls the box back again to the same snapshot, once, when the node shows it restarted after the rollback began. Proxmox often leaves the guest locked then, and only root on the node can unlock it. Until then the restore stays open, the box stays stopped, and `bb box doctor` and the box's notice give the command to run, such as `pct unlock 214`. BB Box tries again at each sweep, and finishes once it can.
+- **During the rollback**: BB Box does not roll the box back again on its own. It stops the box if the node started it, and the restore fails with the box stopped. BB Box says its disk may be part-restored, and keeps the restore's undo, which holds the disk as it was before.
 - **After the rollback**: BB Box finishes the restore, and the box has the snapshot's disk. After a reboot its undo is there too. After a power cut the undo can be lost, as above.
 
-BB Box leaves the box stopped, and says its disk may be part-restored, when the rollback cut short cannot be finished: its undo is gone, the restore's guard refuses, or the second rollback fails too. If the node started the box at its boot, BB Box stops it first. If it cannot stop it, the restore stays open and the box held, and BB Box tries again at each sweep. Restore the box to a snapshot again before you use it, or release it.
+BB Box acts so whenever it cannot be sure whether a rollback began or what the disk holds: the node shows it restarted after the rollback's task began, Proxmox no longer has the task, or BB Box never heard back and cannot find a task. The one exception is as for a restart of BB Box alone: when its first request for the rollback had no answer and BB Box finds no task for it, it asks once more, unless the box is running. An HTTP error with no clear answer, such as a 502 from a proxy, a timeout or a lost connection, is never taken as a refusal.
 
-BB Box records each rollback before it asks Proxmox for it. If it never hears back from the second, and cannot find its task, it does not roll back a third time: the restore stays open, with the box stopped, and BB Box looks for the task again at each sweep. Restore the box again, or release it, if it stays so.
+To use a box left so, restore it to a snapshot again, or release it. A new restore first takes a fresh undo, of the part-restored disk, so restore to the failed restore's undo to get the disk as it was before. Do not start the box until then. If Proxmox left the guest locked, the new restore is refused, with the command to run on the node, such as `pct unlock 214`.
 
-BB Box rolls back again only on the node's own evidence of its restart: the node's uptime is less than it was when the rollback's task began. Without it, a rollback whose task failed leaves the box stopped, and one whose task Proxmox no longer has stays unknown, as for a restart of BB Box alone.
+If BB Box cannot stop the box, or cannot read whether it runs, the restore stays open so that nothing starts the box, and BB Box tries to stop it again at each sweep. It never rolls back then. You can release the box at any time.
+
+BB Box knows the node restarted only from the node's own evidence: its uptime is less than it was when the rollback's task began. Without it, a rollback whose task failed leaves the box stopped, as for a restart of BB Box alone.
 
 Two cases need more from root on the node:
 
@@ -389,7 +391,7 @@ Two cases need more from root on the node:
   pct unlock 214
   ```
 
-  Then BB Box's next sweep finishes the restore. The window is a few milliseconds.
+  Then restore the box again. The window is a few milliseconds.
 - A full copy cut short by a power cut, such as a held copy on ZFS, can leave its volume with no guest, which BB Box's token cannot see or delete. `zfs list` on the node shows it, such as `rpool/data/subvol-215-disk-0` with no guest 215. Deleting it does not bring an undo back. Once you are sure no guest uses it, root can delete it with `zfs destroy`.
 
 These were checked in part, on a node nested in a VM, rebooted and reset at steps of a restore on LVM-thin and on ZFS, with root's steps above where they were needed. A take on ZFS cut short was not run. See [093's results](../decisions/093-results.md).

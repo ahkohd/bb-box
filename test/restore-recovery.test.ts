@@ -542,6 +542,26 @@ async function rollbackCutShort(state: World, box: BoxRecord, outcome: TaskOutco
   return cut;
 }
 
+const PART_RESTORED = /BB Box does not roll it back again on its own\. To use it, restore it to a snapshot again, or release it\. A new restore first takes a fresh undo, of this part-restored disk\.$/;
+
+async function endsStoppedAndFailed(state: World, box: BoxRecord, operation: SnapshotOperation, why: RegExp, rollbacks: number): Promise<void> {
+  const failed = state.store.operation(operation.id)!;
+  assert.equal(failed.state, "failed");
+  assert.match(failed.error!, why);
+  assert.match(failed.error!, PART_RESTORED);
+
+  const now = await current(state, box);
+  assert.equal(now.state, "stopped");
+  assert.equal(await state.backend.power(now.guest!), "stopped");
+  assert.equal(now.restoring ?? null, null);
+  assert.equal(rollbacksRun(state), rollbacks);
+
+  await state.restart();
+  assert.equal(await state.snapshots.recover(), 0);
+  assert.equal(rollbacksRun(state), rollbacks, "no further rollback at a later sweep");
+  assert.equal(await state.backend.power((await current(state, box)).guest!), "stopped");
+}
+
 test("with no node restart, a rollback task that failed is not rolled back again, at once or after BB Box restarts", async () => {
   const state = world();
   const box = await targetBox(state);
@@ -553,111 +573,121 @@ test("with no node restart, a rollback task that failed is not rolled back again
   const cut = await rollbackCutShort(state, box, { state: "failed", words: "rollback interrupted" });
   assert.equal(await state.snapshots.recover(), 1);
   assert.equal(state.store.operation(cut.id)!.state, "failed");
+  assert.match(state.store.operation(cut.id)!.error!, /^The rollback on .+ failed: rollback interrupted\.$/);
   assert.equal(rollbacksRun(state), 2, "one rollback for each restore");
   assert.equal((await current(state, box)).state, "stopped");
-
-  const missing = await rollbackCutShort(state, box, { state: "missing", words: "Proxmox has no task t3." });
-  assert.equal(await state.snapshots.recover(), 0);
-  assert.equal(state.store.operation(missing.id)!.state, "unknown");
-  assert.equal(rollbacksRun(state), 3);
 });
 
 for (const cut of [
-  { how: "lost by its node", outcome: NODE_LOST_IT_TOO },
-  { how: "failed as its node rebooted", outcome: FAILED_AS_THE_NODE_REBOOTED },
-]) test(`G16: a rollback ${cut.how} is rolled back again once, and finishes with its undo`, async () => {
+  { how: "lost by its node", outcome: NODE_LOST_IT_TOO, why: /^Its rollback was cut short when its node restarted: pve-1 restarted after Proxmox began task t1/ },
+  { how: "failed as its node rebooted", outcome: FAILED_AS_THE_NODE_REBOOTED, why: /^Its rollback was cut short when its node restarted: unexpected status\./ },
+  { how: "gone from Proxmox", outcome: { state: "missing", words: "Proxmox has no task t1." } as TaskOutcome, why: /no longer has the rollback's task, so BB Box cannot tell how it ended\./ },
+]) {
+  for (const boot of [{ nodeStartsIt: false }, { nodeStartsIt: true }]) {
+    test(`G16: a rollback ${cut.how} is not rolled back again${boot.nodeStartsIt ? ", and the box its node started is stopped" : ""}: the restore fails and says what to do`, async () => {
+      const state = world();
+      const box = await targetBox(state);
+      const operation = await rollbackCutShort(state, box, cut.outcome);
+      if (boot.nodeStartsIt) await bootStarts(state, box);
+
+      assert.equal(await state.snapshots.recover(), 1);
+
+      await endsStoppedAndFailed(state, box, operation, cut.why, 1);
+      assert.equal(state.store.record(operation.undo!)!.state, "ready", "its undo is kept");
+    });
+  }
+}
+
+test("G16: a box left part-restored, as when its rollback's task is gone for good, can be restored again, from a fresh undo, and keeps the undo of the restore that failed", async () => {
   const state = world();
   const box = await targetBox(state);
-  const operation = await rollbackCutShort(state, box, cut.outcome);
+  const operation = await rollbackCutShort(state, box, { state: "missing", words: "Proxmox has no task t1." });
+  for (let sweep = 0; sweep < 3; sweep++) await state.snapshots.recover();
+  assert.equal(state.store.operation(operation.id)!.state, "failed");
+  assert.equal(rollbacksRun(state), 1);
+  writeIn(state, box, "work.txt", "part-restored");
 
-  assert.equal(await state.snapshots.recover(), 1);
+  const again = await state.snapshots.restore(COMMAND, await current(state, box), standing(await current(state, box)), "target");
 
-  assert.equal(state.store.operation(operation.id)!.state, "done");
-  assert.equal(rollbacksRun(state), 2);
+  assert.equal(again.operation.state, "done");
   assert.equal(readIn(state, box, "work.txt"), "target");
   assert.equal(state.store.record(operation.undo!)!.state, "ready");
-  assert.equal((await current(state, box)).state, "ready");
+  assert.equal(undosOf(state, box).length, 2);
 });
 
-for (const order of [{ name: "a snapshot", enter: (_state: World) => {} }, { name: "a held copy", enter: (state: World) => void (state.undoByCopy = true) }]) test(`G16: a rollback cut short whose undo, ${order.name}, is then gone leaves the box stopped and says its disk may be part-restored`, async () => {
+for (const order of [{ name: "a snapshot", enter: (_state: World) => {} }, { name: "a held copy", enter: (state: World) => void (state.undoByCopy = true) }]) test(`G16: a rollback cut short whose undo, ${order.name}, is gone, and whose box the node started, is stopped and left stopped, never started as unchanged`, async () => {
   const state = armedWorld();
   order.enter(state);
   const box = await targetBox(state);
   const operation = await rollbackCutShort(state, box);
   const undo = state.store.record(operation.undo!)!;
   assert.equal(undo.guest, order.name === "a held copy" ? "held-copy" : "current");
-
   if (undo.guest === "held-copy") state.provider.copies.delete(undo.ref!);
   else state.provider.held.delete(undo.id);
+  await bootStarts(state, box);
+
   assert.equal(await state.snapshots.recover(), 1);
 
-  const failed = state.store.operation(operation.id)!;
-  assert.equal(failed.state, "failed");
-  assert.match(failed.error!, /^Its rollback was cut short when its node restarted, and its undo "[^"]+" was not there when BB Box went to roll it back again/);
-  assert.equal(state.store.record(undo.id)!.state, "lost");
-  assert.equal(rollbacksRun(state), 1, "it does not roll back again with no undo");
-  assert.equal((await current(state, box)).state, "stopped");
+  await endsStoppedAndFailed(state, box, operation, /^Its rollback was cut short when its node restarted/, 1);
   assert.doesNotMatch(state.boxLogs.join("\n") + state.log.events(box.id).map((event) => event.words).join("\n"), /Nothing on its disk changed/);
 });
 
-test("G16: a rollback cut short is not rolled back again once the guard refuses; the box stays stopped", async () => {
+test("G16: a rollback cut short is not rolled back again, whatever the guard says, and the box the node started is stopped", async () => {
   const state = world();
   const box = await targetBox(state);
   const operation = await rollbackCutShort(state, box);
-
+  await bootStarts(state, box);
   state.guard = { threads: [{ id: "late", title: "Late workspace", running: true }], threadsUnread: null, control: false, terminals: 0 };
+
   assert.equal(await state.snapshots.recover(), 1);
 
-  assert.equal(state.store.operation(operation.id)!.state, "failed");
-  assert.match(state.store.operation(operation.id)!.error!, /^Its rollback was cut short when its node restarted, and BB Box did not roll it back again/);
-  assert.equal(rollbacksRun(state), 1);
-  assert.equal((await current(state, box)).state, "stopped");
+  await endsStoppedAndFailed(state, box, operation, /^Its rollback was cut short when its node restarted/, 1);
 });
 
-for (const second of [
-  { how: "fails", outcome: FAILED_AS_THE_NODE_REBOOTED },
-  { how: "is lost too", outcome: NODE_LOST_IT_TOO },
-]) test(`G16: a restore rolls back again only once, across BB Box's restarts: when the second rollback ${second.how}, the box stays stopped`, async () => {
+test("G16: a rollback cut short whose box runs and will not stop keeps its restore open and tries to stop it at each sweep, never rolling back again, and fails once it stops", async () => {
   const state = world();
   const box = await targetBox(state);
   const operation = await rollbackCutShort(state, box);
+  await bootStarts(state, box);
+  state.provider.powerOffFault = new Error("the guest would not stop");
 
-  state.provider.rollback = "unknown";
   assert.equal(await state.snapshots.recover(), 0);
-  const retried = state.store.operation(operation.id)!;
-  assert.notEqual(retried.task!.ref, operation.task!.ref);
-  state.provider.tasks.set(retried.task!.ref, second.outcome);
-  await state.restart();
+
+  const open = state.store.operation(operation.id)!;
+  assert.equal(open.state, "unknown");
+  assert.match(open.error!, /The box was running, and BB Box could not stop it: the guest would not stop\. BB Box keeps the restore open, so nothing starts the box, and tries to stop it again at each sweep\. You can release the box\./);
+  assert.ok((await current(state, box)).restoring, "the box stays held");
+  assert.equal(rollbacksRun(state), 1);
+
   assert.equal(await state.snapshots.recover(), 1);
 
-  const failed = state.store.operation(operation.id)!;
-  assert.equal(failed.state, "failed");
-  assert.match(failed.error!, /^Its rollback was cut short when its node restarted, and BB Box rolled it back again once, which failed too/);
-  assert.equal(rollbacksRun(state), 2);
-  assert.equal((await current(state, box)).state, "stopped");
-  assert.equal(state.store.record(operation.undo!)!.state, "ready", "its undo is kept");
+  await endsStoppedAndFailed(state, box, operation, /^Its rollback was cut short when its node restarted/, 1);
 });
 
-test("G16: while the host refuses to roll back again, as when it left the guest locked, the restore stays open with the host's words, and a refusal spends no try", async () => {
+test("G16: while BB Box cannot read whether the box runs, its restore stays open at every sweep with no rollback, and release ends it", async () => {
   const state = world();
   const box = await targetBox(state);
   const operation = await rollbackCutShort(state, box);
+  Object.assign(state.backend, {
+    power: async () => {
+      throw new Error("cannot reach the provider: timed out");
+    },
+  });
 
-  for (const sweep of [1, 2]) {
-    state.provider.rollback = "refused";
+  for (const sweep of [1, 2, 3]) {
     assert.equal(await state.snapshots.recover(), 0, `sweep ${sweep}`);
     assert.equal(state.store.operation(operation.id)!.state, "unknown");
-    assert.match(state.store.operation(operation.id)!.error!, /CT is locked \(backup\)/);
-    assert.equal((await current(state, box)).state, "stopped");
+    assert.match(state.store.operation(operation.id)!.error!, /BB Box could not read whether the box runs\. .+You can release the box\./);
+    assert.equal(rollbacksRun(state), 1);
   }
 
-  state.provider.rollback = "unknown";
-  assert.equal(await state.snapshots.recover(), 0);
-  state.provider.tasks.set(state.store.operation(operation.id)!.task!.ref, { state: "ok" });
-  assert.equal(await state.snapshots.recover(), 1);
-  assert.equal(state.store.operation(operation.id)!.state, "done");
-  assert.equal(readIn(state, box, "work.txt"), "target");
-  assert.equal(state.store.record(operation.undo!)!.state, "ready");
+  await state.restart();
+  await state.boxes.release(THREAD, box.name, "done with it");
+  await state.boxes.settled(box);
+  await state.snapshots.recover();
+
+  assert.equal(await state.boxes.find(box.id), null);
+  assert.equal(state.store.unsettled().filter((open) => open.id === operation.id).length, 0);
 });
 
 test("G16: a delete whose task the node lost, with the snapshot still on the guest, is deleted again, as one Proxmox has no record of", async () => {
@@ -700,6 +730,10 @@ function rollbackListings(state: World): [string, FakeTaskListing][] {
 
 type FakeTaskListing = World["provider"]["started"] extends Map<string, infer Listing> ? Listing : never;
 
+function forgetRollbackListings(state: World): void {
+  for (const [key] of rollbackListings(state)) state.provider.started.delete(key);
+}
+
 function answerLostOnceProxmoxAccepts(state: World): void {
   const submit = (state.backend as unknown as Required<Pick<Backend, "rollbackSnapshot">>).rollbackSnapshot;
   Object.assign(state.backend, {
@@ -710,117 +744,65 @@ function answerLostOnceProxmoxAccepts(state: World): void {
   });
 }
 
-test("G16: a second rollback Proxmox accepted, whose answer and task were both lost, is the one retry: there is no third, and the box stays stopped and held", async () => {
+async function firstAnswerLost(state: World, box: BoxRecord): Promise<SnapshotOperation> {
+  answerLostOnceProxmoxAccepts(state);
+  await rejection(state.snapshots.restore(COMMAND, box, standing(box), "target"));
+  const operation = state.store.unsettled()[0]!;
+  assert.equal(operation.step, "rollback-submitting");
+  assert.equal(operation.task, null);
+  forgetRollbackListings(state);
+  await state.restart();
+  return operation;
+}
+
+for (const boot of [{ nodeStartsIt: false }, { nodeStartsIt: true }]) test(`with no node restart, an unanswered first rollback is sent once more, as before; when that answer is lost too there is no third${boot.nodeStartsIt ? ", and the box its node started is stopped" : ""}`, async () => {
   const state = world();
   const box = await targetBox(state);
-  const operation = await rollbackCutShort(state, box);
+  const operation = await firstAnswerLost(state, box);
 
   answerLostOnceProxmoxAccepts(state);
   assert.equal(await state.snapshots.recover(), 0);
   assert.equal(rollbacksRun(state), 2);
-  const listed = rollbackListings(state);
-  for (const [key] of listed) state.provider.started.delete(key);
+  assert.equal(state.store.operation(operation.id)!.state, "unknown");
+  forgetRollbackListings(state);
   await state.restart();
+  if (boot.nodeStartsIt) await bootStarts(state, box);
 
-  for (const sweep of [{ nodeStartsIt: false }, { nodeStartsIt: true }]) {
-    if (sweep.nodeStartsIt) await bootStarts(state, box);
-    assert.equal(await state.snapshots.recover(), 0, JSON.stringify(sweep));
-    assert.equal(rollbacksRun(state), 2, "no third rollback");
-    const open = state.store.operation(operation.id)!;
-    assert.equal(open.state, "unknown");
-    assert.match(open.error!, /cannot tell whether .+ accepted that rollback, so it does not roll it back a third time/);
-    const now = await current(state, box);
-    assert.equal(now.state, "stopped");
-    assert.equal(await state.backend.power(now.guest!), "stopped");
-    assert.ok(now.restoring, "the box stays held");
-  }
-
-  for (const [key, listing] of listed) state.provider.started.set(key, listing);
-  assert.equal(await state.snapshots.recover(), 1);
-  assert.equal(state.store.operation(operation.id)!.state, "done");
-  assert.equal(rollbacksRun(state), 2);
-  assert.equal(readIn(state, box, "work.txt"), "target");
-});
-
-for (const order of [{ name: "a snapshot", enter: (_state: World) => {} }, { name: "a held copy", enter: (state: World) => void (state.undoByCopy = true) }]) test(`G16: a rollback cut short whose undo, ${order.name}, is gone, and whose guest the node started at its boot, is stopped again and left stopped`, async () => {
-  const state = armedWorld();
-  order.enter(state);
-  const box = await targetBox(state);
-  const operation = await rollbackCutShort(state, box);
-  const undo = state.store.record(operation.undo!)!;
-  if (undo.guest === "held-copy") state.provider.copies.delete(undo.ref!);
-  else state.provider.held.delete(undo.id);
-
-  await bootStarts(state, box);
   assert.equal(await state.snapshots.recover(), 1);
 
-  const failed = state.store.operation(operation.id)!;
-  assert.equal(failed.state, "failed");
-  assert.match(failed.error!, /^Its rollback was cut short when its node restarted, and its undo "[^"]+" was not there when BB Box went to roll it back again/);
-  assert.equal(rollbacksRun(state), 1);
-  const now = await current(state, box);
-  assert.equal(now.state, "stopped");
-  assert.equal(await state.backend.power(now.guest!), "stopped");
+  await endsStoppedAndFailed(state, box, operation, /^BB Box had no answer to its rollback and found no task for it, so it cannot tell whether a rollback began\./, 2);
 });
 
-test("G16: a rollback cut short, whose guest the node started at its boot, is stopped again when the guard then refuses, and left stopped", async () => {
+test("an unanswered first rollback sent once more, whose task is then gone, does not leave a box its node started running", async () => {
   const state = world();
   const box = await targetBox(state);
-  const operation = await rollbackCutShort(state, box);
-
-  await bootStarts(state, box);
-  state.guard = { threads: [{ id: "late", title: "Late workspace", running: true }], threadsUnread: null, control: false, terminals: 0 };
-  assert.equal(await state.snapshots.recover(), 1);
-
-  assert.equal(state.store.operation(operation.id)!.state, "failed");
-  assert.match(state.store.operation(operation.id)!.error!, /^Its rollback was cut short when its node restarted, and BB Box did not roll it back again/);
-  assert.equal(rollbacksRun(state), 1);
-  const now = await current(state, box);
-  assert.equal(now.state, "stopped");
-  assert.equal(await state.backend.power(now.guest!), "stopped");
-});
-
-test("G16: a rollback cut short, whose guest the node started and BB Box cannot stop, keeps its restore open and the box held, then rolls back again once it stops", async () => {
-  const state = world();
-  const box = await targetBox(state);
-  const operation = await rollbackCutShort(state, box);
-
-  await bootStarts(state, box);
-  state.provider.powerOffFault = new Error("the guest would not stop");
-  assert.equal(await state.snapshots.recover(), 0);
-
-  const open = state.store.operation(operation.id)!;
-  assert.equal(open.state, "unknown");
-  assert.match(open.error!, /its node started it again, and BB Box could not stop it: the guest would not stop/);
-  assert.equal(rollbacksRun(state), 1);
-  assert.ok((await current(state, box)).restoring, "the box stays held");
-  assert.notEqual((await current(state, box)).state, "ready");
-
-  assert.equal(await state.snapshots.recover(), 1);
-  assert.equal(state.store.operation(operation.id)!.state, "done");
-  assert.equal(rollbacksRun(state), 2);
-  assert.equal(readIn(state, box, "work.txt"), "target");
-});
-
-test("G16: a second rollback lost too, whose guest the node then started, is stopped again and left stopped", async () => {
-  const state = world();
-  const box = await targetBox(state);
-  const operation = await rollbackCutShort(state, box);
+  const operation = await firstAnswerLost(state, box);
 
   state.provider.rollback = "unknown";
   assert.equal(await state.snapshots.recover(), 0);
-  state.provider.tasks.set(state.store.operation(operation.id)!.task!.ref, NODE_LOST_IT_TOO);
+  const second = state.store.operation(operation.id)!;
+  assert.equal(second.step, "rollback-task");
+  state.provider.tasks.set(second.task!.ref, { state: "missing", words: `Proxmox has no task ${second.task!.ref}.` });
   await state.restart();
   await bootStarts(state, box);
+
   assert.equal(await state.snapshots.recover(), 1);
 
-  assert.match(state.store.operation(operation.id)!.error!, /^Its rollback was cut short when its node restarted, and BB Box rolled it back again once, which failed too/);
-  const now = await current(state, box);
-  assert.equal(now.state, "stopped");
-  assert.equal(await state.backend.power(now.guest!), "stopped");
+  await endsStoppedAndFailed(state, box, operation, /no longer has the rollback's task/, 2);
 });
 
-test("G16: a first rollback cut short by a restart is still BB Box's own after its retry, and not reported as made outside it, though Proxmox still lists it", async () => {
+test("an unanswered first rollback is not sent again when its box is running, as its node restarted and started it: the box is stopped", async () => {
+  const state = world();
+  const box = await targetBox(state);
+  const operation = await firstAnswerLost(state, box);
+  await bootStarts(state, box);
+
+  assert.equal(await state.snapshots.recover(), 1);
+
+  await endsStoppedAndFailed(state, box, operation, /^Box \S+ started again while BB Box had no answer to its rollback, as a node that restarts starts its boxes\./, 1);
+});
+
+test("both of a restore's rollbacks are BB Box's own: neither is reported as made outside it, though Proxmox still lists them", async () => {
   const state = world();
   const box = await targetBox(state);
   const operation = await rollbackCutShort(state, box, FAILED_AS_THE_NODE_REBOOTED);
@@ -828,8 +810,7 @@ test("G16: a first rollback cut short by a restart is still BB Box's own after i
   assert.equal(first.ref, operation.task!.ref);
 
   assert.equal(await state.snapshots.recover(), 1);
-  assert.equal(state.store.operation(operation.id)!.state, "done");
-  state.provider.started.set(`${box.guest!.ref}|rollback|first-try`, first);
+  assert.equal(state.store.operation(operation.id)!.state, "failed");
   assert.equal(state.store.operationWithTask(first.ref)?.id, operation.id);
 
   state.tick(5 * 60_000);

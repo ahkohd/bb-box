@@ -1,6 +1,8 @@
 # 093 results: G16, restores through a node's restart
 
-Run on 11 November 2026, on main `73d24449` and then this change.
+Run on 11 November 2026, on main `73d24449` and then this change. The
+sections on the first three changes record heads whose rule, rolling back
+again once after a restart, the fourth change took out.
 
 ## The test bed
 
@@ -49,7 +51,7 @@ Run on 11 November 2026, on main `73d24449` and then this change.
 | --- | --- | --- | --- | --- |
 | After the stop | reboot | The box running at B | Before the fix: "could not copy box zfs-a for its undo: Guest 9901 is running", with a failed undo record | B, not done. Fixed as on LVM-thin |
 | During the held copy | hard reset | The copy's guest config gone, its dataset `tank/subvol-9902-disk-0` left with no guest; the box running at B | Before the fix: unsettled, as the take above. After it: "Box zfs-a started again before BB Box restored it, as a node that restarts starts its boxes. Nothing on its disk changed" | B, not done; a stray dataset only root can delete |
-| During the rollback | reboot, `zfs rollback` held | The rollback not run: the disk at B, `lock: rollback`; the boot's start failed; held copy 9903 a template, stopped | After the fix: the restore stays open: "... failed: zfs error: received interrupt, so its disk may be part-restored, and Proxmox LXC on pve-1 refused to roll it back again: Proxmox has guest 9901 locked (rollback) ... Run `pct unlock 9901` on pve-1. BB Box rolls it back again at each sweep until it can". After `pct unlock 9901` and a sweep: done | A, with its undo; restoring the undo made a new guest from 9903 and brought back B |
+| During the rollback | reboot, `zfs rollback` held | The rollback not run: the disk at B, `lock: rollback`; the boot's start failed; held copy 9903 a template, stopped | After the fix: the restore stays open: "... failed: zfs error: received interrupt, so its disk may be part-restored, and Proxmox LXC on pve-1 refused to roll it back again: Proxmox has guest 9901 locked (rollback) ... Run `pct unlock 9901` on pve-1. BB Box rolls it back again at each sweep until it can". After `pct unlock 9901` and a sweep: done. Under the fourth change the restore fails instead, with the box stopped and its undo kept; not run live | A, with its undo; restoring the undo made a new guest from 9903 and brought back B |
 | After the rollback, before the start | hard reset | The rollback kept: the box running at A. The held copy's guest config, made 41 s before the reset, gone; its dataset `tank/basevol-9905-disk-0` left | Finished the restore. Listed the undo as ready, on guest 9905, which no longer exists | A, with its undo lost |
 
 Held copy 9903 (`template: 1`, `onboot: 0`, `link_down=1`) and earlier guest
@@ -173,6 +175,41 @@ spends no try"), and the first rollback asked again as before 1 ("with no
 node restart, a first rollback whose answer never came ... as before",
 which passes on main and on the second head).
 
+## Tests of the fourth change
+
+The fourth change takes out rolling back again after a restart, with the
+retry's place in the journal and the hold while a second rollback was
+unsure. Where BB Box cannot be sure whether a rollback began, or what the
+disk holds, it stops the box if it runs, and fails the restore with the box
+stopped. Its tests were run against the third head (`b2eed59b`) and main
+(`73d24449`), each with this change's tests and fakes.
+
+In `proxmox-lxc-snapshots`, `restore-recovery` and `restore`, 129 tests:
+all pass on this change, 22 fail on the third head and 35 on main. The
+Proxmox, snapshot and restore tests, 448, all pass.
+
+Each reproduction from the three reviews is a test, and each ends with the
+box stopped, the restore failed with words that say its disk may be
+part-restored and what to do, and no rollback at a later sweep:
+
+| Review's case | Test | Rollbacks |
+| --- | --- | --- |
+| An accepted retry whose answer is lost allows a third rollback | "with no node restart, an unanswered first rollback is sent once more, as before; when that answer is lost too there is no third", with and without the node starting the box | 2 |
+| An HTTP 502 is a definite refusal | "G16: an HTTP 502 from a proxy to the rollback's request is not a refusal", with 500, 503, 504 and a lost connection; 400 and 403 stay refusals | not sent again |
+| An accepted retry reported as an HTTP refusal allows a third | the first row: the backend no longer reports it as a refusal | 2 |
+| A recorded retry whose task goes missing leaves a node-started guest running | "an unanswered first rollback sent once more, whose task is then gone, does not leave a box its node started running", and "G16: a rollback gone from Proxmox is not rolled back again" | 2, and 1 |
+| A permanently missing retry cannot be replaced by a fresh restore | "G16: a box left part-restored, as when its rollback's task is gone for good, can be restored again" | 1, then the new restore's |
+| Permanently unreadable power holds the restore | "G16: while BB Box cannot read whether the box runs, its restore stays open at every sweep with no rollback, and release ends it" | 1 |
+| A node-started guest with its undo gone is released as ready | "G16: a rollback cut short whose undo, a snapshot, is gone, and whose box the node started, is stopped", and for a held copy | 1 |
+| A node-started guest with the guard refusing is released as ready | "G16: a rollback cut short is not rolled back again, whatever the guard says" | 1 |
+| A retry's undo gone starts a part-restored disk | the undo-gone tests above | 1 |
+| The retry limit is lost across a restart | "G16: a rollback lost by its node", "failed as its node rebooted" and "gone from Proxmox ... is not rolled back again", each with and without the node starting the box | 1 |
+| A retried restore's first task reported as outside | "both of a restore's rollbacks are BB Box's own" | 1 |
+| A malformed task ID is restart evidence | "G16: only a task ID whole in Proxmox's own form is evidence of a restart", kept from the third change | none |
+
+Main's 47 restore tests, `restore.test.ts` and `restore-recovery.test.ts`
+from `73d24449`, pass unchanged against this change.
+
 ## Live after the change
 
 With bb-box from this branch's first head, at its restart: a restore held
@@ -184,11 +221,11 @@ settled as not done; the ZFS rollback cut short stayed open until
 `pct unlock`, then finished, and its undo restored B. `bb box doctor` then
 said 0 operations not settled.
 
-The second and third changes, to the lost task's evidence, the
-rollback's journal and the stop of a node-started guest, were not run
-again on the node. Both live rollbacks cut short read back
+The second, third and fourth changes, to the lost task's evidence, the
+rollback's journal, the stop of a node-started guest and the end of
+rolling back again, were not run again on the node. Both live rollbacks cut short read back
 after the reboot as failed tasks, "received interrupt", whose worker began
-before the boot: the case the change rolls back again.
+before the boot: the case the fourth change fails, with the box stopped.
 
 ## Not proved
 

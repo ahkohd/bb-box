@@ -1020,3 +1020,57 @@ test("review: a clone's wait grows with its disk, at 3 times BB Box's estimate a
   await new Proxmox(options).waitTask(upid, undefined, 60_000);
   assert.equal(polls, 6, "a longer wait keeps polling until the task ends");
 });
+
+function failedAnswer(status: number, message: string): FetchResponse {
+  return { ok: false, status, statusText: message, text: async () => JSON.stringify({ data: null }) };
+}
+
+const UNCLEAR_ROLLBACK_ANSWERS: readonly { readonly how: string; readonly respond: () => FetchResponse }[] = [
+  { how: "an HTTP 500", respond: () => failedAnswer(500, "internal error") },
+  { how: "an HTTP 502 from a proxy", respond: () => failedAnswer(502, "Bad Gateway") },
+  { how: "an HTTP 503", respond: () => failedAnswer(503, "Service Unavailable") },
+  { how: "an HTTP 504 timeout", respond: () => failedAnswer(504, "Gateway Timeout") },
+  {
+    how: "a lost connection",
+    respond: () => {
+      throw new Error("socket hang up");
+    },
+  },
+];
+
+for (const unclear of UNCLEAR_ROLLBACK_ANSWERS) {
+  test(`G16: ${unclear.how} to the rollback's request is not a refusal, as Proxmox may have begun it`, async () => {
+    const state = world();
+    const { guest, id } = await box(state);
+    const { hooks, submitted } = tasks();
+    await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+    await state.backend.powerOff(guest);
+    state.proxmox.intercept = (call) => (call.method === "POST" && call.path.endsWith("/rollback") ? unclear.respond() : undefined);
+
+    const error = await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks).catch((caught: unknown) => caught);
+
+    assert.ok(error instanceof Error);
+    assert.ok(!(error instanceof SnapshotFailed), "not a refusal");
+    assert.ok(!(error instanceof RestoreChanged));
+    assert.match(error.message, /^Proxmox gave no clear answer to the rollback, so BB Box cannot tell whether it began: /);
+    assert.equal(submitted.length, 2, "the rollback was journalled as asked for before it was sent");
+  });
+}
+
+for (const refusal of [
+  { how: "an HTTP 400", status: 400 },
+  { how: "an HTTP 403", status: 403 },
+]) {
+  test(`G16: ${refusal.how} to the rollback's request is a refusal, as Proxmox began nothing`, async () => {
+    const state = world();
+    const { guest, id } = await box(state);
+    const { hooks } = tasks();
+    await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+    await state.backend.powerOff(guest);
+    state.proxmox.intercept = (call) => (call.method === "POST" && call.path.endsWith("/rollback") ? failedAnswer(refusal.status, "refused") : undefined);
+
+    const error = await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks).catch((caught: unknown) => caught);
+
+    assert.ok(error instanceof SnapshotFailed);
+  });
+}

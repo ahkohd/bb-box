@@ -184,6 +184,19 @@ export function storageOfVolume(value: unknown): string | null {
   return /^([A-Za-z][A-Za-z0-9_.-]*):/.exec(String(value ?? ""))?.[1] ?? null;
 }
 
+function refusedBeforeItBegan(error: ProxmoxError): boolean {
+  return (error.status >= 400 && error.status < 500) || error.locked;
+}
+
+async function askToRollBack(api: Proxmox, vmid: number, name: string, signal?: AbortSignal): Promise<string> {
+  try {
+    return await api.startRollback(vmid, name, signal);
+  } catch (error) {
+    if (!(error instanceof ProxmoxError) || refusedBeforeItBegan(error)) throw error;
+    throw new Error(`Proxmox gave no clear answer to the rollback, so ${PRODUCT} cannot tell whether it began: ${taskWords(error)}`, { cause: error });
+  }
+}
+
 function volumeNameOf(value: unknown): string | null {
   return /^[A-Za-z][A-Za-z0-9_.-]*:(?:[A-Za-z0-9_.+-]+\/)?([A-Za-z0-9_.+-]+)(?:,|$)/.exec(String(value ?? ""))?.[1] ?? null;
 }
@@ -608,7 +621,7 @@ export class ProxmoxSnapshotting {
         throw new SnapshotFailed(words.running ?? `Proxmox has guest ${vmid} locked (${lock}), so it cannot restore the snapshot.${remake ? ` ${remake}` : ""}${words.fix ? ` ${words.fix}` : ""}`);
       }
       await hooks.submitting();
-      upid = await api.startRollback(vmid, name, signal);
+      upid = await askToRollBack(api, vmid, name, signal);
     } catch (error) {
       if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(taskWords(error));
       throw error;

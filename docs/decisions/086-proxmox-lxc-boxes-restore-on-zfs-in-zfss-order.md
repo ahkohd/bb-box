@@ -68,10 +68,11 @@ piece of work.
 - G4 on ZFS ran on a test ZFS storage: [results](070-results.md#zfs-restores-on-proxmox-lxc).
 - G16 was run in part on 11 November 2026, on a node nested in a VM, on
   ZFS and on LVM-thin: see [093](093-proxmox-restores-recover-from-a-nodes-restart.md)
-  and [its results](093-results.md). With 093's fixes, the reboots run
-  ended at the snapshot with its undo, or as it was with the restore
-  reported as not done; where Proxmox left a lock, once root unlocked the
-  guest. Held copies and earlier guests stayed stopped through a reboot and
+  and [its results](093-results.md). With 093's rule, a restore cut
+  short before its rollback ends as it was, reported as not done, and one
+  cut short during its rollback fails with the box stopped and its undo
+  kept, to be restored again; where Proxmox left a lock, once root unlocks
+  the guest. Held copies and earlier guests stayed stopped through a reboot and
   a hard reset. It does not discharge G16. On LVM-thin a restart between
   Proxmox's removal of the volume and its remaking needs root. A hard
   reset can lose a recent undo, ZFS's held copy included, as Proxmox can

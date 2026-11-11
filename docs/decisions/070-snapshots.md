@@ -15,9 +15,9 @@ supersedes G16's condition only for what that run proves: a restore
 through a graceful reboot at the steps it ran, and held copies and
 earlier guests that stay stopped through a reboot and a hard reset. A
 power cut can still lose a recent undo, and G16 still holds for unit 8's
-Keep. 093 also supersedes "a rollback task that failed leaves the box
-stopped", from G6's tests, for a rollback cut short by its node's restart
-only: such a rollback is rolled back again once.
+Keep. 093 also supersedes two of G6's rules for a rollback: one whose task
+Proxmox no longer has fails with the box stopped, rather than staying
+unknown, and a rollback request with no answer is sent again once at most.
 
 Research: [Snapshots of boxes](../research/box-snapshots.md), with its
 measurements on Proxmox LXC and QEMU, Docker, Tart, microsandbox, boat.dev,
