@@ -82,7 +82,7 @@ export PATH LC_ALL
 # Empty on a Mac. The tests set it to a directory laid out as a Mac's, to run the helper on Linux with stub macOS tools.
 ROOT=
 
-VERSION=3
+VERSION=4
 STATE=$ROOT/var/db/bb-box
 TEMPLATE=$ROOT/usr/local/share/bb-box/home
 # Cua Driver's bundle ID, which macOS keys its screen-capture approval by.
@@ -133,6 +133,15 @@ PROOF_LATE_STOP_SECONDS=3
 NEWLINE='
 '
 DEVICE_HOST_LOCK=$SLOTS_STATE/lock
+SLOT_HOLDER_PREFIX=slot-
+SLOT_PREFIX=bbd-
+SLOT_UID_BASE=80000
+SLOT_UID_SPAN=10000
+SLOT_LOCK_SECONDS=60
+IOS_SHARE=$ROOT/usr/local/share/bb-box/ios
+SIM_STORES=$ROOT/private/var/tmp
+PROOF_DEVICE_BOOT_SECONDS=180
+EXIT_NOT_OURS=4
 DEVICE_HOST_WAIT_SECONDS=60
 PAUSE_LOCK=$STATE/pause-lock
 PAUSE_ROUNDS=5
@@ -256,7 +265,7 @@ dirt() {
   ready=${1:-}
   for user in $(box_users); do [ "$user" = "$ready" ] || echo "user $user"; done
   for path in "$ROOT"/Users/"$PREFIX"* "$ROOT"/etc/sudoers.d/"$PREFIX"* "$ROOT"/private/var/at/tabs/"$PREFIX"* "$STATE"/passwords/"$PREFIX"* "$HOME_SNAPSHOTS"/*; do
-    [ -e "$path" ] && [ "${path##*/}" != "$ready" ] && echo "${path#"$ROOT"}"
+    [ -e "$path" ] && [ "${path##*/}" != "$ready" ] && ! the_store_of_a_slot_the_mac_still_has "$path" && echo "${path#"$ROOT"}"
   done
   for group in $JOINS; do
     for user in $(box_members "$group"); do [ "$user" = "$ready" ] || echo "$user in group $group"; done
@@ -539,6 +548,8 @@ on_a_half_made_user=remove_half_made_user
 on_what_changed=say_what_changed
 which_temporary_entries=every_temporary_entry
 proof_fork_identity=''
+lent_slot=''
+holder_record=$STATE/owner
 
 helper_exit() {
   code=$?
@@ -820,15 +831,91 @@ resume_abandoned_pauses() {
   let_go_of_pause_lock
 }
 
+slot_of_holder() {
+  case ${1:-} in "$SLOT_HOLDER_PREFIX"*) printf '%s\n' "${1#"$SLOT_HOLDER_PREFIX"}" ;; *) return 1 ;; esac
+}
+
 lent_user() {
-  expected=$1
-  number "$expected" || quit 2 "The snapshot command needs the Mac's generation."
+  if lent_slot=$(slot_of_holder "$1"); then slot_lent_to_the_box "$lent_slot"; else mac_lent_to_the_box "$1"; fi
+}
+
+mac_lent_to_the_box() {
+  expected=$1 lent_slot=''
+  number "$expected" || quit 2 "The snapshot command needs the Mac's generation, or slot-<n> for an iOS slot."
   [ -n "$box" ] || quit 2 "The snapshot command needs box=."
   [ -e "$STATE/owner" ] || quit 4 "No box holds the Mac."
   [ "$(field "$STATE/owner" install)" = "$install" ] && [ "$(field "$STATE/owner" box)" = "$box" ] &&
     [ "$(field "$STATE/owner" generation)" = "$expected" ] || quit 4 "Another box holds the Mac."
   user=$(field "$STATE/owner" user) uid=$(field "$STATE/owner" uid)
   box_uid "$uid" && [ "$(attribute "$user" UniqueID)" = "$uid" ] || fail "Box user $user is not on the Mac."
+  holder_record=$STATE/owner
+}
+
+slot_folder() { printf '%s\n' "$SLOTS_STATE/slots/$1"; }
+
+a_slot_number() { number "${1:-}" && [ "$1" -gt 0 ] && [ "$1" -lt "$SLOT_UID_SPAN" ]; }
+
+slot_user_the_device_host_made() {
+  made_slot=$1 made_name=$2 made_uid=$3
+  a_slot_number "$made_slot" && [ "$made_name" = "$SLOT_PREFIX$made_slot" ] && [ "$made_uid" = $((SLOT_UID_BASE + made_slot)) ] &&
+    [ -e "$(slot_folder "$made_slot")/user-made" ] && [ "$(field "$(slot_folder "$made_slot")/slot" user)" = "$made_name" ] &&
+    [ "$(field "$(slot_folder "$made_slot")/slot" uid)" = "$made_uid" ] && [ "$(attribute "$made_name" UniqueID)" = "$made_uid" ]
+}
+
+a_slot_user_the_device_host_made() {
+  case $1 in "$SLOT_PREFIX"*) slot_user_the_device_host_made "${1#"$SLOT_PREFIX"}" "$1" "$2" ;; *) return 1 ;; esac
+}
+
+the_store_of_a_slot_the_mac_still_has() {
+  case $1 in "$HOME_SNAPSHOTS/$SLOT_PREFIX"*) ;; *) return 1 ;; esac
+  kept_slot=${1##*/}
+  kept_slot=${kept_slot#"$SLOT_PREFIX"}
+  a_slot_number "$kept_slot" && [ "$(field "$(slot_folder "$kept_slot")/slot" user)" = "$SLOT_PREFIX$kept_slot" ]
+}
+
+slot_lent_to_the_box() {
+  a_slot_number "$1" || quit 2 "The snapshot command needs the Mac's generation, or slot-<n> for an iOS slot."
+  [ -n "$box" ] || quit 2 "The snapshot command needs box=."
+  slots_set_up || quit 4 "The Mac lends no iOS slots."
+  folder=$(slot_folder "$1")
+  [ -f "$folder/slot" ] || quit 4 "The Mac has no iOS slot $1."
+  [ "$(field "$folder/state" is)" = held ] || quit 4 "No box holds iOS slot $1."
+  [ "$(field "$folder/claim" install)" = "$install" ] && [ "$(field "$folder/claim" box)" = "$box" ] || quit 4 "Another box holds iOS slot $1."
+  user=$(field "$folder/slot" user) uid=$(field "$folder/slot" uid)
+  slot_user_the_device_host_made "$1" "$user" "$uid" || fail "iOS slot $1's user is not the one the device host made, so the helper takes no snapshot of it and ends none of its processes."
+  holder_record=$folder/claim
+}
+
+hold_the_slots_lock() {
+  folder=$(slot_folder "$1")
+  [ -f "$folder/slot" ] || quit 4 "The Mac has no iOS slot $1."
+  exec 5>>"$folder/lock"
+  lock_open_file 5 "$2" || quit 3 "Another bb-box command is working on iOS slot $1; ask again."
+}
+
+hold_for() {
+  if holder_slot=$(slot_of_holder "$1"); then
+    a_slot_number "$holder_slot" || quit 2 "The snapshot command needs the Mac's generation, or slot-<n> for an iOS slot."
+    hold_the_slots_lock "$holder_slot" "$SLOT_LOCK_SECONDS"
+  else
+    lock "$2"
+  fi
+}
+
+hold_a_slot_users_store() {
+  case $1 in "$SLOT_PREFIX"*) ;; *) return 0 ;; esac
+  store_slot=${1#"$SLOT_PREFIX"}
+  a_slot_number "$store_slot" && [ -f "$(slot_folder "$store_slot")/slot" ] || return 0
+  hold_the_slots_lock "$store_slot" "$2"
+}
+
+stopped_for_the_restore() {
+  [ -f "$(session_file "$1")" ] || return 1
+  [ -z "$lent_slot" ] || [ -e "$(slot_folder "$lent_slot")/stopped" ]
+}
+
+device_host_for_the_box() {
+  printf 'install=%s\nbox=%s\n' "$install" "$box" | /bin/sh "$DEVICE_HOST" "$@" 5>&- 6>&- 8>&- 9>&-
 }
 
 session_file() { printf '%s\n' "$(store_of "$1")/.session"; }
@@ -842,7 +929,8 @@ taken_line() {
 
 snapshot_info() {
   printf 'install=%s\nbox=%s\nuser=%s\nuid=%s\ncaptured=%s\npaused_ms=%s\n' "$install" "$box" "$1" "$2" "$3" "$4"
-  for key in thread name kind created; do printf '%s=%s\n' "$key" "$(field "$STATE/owner" "$key")"; done
+  for key in thread name kind created; do printf '%s=%s\n' "$key" "$(field "$holder_record" "$key")"; done
+  [ -z "$lent_slot" ] || printf 'slot=%s\nslot_made=%s\n' "$lent_slot" "$(field "$(slot_folder "$lent_slot")/slot" made)"
 }
 
 clone_home() {
@@ -883,14 +971,46 @@ take_home() {
   dir=$(store_of "$user")/$id
   if [ ! -d "$dir/home" ]; then
     pause=pause
-    [ ! -f "$(session_file "$user")" ] || pause=stopped
+    ! stopped_for_the_restore "$user" || pause=stopped
     clone_home "$user" "$uid" "$dir" "$pause"
   fi
   taken_line "$dir"
 }
 
+end_slot_session() {
+  user=$1
+  ready_store "$user"
+  session=$(session_file "$user")
+  [ -f "$session" ] || printf 'console=no\nautologin=no\nslot=%s\nsince=%s\n' "$lent_slot" "$(now)" | put "$session"
+  resume_user "$user"
+  said=$(device_host_for_the_box stop "$lent_slot" 2>&1)
+  case $? in
+    0) ;;
+    4) quit 4 "$(printf '%s\n' "$said" | tail -n 1)" ;;
+    *) fail "Could not stop iOS slot $lent_slot for the restore: $(printf '%s\n' "$said" | tail -n 1)" ;;
+  esac
+  echo stopped=yes
+  echo console=no
+}
+
+start_slot_session() {
+  user=$1
+  said=$(device_host_for_the_box start "$lent_slot" 2>&1)
+  code=$?
+  [ -e "$(slot_folder "$lent_slot")/stopped" ] || rm -f "$(session_file "$user")"
+  case $code in
+    0) ;;
+    4) quit 4 "$(printf '%s\n' "$said" | tail -n 1)" ;;
+    *) fail "$(printf '%s\n' "$said" | grep -v -e '^started=' -e '^booted=' | tail -n 1)" ;;
+  esac
+  echo started=yes
+  echo console=
+  printf '%s\n' "$said" | grep '^booted='
+}
+
 end_session() {
   user=$1 uid=$2
+  [ -z "$lent_slot" ] || { end_slot_session "$user"; return; }
   ready_store "$user"
   session=$(session_file "$user")
   if [ ! -f "$session" ]; then
@@ -981,7 +1101,7 @@ restore_home() {
     return 0
   fi
   [ -d "$snapshot/home" ] || quit "$EXIT_NO_SNAPSHOT" "Box user $user has no snapshot $id."
-  [ -f "$(session_file "$user")" ] || quit "$EXIT_REFUSED" "Box user $user's session has not been ended for a restore. End it with machine snapshot stop first."
+  stopped_for_the_restore "$user" || quit "$EXIT_REFUSED" "Box user $user's session has not been ended for a restore. End it with machine snapshot stop first."
   log_out "$user" "$uid" || quit "$EXIT_REFUSED" "Could not end every process of $user, as the notes above say, so the restore changed nothing."
   printf 'operation=%s\nsnapshot=%s\nstate=running\n' "$operation" "$id" | put "$record"
   swap_home "$user" "$uid" "$snapshot"
@@ -1015,6 +1135,7 @@ restore_sign_in() {
 
 start_session() {
   user=$1 uid=$2
+  [ -z "$lent_slot" ] || { start_slot_session "$user"; return; }
   session=$(session_file "$user")
   if [ -f "$session" ]; then
     [ "$(field "$session" autologin)" != yes ] && [ "$(field "$session" console)" != yes ] || automatic_login "$user"
@@ -1079,6 +1200,56 @@ delete_snapshot() {
     absent "$dir" || remove_tree "$dir" || fail "Could not delete $dir."
   done
   echo "deleted=$id"
+}
+
+the_slots_own_snapshot() {
+  a_snapshot_of_this_install_for "$1" "$2" && [ "$(field "$1/info" uid)" = "$3" ] && [ "$(field "$1/info" slot_made)" = "$4" ]
+}
+
+a_working_entry_of_the_helper() {
+  case ${1##*/} in .paused | .session | .restore | .replaced | .restoring) return 0 ;; *) return 1 ;; esac
+}
+
+entries_of() {
+  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do absent "$entry" || printf '%s\n' "$entry"; done
+}
+
+what_is_not_the_slots() {
+  entries_of "$1" | while IFS= read -r entry; do
+    a_working_entry_of_the_helper "$entry" && continue
+    the_slots_own_snapshot "$entry" "$2" "$3" "$4" || printf '%s is not a snapshot this install took of %s in this slot, or has no record of whose it is\n' "$entry" "$2"
+  done
+}
+
+forget_slot_snapshots() {
+  folder=$(slot_folder "$1")
+  [ -f "$folder/slot" ] || quit 4 "The Mac has no iOS slot $1."
+  slot_is=$(field "$folder/state" is)
+  [ "$slot_is" = resetting ] || quit "$EXIT_REFUSED" "iOS slot $1 is ${slot_is:-in no known state}, not being removed, so the helper deletes none of its snapshots."
+  user=$(field "$folder/slot" user) uid=$(field "$folder/slot" uid) made=$(field "$folder/slot" made)
+  [ "$user" = "$SLOT_PREFIX$1" ] && [ "$uid" = $((SLOT_UID_BASE + $1)) ] || quit "$EXIT_REFUSED" "iOS slot $1's record names user $user with UID $uid, not the slot's own, so the helper deletes none of its snapshots."
+  install=$(field "$folder/released" install)
+  [ -n "$install" ] || install=$(field "$folder/claim" install)
+  store=$(store_of "$user")
+  if absent "$store"; then
+    echo forgotten=0
+    return 0
+  fi
+  refuse_a_store_that_is_a_link "$store"
+  [ -d "$store" ] && owned_by "$store" 0 || quit 4 "$store is not a folder of root's, so the helper leaves it. Check it with: ls -ld $store"
+  hold_pause_lock 60 || fail "Another take is pausing processes; ask again."
+  resume_journal "$(paused_marker "$user")"
+  let_go_of_pause_lock
+  ! journal_holds_processes "$(paused_marker "$user")" || fail "A take's pause record in $store still names processes that may stop; ask again in a minute."
+  refusal=$(what_is_not_the_slots "$store" "$user" "$uid" "$made" | head -n 1)
+  [ -z "$refusal" ] || quit 4 "$refusal, so the helper leaves the store and deletes nothing. Check it with: ls -la $store"
+  forgotten=0
+  for entry in $(entries_of "$store"); do
+    remove_tree "$entry" || fail "Could not delete $entry."
+    a_working_entry_of_the_helper "$entry" || forgotten=$((forgotten + 1))
+  done
+  rmdir "$store" || fail "Could not delete $store."
+  echo "forgotten=$forgotten"
 }
 
 home_naming_files() {
@@ -1562,14 +1733,15 @@ recover_an_earlier_proof() {
     rm -f "$PROOF_RECORD"
     echo "note: removed what the earlier proof made"
     set -- $earlier_uids
-    note_what_stays_outside_the_record "${1:-}" "${2:-${1:-}}"
+    note_what_stays_outside_the_record "$@"
     return 0
   fi
   quit "$EXIT_REFUSED" "The proof does not run: what an earlier proof made changed while this proof removed it, as the notes above say. It removed the rest, and kept $PROOF_RECORD. Check each, remove what is an earlier proof's yourself, then remove $PROOF_RECORD."
 }
 
 note_what_stays_outside_the_record() {
-  echo "note: the proof deletes only what it recorded, so what macOS made for the scratch users outside the record, such as their temporary folders, stays. List it with: sudo find /System/Volumes/Data -xdev \( -uid $1 -o -uid $2 \)"
+  uid_tests=$(for each_uid; do printf -- '-uid %s -o ' "$each_uid"; done | sed 's/ -o $//')
+  echo "note: the proof deletes only what it recorded, so what macOS made for the scratch users outside the record, such as their temporary folders, stays. List it with: sudo find /System/Volumes/Data -xdev \( $uid_tests \)"
 }
 
 end_proof() {
@@ -1578,12 +1750,12 @@ end_proof() {
   reap_if_ended $proof_children
   clean_what_the_record_proves
   cleaned=$?
-  for each_made in "$proof_fork_user" "$proof_user" "$proof_stranger"; do
+  for each_made in "$proof_fork_user" "$proof_user" "$proof_stranger" "$proof_slot_user"; do
     proof_check "removed $each_made and what the proof made for it" no_user "$each_made"
   done
-  proof_check "no process of the scratch users is left" eval "no_process_of $proof_uid && no_process_of $proof_fork_uid"
+  proof_check "no process of the scratch users is left" eval "no_process_of $proof_uid && no_process_of $proof_fork_uid && no_process_of $proof_slot_uid"
   if [ "$proof_made_the_store" = yes ]; then proof_check "removed the snapshot store it made" absent "$HOME_SNAPSHOTS"; fi
-  note_what_stays_outside_the_record "$proof_uid" "$proof_fork_uid"
+  note_what_stays_outside_the_record "$proof_uid" "$proof_fork_uid" "$proof_slot_uid"
   if [ "$cleaned" = 0 ]; then
     rm -f "$PROOF_RECORD"
   else
@@ -1732,6 +1904,8 @@ pick_proof_identities() {
   pick name && proof_fork_user=$picked
   pick uid && proof_fork_uid=$picked
   pick name && proof_stranger=$picked
+  pick name && proof_slot_user=$picked
+  pick uid && proof_slot_uid=$picked
   proof_fork_identity=$proof_fork_user:$proof_fork_uid
 }
 
@@ -1740,8 +1914,105 @@ start_the_record() {
   record_line "user $proof_user $proof_uid - $UNUSED_WHEN_PICKED"
   record_line "user $proof_fork_user $proof_fork_uid - $UNUSED_WHEN_PICKED"
   record_line "user $proof_stranger $proof_fork_uid - $UNUSED_WHEN_PICKED"
+  record_line "user $proof_slot_user $proof_slot_uid - $UNUSED_WHEN_PICKED"
   proof_run=$(mktemp -d "$STATE/proof-run.XXXXXX") || fail "Could not make the proof's own folder in $STATE."
   record_dir - "$proof_run"
+}
+
+slot_probe_simctl() { (cd / && sudo -n -H -u "$proof_slot_user" -- xcrun simctl "$@") </dev/null 2>/dev/null; }
+proof_device_listed() { slot_probe_simctl list devices | grep -F "($1)" >/dev/null; }
+proof_device_booted() { slot_probe_simctl list devices | grep -F "($1)" | grep -q '(Booted)'; }
+proof_setting() { slot_probe_simctl spawn "$proof_device" defaults read com.bb-box.proof value; }
+set_proof_setting() { slot_probe_simctl spawn "$proof_device" defaults write com.bb-box.proof value "$1" >/dev/null; }
+a_device_id() { case ${1:-} in ????????-????-????-????-????????????) return 0 ;; *) return 1 ;; esac; }
+
+boot_proof_device() {
+  proof_device_booted "$1" || slot_probe_simctl boot "$1" >/dev/null || proof_device_booted "$1" || return 1
+  within "$PROOF_DEVICE_BOOT_SECONDS" sudo -n -H -u "$proof_slot_user" -- xcrun simctl bootstatus "$1" -b >/dev/null 2>&1 </dev/null
+}
+
+record_the_devices_store() {
+  record_dir "$proof_slot_user" "$SIM_STORES/com.apple.CoreSimulator.SimDevice.$1"
+}
+
+proof_device_line() { grep -v '^#' "$IOS_SHARE/$1" 2>/dev/null | head -n 1; }
+
+make_the_proof_device() {
+  proof_device_type=$(proof_device_line devices.tsv | cut -f 2) proof_runtime=$(proof_device_line runtimes.tsv | cut -f 1)
+  [ -n "$proof_device_type" ] && [ -n "$proof_runtime" ] || return 1
+  slot_probe_simctl list devices >/dev/null || return 1
+  slot_probe_simctl delete all >/dev/null
+  proof_device=$(slot_probe_simctl create bb-box-proof "$proof_device_type" "$proof_runtime" | tail -n 1)
+  a_device_id "$proof_device"
+}
+
+prove_slot_snapshots() {
+  if ! slots_set_up; then
+    echo "note: this Mac lends no iOS slots, so the proof checked no slot user's device"
+    return 0
+  fi
+  make_proof_user "$proof_slot_user" "$proof_slot_uid"
+  proof_line ok "made $proof_slot_user, UID $proof_slot_uid, a scratch user for an iOS slot, with no console session, as slot users have none"
+  ready_store "$proof_slot_user"
+  record_dir "$proof_slot_user" "$(store_of "$proof_slot_user")"
+  slot_home=$ROOT/Users/$proof_slot_user
+  echo before >"$slot_home/app-data.txt" && chown "$proof_slot_uid:20" "$slot_home/app-data.txt"
+  if ! make_the_proof_device; then
+    proof_line FAILED "simctl made a device for $proof_slot_user from the device host's $IOS_SHARE/devices.tsv and runtimes.tsv"
+    return 0
+  fi
+  proof_line ok "simctl made device $proof_device, a $proof_device_type on $proof_runtime, for $proof_slot_user"
+  began=$(now_ms)
+  boot_proof_device "$proof_device"
+  proof_check "the device booted, in $(( ($(now_ms) - began) / 1000 )) s" proof_device_booted "$proof_device"
+  record_the_devices_store "$proof_device"
+  set_proof_setting one
+  proof_check "a setting inside the device reads one" test "$(proof_setting)" = one
+
+  began=$(now_ms)
+  take_home "$proof_slot_user" "$proof_slot_uid" snproofslot01 >"$proof_run/slot-take" || fail "The take of $proof_slot_user's home failed: $(cat "$proof_run/slot-take")"
+  record_dir "$proof_slot_user" "$(store_of "$proof_slot_user")/snproofslot01"
+  echo "slot take, its device booted: $(( $(now_ms) - began )) ms in all, the user's processes paused $(field "$proof_run/slot-take" paused_ms) ms"
+  proof_check "the device still runs after the take" proof_device_booted "$proof_device"
+  set_proof_setting two
+  echo after >"$slot_home/app-data.txt"
+  proof_later=$(slot_probe_simctl create bb-box-proof-later "$proof_device_type" "$proof_runtime" | tail -n 1)
+  a_device_id "$proof_later" && record_the_devices_store "$proof_later"
+  proof_check "a device made after the take is listed" proof_device_listed "$proof_later"
+
+  began=$(now_ms)
+  end_session "$proof_slot_user" "$proof_slot_uid" >/dev/null
+  echo "slot stop, shutting its device down: $(( $(now_ms) - began )) ms"
+  proof_check "the stop ended the slot user's processes, its device's with them" no_process_of "$proof_slot_uid"
+  take_home "$proof_slot_user" "$proof_slot_uid" snproofslotun >/dev/null || fail "The slot user's undo failed."
+  record_dir "$proof_slot_user" "$(store_of "$proof_slot_user")/snproofslotun"
+  began=$(now_ms)
+  restore_home "$proof_slot_user" "$proof_slot_uid" snproofslot01 opproofslot01 >/dev/null
+  echo "slot restore: $(( $(now_ms) - began )) ms for the swap"
+  record_again "$proof_slot_user" "$slot_home"
+  start_session "$proof_slot_user" "$proof_slot_uid" >/dev/null
+  proof_check "a file in the slot user's home is as at the take" file_says "$slot_home/app-data.txt" before
+  proof_check "simctl lists the device as at the take" proof_device_listed "$proof_device"
+  proof_check "simctl no longer lists the device made after the take" eval "! proof_device_listed '$proof_later'"
+  began=$(now_ms)
+  boot_proof_device "$proof_device"
+  proof_check "the device boots after the restore, in $(( ($(now_ms) - began) / 1000 )) s" proof_device_booted "$proof_device"
+  proof_check "the setting inside the device is as at the take: one" test "$(proof_setting)" = one
+
+  end_session "$proof_slot_user" "$proof_slot_uid" >/dev/null
+  restore_home "$proof_slot_user" "$proof_slot_uid" snproofslotun opproofslot02 >/dev/null
+  record_again "$proof_slot_user" "$slot_home"
+  start_session "$proof_slot_user" "$proof_slot_uid" >/dev/null
+  proof_check "the undo puts back the slot user's file as before the restore" file_says "$slot_home/app-data.txt" after
+  proof_check "the undo puts back the device made after the take" proof_device_listed "$proof_later"
+  boot_proof_device "$proof_device"
+  proof_check "the device boots after the undo, its setting two" test "$(proof_setting)" = two
+  end_session "$proof_slot_user" "$proof_slot_uid" >/dev/null
+  proof_check "the slot user's processes ended before the clean-up" no_process_of "$proof_slot_uid"
+  for id in snproofslot01 snproofslotun; do
+    remove_one_recorded "$(store_of "$proof_slot_user")/$id"
+    proof_check "deleted the slot user's snapshot $id, which it recorded making" absent "$(store_of "$proof_slot_user")/$id"
+  done
 }
 
 prove_home_snapshots() {
@@ -1764,7 +2035,7 @@ prove_home_snapshots() {
   then_on_exit=end_proof
   exit_cleanly
   echo "macOS $(sw_vers -productVersion 2>/dev/null), homes on $(homes_filesystem), clone by $([ -x "$CLONE_TREE" ] && echo "clonefile(2)" || echo "ditto --clone")"
-  echo "note: scratch users $proof_user (UID $proof_uid) and $proof_fork_user (UID $proof_fork_uid), recorded in $PROOF_RECORD as they are made"
+  echo "note: scratch users $proof_user (UID $proof_uid), $proof_fork_user (UID $proof_fork_uid) and, for an iOS slot, $proof_slot_user (UID $proof_slot_uid), recorded in $PROOF_RECORD as they are made"
   echo "note: the proof chooses nothing it deletes or signals by name, UID or PID alone, but for one rule: it ends every process of a scratch user's UID, and only while that account's UID and GeneratedUID match its record and the UID had no process when the proof picked it"
   proof_console_before=$(console)
 
@@ -1902,6 +2173,7 @@ prove_home_snapshots() {
   proof_check "the refused fork left $proof_fork_user with UID $proof_fork_uid" test "$(attribute "$proof_fork_user" UniqueID)" = "$proof_fork_uid"
   proof_check "the refused fork left $proof_fork_user's files as they were" owned_by "$fork/proof/file.txt" "$proof_fork_uid"
 
+  prove_slot_snapshots
   proof_check "the user at the console is as before the proof: ${proof_console_before:-none}" test "$(console)" = "$proof_console_before"
   for id in snproof000001 snproofundo01; do
     remove_one_recorded "$(store_of "$proof_user")/$id"
@@ -1918,9 +2190,9 @@ snapshot() {
       probe_snapshots
       ;;
     take)
-      [ $# -eq 2 ] && snapshot_name_ok "$2" || quit 2 "usage: machine snapshot take <generation> <snapshot>"
+      [ $# -eq 2 ] && snapshot_name_ok "$2" || quit 2 "usage: machine snapshot take <generation | slot-<n>> <snapshot>"
       read_input
-      lock 60
+      hold_for "$1" 60
       lent_user "$1"
       exit_cleanly
       take_home "$user" "$uid" "$2"
@@ -1934,19 +2206,20 @@ snapshot() {
       [ $# -eq 2 ] && snapshot_name_ok "$1" && snapshot_name_ok "$2" || quit 2 "usage: machine snapshot delete <user> <snapshot>"
       read_input
       lock 300
+      hold_a_slot_users_store "$1" 300
       delete_snapshot "$1" "$2"
       ;;
     stop | start)
-      [ $# -eq 1 ] || quit 2 "usage: machine snapshot $verb <generation>"
+      [ $# -eq 1 ] || quit 2 "usage: machine snapshot $verb <generation | slot-<n>>"
       read_input
-      lock 60
+      slot_of_holder "$1" >/dev/null || lock 60
       lent_user "$1"
       if [ "$verb" = stop ]; then end_session "$user" "$uid"; else start_session "$user" "$uid"; fi
       ;;
     restore)
-      [ $# -eq 3 ] && snapshot_name_ok "$2" && snapshot_name_ok "$3" || quit 2 "usage: machine snapshot restore <generation> <snapshot> <operation>"
+      [ $# -eq 3 ] && snapshot_name_ok "$2" && snapshot_name_ok "$3" || quit 2 "usage: machine snapshot restore <generation | slot-<n>> <snapshot> <operation>"
       read_input
-      lock 300
+      hold_for "$1" 300
       lent_user "$1"
       restore_home "$user" "$uid" "$2" "$3"
       ;;
@@ -1956,11 +2229,15 @@ snapshot() {
       lock 300
       fork_home "$1" "$2" "$3" "$4"
       ;;
+    forget-slot)
+      [ $# -eq 1 ] && a_slot_number "$1" || quit 2 "usage: machine snapshot forget-slot <slot>"
+      forget_slot_snapshots "$1"
+      ;;
     proof)
       [ $# -eq 0 ] || quit 2 "usage: machine snapshot proof"
       prove_home_snapshots
       ;;
-    *) quit 2 "usage: machine snapshot probe | take <generation> <snapshot> | list | delete <user> <snapshot> | stop <generation> | restore <generation> <snapshot> <operation> | start <generation> | fork <source user> <snapshot> <user> <uid> | proof" ;;
+    *) quit 2 "usage: machine snapshot probe | take <holder> <snapshot> | list | delete <user> <snapshot> | stop <holder> | restore <holder> <snapshot> <operation> | start <holder> | fork <source user> <snapshot> <user> <uid> | forget-slot <slot> | proof, where a holder is the Mac's generation, or slot-<n> for an iOS slot" ;;
   esac
 }
 
@@ -2262,7 +2539,7 @@ end_every_process_of_an_account_this_proof_made() {
 log_out() {
   user=$1 uid=${2:-}
   [ -n "$uid" ] || uid=$(attribute "$user" UniqueID)
-  if box_uid "$uid"; then
+  if box_uid "$uid" || a_slot_user_the_device_host_made "$user" "$uid"; then
     end_every_process_of_the_uid "$user" "$uid"
   elif a_name_this_proof_recorded "$user"; then
     end_every_process_of_an_account_this_proof_made "$user" "$uid"

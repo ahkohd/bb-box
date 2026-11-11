@@ -80,6 +80,7 @@ export function fakeDeviceHost(options: { slim?: boolean; template?: boolean } =
   mkdirSync(libexec, { recursive: true });
   copyFileSync(helper, join(libexec, "device-host"));
   const machineHelper = join(dir, "pool", "machine-mac.sh");
+  copyFileSync(machineHelper, join(libexec, "machine"));
 
   const share = join(mac.data, "usr/local/share/bb-box");
   mkdirSync(join(share, "ios"), { recursive: true });

@@ -407,7 +407,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       try {
         return await restorePreview(snapshots, await pageBox(boxId), snapshot);
       } catch (error) {
-        return { refusal: describeError(error, "Planning the restore"), threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "", undoUnflushed: null };
+        return { refusal: describeError(error, "Planning the restore"), threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "", undoUnflushed: null, inSlot: false };
       }
     },
     async "snapshot.restore"({ box: boxId, snapshot, undo, accept, token, unflushed, request }) {

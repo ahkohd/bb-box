@@ -74,7 +74,10 @@ import { newOperationId } from "../../core/snapshot.ts";
 import {
   HOME_SNAPSHOTS_HELPER_VERSION,
   HOME_SNAPSHOT_KINDS,
-  SLOT_SNAPSHOTS_LATER,
+  SLOT_SNAPSHOTS_DEVICE_HOST_VERSION,
+  SLOT_SNAPSHOTS_HELPER_VERSION,
+  olderDeviceHostWhy,
+  slotHolder,
   heldHome,
   homeOffer,
   homePlan,
@@ -101,7 +104,7 @@ import { startMacInput } from "../../core/mac-input.ts";
 import { MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
 import { CUA_VERSION } from "../tart/backend.ts";
 import { EXAMPLE, SLOT_KIND, hostKeysFor, type SshPoolConfig, type SshPoolHost, type SshPoolKind, type SshPoolMachine } from "./config.ts";
-import { PoolSlots, lendingSlots, lendingWords, listsSlots, poolSlotOf, slotDeviceOffer, slotsSetUp, type PoolMacView } from "./slots.ts";
+import { PoolSlots, lendingSlots, lendingWords, listsSlots, poolSlotOf, slotDeviceOffer, slotUserOf, slotsSetUp, type PoolMacView } from "./slots.ts";
 import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, grantInput, parseDisplay, parseGrant, parseGranted, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import {
@@ -133,6 +136,7 @@ const SNAPSHOT_PROBE_TIMEOUT_MS = 60_000;
 const HOME_TAKE_TIMEOUT_MS = 10 * 60_000;
 const HOME_STOP_TIMEOUT_MS = 3 * 60_000;
 const HOME_RESTORE_TIMEOUT_MS = 15 * 60_000;
+const SLOT_START_TIMEOUT_MS = 5 * 60_000;
 /** The helper waits this long for its lock, and a whole-machine reset may take as long. */
 const RESET_TIMEOUT_MS = 15 * 60_000;
 const RESET_POLL_MS = 2_000;
@@ -556,27 +560,38 @@ export class SshPoolBackend implements Backend {
 
   snapshotting(kind: string): Snapshotting | null {
     if (!HOME_SNAPSHOT_KINDS.has(kind)) return null;
-    return this.#homeMacs(kind).some((machine) => this.#offersHome(machine)) ? homeOffer() : null;
+    return this.#homeMacs(kind).some((machine) => this.#offersHome(machine)) ? homeOffer(kind) : null;
+  }
+
+  #machineOfGuest(guest: Guest): SshPoolMachine | undefined {
+    return this.#machines.get(poolSlotOf(guest)?.mac ?? guest.ref);
   }
 
   #homeRefusal(guest: Guest, status: MachineStatus | null): string | null {
-    if (poolSlotOf(guest)) return SLOT_SNAPSHOTS_LATER;
-    const machine = this.#machines.get(guest.ref);
-    if (!machine) return `its machine, ${guest.ref}, is no longer in the SSH host pool's settings`;
+    const slot = poolSlotOf(guest);
+    const machine = this.#machineOfGuest(guest);
+    if (!machine) return `its machine, ${slot?.mac ?? guest.ref}, is no longer in the SSH host pool's settings`;
     if (!this.#offersHome(machine)) return this.noSnapshotsWhy(guest);
-    if (status && (status.helper ?? 0) < HOME_SNAPSHOTS_HELPER_VERSION) return olderHelperWhy(machine.name, status.helper);
+    if (slot && !slot.slot) return "it is still waiting for its iOS slot";
+    const least = slot ? SLOT_SNAPSHOTS_HELPER_VERSION : HOME_SNAPSHOTS_HELPER_VERSION;
+    if (status && (status.helper ?? 0) < least) return olderHelperWhy(machine.name, status.helper, least);
+    if (slot && status && (status.slots?.helper ?? 0) < SLOT_SNAPSHOTS_DEVICE_HOST_VERSION) return olderDeviceHostWhy(machine.name, status.slots?.helper ?? null);
     return null;
   }
 
-  #lentGuest(guest: Guest): { machine: SshPoolMachine; box: string; generation: number; user: string } {
-    if (poolSlotOf(guest)) throw new BackendError("unsupported", `${SLOT_SNAPSHOTS_LATER}.`);
-    const machine = this.#machines.get(guest.ref);
-    if (!machine) throw new BackendError("gone", missing(guest.ref));
+  #lentGuest(guest: Guest): { machine: SshPoolMachine; box: string; holder: string; user: string } {
+    const slot = poolSlotOf(guest);
+    const machine = this.#machineOfGuest(guest);
+    if (!machine) throw new BackendError("gone", missing(slot?.mac ?? guest.ref));
+    if (slot) {
+      if (!slot.slot || !slot.box) throw new BackendError("gone", `Box guest ${guest.ref} holds no iOS slot on ${machine.name}.`);
+      return { machine, box: slot.box, holder: slotHolder(slot.slot), user: slotUserOf(guest) };
+    }
     const generation = whole(guest.data?.generation);
     const box = typeof guest.data?.box === "string" ? guest.data.box : null;
     const user = typeof guest.data?.user === "string" ? guest.data.user : null;
     if (generation === null || !box || !user) throw new BackendError("gone", `Machine ${machine.name} does not say which box holds it.`);
-    return { machine, box, generation, user };
+    return { machine, box, holder: String(generation), user };
   }
 
   async #homeListing(machine: SshPoolMachine, signal?: AbortSignal): Promise<HomeListing> {
@@ -586,22 +601,22 @@ export class SshPoolBackend implements Backend {
   }
 
   async planSnapshots(guest: Guest, _kind: string, _target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
-    const machine = this.#machines.get(poolSlotOf(guest)?.mac ?? guest.ref);
+    const machine = this.#machineOfGuest(guest);
     const homes = machine ? (this.#snapshotReports.get(machine.name)?.homes ?? "/Users") : "/Users";
-    const status = machine && !poolSlotOf(guest) ? (await this.#status(machine, signal)).status : null;
+    const status = machine ? (await this.#status(machine, signal)).status : null;
     const refusal = this.#homeRefusal(guest, status);
     const listing = machine && !refusal ? await this.#homeListing(machine, signal) : { snapshots: [], store: null };
     const box = typeof guest.data?.box === "string" ? guest.data.box : "";
-    return homePlan(homeStorage(machine?.name ?? guest.ref, homes, listing.store), refusal, pauseGuess(listing, box));
+    return homePlan(homeStorage(machine?.name ?? guest.ref, homes, listing.store), refusal, pauseGuess(listing, box), poolSlotOf(guest) !== null);
   }
 
   async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
-    const { machine, box, generation, user } = this.#lentGuest(guest);
+    const { machine, box, holder, user } = this.#lentGuest(guest);
     const refusal = this.#homeRefusal(guest, null);
     if (refusal) throw new SnapshotFailed(`${refusal.charAt(0).toUpperCase()}${refusal.slice(1)}.`);
     await hooks.submitting();
     await hooks.task({ ref: homeTaskRef({ kind: "take", id: take.id }), host: machine.name });
-    const result = await this.#helper(machine, ["snapshot", "take", String(generation), take.id], releaseInput(this.#context.installId, box), HOME_TAKE_TIMEOUT_MS, signal);
+    const result = await this.#helper(machine, ["snapshot", "take", holder, take.id], releaseInput(this.#context.installId, box), HOME_TAKE_TIMEOUT_MS, signal);
     if (result.exitCode === EXIT.notOurs) throw new BackendError("gone", `Machine ${machine.name} is no longer this box's.`);
     if (result.exitCode === EXIT.usage) throw new SnapshotFailed(`${olderHelperWhy(machine.name, null)}.`);
     if (result.exitCode === EXIT.failed) throw new SnapshotFailed(`Machine ${machine.name} could not take the snapshot: ${said(result)}`);
@@ -635,15 +650,15 @@ export class SshPoolBackend implements Backend {
   }
 
   async snapshotsOn(guest: Guest, signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
-    const machine = this.#machines.get(guest.ref);
-    if (poolSlotOf(guest) || !machine || machine.os !== "macos") return [];
+    const machine = this.#machineOfGuest(guest);
+    if (!machine || machine.os !== "macos") return [];
     const listing = await this.#homeListing(machine, signal);
     const homes = this.#snapshotReports.get(machine.name)?.homes ?? "/Users";
     return listing.snapshots.filter((listed) => listed.box === guest.data?.box).map((listed) => heldHome(this.#guest(machine, null, 0, "", null), listed, homes));
   }
 
   async deleteSnapshot(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
-    const machine = this.#machines.get(ref.guest.ref);
+    const machine = this.#machineOfGuest(ref.guest);
     if (!machine) return;
     const user = homeUserOf(ref.ref);
     if (!user) throw new Error(`Snapshot ${ref.id} on ${machine.name} does not name the box user whose store holds it, so BB Box deletes nothing.`);
@@ -658,16 +673,16 @@ export class SshPoolBackend implements Backend {
   }
 
   async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
-    const { machine, box, generation, user } = this.#lentGuest(guest);
-    const result = await this.#helper(machine, ["snapshot", "stop", String(generation)], releaseInput(this.#context.installId, box), HOME_STOP_TIMEOUT_MS, signal);
+    const { machine, box, holder, user } = this.#lentGuest(guest);
+    const result = await this.#helper(machine, ["snapshot", "stop", holder], releaseInput(this.#context.installId, box), HOME_STOP_TIMEOUT_MS, signal);
     await (await this.#keys()).ssh.forget(this.#access(machine, user));
     if (result.exitCode === EXIT.notOurs) throw new BackendError("gone", `Machine ${machine.name} is no longer this box's.`);
     if (result.exitCode !== EXIT.ok) throw new Error(`Machine ${machine.name} could not end box user ${user}'s session: ${said(result)}`);
   }
 
   async rollbackSnapshot(guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
-    const { machine, box, generation } = this.#lentGuest(guest);
-    const task: HomeTask = { kind: "restore", box, generation, id: ref.id, operation: newOperationId((bytes) => randomBytes(bytes)) };
+    const { machine, box, holder } = this.#lentGuest(guest);
+    const task: HomeTask = { kind: "restore", box, holder, id: ref.id, operation: newOperationId((bytes) => randomBytes(bytes)) };
     await hooks.submitting();
     await hooks.task({ ref: homeTaskRef(task), host: machine.name });
     const outcome = await this.#restoreHome(machine, task, signal);
@@ -677,7 +692,7 @@ export class SshPoolBackend implements Backend {
   }
 
   async #restoreHome(machine: SshPoolMachine, task: Extract<HomeTask, { kind: "restore" }>, signal?: AbortSignal): Promise<TaskOutcome> {
-    const result = await this.#helper(machine, ["snapshot", "restore", String(task.generation), task.id, task.operation], releaseInput(this.#context.installId, task.box), HOME_RESTORE_TIMEOUT_MS, signal);
+    const result = await this.#helper(machine, ["snapshot", "restore", task.holder, task.id, task.operation], releaseInput(this.#context.installId, task.box), HOME_RESTORE_TIMEOUT_MS, signal);
     if (result.exitCode === EXIT.ok) return { state: "ok" };
     if (result.exitCode === EXIT.notOurs || result.exitCode === EXIT.dirty) return { state: "failed", words: said(result), unchanged: true };
     if (result.exitCode === 255 || result.timedOut) return { state: "running" };
@@ -700,9 +715,10 @@ export class SshPoolBackend implements Backend {
   }
 
   async start(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>): Promise<Started | void> {
-    const { machine, box, generation, user } = this.#lentGuest(guest);
+    const { machine, box, holder, user } = this.#lentGuest(guest);
+    if (poolSlotOf(guest)) return this.#startSlot(machine, box, holder, user, signal, timing, answered);
     const started = performance.now();
-    const console = await this.#signBackIn(machine, box, generation, user, signal);
+    const console = await this.#signBackIn(machine, box, holder, user, signal);
     timing?.("sign-in", performance.now() - started);
     await (await this.#keys()).ssh.forget(this.#access(machine, user));
     const status = (await this.#status(machine, signal)).status;
@@ -710,24 +726,37 @@ export class SshPoolBackend implements Backend {
     const stops = signal ?? new AbortController().signal;
     const ready = performance.now();
     if (console === user) await this.#waitReady(machine, user, kind, stops);
-    else await this.#waitAnswers(machine, user, kind, stops);
+    else await this.#waitAnswers(machine, user, kind.readyTimeoutMs, stops);
     timing?.("ssh", performance.now() - ready);
     await answered?.();
   }
 
-  async #waitAnswers(machine: SshPoolMachine, user: string, kind: BoxKind, signal: AbortSignal): Promise<void> {
-    const timeoutMs = this.#options.readyTimeoutMs ?? kind.readyTimeoutMs;
+  async #startSlot(machine: SshPoolMachine, box: string, holder: string, user: string, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>): Promise<void> {
+    const started = performance.now();
+    const result = await this.#helper(machine, ["snapshot", "start", holder], releaseInput(this.#context.installId, box), SLOT_START_TIMEOUT_MS, signal);
+    timing?.("device", performance.now() - started);
+    if (result.exitCode === EXIT.notOurs) throw new BackendError("gone", `Box ${box} no longer holds its iOS slot on ${machine.name}.`);
+    if (result.exitCode !== EXIT.ok) throw new Error(`Machine ${machine.name} could not start box user ${user} again: ${said(result)}`);
+    await (await this.#keys()).ssh.forget(this.#access(machine, user));
+    const ready = performance.now();
+    await this.#waitAnswers(machine, user, MAC_READY_TIMEOUT_MS, signal ?? new AbortController().signal);
+    timing?.("ssh", performance.now() - ready);
+    await answered?.();
+  }
+
+  async #waitAnswers(machine: SshPoolMachine, user: string, readyTimeoutMs: number, signal: AbortSignal): Promise<void> {
+    const timeoutMs = this.#options.readyTimeoutMs ?? readyTimeoutMs;
     const command = await this.#command(machine, user);
     const ready = await waitUntilAnswers({ probe: (each?: AbortSignal) => command.answers(each) }, { timeoutMs, intervalMs: 250, signal, sleep: this.#options.sleep });
     if (!ready) throw new Error(`Box user ${user} on ${machine.name} did not answer over SSH within ${Math.round(timeoutMs / 1000)} s after its restore.`);
   }
 
-  async #signBackIn(machine: SshPoolMachine, box: string, generation: number, user: string, signal?: AbortSignal): Promise<string | null> {
+  async #signBackIn(machine: SshPoolMachine, box: string, holder: string, user: string, signal?: AbortSignal): Promise<string | null> {
     const sleep = this.#options.sleep ?? pause;
     const limitMs = this.#options.resetTimeoutMs ?? RESET_TIMEOUT_MS;
     const deadline = Date.now() + limitMs;
     for (;;) {
-      const result = await this.#helper(machine, ["snapshot", "start", String(generation)], releaseInput(this.#context.installId, box), STATUS_TIMEOUT_MS, signal);
+      const result = await this.#helper(machine, ["snapshot", "start", holder], releaseInput(this.#context.installId, box), STATUS_TIMEOUT_MS, signal);
       signal?.throwIfAborted();
       if (result.exitCode === EXIT.ok) return fields(result.stdout).get("console") || null;
       const restarting = result.exitCode === 255 || result.timedOut;

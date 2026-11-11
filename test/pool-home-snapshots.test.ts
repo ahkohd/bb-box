@@ -5,9 +5,8 @@ import { describe, it } from "node:test";
 import { spawnSync } from "node:child_process";
 import { SshPoolBackend } from "../src/backends/ssh-pool/backend.ts";
 import { parseSshPoolSettings } from "../src/backends/ssh-pool/config.ts";
-import { HOME_FORK_OFF, SLOT_SNAPSHOTS_LATER } from "../src/backends/ssh-pool/home-snapshots.ts";
-import { SLOT_MAC_KEY } from "../src/backends/ssh-pool/slots.ts";
-import { BackendError, type Backend, type BackendStorage, type Guest } from "../src/backends/types.ts";
+import { HOME_FORK_OFF } from "../src/backends/ssh-pool/home-snapshots.ts";
+import type { BackendStorage } from "../src/backends/types.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
 import { restoreCheckText, restoredText, takeCheckText } from "../src/plugin/snapshot-words.ts";
@@ -154,21 +153,6 @@ describe("Home snapshots of a box on a Mac lent whole, through BB Box's snapshot
 });
 
 describe("Where home snapshots are refused (090)", () => {
-  it("refuses an iOS slot's box with the reason, and takes nothing", async () => {
-    const host = "192.0.2.154";
-    mac(host);
-    const backend: Backend = pool(host, new MemoryStorage());
-    await backend.doctor();
-    const slot: Guest = { ref: "mac-1/slot-1", host: "mac-1", address: null, size: null, data: { [SLOT_MAC_KEY]: "mac-1", slot: "1", box: "box_slot" } };
-
-    const plan = await backend.planSnapshots!(slot, "macos", null);
-    const take = await backend.snapshot!(slot, { id: "snaaaaaaaaaaaa", box: "box_slot", memory: false }, { submitting: async () => {}, task: async () => {} }).catch((error: unknown) => error);
-
-    assert.deepEqual([plan.take.ok, plan.take.why, plan.restore.way], [false, SLOT_SNAPSHOTS_LATER, "none"]);
-    assert.ok(take instanceof BackendError && take.code === "unsupported", String(take));
-    assert.deepEqual(helperCalls(host).filter((call) => call !== "snapshot probe" && call !== "snapshot list"), []);
-  });
-
   it("refuses on a Mac whose helper is older, saying how to update it", async () => {
     const host = "192.0.2.155";
     const { state, box } = await lentMac(host, { helper: "2" });
@@ -191,6 +175,6 @@ describe("Where home snapshots are refused (090)", () => {
     assert.equal(without.snapshotting("macos"), null);
     assert.equal(offering.snapshotting("macos")?.scope, "home");
     assert.equal(offering.snapshotting("macos-desktop")?.restore, "in-place");
-    assert.equal(offering.snapshotting("ios"), null);
+    assert.equal(offering.snapshotting("ios"), null, "a Mac that lists no ios lends no slots to snapshot");
   });
 });

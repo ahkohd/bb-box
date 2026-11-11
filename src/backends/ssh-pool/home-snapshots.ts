@@ -2,7 +2,11 @@ import { NO_PAUSE, type BoxOwner, type Guest, type HeldSnapshot, type HeldSnapsh
 import { PRODUCT } from "../../brand.ts";
 
 export const HOME_SNAPSHOTS_HELPER_VERSION = 3;
-export const HOME_SNAPSHOT_KINDS: ReadonlySet<string> = new Set(["macos", "macos-desktop"]);
+export const SLOT_SNAPSHOTS_HELPER_VERSION = 4;
+export const SLOT_SNAPSHOTS_DEVICE_HOST_VERSION = 8;
+export const HOME_SNAPSHOT_KINDS: ReadonlySet<string> = new Set(["macos", "macos-desktop", "ios"]);
+export const SLOT_KINDS_ONLY: ReadonlySet<string> = new Set(["ios"]);
+const SLOT_HOLDER_PREFIX = "slot-";
 export const TAKE_PAUSE_GUESS_MS = 300;
 export const SESSION_END_ABOUT_MS = 1_500;
 export const SIGN_IN_ABOUT_MS = 2_000;
@@ -10,10 +14,17 @@ export const SIGN_IN_ABOUT_MS = 2_000;
 export const HOME_KEEP_OFF = `a home snapshot lives on the pool's Mac, which ${PRODUCT} lends to the next box after the release, so the snapshot goes with its box`;
 export const HOME_FORK_OFF = `a fork would be a new box user beside its source on the same Mac, and signing that user in needs a userspace restart, which ends the source box's session and every SSH session on the Mac, so ${PRODUCT} forks no home snapshots yet`;
 export const HOME_EXCLUDES = "apps installed on the Mac, files outside the home folder, the user's temporary and cache folders, and anything running";
-export const SLOT_SNAPSHOTS_LATER = `${PRODUCT} takes no snapshots of iOS slots on the pool's Macs yet`;
+export const SLOT_FORK_OFF = `a fork would be a new slot user on the same Mac, and signing a new user in can need a userspace restart, which ends every session on the Mac, so ${PRODUCT} forks no snapshots of iOS slots`;
+export const SLOT_DEVICE_STOP_ABOUT_MS = 4_000;
+export const SLOT_DEVICE_BOOT_ABOUT_MS = 15_000;
 export const LINUX_SNAPSHOTS_LATER = `${PRODUCT} takes no snapshots on the pool's Linux machines yet`;
 
-export function homeOffer(): Snapshotting {
+export function slotHolder(slot: string): string {
+  return `${SLOT_HOLDER_PREFIX}${slot}`;
+}
+
+export function homeOffer(kind: string): Snapshotting {
+  const forkWhy = SLOT_KINDS_ONLY.has(kind) ? SLOT_FORK_OFF : HOME_FORK_OFF;
   return {
     scope: "home",
     holds: ["disk"],
@@ -24,13 +35,17 @@ export function homeOffer(): Snapshotting {
     lives: "host",
     price: null,
     excludes: HOME_EXCLUDES,
-    forkWhy: HOME_FORK_OFF,
+    forkWhy,
     keepWhy: HOME_KEEP_OFF,
   };
 }
 
-export function olderHelperWhy(machine: string, version: number | null): string {
-  return `its machine, ${machine}, has helper version ${version ?? "unknown"}, and home snapshots need version ${HOME_SNAPSHOTS_HELPER_VERSION}: run this ${PRODUCT}'s setup-mac.sh on it again`;
+export function olderHelperWhy(machine: string, version: number | null, least = HOME_SNAPSHOTS_HELPER_VERSION): string {
+  return `its machine, ${machine}, has helper version ${version ?? "unknown"}, and ${least > HOME_SNAPSHOTS_HELPER_VERSION ? "home snapshots of iOS slots" : "home snapshots"} need version ${least}: run this ${PRODUCT}'s setup-mac.sh on it again`;
+}
+
+export function olderDeviceHostWhy(machine: string, version: number | null): string {
+  return `its machine, ${machine}, has iOS slot helper version ${version ?? "unknown"}, and home snapshots of iOS slots need version ${SLOT_SNAPSHOTS_DEVICE_HOST_VERSION}: run this ${PRODUCT}'s setup-mac.sh on it again`;
 }
 
 export interface ListedHome {
@@ -129,7 +144,8 @@ export function pauseGuess(listing: HomeListing, box: string): number {
   return paused.length ? Math.max(...paused) : TAKE_PAUSE_GUESS_MS;
 }
 
-export function homePlan(storage: SnapshotStorage, refusal: string | null, pauseMs: number): SnapshotPlan {
+export function homePlan(storage: SnapshotStorage, refusal: string | null, pauseMs: number, inSlot = false): SnapshotPlan {
+  const stopMs = inSlot ? SLOT_DEVICE_STOP_ABOUT_MS : SESSION_END_ABOUT_MS;
   return {
     storage,
     take: {
@@ -146,7 +162,7 @@ export function homePlan(storage: SnapshotStorage, refusal: string | null, pause
       way: refusal ? "none" : "rollback",
       why: refusal,
       undo: refusal ? "none" : "snapshot",
-      undoAboutMs: SESSION_END_ABOUT_MS + pauseMs,
+      undoAboutMs: stopMs + pauseMs,
       undoBytes: 0,
       sizeBack: null,
       leavesOnEarlierGuest: 0,
@@ -154,7 +170,7 @@ export function homePlan(storage: SnapshotStorage, refusal: string | null, pause
       copyAboutMs: null,
     },
     keep: { way: "no", why: HOME_KEEP_OFF, aboutMs: null, bytes: null, price: null },
-    fork: { ok: false, why: HOME_FORK_OFF, aboutMs: 0, bytes: null, size: null },
+    fork: { ok: false, why: inSlot ? SLOT_FORK_OFF : HOME_FORK_OFF, aboutMs: 0, bytes: null, size: null },
     locked: null,
     busy: null,
   };
@@ -185,10 +201,12 @@ export function heldHome(machine: Guest, listed: ListedHome, homes: string): Hel
 export type HomeTask =
   | { readonly kind: "take"; readonly id: string }
   | { readonly kind: "delete"; readonly user: string; readonly id: string }
-  | { readonly kind: "restore"; readonly box: string; readonly generation: number; readonly id: string; readonly operation: string };
+  | { readonly kind: "restore"; readonly box: string; readonly holder: string; readonly id: string; readonly operation: string };
+
+const HOLDER = /^(\d+|slot-\d+)$/;
 
 export function homeTaskRef(task: HomeTask): string {
-  if (task.kind === "restore") return `restore:${task.box}:${task.generation}:${task.id}:${task.operation}`;
+  if (task.kind === "restore") return `restore:${task.box}:${task.holder}:${task.id}:${task.operation}`;
   return task.kind === "delete" ? `delete:${task.user}:${task.id}` : `take:${task.id}`;
 }
 
@@ -196,6 +214,6 @@ export function parseHomeTask(ref: string): HomeTask | null {
   const parts = ref.split(":");
   if (parts[0] === "take" && parts.length === 2 && parts[1]) return { kind: "take", id: parts[1] };
   if (parts[0] === "delete" && parts.length === 3 && parts[1] && parts[2]) return { kind: "delete", user: parts[1], id: parts[2] };
-  if (parts[0] === "restore" && parts.length === 5 && /^\d+$/.test(parts[2]!)) return { kind: "restore", box: parts[1]!, generation: Number(parts[2]), id: parts[3]!, operation: parts[4]! };
+  if (parts[0] === "restore" && parts.length === 5 && HOLDER.test(parts[2]!)) return { kind: "restore", box: parts[1]!, holder: parts[2]!, id: parts[3]!, operation: parts[4]! };
   return null;
 }

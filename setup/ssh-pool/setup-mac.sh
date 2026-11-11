@@ -436,7 +436,7 @@ if [ "$(value console)" != "$(value autologin)" ]; then
 fi
 if [ -n "$snapshots" ]; then
   echo
-  echo "For snapshots, it reported: box homes on $(probed filesystem) under $(probed homes), home snapshots $(probed home), snapshot hook $(probed hook). With home snapshots yes, boxes lent this Mac whole take snapshots of their home folders. bb box doctor shows what each machine offers."
+  echo "For snapshots, it reported: box homes on $(probed filesystem) under $(probed homes), home snapshots $(probed home), snapshot hook $(probed hook). With home snapshots yes, boxes lent this Mac whole, and boxes in its iOS slots, take snapshots of their home folders. bb box doctor shows what each machine offers."
 fi
 if [ -n "$warnings" ]; then
   echo

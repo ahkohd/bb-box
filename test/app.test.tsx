@@ -747,7 +747,7 @@ function server(initial: BoxView[], options: { projects?: { id: string; name: st
       changes.push(`snapshot.take ${JSON.stringify({ ...input, request: undefined })}`);
       return { error: options.failWith ?? null, pending: false };
     },
-    "snapshot.restoreCheck": () => options.restorePreview ?? { refusal: "No preview.", threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "none", undoUnflushed: null },
+    "snapshot.restoreCheck": () => options.restorePreview ?? { refusal: "No preview.", threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "none", undoUnflushed: null, inSlot: false },
     "snapshot.restore": (input) => {
       changes.push(`snapshot.restore ${JSON.stringify({ ...input, request: undefined })}`);
       const answer = options.restoreAnswers?.shift();
@@ -10777,12 +10777,37 @@ test("090 unit 2: the restore form of a home snapshot says the home folder goes 
     plan: "abc123",
     gpuStay: null,
     userspaceNote: null,
+    inSlot: false,
   };
 
   const words = restoreFormWords(payload, Date.now());
 
   expect(words.goes).toMatch(/^Everything in pool-mac's home folder since then goes: its files, settings and keychain items\. Its session ends and signs in again where it was/);
   expect(words.goes).not.toMatch(/on its disk|installed apps and settings/);
+});
+
+test("090 unit 3: the restore form of an iOS slot's home snapshot says its device shuts down and boots again, not that it signs in", async () => {
+  const { restoreFormWords } = await import("../src/app/restore-form.tsx");
+  const payload = {
+    box: { id: "bxslot", name: "ios-slot" },
+    snapshot: { id: "sn1", name: "before", takenAt: Date.now() - 3_600_000, holds: "disk", scope: "home" as const },
+    undo: { name: "before the restore at 11:02", aboutSeconds: 5, heldCopy: false },
+    asks: "settings" as const,
+    losses: [],
+    sizeBack: null,
+    excludes: null,
+    runsOnIt: false,
+    changed: false,
+    plan: "abc123",
+    gpuStay: null,
+    userspaceNote: null,
+    inSlot: true,
+  };
+
+  const words = restoreFormWords(payload, Date.now());
+
+  expect(words.goes).toMatch(/^Everything in ios-slot's home folder since then goes: its files, settings, keychain items, and its device's apps, data and settings\. Its device shuts down and every process of its user ends, then the device boots again\./);
+  expect(words.goes).not.toMatch(/signs in/);
 });
 
 test("070 unit 5: the restore form says what goes, that an undo is always taken and that an answer is a yes given in the thread, and submits its plan", async () => {
@@ -10800,6 +10825,7 @@ test("070 unit 5: the restore form says what goes, that an undo is always taken 
     plan: "abc123",
     gpuStay: "Its GPU stays as it is now: shared, card 1.",
     userspaceNote: null,
+    inSlot: false,
   };
   const words = restoreFormWords(payload, Date.now());
   expect(words.lead).toMatch(/^An agent in this thread asks to restore dev-desk to "before the upgrade", taken (?:today|yesterday) at \d{2}:\d{2}, 2 h ago\. dev-desk is a box threads run on, so an agent restores it only on a yes given here\.$/);
@@ -10909,6 +10935,7 @@ function restorePreviewOf(overrides: Partial<RestorePreview> = {}): RestorePrevi
     snapshot: snapshotRow(),
     token: "tokenone",
     undoUnflushed: null,
+    inSlot: false,
     ...overrides,
   };
 }

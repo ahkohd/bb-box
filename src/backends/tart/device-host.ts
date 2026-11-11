@@ -77,6 +77,7 @@ export interface HostStatus {
   readonly slots: readonly HostSlotLine[];
   readonly secondDevices: readonly { readonly slot: string; readonly booted: number; readonly since: number | null }[];
   readonly deviceWords: readonly { readonly slot: string; readonly words: string }[];
+  readonly stopped: readonly { readonly slot: string; readonly since: number | null }[];
   readonly sweeping: number;
   readonly sweeps: readonly HostSweep[];
   readonly bbApp: string | null;
@@ -132,6 +133,7 @@ export function parseHostStatus(stdout: string): HostStatus | null {
   const promises: { box: string; install: string; since: number }[] = [];
   const secondDevices: { slot: string; booted: number; since: number | null }[] = [];
   const deviceWords: { slot: string; words: string }[] = [];
+  const stopped: { slot: string; since: number | null }[] = [];
   const sweeps: HostSweep[] = [];
   const claims: HostClaim[] = [];
   for (const line of stdout.split("\n")) {
@@ -158,6 +160,9 @@ export function parseHostStatus(stdout: string): HostStatus | null {
         break;
       case "device_words":
         if (fields[0] && fields[1]) deviceWords.push({ slot: fields[0], words: fields.slice(1).join("\t") });
+        break;
+      case "stopped":
+        if (fields[0]) stopped.push({ slot: fields[0], since: wholeOrNull(fields[1]) });
         break;
       case "sweep": {
         const [uid, inPass, found, left, seconds, when] = fields.map(numberOrNull);
@@ -194,6 +199,7 @@ export function parseHostStatus(stdout: string): HostStatus | null {
     slots,
     secondDevices,
     deviceWords,
+    stopped,
     sweeping: wholeOrNull(values.get("sweeping")) ?? 0,
     sweeps,
     bbApp: /^[a-f0-9]{64}$/.test(values.get("bb-app") ?? "") ? values.get("bb-app")! : null,

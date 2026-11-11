@@ -10,7 +10,7 @@ export const SNAPSHOT_HOOK_PATH = "/usr/local/libexec/bb-box/snapshot-machine";
 export const SNAPSHOT_HOOK_CONTRACT = 1;
 export const LINUX_TAKES_NONE_YET = `${PRODUCT} takes no snapshots on the pool's Linux machines yet`;
 export const HOOKS_TAKE_NONE_YET = `${PRODUCT} takes no machine snapshots by a hook yet`;
-export const MACS_TAKE_HOME_SNAPSHOTS = "Boxes lent a Mac whole take home snapshots there";
+export const MACS_TAKE_HOME_SNAPSHOTS = "Boxes lent a Mac whole and boxes in its iOS slots take home snapshots there";
 
 export type HomeWay = "apfs" | "btrfs" | "zfs";
 
@@ -258,7 +258,7 @@ export function machineSnapshotsCheck(check: MachineSnapshotsCheck): DoctorCheck
 function takenWords(machine: SshPoolMachine, offers: SnapshotOffers, listsSlots: boolean): string {
   const said: string[] = [];
   if (machine.os === "linux") said.push(LINUX_TAKES_NONE_YET);
-  else if (offers.home.is === "yes") said.push(listsSlots ? "Boxes lent it whole take home snapshots; its iOS slots take none yet" : "Boxes lent it whole take home snapshots");
+  else if (offers.home.is === "yes") said.push(listsSlots ? "Boxes lent it whole and boxes in its iOS slots take home snapshots" : "Boxes lent it whole take home snapshots");
   if (offers.machine.is === "yes") said.push(HOOKS_TAKE_NONE_YET);
   return said.map((sentence) => `${sentence}.`).join(" ");
 }

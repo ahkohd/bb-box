@@ -30,6 +30,7 @@ next_number() {
 }
 
 sims=$F/sims/$as
+! flag sims-in-home || [ "$as" = root ] || sims=$R/Users/$as/Library/Developer/CoreSimulator/Devices
 device_value() { sed -n "s/^$2=//p" "$sims/$1" 2>/dev/null; }
 set_device_value() { edit "$sims/$1" sed "s/^$2=.*/$2=$3/"; }
 make_device() {
@@ -87,6 +88,10 @@ case $tool in
     command=$1
     shift
     export FAKE_AS=$as
+    if [ "$as" != root ] && flag sudo-processes; then
+      echo "$$ $(uid_of "$as") ${command##*/} 1" >>"$F/processes"
+      echo "$$ $(uid_of "$as")" >>"$F/process-uids"
+    fi
     if [ -x "$FAKE_MAC_BIN/${command##*/}" ]; then exec "$FAKE_MAC_BIN/${command##*/}" "$@"; fi
     exec "$command" "$@"
     ;;
@@ -170,8 +175,12 @@ case $tool in
         [ "$(device_value "$2" state)" = Booted ] || { echo "Device is not booted." >&2; exit 149; }
         if [ "$3 $4" = "defaults write" ]; then
           flag defaults-write-fails && exit 1
-          printf '%s %s %s %s\n' "$5" "$6" "$7" "$8" >>"$sims/.$2.defaults"
+          printf '%s %s %s %s\n' "$5" "$6" "$7" "${8:-}" >>"$sims/.$2.defaults"
           exit 0
+        fi
+        if [ "$3 $4" = "defaults read" ]; then
+          awk -v d="$5" -v k="$6" '$1 == d && $2 == k { v = ($3 ~ /^-/ ? $4 : $3) } END { if (v == "") exit 1; print v }' "$sims/.$2.defaults" 2>/dev/null
+          exit
         fi
         [ "$3 $4" = "launchctl disable" ] || exit 1
         flag spawn-skips && exit 0

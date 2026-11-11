@@ -489,11 +489,15 @@ export function scopeFootnote(scope: Exclude<SnapshotScope, "box">, boxName: str
   }
 }
 
-export function homeRestoreGoesWords(boxName: string): string {
+export function homeRestoreGoesWords(boxName: string, inSlot = false): string {
+  if (inSlot) return `Everything in ${boxName}'s home folder since then goes: its files, settings, keychain items, and its device's apps, data and settings. Its device shuts down and every process of its user ends, then the device boots again. Apps installed on the Mac, files outside the home and the Mac's other users stay as they are.`;
   return `Everything in ${boxName}'s home folder since then goes: its files, settings and keychain items. Its session ends and signs in again where it was, so every process of its user ends. Apps installed on the Mac and files outside the home stay as they are.`;
 }
 
-export const HOME_RESTORE_WENT = "Everything in its home folder since then went. Every process of its user ended, and it signed in again where it was.";
+export function homeRestoreWentWords(inSlot: boolean): string {
+  if (inSlot) return "Everything in its home folder since then went, its device's apps and data with it. Every process of its user ended, and its device booted again.";
+  return "Everything in its home folder since then went. Every process of its user ended, and it signed in again where it was.";
+}
 
 export function notKeptForScope(scope: SnapshotScope, boxName: string): string | null {
   switch (scope) {

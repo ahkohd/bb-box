@@ -799,7 +799,7 @@ interface ScratchUsers {
 }
 
 function scratchUsers(stdout: string): ScratchUsers {
-  const found = stdout.match(/^note: scratch users (\S+) \(UID (\d+)\) and (\S+) \(UID (\d+)\)/m);
+  const found = stdout.match(/^note: scratch users (\S+) \(UID (\d+)\), (\S+) \(UID (\d+)\) and, for an iOS slot, \S+ \(UID \d+\)/m);
   assert.ok(found, stdout);
   return { user: found[1]!, uid: found[2]!, fork: found[3]!, forkUid: found[4]! };
 }
