@@ -7,12 +7,30 @@ import { HostReach } from "./reach.ts";
 import { sleep as abortableSleep } from "../proxmox/api.ts";
 import { DockerBackend, dockerKinds, type DockerBackendOptions } from "../docker/backend.ts";
 import type { DockerCli } from "../docker/cli.ts";
+import { dockerOffer, snapshotLinesOf } from "../docker/snapshots.ts";
+import { withDesktopForkSafety } from "../../core/identity.ts";
+import { gbWords } from "../../core/snapshot.ts";
 import type { DockerConfig, DockerKind } from "../docker/config.ts";
 import { kindInfo } from "../kinds.ts";
 import {
   BackendError,
   type AcquireHooks,
   type Backend,
+  type CopyHooks,
+  type ForkArming,
+  type GuestIdentity,
+  type HeldSnapshot,
+  type IdentitySource,
+  type LeasedAddressNow,
+  type SnapshotHooks,
+  type SnapshotPlan,
+  type SnapshotRef,
+  type SnapshotStorage,
+  type SnapshotTake,
+  type SnapshotTaken,
+  type Snapshotting,
+  type TaskOutcome,
+  type TaskRef,
   type BackendContext,
   type BackendStorage,
   type BoxIdentity,
@@ -89,7 +107,8 @@ interface BilledServerOfType extends BilledServer {
 }
 
 const HOST_KEY = "hetznerHost";
-export const HETZNER_KEEP_OFF = "Hetzner Cloud hosts are deleted when they are idle, so a snapshot cannot outlive its box there yet";
+export const HETZNER_KEEP_OFF = `a box's snapshots stay on its Hetzner Cloud host and go when the box is released, as ${PRODUCT} never keeps a host running to hold a snapshot`;
+const SNAPSHOTS_TAKEN_ON = "snapshots-taken-on:";
 
 export function hostPartOptions(given: Omit<DockerBackendOptions, "cliReachingAHostAnotherBackendMade"> | undefined, cli: DockerCli): DockerBackendOptions {
   return { ...given, cliReachingAHostAnotherBackendMade: cli, keepOffBecause: HETZNER_KEEP_OFF };
@@ -135,6 +154,22 @@ const DOCKER_TARGETS: Readonly<Record<Architecture, readonly DockerKind[]>> = { 
 const ARM_KIND_OF: Readonly<Record<string, string>> = { linux: "linux-arm64", "linux-desktop-cpu": "linux-arm64-desktop-cpu" };
 const DOCKER_KIND_OF_ARM: Readonly<Record<string, DockerKind>> = { "linux-arm64": "linux", "linux-arm64-desktop-cpu": "linux-desktop-cpu" };
 const ARCHITECTURE_WORDS: Readonly<Record<Architecture, string>> = { x86: "x86", arm: "Arm" };
+
+export function snapshotStorageOn(serverName: string): string {
+  return `Docker's disk on Hetzner Cloud host ${serverName}`;
+}
+
+export function forkRoomRefusal(serverName: string, noRoomBecause: string | null, storage: SnapshotStorage, forkBytes: number | null): string | null {
+  const sameHost = `a fork goes on the same Hetzner Cloud host as its snapshot, ${serverName}`;
+  if (noRoomBecause) return `${sameHost}, and it has no room for one: ${noRoomBecause.replace(/\.$/, "")}. Release a box there, then try again`;
+  if (storage.totalBytes === null || storage.usedBytes === null || forkBytes === null) return null;
+  const free = storage.totalBytes - storage.usedBytes;
+  return forkBytes >= free ? `${sameHost}, and its Docker disk has ${gbWords(Math.max(0, free))} free, less than the fork's ${gbWords(forkBytes)}. Delete snapshots or release a box there, then try again` : null;
+}
+
+function tasksOnHost<Hooks extends SnapshotHooks>(hooks: Hooks, hostId: string): Hooks {
+  return { ...hooks, task: (task: TaskRef) => hooks.task({ ...task, host: hostId }) };
+}
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -379,6 +414,128 @@ export class HetznerBackend implements Backend {
     return (await this.#requirePart(guest)).docker.transports(guest, this.#dockerKindOf(kind));
   }
 
+  identitySource(kind: string): IdentitySource | null {
+    return this.#kinds.some((each) => each.id === kind) ? "value" : null;
+  }
+
+  snapshotting(kind: string): Snapshotting | null {
+    return this.#kinds.some((each) => each.id === kind) ? withDesktopForkSafety(kind, dockerOffer(HETZNER_KEEP_OFF)) : null;
+  }
+
+  async planSnapshots(guest: Guest, kind: string, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+    const part = await this.#requirePart(guest, signal);
+    const plan = await part.docker.planSnapshots(guest, this.#dockerKindOf(kind), target, signal);
+    const storage = { ...plan.storage, name: snapshotStorageOn(part.record.serverName) };
+    if (!plan.fork.ok || !plan.fork.size) return { ...plan, storage };
+    const room = await part.docker.capacity(this.#dockerKindOf(kind), plan.fork.size, [], signal);
+    const why = forkRoomRefusal(part.record.serverName, room.ok ? null : room.message, plan.storage, plan.fork.bytes);
+    return { ...plan, storage, fork: why ? { ...plan.fork, ok: false, why } : plan.fork };
+  }
+
+  async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
+    const part = await this.#requirePart(guest, signal);
+    await this.#context.storage.set(SNAPSHOTS_TAKEN_ON + part.record.hostId, true);
+    return part.docker.snapshot(guest, take, tasksOnHost(hooks, part.record.hostId), signal);
+  }
+
+  async heldSnapshots(signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    const all: HeldSnapshot[] = [];
+    for (const key of await this.#context.storage.list(SNAPSHOTS_TAKEN_ON)) {
+      const hostId = key.slice(SNAPSHOTS_TAKEN_ON.length);
+      const record = await this.hostRecords.record(hostId);
+      if (!record) {
+        await this.#context.storage.delete(key);
+        continue;
+      }
+      const part = await this.#partOf(hostId, signal);
+      if (!part) continue;
+      try {
+        all.push(...(await part.docker.heldSnapshots(signal)).map((held) => this.#heldOn(part, held)));
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        this.#context.logError(`list the snapshots on Hetzner Cloud host ${record.serverName}`, error);
+      }
+    }
+    return all;
+  }
+
+  async snapshotsOn(guest: Guest, signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    const part = await this.#partOfGuest(guest, signal);
+    if (!part || !(await this.#context.storage.get(SNAPSHOTS_TAKEN_ON + part.record.hostId))) return [];
+    return (await part.docker.snapshotsOn(guest, signal)).map((held) => this.#heldOn(part, held));
+  }
+
+  async deleteSnapshot(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    const part = await this.#partOfGuest(ref.guest, signal);
+    if (part) await part.docker.deleteSnapshot(ref, tasksOnHost(hooks, part.record.hostId), signal);
+  }
+
+  async providerTask(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
+    const part = task.host ? await this.#partOf(task.host, signal) : null;
+    if (!part) return { state: "missing", words: "Its Hetzner Cloud host is gone, and the box's snapshots went with it." };
+    return part.docker.providerTask(task);
+  }
+
+  async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
+    await (await this.#requirePart(guest, signal)).docker.powerOff(guest, signal);
+  }
+
+  async adoptSnapshot(ref: SnapshotRef, box: BoxIdentity, identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
+    const part = await this.#requirePart(ref.guest, signal);
+    const own = (guest: Guest) => this.#ownedBy(part, guest);
+    const made = await part.docker.adoptSnapshot(ref, { ...box, kind: this.#dockerKindOf(box.kind) }, identity, { ...tasksOnHost(hooks, part.record.hostId), claimed: (guest) => hooks.claimed(own(guest)) }, signal);
+    return own(made);
+  }
+
+  async forkSnapshot(ref: SnapshotRef, box: BoxIdentity, previous: Guest | null, hooks: AcquireHooks, signal: AbortSignal): Promise<Guest> {
+    const part = await this.#requirePart(ref.guest, signal);
+    const own = (guest: Guest) => this.#ownedBy(part, guest);
+    await this.hostRecords.markBusy(part.record.hostId);
+    const made = await part.docker.forkSnapshot(ref, { ...box, kind: this.#dockerKindOf(box.kind) }, previous, { ...hooks, claim: (guest) => hooks.claim(own(guest)) }, signal);
+    return own(made);
+  }
+
+  async startForForkCheck(guest: Guest, signal: AbortSignal): Promise<void> {
+    await (await this.#requirePart(guest, signal)).docker.startForForkCheck(guest, signal);
+  }
+
+  async armFork(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void> {
+    await (await this.#requirePart(guest, signal)).docker.armFork(guest, arming, signal);
+  }
+
+  async disarmFork(guest: Guest, signal?: AbortSignal): Promise<void> {
+    const part = await this.#partOfGuest(guest, signal);
+    if (part) await part.docker.disarmFork(guest, signal);
+  }
+
+  async guestIdentity(guest: Guest): Promise<GuestIdentity> {
+    return (await this.#requirePart(guest)).docker.guestIdentity(guest);
+  }
+
+  async leasedAddressNow(guest: Guest, signal?: AbortSignal): Promise<LeasedAddressNow> {
+    const part = await this.#partOfGuest(guest, signal);
+    return part ? part.docker.leasedAddressNow(guest, signal) : { power: "gone", leased: null };
+  }
+
+  async boxHasNoGuest(boxId: string, lastKnown: Guest, signal?: AbortSignal): Promise<boolean> {
+    const part = await this.#partOfGuest(lastKnown, signal);
+    return part ? part.docker.boxHasNoGuest(boxId, lastKnown, signal) : true;
+  }
+
+  async addressesGivenByProvider(guest: Guest, signal?: AbortSignal): Promise<readonly string[]> {
+    return (await this.#requirePart(guest, signal)).docker.addressesGivenByProvider(guest, signal);
+  }
+
+  #ownedBy(part: HostPart, guest: Guest): Guest {
+    return { ...guest, host: part.record.serverName, data: { ...guest.data, [HOST_KEY]: part.record.hostId } };
+  }
+
+  #heldOn(part: HostPart, held: HeldSnapshot): HeldSnapshot {
+    const owner = held.owner && part.architecture === "arm" && held.owner.kind && ARM_KIND_OF[held.owner.kind] ? { ...held.owner, kind: ARM_KIND_OF[held.owner.kind]! } : held.owner;
+    const storage = held.storage ? { ...held.storage, name: snapshotStorageOn(part.record.serverName) } : null;
+    return { ...held, owner, storage, guest: this.#ownedBy(part, held.guest) };
+  }
+
   async maintain(given?: AbortSignal): Promise<void> {
     const signal = this.#untilDisposed(given);
     await this.hostRecords.sweep(signal);
@@ -480,6 +637,8 @@ export class HetznerBackend implements Backend {
       const report = part ? await part.docker.doctor(signal).catch((error: unknown) => error as Error) : new Error(`${PRODUCT} cannot reach it`);
       if (report instanceof Error) push(`hetzner.host.${record.serverName}`, `Docker on ${record.serverName}`, "fail", message(report), "Check the host's network, or let the sweep delete it.");
       else push(`hetzner.host.${record.serverName}`, `Docker on ${record.serverName}`, report.ok ? "ok" : "fail", report.summary, report.ok ? null : report.checks.find((each) => each.status === "fail")?.fix ?? null);
+      const lines = report instanceof Error || !(await this.#context.storage.get(SNAPSHOTS_TAKEN_ON + record.hostId)) ? null : snapshotLinesOf(report.checks);
+      if (lines) push(`hetzner.snapshots.${record.serverName}`, `Snapshots on ${record.serverName}`, lines.status, `${lines.detail} Kept snapshots: off, as ${HETZNER_KEEP_OFF}.`);
     }
 
     const failed = checks.find((each) => each.status === "fail");
@@ -926,6 +1085,7 @@ export class HetznerBackend implements Backend {
     this.#parts.delete(record.hostId);
     await this.#reach?.forget(record.hostId);
     await this.hostRecords.delete(record.hostId, signal);
+    await this.#context.storage.delete(SNAPSHOTS_TAKEN_ON + record.hostId);
     await this.#removeFromTailnet([record.serverName], signal);
   }
 

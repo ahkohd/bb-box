@@ -28,6 +28,18 @@ import {
   type OwnImage,
   type PowerState,
   type ReleaseHooks,
+  type CopyHooks,
+  type GuestIdentity,
+  type HeldSnapshot,
+  type SnapshotHooks,
+  type SnapshotPlan,
+  type SnapshotRef,
+  type SnapshotTake,
+  type SnapshotTaken,
+  type Snapshotting,
+  type Started,
+  type TaskOutcome,
+  type TaskRef,
 } from "../types.ts";
 import { MacProbeCache, PROBE_TIMEOUT_MS, capabilityCheck, capabilityWords, eachKindOfMacWords, macsVary, measuredByOlderProbe, type MacReport } from "../../core/mac-capabilities.ts";
 import { NamespaceMacReports } from "./mac-reports.ts";
@@ -37,7 +49,9 @@ import { setupDir } from "../setup-dir.ts";
 import { NamespaceApi, NamespaceError, type Instance, type InstanceShape, type NamespaceFetch, type PlatformConcurrency } from "./api.ts";
 import type { MacShape, NamespaceConfig, NamespaceKind } from "./config.ts";
 import { LINUX_IMAGE_TARGETS, LinuxImages, type LinuxImageDeps } from "./linux-images.ts";
-import { NamespaceLinux, isLinuxKind, linuxShapeFor } from "./linux.ts";
+import { NamespaceLinux, isLinuxKind, linuxShapeFor, namespaceOffer, snapshotStorageOnMachine, withMachineDeadline } from "./linux.ts";
+import { containerName, type DockerBackend } from "../docker/backend.ts";
+import { isBoxContainerName, snapshotLinesOf } from "../docker/snapshots.ts";
 import type { DockerBackendOptions } from "../docker/backend.ts";
 import type { DockerCli } from "../docker/cli.ts";
 import { storedKeyPair } from "../ssh-key.ts";
@@ -253,6 +267,10 @@ function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
     const timer = setTimeout(resolve, ms);
     signal?.addEventListener("abort", () => (clearTimeout(timer), reject(signal.reason)), { once: true });
   });
+}
+
+function tasksOnMachine<Hooks extends SnapshotHooks>(hooks: Hooks, instance: string): Hooks {
+  return { ...hooks, task: (task: TaskRef) => hooks.task({ ...task, host: instance }) };
 }
 
 function clock(ms: number): string {
@@ -643,10 +661,14 @@ export class NamespaceBackend implements Backend {
       return;
     }
     const instance = await this.#mine(guest, signal);
+    if (instance && (await this.#anotherContainerOfTheBoxStays(instance, guest, hooks, signal))) {
+      hooks.timing("remove container", Math.round(performance.now() - started));
+      return;
+    }
     if (instance) {
       if (instance.status === "running" && this.#context.tailnet?.()) await this.#leave(instance.id, signal);
       await this.#api.destroy(instance.id, "bb-box: the box was released", signal);
-      this.#linux.forget(instance.id);
+      await this.#linux.forget(instance.id);
       await this.#forget(instance.id);
     }
     hooks.timing("destroy", Math.round(performance.now() - started));
@@ -663,7 +685,7 @@ export class NamespaceBackend implements Backend {
 
   async held(signal?: AbortSignal): Promise<HeldGuest[]> {
     const slots = await this.slots.held(signal);
-    return [...slots, ...(await this.#held(signal)).map((instance): HeldGuest => {
+    const machines = (await this.#held(signal)).map((instance): HeldGuest => {
       const boxId = instance.labels[LABELS.box] ?? null;
       const created = Number(instance.labels[LABELS.created]);
       const owner =
@@ -678,7 +700,125 @@ export class NamespaceBackend implements Backend {
           : null;
       const shape = instance.shape ? { cores: instance.shape.cores, memoryGB: Math.round(instance.shape.memoryMiB / MIB_PER_GB) } : null;
       return { ...this.#guest(this.#refOf(instance), boxId, instance, shape, isLinuxKind(instance.labels[LABELS.kind] ?? "")), owner, power: instance.status === "running" ? "running" : instance.status === "suspended" ? "stopped" : "unknown" };
-    })];
+    });
+    const withSnapshots = new Set(await this.#linux.machinesWithSnapshots());
+    const listed: HeldGuest[] = [];
+    for (const machine of machines) {
+      const instance = typeof machine.data?.instance === "string" ? machine.data.instance : null;
+      if (!instance || !withSnapshots.has(instance) || machine.power !== "running") {
+        listed.push(machine);
+        continue;
+      }
+      try {
+        listed.push(...(await this.#containersOfTheBox(instance, machine.owner?.boxId ?? null, signal)).map((container) => ({ ...machine, ref: container.ref, power: container.power })));
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        this.#context.logError(`list the containers on Namespace machine ${instance}`, error);
+      }
+    }
+    return [...slots, ...listed];
+  }
+
+  async #containersOfTheBox(instance: string, boxId: string | null, signal?: AbortSignal): Promise<readonly HeldGuest[]> {
+    const part = await this.#linux.part(instance);
+    return (await part.held(signal)).filter((container) => boxId !== null && container.owner?.boxId === boxId);
+  }
+
+  async #anotherContainerOfTheBoxStays(instance: Instance, guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<boolean> {
+    const boxId = typeof guest.data?.box === "string" ? guest.data.box : null;
+    if (!boxId || !isLinuxKind(instance.labels[LABELS.kind] ?? "") || !(await this.#linux.snapshotsTakenOn(instance.id)) || instance.status !== "running") return false;
+    const others = (await this.#containersOfTheBox(instance.id, boxId, signal)).filter((container) => container.ref !== guest.ref);
+    if (!others.length) return false;
+    await (await this.#linux.part(instance.id)).release(guest, hooks, signal);
+    return true;
+  }
+
+  snapshotting(kind: string): Snapshotting | null {
+    return isLinuxKind(kind) ? namespaceOffer() : null;
+  }
+
+  async start(guest: Guest, signal?: AbortSignal): Promise<Started | void> {
+    return (await this.#linuxPart(guest)).start(guest, signal);
+  }
+
+  async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
+    await (await this.#linuxPart(guest)).powerOff(guest, signal);
+  }
+
+  async planSnapshots(guest: Guest, kind: string, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+    const plan = await (await this.#linuxPart(guest)).planSnapshots(guest, kind, target, signal);
+    return withMachineDeadline(plan, guest.endsAt ?? null, this.#now());
+  }
+
+  async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
+    const instance = this.#instanceOf(guest);
+    await this.#linux.markSnapshotsOn(instance);
+    return (await this.#linux.part(instance)).snapshot(guest, take, tasksOnMachine(hooks, instance), signal);
+  }
+
+  async heldSnapshots(signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    const all: HeldSnapshot[] = [];
+    const withSnapshots = await this.#linux.machinesWithSnapshots();
+    if (!withSnapshots.length) return all;
+    const running = new Map((await this.#held(signal)).filter((instance) => instance.status === "running").map((instance) => [instance.id, instance]));
+    for (const instance of withSnapshots) {
+      const machine = running.get(instance);
+      if (!machine) continue;
+      try {
+        all.push(...(await (await this.#linux.part(instance)).heldSnapshots(signal)).map((held) => this.#heldOn(machine, held)));
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        this.#context.logError(`list the snapshots on Namespace machine ${instance}`, error);
+      }
+    }
+    return all;
+  }
+
+  async snapshotsOn(guest: Guest, signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    const instance = typeof guest.data?.instance === "string" ? guest.data.instance : null;
+    if (!instance || !(await this.#linux.snapshotsTakenOn(instance))) return [];
+    const machine = await this.#mine(guest, signal);
+    if (!machine || machine.status !== "running") return [];
+    return (await (await this.#linux.part(instance)).snapshotsOn(guest, signal)).map((held) => this.#heldOn(machine, held));
+  }
+
+  async deleteSnapshot(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    const machine = await this.#mine(ref.guest, signal);
+    if (!machine || machine.status !== "running") return;
+    await (await this.#linux.part(machine.id)).deleteSnapshot(ref, tasksOnMachine(hooks, machine.id), signal);
+  }
+
+  async providerTask(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
+    const machine = task.host ? await this.#api.describe(task.host, signal).catch(() => null) : null;
+    if (!machine || machine.status !== "running" || !this.#owner.owns(machine.labels)) return { state: "missing", words: "Its Namespace machine is gone, and the box's snapshots went with it." };
+    return (await this.#linux.part(machine.id)).providerTask(task);
+  }
+
+  async adoptSnapshot(ref: SnapshotRef, box: BoxIdentity, identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
+    const instance = this.#instanceOf(ref.guest);
+    const own = (guest: Guest): Guest => ({ ...ref.guest, ...guest, host: ref.guest.host, size: ref.guest.size, data: { ...guest.data, box: box.boxId, instance } });
+    const made = await (await this.#linux.part(instance)).adoptSnapshot(ref, box, identity, { ...tasksOnMachine(hooks, instance), claimed: (guest) => hooks.claimed(own(guest)) }, signal);
+    return own(made);
+  }
+
+  #heldOn(machine: Instance, held: HeldSnapshot): HeldSnapshot {
+    const endsAt = machine.createdAt === null ? null : this.#endsAt(machine.createdAt);
+    return {
+      ...held,
+      guest: { ...held.guest, host: machine.continent ?? null, data: { ...held.guest.data, instance: machine.id } },
+      storage: held.storage ? { ...held.storage, name: snapshotStorageOnMachine(endsAt) } : null,
+    };
+  }
+
+  #instanceOf(guest: Guest): string {
+    const instance = typeof guest.data?.instance === "string" ? guest.data.instance : null;
+    if (!instance) throw new BackendError("gone", `Box ${guest.ref} has no Namespace machine.`);
+    return instance;
+  }
+
+  async #linuxPart(guest: Guest): Promise<DockerBackend> {
+    if (namespaceSlotOf(guest)) throw new BackendError("unsupported", "Namespace's iOS boxes take no snapshots.");
+    return this.#linux.part(this.#instanceOf(guest));
   }
 
   async restartDeviceServer(guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -702,15 +842,46 @@ export class NamespaceBackend implements Backend {
     await this.slots.maintain(signal);
     await this.#measureAfreshIfDue(signal).catch((error) => this.#context.logError("measure a Namespace Mac afresh", error));
     const held = await this.#held(signal);
+    await this.#tendSnapshots(held, signal);
     await this.#removeStaleDevices(held, signal).catch((error) => this.#context.logError("remove Namespace machines' leftover tailnet devices", error));
     for (const instance of held) {
       if (instance.status !== "running" || instance.createdAt === null) continue;
-      if (!recordedGuests?.has(this.#refOf(instance))) continue;
+      if (!this.#recorded(instance, recordedGuests)) continue;
       const ends = this.#endsAt(instance.createdAt);
       const ahead = Math.min(KEEP_AHEAD_MS, ends - this.#now());
       if (ahead <= 0 || (instance.deadline ?? 0) - this.#now() >= ahead - 5 * 60_000) continue;
       await this.#api.extend(instance.id, ahead, signal).catch((error) => this.#context.logError(`keep Namespace machine ${instance.id} alive`, error));
     }
+  }
+
+  async #snapshotChecks(held: readonly Instance[], signal?: AbortSignal): Promise<DoctorCheck[]> {
+    const checks: DoctorCheck[] = [];
+    for (const instance of held) {
+      if (instance.status !== "running" || !(await this.#linux.snapshotsTakenOn(instance.id))) continue;
+      const report = await (await this.#linux.part(instance.id)).doctor(signal).catch((error: unknown) => error as Error);
+      const lines = report instanceof Error ? { status: "fail" as const, detail: report.message } : snapshotLinesOf(report.checks);
+      if (!lines) continue;
+      const ends = instance.createdAt === null ? "" : ` They end with the machine at ${clock(this.#endsAt(instance.createdAt))}, the plan's longest life, or at the box's release.`;
+      checks.push({ id: `namespace.snapshots.${instance.id}`, name: `Snapshots on ${instance.id}`, status: lines.status, detail: `${lines.detail}${ends}`, fix: null });
+    }
+    return checks;
+  }
+
+  async #tendSnapshots(held: readonly Instance[], signal?: AbortSignal): Promise<void> {
+    const running = new Set(held.filter((instance) => instance.status === "running").map((instance) => instance.id));
+    const listed = new Set(held.map((instance) => instance.id));
+    for (const instance of await this.#linux.machinesWithSnapshots()) {
+      if (!listed.has(instance)) await this.#linux.forget(instance);
+      if (!running.has(instance)) continue;
+      await (await this.#linux.part(instance)).maintain(signal).catch((error) => this.#context.logError(`tend the snapshots on Namespace machine ${instance}`, error));
+    }
+  }
+
+  #recorded(instance: Instance, recordedGuests: ReadonlySet<string> | undefined): boolean {
+    const ref = this.#refOf(instance);
+    if (recordedGuests?.has(ref)) return true;
+    const boxId = instance.labels[LABELS.box];
+    return !!boxId && isLinuxKind(instance.labels[LABELS.kind] ?? "") && [...(recordedGuests ?? [])].some((recorded) => isBoxContainerName(containerName(boxId), recorded));
   }
 
   async transports(guest: Guest, kind: string): Promise<BoxTransports> {
@@ -777,6 +948,7 @@ export class NamespaceBackend implements Backend {
     });
     checks.push(await this.#limitsCheck(signal));
     checks.push(await this.#linuxImagesCheck(signal));
+    checks.push(...(await this.#snapshotChecks(held, signal)));
     const macs = held.filter((instance) => instance.labels[LABELS.kind] !== undefined && !isLinuxKind(instance.labels[LABELS.kind] as NamespaceKind));
     for (const instance of macs) await this.#probes.measure(instance.id, signal).catch((error) => this.#context.logError(`measure what Namespace's Mac ${instance.id} offers`, error));
     checks.push(await this.slots.doctor(signal));

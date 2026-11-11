@@ -21,6 +21,8 @@ Larger machines cost more: see Namespace's pricing page. Minutes beyond what you
 
 BB Box gives each box the smallest machine Namespace offers that has at least the cores and memory the box's size asks for, and for a Mac its disk. Namespace's machines come in fixed shapes, so a box can have more than it asked for, and you pay for the machine it gets.
 
+A Linux box's snapshots stay on its machine's disk and cost nothing extra. See [Snapshots on a Linux box](#snapshots-on-a-linux-box).
+
 Linux boxes also need BB Box's Linux images. BB Box builds each in a Linux machine of 8 vCPU and 16 GB, about 4 minutes for the Linux image, 6 to 7 for the desktop's and 9 for the Wayland desktop's, and keeps it in the workspace's container registry. It builds an image when a box first needs it, and again, while boxes use it, when BB Box's image scripts or BB's app change, or after a week.
 
 ### What your plan allows
@@ -166,6 +168,18 @@ BB Box reaches the machine through Namespace's SSH gateway, and the box's comman
 A Linux box can run VMs and emulators of its own: Namespace's machines have KVM, and the box's user may use `/dev/kvm`. So a thread that asks for `linux-kvm` can get a box from Namespace. As such boxes cost by the minute, a thread that asks for plain `linux` gets one from Namespace only when no other backend has room.
 
 A Linux box ends at your plan's limit, as a Mac does, and is destroyed when it is released.
+
+### Snapshots on a Linux box
+
+A Linux box on Namespace takes snapshots as a Docker box does: of its disk and its Docker data, pausing the box while BB Box copies them. They stay on the box's machine, use its disk and cost nothing beyond the machine. They end with the machine, at the box's release or at the machine's deadline, your plan's longest life.
+
+- A restore makes a new container on the same machine, with an undo, and keeps the machine.
+- A take or a restore that would end after the machine is refused, and says when the machine ends.
+- Forks are off: a fork needs a machine of its own, and BB Box cannot carry a snapshot from one machine to another yet.
+- Keep is off, as the snapshots end with the machine.
+- Macs and iOS boxes on Namespace take no snapshots.
+
+See [Snapshots](snapshots.md#hetzner-cloud-and-namespace) for the rest.
 
 ## Check that nothing is left running
 

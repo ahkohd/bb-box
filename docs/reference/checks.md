@@ -90,6 +90,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `namespace.token` | API token | Namespace's API answers to the token in BB Box's settings. |
 | `namespace.machines` | Machines | The Namespace machines BB Box has, each with its age and when it ends, and any no box claims. |
 | `namespace.limits` | Workspace limits | The Mac cores and memory the workspace allows at once and has in use, read from Namespace, from which BB Box refuses a Mac up front; a warning when the token may not read them. |
+| `namespace.snapshots.<machine>` | Snapshots on &lt;machine> | On a Linux machine where its box took snapshots: Docker's snapshot lines for that machine, and when the machine ends with them. |
 | `namespace.images` | Linux images | BB Box's Linux images in the workspace's registry: when each was built, whether a new one is due, and whether one is being built. |
 | `ios-hosts.<mac>` | Shared iOS hosts on &lt;mac> | The shared iOS hosts on the Mac (064), or on Namespace (065): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; Namespace's host's end and how its video is encoded; or, with none, whether one can start. |
 
@@ -173,6 +174,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `hetzner.hosts` | Hosts | Each host BB Box made: its state, age, boxes and cost this month. |
 | `hetzner.spend` | This month's spend | What the hosts cost this month before VAT, against the monthly limit. |
 | `hetzner.host.<host>` | Docker on &lt;host> | A host's Docker, as the Docker backend's checks find it. |
+| `hetzner.snapshots.<host>` | Snapshots on &lt;host> | On a host where a box took snapshots: Docker's snapshot lines for that host, with how full its disk is, and that Keep is off as a release deletes them. |
 
 ## microsandbox
 

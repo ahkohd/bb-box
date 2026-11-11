@@ -20,6 +20,8 @@ For Linux boxes on arm64, BB Box makes Arm hosts of Hetzner's Ampere types, whic
 
 BB Box also keeps a host image: a snapshot of a host with Docker, Tailscale and the box images in it, so a new host has nothing to install or build. Hetzner bills snapshots by their size. On 22 October the host image was 17 GB, about EUR 0.20 a month, and the Arm one 9.9 GB, about EUR 0.12 a month. BB Box keeps the 2 newest of each.
 
+A box's own snapshots are different: they stay on its host's disk and cost nothing extra. See [Snapshots](#snapshots).
+
 Building the host image takes 10 to 30 minutes on a server of its own, or about 13 minutes for the Arm one, which costs one hour of that server. BB Box builds a new one each week, when BB updates its app, or when BB Box's image scripts change.
 
 ### Keeping the cost down
@@ -115,6 +117,17 @@ Each host:
 - lets in only Tailscale and ping from the internet: BB Box reaches its Docker over SSH on the tailnet, with a key of BB Box's own
 - stops boxes reaching Hetzner's metadata service, which holds the host's first-boot data
 - pins each box to as many of its CPUs as the box has cores, and runs LXCFS, so `nproc`, `free` and `/proc/cpuinfo` in a box say the box's own cores and memory. LXCFS is held and kept from restarts, as a restart would break those files in running boxes
+
+## Snapshots
+
+A Linux box on Hetzner Cloud takes snapshots as a Docker box does: of its disk and its Docker data, pausing the box while BB Box copies them. They stay on the box's host and use its disk, so they cost nothing beyond the host. BB Box's room check before a take or a fork reads that disk, with every snapshot already on it.
+
+- A restore makes a new container on the same host, with an undo, and deletes the old one once the new one runs.
+- A fork is a new container on the same host, from a snapshot taken with identity reset version 7, or 9 for a desktop, once `general.identityResetBackends` names the backend. When the host has too little memory, too few cores or too little Docker disk for the fork, BB Box refuses it before it makes anything, and says why.
+- Releasing a box deletes its snapshots. Keep is off: BB Box never keeps a host running to hold a snapshot.
+- Snapshots never keep a host past its idle time, and never stop it being deleted: a host is idle only once no box lives on it.
+
+See [Snapshots](snapshots.md#hetzner-cloud-and-namespace) for the rest.
 
 ## Check that nothing is left running
 
