@@ -32,7 +32,8 @@ let such waits through; a retry would still fail on a host that stays busy.
   time Docker waited for its host: the time any of Docker's threads was
   waiting for the disk, sampled every 10 ms; the time its cgroups waited
   for a CPU, from their pressure stall information; and the CPU time its
-  host took from Docker's work, from the box's steal time.
+  host took from Docker's work: Docker's CPU time times the box's steal
+  time over its busy time, at most 19 times, as when 95% is stolen.
 - What remains is Docker's own time. The check fails above 2 s of it, 041's
   limit, or above 30 s in all, or when Docker does not answer.
 - Under systemd, Docker's threads are those of `containerd.service` and
@@ -44,7 +45,14 @@ let such waits through; a retry would still fail on a host that stays busy.
 ## Consequences
 
 - A healthy image passes on a busy host: 178 to 1,252 ms of its own in every
-  load measured, against the limit of 2,000 ms.
+  load measured in a box, against the limit of 2,000 ms. In an Android
+  template's build at a host load of 7 to 22, the linked clone's first
+  command took 2,622 ms, which failed 041's rule, and 1,623 ms of its own,
+  before the steal time was counted over busy time alone.
+- What Docker's own time still holds: its CPU work, about 0.2 s in a Linux
+  box and 0.7 s in an Android box; its waits for anything but the disk or
+  a CPU, such as timers, sockets and child processes; and the time systemd
+  and the `docker` command take to pass it the connection.
 - A start that waits 3 s for another unit fails on a quiet box and under CPU
   load. Under heavy disk load, the part of such a wait that overlaps
   Docker's own waits for the disk is not counted: it delayed nothing that the

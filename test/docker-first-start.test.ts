@@ -10,6 +10,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const GUEST = join(ROOT, "setup/proxmox-lxc/template/guest");
 const HELPER = join(GUEST, "docker-first-start.sh");
 const DOCKERD_PID = "4242";
+const IDLE_TICKS_OF_A_MOSTLY_IDLE_VM = 600;
 const NO_STALL = "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n";
 
 interface FakeStart {
@@ -21,9 +22,8 @@ interface FakeStart {
   readonly dockerCpuUs?: number;
 }
 
-function cpuLine(total: number, steal: number): string {
-  const idle = total - steal;
-  return `cpu  0 0 0 ${idle} 0 0 0 ${steal} 0 0\n`;
+function cpuLine(idle: number, busy: number, steal: number): string {
+  return `cpu  ${busy} 0 0 ${idle} 0 0 0 ${steal} 0 0\n`;
 }
 
 function fakeBox(start: FakeStart): string {
@@ -40,7 +40,7 @@ function fakeBox(start: FakeStart): string {
     writeFileSync(join(cgroup, unit, "cpu.pressure"), NO_STALL);
     writeFileSync(join(cgroup, unit, "cpu.stat"), `usage_usec ${unit === "docker.service" ? (start.dockerCpuUs ?? 0) : 0}\n`);
   }
-  writeFileSync(join(proc, "stat"), cpuLine(10_000, 0));
+  writeFileSync(join(proc, "stat"), cpuLine(100_000, 1_000, 0));
   writeFileSync(join(proc, DOCKERD_PID, "task", DOCKERD_PID, "stat"), `${DOCKERD_PID} (dockerd) ${start.dockerdState} 1 1 1 0 -1\n`);
   const cpuStall = start.cpuStallUsDuringStart ?? 0;
   const steal = start.stealTicksDuringStart ?? 0;
@@ -50,7 +50,7 @@ function fakeBox(start: FakeStart): string {
 [ "$1" = --version ] && exit 0
 sleep ${start.seconds}
 printf 'some avg10=0.00 avg60=0.00 avg300=0.00 total=${cpuStall}\\n' > "${join(cgroup, "docker.service/cpu.pressure")}"
-printf '${cpuLine(10_000 + Math.max(steal * 2, 1), steal).trim()}\\n' > "${join(proc, "stat")}"
+printf '${cpuLine(100_000 + IDLE_TICKS_OF_A_MOSTLY_IDLE_VM, 1_000 + steal, steal).trim()}\\n' > "${join(proc, "stat")}"
 ${start.answers === false ? 'echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1' : "echo 29.1.3"}
 `,
     { mode: 0o755 },
@@ -107,9 +107,9 @@ test("in a box without systemd, as a Docker box is, any of the box's threads wai
   assert.equal(forSleep.status, 1, forSleep.line);
 });
 
-test("the time Docker waited for a CPU, and the time its host took its CPUs, are not its own", () => {
+test("the time Docker waited for a CPU, and the time its host took from its work, are not its own, however idle the box's other CPUs", () => {
   const waiting = fakeBox({ seconds: 0.9, dockerdState: "S", cpuStallUsDuringStart: 700_000 });
-  const stolen = fakeBox({ seconds: 0.9, dockerdState: "S", stealTicksDuringStart: 500, dockerCpuUs: 700_000 });
+  const stolen = fakeBox({ seconds: 0.9, dockerdState: "S", stealTicksDuringStart: 60, dockerCpuUs: 600_000 });
 
   const forCpu = judge(waiting, 400);
   const forSteal = judge(stolen, 400);

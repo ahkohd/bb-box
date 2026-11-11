@@ -78,22 +78,26 @@ cpu_used_us() {
   echo "$total"
 }
 
-cpu_ticks() {
-  awk '$1 == "cpu" { total = 0; for (i = 2; i <= NF; i++) total += $i; print total, ($9 == "" ? 0 : $9) }' "$proc_root/stat" 2>/dev/null || echo "0 0"
+busy_and_stolen_ticks() {
+  awk '$1 == "cpu" { print $2 + $3 + $4 + $7 + $8, ($9 == "" ? 0 : $9) }' "$proc_root/stat" 2>/dev/null || echo "0 0"
 }
+
+most_stolen_per_busy_milli=19000
 
 stolen_from_work_us() {
   local work_us=$1 before=($2) after=($3)
-  local total=$((${after[0]} - ${before[0]})) stolen=$((${after[1]} - ${before[1]}))
-  [ "$total" -gt 0 ] && [ "$stolen" -gt 0 ] || { echo 0; return; }
-  [ $((stolen * 20)) -le $((total * 19)) ] || stolen=$((total * 19 / 20))
-  echo $((work_us * stolen / (total - stolen)))
+  local busy=$((${after[0]} - ${before[0]})) stolen=$((${after[1]} - ${before[1]})) per_busy_milli
+  [ "$stolen" -gt 0 ] || { echo 0; return; }
+  per_busy_milli=$most_stolen_per_busy_milli
+  [ "$busy" -le 0 ] || per_busy_milli=$((stolen * 1000 / busy))
+  [ "$per_busy_milli" -le "$most_stolen_per_busy_milli" ] || per_busy_milli=$most_stolen_per_busy_milli
+  echo $((work_us * per_busy_milli / 1000))
 }
 
 mapfile -t groups < <(docker_unit_cgroups)
 docker --version >/dev/null 2>&1
 cpu_stall_before=$(cpu_pressure_us "${groups[@]}")
-ticks_before=$(cpu_ticks)
+ticks_before=$(busy_and_stolen_ticks)
 time_docker_waited_for_disk_us "$work/answered" "${groups[@]}" >"$work/disk-wait" &
 sampler=$!
 started=$(now_us)
@@ -109,7 +113,7 @@ fi
 
 disk_us=$(cat "$work/disk-wait")
 cpu_us=$(($(cpu_pressure_us "${groups[@]}") - cpu_stall_before))
-steal_us=$(stolen_from_work_us "$(cpu_used_us "${groups[@]}")" "$ticks_before" "$(cpu_ticks)")
+steal_us=$(stolen_from_work_us "$(cpu_used_us "${groups[@]}")" "$ticks_before" "$(busy_and_stolen_ticks)")
 waited_ms=$(((disk_us + cpu_us + steal_us) / 1000))
 [ "$waited_ms" -le "$took_ms" ] || waited_ms=$took_ms
 own_ms=$((took_ms - waited_ms))

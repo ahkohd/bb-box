@@ -61,3 +61,25 @@ healthy starts under disk load, at 4,518 to 5,148 ms of their own, because
 the kernel does not count a wait for the file system's journal, as in
 `fsync`, as a stall. Such a thread is in uninterruptible sleep, so sampling
 Docker's threads counts it.
+
+## An Android template's build
+
+The Android template built from this change on a Proxmox host, with the
+host's load rising from about 7 to 22 during the linked clone's check. The
+check then counted steal time over all of the box's CPU time, not over its
+busy time alone.
+
+| Where | Whole time, ms | Waiting for the host, ms | Docker's own, ms | Result |
+| --- | --- | --- | --- | --- |
+| Build VM | 653 | 348 | 305 | pass |
+| Linked clone | 2,622 | 999 | 1,623 | pass |
+
+041's rule would have failed the clone, as it failed the builds of 10 and
+11 November.
+
+On a VM whose other CPUs are idle, steal over all CPU time is a small
+fraction even when the host takes much of the time Docker runs. So the
+check now scales Docker's CPU time by steal over busy time: on 8 CPUs with
+600 of 720 ticks idle, 60 busy and 60 stolen, 600 ms of Docker's work is
+credited 600 ms, not 55 ms.
+
