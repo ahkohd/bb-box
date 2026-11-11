@@ -186,3 +186,52 @@ for a slot command, as the VM has no iOS slots.
 A run killed in the moment it starts its killed-take step leaves that
 step's clone, a root `sleep 120` that the record does not name yet, which
 ends by itself within 2 minutes.
+
+## After the fourth independent review
+
+The fourth review found three faults in version 4. Its restores cleared
+the temporary and cache folders of the scratch user's UID, so they deleted
+a file that was there before the proof ran. Its normal exit ended the
+processes it started by process ID alone, before the clean-up that checks
+each one's start time. And a recovery deleted what an earlier record
+proved before it refused for what the record did not prove, or when it
+could not list the Mac's users, then said it changed nothing.
+
+Now one function signals, deletes and removes accounts, checking each
+object's recorded identity at that moment (see the decision). A restore
+clears only what the box user made in its temporary and cache folders
+after macOS made the account, which the account's `creationTime` gives:
+macOS makes the user's folder in `/private/var/folders` as it makes the
+account, a second or two before the helper writes its password file, so
+that file could not mark the user's start. The proof's restores clear only
+the temporary files it recorded making. A recovery checks the whole record
+and the list of users before it changes anything.
+
+Version 5 was run on 11 November 2026 on a test pool Mac: a Tart VM, 4
+cores, 8 GiB memory, macOS 27.0 (26A428), APFS, the Mac's admin user at the
+console, made a pool Mac by the helper's `init`, with box user `bbx-0`. It
+passed all 56 checks in 17 s, with users of UID 500 or more the same before
+and after, and no snapshot store or record left.
+
+| Step | Time |
+| --- | --- |
+| Take, in all, with 1 s of checks after the resume | 1,626 ms |
+| The scratch user's processes paused | 187 ms |
+| Stop, ending the scratch user's processes | 1,225 ms |
+| Restore, the swap | 203 ms |
+| Fork into a second scratch user | 2,308 ms |
+
+The review's reproductions were run against version 5 on the same Mac.
+
+| The Mac had | Exit | What happened |
+| --- | --- | --- |
+| A folder at the depth of a user's temporary folder for each UID from 90000 to 99999, each with a file in its `T` folder, made before the proof | 0 | all 10,000 files stayed |
+| A file planted in the scratch user's own temporary folder, owned by its UID, once the proof had made the user | 0 | the file stayed; the restore cleared only the proof's recorded files |
+| A record naming a folder with its right device and inode, and a file with another | 5 | it changed nothing: the folder, its file, the other file and the record stayed |
+| A proof killed with `kill -9` after its first take | 0 | the next run checked the record, removed what it proved, and passed; every user of the earlier record was gone |
+
+The review's two other cases ran against fakes of the Mac only. A process
+whose recorded start time no longer matched stayed running at the proof's
+normal exit, where version 4 ended it. And with the directory service down,
+a run that found an earlier record refused with exit 5, and kept the
+recorded folder and the record, where version 4 deleted the folder.
