@@ -11,14 +11,11 @@
 // do, such as --skip enrol="no BB server here".
 
 import { parseArgs } from "node:util";
-import { DRIVERS } from "../src/backends/index.ts";
-import { backendPart } from "../src/core/document.ts";
-import { defaultSize, kindSizes, presetSizes } from "../src/core/sizes.ts";
+import { resolve } from "node:path";
 import { conformance, slotConformance, type ConformanceCheck } from "../test/conformance/suite.ts";
 import { SLOT_KINDS } from "../src/core/device-host.ts";
-import type { BackendStorage } from "../src/backends/types.ts";
 import { MemoryStorage } from "../test/helpers.ts";
-import { readSettings, toConfiguration } from "./smoke.ts";
+import { liveBackend } from "./live-backend.ts";
 
 const USAGE = "usage: npm run conformance -- --backend <type> --settings <settings.json> [--kind <kind>]... [--skip <check>=<reason>]...";
 
@@ -31,14 +28,8 @@ const { values } = parseArgs({
   },
 });
 if (!values.backend || !values.settings) throw new Error(USAGE);
-const driver = DRIVERS.find((other) => other.type === values.backend);
-if (!driver) throw new Error(`No backend is called ${values.backend}. There are ${DRIVERS.map((other) => other.type).join(" and ")}.`);
-const configuration = toConfiguration(readSettings(values.settings));
-if (configuration.problems.length) throw new Error(configuration.problems.join(" "));
-const backend = configuration.document.backends.find((other) => other.type === driver.type);
-if (!backend?.enabled) throw new Error(`${driver.label} is off in ${values.settings}.`);
-const parsed = driver.parse(backendPart(backend, driver, configuration.secrets, configuration.document.backends));
-if (!parsed.ok) throw new Error(`${driver.label}: ${parsed.problems.map((problem) => problem.message).join(" ")}`);
+const settings = resolve(values.settings);
+const driver = liveBackend(values.backend, settings);
 const skip: Partial<Record<ConformanceCheck, string>> = {};
 for (const item of values.skip ?? []) {
   const [check, reason] = item.split(/=(.*)/s);
@@ -46,20 +37,7 @@ for (const item of values.skip ?? []) {
   skip[check as ConformanceCheck] = reason;
 }
 
-const live = (storage: BackendStorage, installId: string) =>
-  driver.create(parsed.config, {
-    id: backend.id,
-    storage,
-    installId,
-    warm: () => 0,
-    warmShortfalls: () => {},
-    hostOn: () => true,
-    kind: (id) => {
-      const sizes = kindSizes(id);
-      return { enabled: true, defaultSize: defaultSize(sizes), presets: presetSizes(sizes) };
-    },
-    logError: (operation, error) => console.error(`# ${operation}: ${error instanceof Error ? error.message : String(error)}`),
-  });
+const live = driver.create;
 
 const lending = live(new MemoryStorage(), "conformance");
 const slotKinds = SLOT_KINDS.filter((kind) => lending.slots?.lends(kind) && (!values.kind || values.kind.includes(kind)));
@@ -74,4 +52,5 @@ await conformance({
   skip,
   timeoutMs: 600_000,
   testDevice: true,
+  elsewhere: { module: new URL("./live-backend.ts", import.meta.url).href, args: [driver.type, settings] },
 });

@@ -164,6 +164,16 @@ checks against any backend:
   lists the windows, and the OS's editor opens and shows text typed into
   it), stop and start (with the box's clock right, and connected to BB
   again within 3 s), recovery by a new instance, and repeated release;
+- for each kind that takes snapshots, as its offer says: a take, the list,
+  a restore as a new guest that can be undone, a delete, Keep dates that a
+  new instance reads from the provider and that outlive the box's release,
+  and a fork whose identity reset passes the same check BB Box makes
+  before it hands a fork over;
+- a take and a restore run in a second process, which the suite kills part
+  way through, as when BB stops: a new instance on that process's storage
+  settles the take, releases the restore's part-made guest and starts the
+  box as it was. Only `npm run conformance` makes the second process, so
+  `npm test` skips these two and says why;
 - for each preset: a box of that size, measured as soon as it is ready;
 - interrupted acquires that leave nothing behind, a small image build, two
   installs on one backend that leave each other alone, and a reused
@@ -190,6 +200,25 @@ Against real hosts:
   echo '{ "backends": [{ "id": "docker", "type": "docker", "enabled": true, "fields": {} }] }' > /tmp/docker.json
   npm run conformance -- --backend docker --settings /tmp/docker.json
   ```
+
+  To check a Docker host over SSH, give its address as the host, and leave
+  out the desktop images you have not built. With `--kind linux` the run
+  checks Linux boxes alone:
+
+  ```sh
+  echo '{ "backends": [{ "id": "docker", "type": "docker", "enabled": true, "fields": { "host": "ssh://box@192.0.2.10", "desktop-image": "", "wayland-desktop-image": "" } }] }' > /tmp/docker-ssh.json
+  npm run conformance -- --backend docker --settings /tmp/docker-ssh.json --kind linux
+  ```
+
+  A run of Linux boxes takes about RUN_MINUTES minutes on a VM with 8 cores. Most
+  of it is the interrupted take: Docker settles a take whose process
+  stopped only once the pause it planned has run three times over, plus a
+  minute, and the suite writes 1 GiB into the box first so that the take
+  is still running when it is killed. Run it on the containerd image
+  store, Docker's default, and on overlay2
+  (`"features": { "containerd-snapshotter": false }` in
+  `/etc/docker/daemon.json`, then restart Docker and build the images
+  again), as their commits differ.
 
 - **The SSH host pool**, on a rig of Docker containers on one computer
   ([its guide](../setup/ssh-pool/README.md#testing-on-one-computer)):
