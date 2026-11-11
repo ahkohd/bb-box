@@ -247,7 +247,11 @@ The standard images are built by each backend's setup, or by bb-box itself
 for Docker on a BB machine and the cloud backends. `bb box images list`
 shows their age and what is due, and after them the Linux images each
 Namespace backend builds in its own workspace, and each boat.dev backend's
-templates. A project's own image, a script run on the
+templates. An image whose rebuild failed is skipped until something it is
+built from changes, such as the build program after a BB Box update; `bb box
+images build <name>` tries it again at once. Builds retry package downloads
+for about 5 minutes, so a failure that names Ubuntu's archive is an outage
+that lasted longer: build again later. A project's own image, a script run on the
 standard image, is in the `bb-box` skill, under "A project's image".
 
 ## When it goes wrong

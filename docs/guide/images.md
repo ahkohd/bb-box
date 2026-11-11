@@ -48,4 +48,8 @@ A Windows image is refreshed in a box of its current build, which installs Windo
 
 BB Box rebuilds one image at a time, the most needed first, and starts none after 4 hours. Each new build is tried in a box first. It replaces the old one only if the box passes its checks. A project's image is then built again on the new standard image.
 
+When a rebuild fails, the image's old build stays, and later runs skip the image until something it is built from changes: its pins, BB's app, the versions of the tools it takes, or the program that builds it. A BB Box update that changes how the image is built makes it due again, with no one asking. To try it again sooner, run `bb box images build <name>`.
+
+A rebuild does not fail for a short outage of Ubuntu's package archive. Each step that installs packages retries its downloads for about 5 minutes first.
+
 To see each standard image's age and its last rebuild, run `bb box images list`. `bb box doctor` warns when a rebuild failed, or when no nightly run has finished for 8 days. See [health checks](../reference/checks.md).

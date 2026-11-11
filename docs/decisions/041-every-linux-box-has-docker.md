@@ -58,7 +58,9 @@ inside" for the feature, which reads as the same thing.
   as before. The Docker backend's start script does the same with
   `systemd-socket-activate`, and no longer waits for Docker.
 - The template's checks find Docker stopped after boot, then time the
-  first `docker` command from there, and fail above 2 s.
+  first `docker` command from there, and fail above 2 s. Superseded by
+  [098](098-dockers-first-start-is-judged-by-its-own-time-not-its-hosts.md):
+  they fail above 2 s of Docker's own time, not of its host's.
 - One kind per shape. `linux-docker` and `linux-arm64-docker` become
   aliases of `linux` and `linux-arm64` with the feature `docker`,
   accepted wherever an ID comes in, as 027's old IDs are. An acquire

@@ -208,7 +208,11 @@ Every download is checked against a pinned SHA-256, and kept in
 `/var/cache/bb-box/artifacts`:
 
 - `template/apt-snapshot`: the Ubuntu archive snapshot each build installs
-  from, so builds repeat;
+  from, so builds repeat. Every step that installs Ubuntu's packages,
+  in every image, downloads them first and retries for about 5 minutes
+  when the snapshot service or the archive does not answer, with waits of
+  30, 60, 90 and 120 s. Then it fails, with the archive's errors: build
+  again later;
 - `template/pins.json`: Node.js, GitHub CLI, ripgrep, fd, Jujutsu, uv, Claude
   Code, Codex and Pi, for x86_64 and arm64;
 - `template/desktop-pins.tsv`: TigerVNC, VirtualGL, Selkies, Google Chrome,
@@ -781,7 +785,14 @@ Every template:
   the address is up, so the host forgets a deleted box's MAC at once;
 - BB's app for `box`, if `BBBOX_BB_URL` was set;
 - `/dev/net/tun`;
-- `bb-box-check-headless`, a check bb-box runs as `box`.
+- `bb-box-check-headless`, a check bb-box runs as `box`. Its "first docker
+  command" line times the first `docker` command, which starts Docker
+  through its socket, and fails when Docker's start took more than 2 s of
+  its own. Time Docker spent waiting for its host's disk or CPU does not
+  count, so a busy host does not fail a healthy image: a line such as
+  "412 ms of its own (limit 2000), of 4280 ms, 3868 ms of it waiting for
+  the host's disk or CPU". A start held by anything else, such as another
+  unit it waits for, counts in full and fails.
 
 The XFCE desktops add:
 
