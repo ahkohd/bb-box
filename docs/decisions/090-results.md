@@ -83,3 +83,54 @@ a `sudo` and its command that the Mac's admin user had stopped before the
 take stayed stopped. `snapshot fork` aimed at the admin user, with UID 501 or
 70500, and at `bbx-0` exited 5 with the reason, and the admin user kept UID
 501 and its files.
+
+## After the second independent review
+
+The second review found 3 more faults. The proof deleted an account that
+was on the Mac already on the strength of its name. Its check that the Mac
+was free ran before it took the helper's lock, so a claim could come in
+between, and it never looked at iOS slots. A take removed its pause record
+0.2 s after the resume, so a `sudo` that stopped itself later stayed stopped
+with nothing to resume it.
+
+The self-contained proof script, version 3, was run on 11 November 2026 on 2
+test Macs, each made a pool Mac by the helper's `init`, with box user
+`bbx-0`:
+
+- a Tart VM, 4 cores, 8 GiB memory, macOS 27.0 (26A428), APFS, FileVault
+  and System Integrity Protection off, the Mac's admin user at the console
+- a Namespace VM, Apple M4 Pro (Virtual), 4 cores, 14 GiB memory, macOS
+  26.3.1 (25D2128), APFS, FileVault and System Integrity Protection off
+
+It passed all 53 checks on each, in 162 s and 139 s. Users with a UID of
+500 or more were the same before and after, and no snapshot store or
+record was left. The pause is now measured to the moment the take resumes
+the user's processes; version 2's figure also held its 0.2 s second look.
+
+| Step | macOS 27.0 | macOS 26.3.1 |
+| --- | --- | --- |
+| Take, in all, with 1 s of checks after the resume | 1,401 ms | 1,441 ms |
+| The scratch user's processes paused | 71 ms | 54 ms |
+| Stop, ending the scratch user's processes | 1,177 ms | 1,138 ms |
+| Restore, the swap | 155 ms | 178 ms |
+| Fork into a second scratch user | 2,368 ms | 2,183 ms |
+
+| New check | Result on both |
+| --- | --- |
+| A root process above the scratch user's `sudo` that stops itself 3 s after the pause, later than the take's last check | stopped after the take; the take's record still named it; the next helper command, `snapshot list`, resumed it |
+| What the proof made | each user recorded with its UID, `GeneratedUID` and home inode, and deleted by that record |
+
+Its refusals were checked on the macOS 27.0 Mac. Each changed no user,
+made no snapshot store and left no record.
+
+| The Mac had | Exit | What it said, in short |
+| --- | --- | --- |
+| A user `bbbox-probe` with UID 70501 and a file in its home | 5 | the user is on the Mac, with UID 70501; the user, its `GeneratedUID` and the file were as before |
+| Another user with UID 79999 | 5 | UID 79999 belongs to that user |
+| A file of UID 79998 under `/Users/Shared` | 5 | files of UID 79999 or 79998 are on the Data volume, such as that file; the check took 38 s |
+| A folder `/Users/bbbox-probe` with no account | 5 | the folder is on the Mac; its file was as before |
+| An iOS slot held by a box, then one being made, in the device host's state, written by hand as the VM has no iOS slots | 3 | an iOS slot is held by a box, or being made, with its state file |
+| A take's pause record with a stopped process of `bbx-0` | 3 | a pause record is left; the process stayed stopped and the record as it was |
+| A holder of the helper's lock, which wrote the owner marker 2 s after the proof started waiting, then let go | 3 | a box holds the Mac |
+| A box that holds the Mac, by the helper's `claim` | 3 | a box holds the Mac |
+| The reset after that box's release, which could not sign the next user in with the admin user at the console | 3 | the Mac's reset is running |
