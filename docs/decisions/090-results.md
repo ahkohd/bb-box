@@ -235,3 +235,67 @@ whose recorded start time no longer matched stayed running at the proof's
 normal exit, where version 4 ended it. And with the directory service down,
 a run that found an earlier record refused with exit 5, and kept the
 recorded folder and the record, where version 4 deleted the folder.
+
+## After the fifth independent review
+
+The fifth review found four more ways the proof or the helper could change
+what they had not made:
+
+- **A snapshot delete looked in every store.** `delete <snapshot>` matched
+  the snapshot's name in every user's store and deleted a folder with no
+  record of whose it was. Run with a folder of the proof's undo snapshot's
+  name in a store it had not made, the proof deleted that folder and
+  passed.
+- **A claimed slot was taken for idle.** The proof read each slot's state
+  only, so a slot whose claim was cut short between linking its claim and
+  writing its held state, which still says ready, did not stop it, and nor
+  did a slot folder with no state.
+- **Signals by UID and by a reaped PID.** Logging a scratch user out ended
+  every process of its UID once its UID was the proof's, even after its
+  account changed. The time limit on `launchctl bootout` signalled its
+  command, timer and watchdog by process IDs it may already have reaped.
+- **Removing a tree changed files outside it.** Clearing flags and ACLs
+  through a whole tree reached files outside it by their hard links.
+
+Now a delete names the box user and looks only in that user's store, and
+refuses unless every folder of the snapshot has a record naming this
+install and that user. A fork reads its source the same way. The proof
+deletes its snapshots by their record, in its own store. It refuses unless
+every iOS slot is completely idle. Ending every process of a UID is the
+one rule by UID alone, written in the helper's function names, in the
+decision and in the proof's first lines. A time limit signals its command
+only while it has not reaped it. Removing a tree unlinks each file with
+more than one link as it is, by the `unlink` system call, before it clears
+any flag; where that fails, it changes nothing more and fails. On the test
+Mac, macOS's `rm` and `unlink` commands, run by root, both cleared the
+outside file's `uchg` flag before they unlinked a hard link to it, so the
+helper calls the system call through Perl. The proof notes the user at the
+console and checks it before its last step, in place of a check that
+always passed.
+
+Version 6 was run on 11 November 2026 on a new test pool Mac, made as
+before: a Tart VM, 4 cores, 8 GiB memory, macOS 27.0 (26A428), APFS, the
+admin user at the console, made a pool Mac by `init`, with box user
+`bbx-0`. It passed all 56 checks in 18 s, with users of UID 500 or more the
+same before and after, and no snapshot store or record left.
+
+| Step | Time |
+| --- | --- |
+| Take, in all, with 1 s of checks after the resume | 1,657 ms |
+| The scratch user's processes paused | 195 ms |
+| Stop, ending the scratch user's processes | 1,363 ms |
+| Restore, the swap | 379 ms |
+| Fork into a second scratch user | 2,484 ms |
+
+| The Mac had | Exit | What happened |
+| --- | --- | --- |
+| A folder named for the proof's undo snapshot, with a file and no record, in a store the proof had not made, and one named for its first snapshot, with a record naming the proof's install and another user | 0 | both folders and their files stayed |
+| The review's slot: a state of ready and a claim, with no slot record | 3 | refused, as the slot lacks its slot record; it changed nothing |
+| The same slot with its slot record | 3 | refused, as the slot is claimed; it changed nothing |
+| A proof killed with `kill -9` after its first take | 0 | the next run checked the record, removed what it proved, and passed |
+| A file outside a test home, with `uchg` and an ACL denying everyone delete, hard-linked into the home, removed by the helper's `remove_tree` | 1 | the helper named the link and left the home; the outside file kept its flag and its ACL |
+| The same with no flag on the outside file | 0 | the link was unlinked and the home removed; the outside file kept its ACL |
+
+A cut-short claim was also made on a fake device host, by killing the
+device host's claim between linking its claim and writing its held state:
+the proof refused with exit 3 and made no record.
