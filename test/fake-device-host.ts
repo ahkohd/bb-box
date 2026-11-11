@@ -11,7 +11,7 @@ const POOL_HOME = fileURLToPath(new URL("../setup/ssh-pool/mac-home/", import.me
 const MACOS_TOOLS = fileURLToPath(new URL("./fake-macos.sh", import.meta.url));
 const DEVICE_TOOLS = fileURLToPath(new URL("./fake-device-host.sh", import.meta.url));
 const DEVICE_TOOL_NAMES = ["sudo", "xcrun", "launchctl", "ps", "top", "pkill", "memory_pressure", "df", "taskpolicy"];
-const DELEGATED = ["launchctl", "plutil", "pkill"];
+const DELEGATED = ["launchctl", "plutil", "pkill", "ps"];
 export const RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-27-0";
 export const LIST = "ios-27.0-24A434";
 
