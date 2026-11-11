@@ -568,17 +568,20 @@ BB Box runs these helper commands, as root, through the same sudo rule:
 
 | Command | What it does |
 | --- | --- |
-| `machine snapshot take <generation> <snapshot>` | Pauses the box user's processes, clones the home, resumes them, then keeps the home's ACLs |
+| `machine snapshot take <generation> <snapshot>` | Pauses the box user's running processes, clones the home, resumes exactly what it paused, then keeps the home's ACLs |
 | `machine snapshot list` | This install's snapshots on the Mac, and the free space under `/Users` |
 | `machine snapshot stop <generation>` | Ends the box user's session for a restore, after clearing the automatic login |
 | `machine snapshot restore <generation> <snapshot> <operation>` | Puts a clone of the snapshot in the home's place, with its ACLs, and clears the user's temporary and cache folders. Asked again with the same operation, it finishes a restore cut short, or changes nothing |
 | `machine snapshot start <generation>` | Signs the box user in again where it was signed in, by restarting the login window, or userspace after 30 s; it exits 10 until the user is at the console |
 | `machine snapshot delete <snapshot>` | Deletes a snapshot; again, it succeeds |
-| `machine snapshot fork <snapshot> <user> <uid>` | Makes a new user from a snapshot, without BB's machine files, the access file, BB's launch agent, the login keychain or plists naming the source's home. Only where no other user shares the Mac. BB Box does not call it yet |
-| `machine snapshot proof` | On a free Mac: makes a scratch user, `bbbox-probe`, as box users are made, then takes, restores with an undo, forks and deletes, checks each, removes everything it made, and prints a report |
+| `machine snapshot fork <snapshot> <user> <uid>` | Makes a new user from a snapshot, without BB's machine files, the access file, BB's launch agent, the login keychain or plists naming the source's home. Only where no other user shares the Mac, and only for a new box user, `bbx-<n>` with UID 70000 plus n modulo 10000, that is not on the Mac or at its console. BB Box does not call it yet |
+| `machine snapshot proof` | On a free Mac: makes a scratch user, `bbbox-probe`, as box users are made, then takes, kills a take during its pause, restores with an undo, forks, aims forks at users already there, and deletes. It checks each, including that processes others stopped stay stopped, removes everything it made, and prints a report |
 
-A take killed while it paused the box user is resumed by the helper's next
-command. A release deletes the box user's snapshots before it removes the
+A take records the processes it pauses, with when each started, before it
+stops them. It resumes only those, and a root `sudo` above one of them that
+stopped with it. A process stopped before the take, or by anyone else,
+stays stopped. A take killed while it paused the box user is resumed by the
+helper's next command, whichever it is. A release deletes the box user's snapshots before it removes the
 user, and the reset refuses to lend the Mac while a snapshot of an earlier
 box is left. A restore signs a desktop's user out for a few seconds. When
 the login window does not sign the user in again, the userspace restart

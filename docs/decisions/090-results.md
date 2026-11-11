@@ -24,9 +24,11 @@ were the same before and after, and no snapshot store was left.
 
 A first run failed one check: a process the scratch user ran under a root
 `sudo` stayed stopped after the take. `sudo` stops itself when its command
-stops, and the resume reached only the user's own processes. The take now
-resumes every process that stopped during its pause, again 0.2 s later, and
-the second run passed.
+stops, and the resume reached only the user's own processes. The take then
+resumed every process that stopped during its pause, again 0.2 s later, and
+the second run passed. The independent review showed that this also resumed
+processes that others had stopped, so the take now records and resumes only
+its own (see After the independent review).
 
 ## Through BB Box on the test Mac
 
@@ -44,3 +46,40 @@ the second run passed.
 The tool, `box_snapshot`, was not called live: the fresh BB had no agent to
 call it, and BB's own install is not used for live checks. It calls the same
 core as the command.
+
+## After the independent review
+
+The review found 3 faults in the helper. A take killed during its pause left
+a root `sudo` stopped after the next command's recovery. A take's resume
+reached processes that it had not stopped, of any user. The helper's `fork`,
+aimed at an existing user, replaced that user and deleted its files. The
+fixed helper was measured on 11 November 2026 on a second test pool Mac: a
+Tart VM, 4 cores, 8 GiB memory, macOS 27.0 (26A428), APFS, made a pool Mac
+by the helper's `init`, with box user `bbx-0`.
+
+The self-contained proof script, version 2, passed all 49 checks in 143 s.
+Users with a UID of 500 or more were the same before and after, and no
+snapshot store was left. While a box held the Mac, it refused with exit 3
+and changed nothing.
+
+| Step | Time |
+| --- | --- |
+| Take, the scratch user's processes paused | 431 ms in all, paused 303 ms |
+| Stop, ending the scratch user's processes | 1,178 ms |
+| Restore, the swap | 137 ms |
+| Fork into a second scratch user | 2,315 ms |
+
+| Check | Result |
+| --- | --- |
+| A root `sudo` above the scratch user's command | stopped with its command during the take, and ran again after it |
+| The scratch user's command stopped by someone else before the take | stayed stopped after the take and after a killed take's recovery |
+| A root process stopped by someone else during a take's pause | stayed stopped |
+| The helper killed by `kill -9` during a take's pause | its pause record stayed; the next helper command, `snapshot list`, resumed the user's command and the `sudo` above it, and nothing else, and removed the record |
+| A fork aimed at the source's user, a user the helper does not reserve, or the fork's user once made | exit 5 with the reason; the users' UIDs and files as before |
+
+Through the helper's own commands, with `bbx-0` lent: after a take that
+paused it for 336 ms, a root `sudo` above a command of `bbx-0` ran again, and
+a `sudo` and its command that the Mac's admin user had stopped before the
+take stayed stopped. `snapshot fork` aimed at the admin user, with UID 501 or
+70500, and at `bbx-0` exited 5 with the reason, and the admin user kept UID
+501 and its files.

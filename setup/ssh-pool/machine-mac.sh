@@ -126,6 +126,10 @@ PROOF_USER=bbbox-probe
 PROOF_UID=79999
 PROOF_FORK_USER=bbbox-probe-fork
 PROOF_FORK_UID=79998
+PROOF_STRANGER=bbbox-probe-stranger
+PAUSE_LOCK=$STATE/pause-lock
+PAUSE_ROUNDS=5
+PARENT_STOP_SECONDS=0.2
 
 quit() {
   code=$1
@@ -614,21 +618,94 @@ put_back_acls() {
 
 paused_marker() { printf '%s\n' "$(store_of "$1")/.paused"; }
 
+process_table() {
+  ps -A -o pid=,ppid=,uid=,stat=,lstart= 2>/dev/null | awk 'NF >= 9 { printf "%s %s %s %s %s_%s_%s_%s_%s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9 }'
+}
+
+hold_pause_lock() {
+  mkdir -p "$STATE"
+  exec 8>>"$PAUSE_LOCK"
+  perl -e 'use Fcntl ":flock"; open(my $f, ">&=", 8) or exit 1; $SIG{ALRM} = sub { exit 3 }; alarm $ARGV[0]; flock($f, $ARGV[0] ? LOCK_EX : LOCK_EX | LOCK_NB) or exit 3' "$1"
+}
+
+let_go_of_pause_lock() { exec 8>&-; }
+
+box_processes_to_pause() {
+  awk -v box="$2" -v me=$$ '
+    FILENAME == ARGV[1] { recorded[$2 " " $3] = 1; next }
+    { parent[$1] = $2; owner[$1] = $3; state[$1] = $4; started[$1] = $5; order[++count] = $1 }
+    function running(pid) { return state[pid] !~ /^[TZ]/ }
+    function record(kind, pid) { recorded[pid " " started[pid]] = 1; print kind, pid, started[pid] }
+    END {
+      for (i = 1; i <= count; i++) {
+        pid = order[i]
+        if (owner[pid] != box || pid == me || !running(pid) || ((pid " " started[pid]) in recorded)) continue
+        record("box", pid)
+        steps = 0
+        for (above = parent[pid]; above > 1 && (above in owner) && steps < 64; above = parent[above]) {
+          steps++
+          if (owner[above] == box || above == me || !running(above) || ((above " " started[above]) in recorded)) continue
+          record("parent", above)
+        }
+      }
+    }' "$1" -
+}
+
+pause_user() {
+  user=$1 uid=$2
+  journal=$(paused_marker "$user")
+  hold_pause_lock 60 || fail "Another take is pausing $user's processes."
+  resume_journal "$journal"
+  : >"$journal"
+  pausing_user=$user
+  rounds=0
+  while [ "$rounds" -lt "$PAUSE_ROUNDS" ]; do
+    round=$(process_table | box_processes_to_pause "$journal" "$uid")
+    [ -n "$round" ] || break
+    printf '%s\n' "$round" >>"$journal"
+    kill -STOP $(printf '%s\n' "$round" | awk '$1 == "box" { print $2 }') 2>/dev/null
+    rounds=$((rounds + 1))
+  done
+}
+
+paused_by_journal() {
+  process_table | awk -v which="$2" '
+    FILENAME == ARGV[1] { if ($1 == "box" || $1 == "parent") kind[$2 " " $3] = $1; next }
+    !(($1 " " $5) in kind) { next }
+    kind[$1 " " $5] == "box" && which == "box" { print $1 }
+    kind[$1 " " $5] == "parent" && which == "parent" && $4 ~ /^T/ { print $1 }' "$1" -
+}
+
+continue_processes() {
+  [ -z "$1" ] || kill -CONT $1 2>/dev/null
+  return 0
+}
+
+resume_journal() {
+  journal=$1
+  [ -f "$journal" ] || return 0
+  continue_processes "$(paused_by_journal "$journal" box)"
+  continue_processes "$(paused_by_journal "$journal" parent)"
+  sleep "$PARENT_STOP_SECONDS"
+  continue_processes "$(paused_by_journal "$journal" parent)"
+  rm -f "$journal"
+}
+
 resume_user() {
-  user=$1
-  uid=$(attribute "$user" UniqueID)
-  number "$uid" && pkill -CONT -u "$uid" >/dev/null 2>&1
-  rm -f "$(paused_marker "$user")"
+  resume_journal "$(paused_marker "$1")"
+  [ "$pausing_user" != "$1" ] || { pausing_user='' && let_go_of_pause_lock; }
+}
+
+abandoned_pauses() {
+  for journal in "$HOME_SNAPSHOTS"/*/.paused; do [ -f "$journal" ] && printf '%s\n' "$journal"; done
+  return 0
 }
 
 resume_abandoned_pauses() {
-  for marker in "$HOME_SNAPSHOTS"/*/.paused; do
-    [ -f "$marker" ] || continue
-    pauser=$(cat "$marker" 2>/dev/null)
-    if number "$pauser" && [ "$pauser" != $$ ] && kill -0 "$pauser" 2>/dev/null; then continue; fi
-    held=${marker%/.paused}
-    resume_user "${held##*/}"
-  done
+  [ -n "$(abandoned_pauses)" ] || return 0
+  hold_pause_lock 0 || return 0
+  for journal in $(abandoned_pauses); do resume_journal "$journal"; done
+  let_go_of_pause_lock
 }
 
 lent_user() {
@@ -651,19 +728,6 @@ taken_line() {
   printf 'paused_ms=%s\n' "$(field "$dir/info" paused_ms)"
 }
 
-stopped_processes() { ps -A -o pid=,stat= 2>/dev/null | awk '$2 ~ /^T/ { print $1 }' | sort; }
-
-continue_stopped_since() {
-  stopped_processes | comm -13 "$1" - | while IFS= read -r pid; do kill -CONT "$pid" 2>/dev/null; done
-}
-
-resume_parents_that_stopped() {
-  continue_stopped_since "$1"
-  sleep 0.2
-  continue_stopped_since "$1"
-  rm -f "$1"
-}
-
 snapshot_info() {
   printf 'install=%s\nbox=%s\nuser=%s\nuid=%s\ncaptured=%s\npaused_ms=%s\n' "$install" "$box" "$1" "$2" "$3" "$4"
   for key in thread name kind created; do printf '%s=%s\n' "$key" "$(field "$STATE/owner" "$key")"; done
@@ -681,19 +745,14 @@ clone_home() {
   paused_ms=0
   captured=$(now_ms)
   if [ "$pause" = pause ]; then
-    stopped_processes >"$partial/stopped-before"
-    echo $$ >"$(paused_marker "$user")"
-    pausing_user=$user
     captured=$(now_ms)
-    pkill -STOP -u "$uid" >/dev/null 2>&1
+    pause_user "$user" "$uid"
   fi
   cloned=yes
-  said=$(clone_tree "$home" "$partial/home" 2>&1) || cloned=no
+  said=$(exec 8>&-; clone_tree "$home" "$partial/home" 2>&1) || cloned=no
   if [ "$pause" = pause ]; then
     resume_user "$user"
-    pausing_user=''
     paused_ms=$(($(now_ms) - captured))
-    resume_parents_that_stopped "$partial/stopped-before"
   fi
   if [ "$cloned" = no ]; then
     remove_tree "$partial"
@@ -912,14 +971,43 @@ refuse_a_shared_fork() {
 fork_home() {
   id=$1 user=$2 uid=$3
   fork_source "$id"
+  refuse_a_fork_target "$user" "$uid"
   refuse_a_shared_fork "$source" "$user"
   make_fork "$id" "$user" "$uid"
+}
+
+reserved_box_identity() {
+  [ "$1" = "$PROOF_FORK_USER" ] && [ "$2" = "$PROOF_FORK_UID" ] && return 0
+  generation_of_name=${1#"$PREFIX"}
+  [ "$generation_of_name" != "$1" ] || return 1
+  case $generation_of_name in '' | 0?* | *[!0-9]*) return 1 ;; esac
+  [ "${#generation_of_name}" -le 9 ] && [ "$2" = "$((ID_BASE + generation_of_name % ID_SPAN))" ]
+}
+
+uid_holder() { dscl . -list /Users UniqueID 2>/dev/null | awk -v id="$1" '$2 == id { print $1; exit }'; }
+
+fork_target_refusal() {
+  target_user=$1 target_uid=$2
+  if ! reserved_box_identity "$target_user" "$target_uid"; then
+    echo "A fork's user is a box user the helper reserves, $PREFIX<n> with UID $ID_BASE plus n modulo $ID_SPAN, and $target_user with UID $target_uid is not."
+  elif dscl . -read "/Users/$target_user" >/dev/null 2>&1 || [ -e "$ROOT/Users/$target_user" ] || [ -L "$ROOT/Users/$target_user" ]; then
+    echo "User $target_user is on the Mac already."
+  elif [ -n "$(uid_holder "$target_uid")" ]; then
+    echo "UID $target_uid belongs to $(uid_holder "$target_uid") already."
+  elif [ "$(console)" = "$target_user" ]; then
+    echo "$target_user is at the Mac's console."
+  fi
+}
+
+refuse_a_fork_target() {
+  refusal=$(fork_target_refusal "$1" "$2")
+  [ -z "$refusal" ] || quit "$EXIT_REFUSED" "$refusal So the helper makes no fork, and changed nothing."
 }
 
 make_fork() {
   id=$1 user=$2 uid=$3
   fork_source "$id"
-  box_uid "$uid" || quit 2 "A fork's user takes a UID from $ID_BASE to $((ID_BASE + ID_SPAN - 1))."
+  refuse_a_fork_target "$user" "$uid"
   ready_user "$user" "$uid" || fail "Could not make the fork's user, $user."
   fork_home_dir=$ROOT/Users/$user
   staged=$(store_of "$source")/.fork-$user
@@ -951,12 +1039,53 @@ absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
 owned_by() { [ "$(stat -f %u "$1" 2>/dev/null)" = "$2" ]; }
 has_acl() { acl_entries "$1" | grep -qxF "$2"; }
 running_not_stopped() { state=$(ps -o stat= -p "$1" 2>/dev/null) && case $state in T*) false ;; *) true ;; esac; }
+stopped() { state=$(ps -o stat= -p "$1" 2>/dev/null) && case $state in T*) true ;; *) false ;; esac; }
 no_process_of() { ! pgrep -u "$1" >/dev/null 2>&1; }
 no_user() { ! dscl . -read "/Users/$1" >/dev/null 2>&1 && absent "$ROOT/Users/$1" && absent "$STATE/passwords/$1"; }
 nothing_owned_by() { [ -z "$(find "$DATA" -xdev -uid "$1" 2>/dev/null | head -n 1)" ]; }
 same_bytes() { cmp -s "$1" "$2"; }
 
 as_probe() { sudo -n -H -u "$PROOF_USER" -- "$@"; }
+
+eventually() {
+  tries=0
+  until "$@"; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 40 ] || return 1
+    sleep 0.25
+  done
+}
+
+command_of_sudo() {
+  child=$(process_table | awk -v p="$1" '$2 == p { print $1; exit }')
+  printf '%s\n' "${child:-$1}"
+}
+
+proof_clone_script() {
+  script=$1 before=$2
+  printf '#!/bin/sh\n%s\nif [ -x %s ]; then exec %s "$1" "$2"; fi\nexec ditto --clone "$1" "$2"\n' "$before" "'$CLONE_TREE'" "'$CLONE_TREE'" >"$script"
+  chmod 700 "$script"
+}
+
+take_by_way_of() {
+  real_clone=$CLONE_TREE
+  CLONE_TREE=$1
+  shift
+  take_home "$@"
+  code=$?
+  CLONE_TREE=$real_clone
+  return "$code"
+}
+
+next_command_resumes() {
+  printf 'install=%s\n' "$install" | sh "$0" snapshot list >/dev/null 2>&1
+  absent "$(paused_marker "$PROOF_USER")"
+}
+
+refused_fork() {
+  (make_fork snproof000001 "$1" "$2") >/dev/null 2>"$STATE/proof.err"
+  [ $? = "$EXIT_REFUSED" ]
+}
 
 proof_keychain() { printf '%s\n' "$ROOT/Users/$PROOF_USER/Library/Keychains/proof.keychain-db"; }
 
@@ -987,7 +1116,8 @@ plant_proof_home() {
 
 end_proof() {
   code=$1
-  [ -z "${proof_pid:-}" ] || kill "$proof_pid" 2>/dev/null
+  [ -z "${proof_pids:-}" ] || { kill -KILL $proof_pids; wait $proof_pids; } 2>/dev/null
+  rm -f "$STATE/proof-clone" "$STATE/proof-clone-waits" "$STATE/proof-cloning" "$STATE/proof.err"
   for each in "$PROOF_FORK_USER:$PROOF_FORK_UID" "$PROOF_USER:$PROOF_UID"; do
     name=${each%%:*} id=${each#*:}
     (remove_user "$name" "$id") >/dev/null 2>&1
@@ -1021,7 +1151,7 @@ prove_home_snapshots() {
   mkdir -p "$STATE"
   lock 60
   install=bb-box-proof box=proof
-  proof_failed=no proof_pid=''
+  proof_failed=no proof_pids=''
   proof_started=$(now_ms)
   store_existed=no
   [ ! -d "$HOME_SNAPSHOTS" ] || store_existed=yes
@@ -1041,15 +1171,48 @@ prove_home_snapshots() {
   proof_check "the box's console user is not touched: $(console) at the console" true
   sudo -n -H -u "$PROOF_USER" -- /bin/sleep 600 </dev/null >/dev/null 2>&1 &
   proof_pid=$!
+  sudo -n -H -u "$PROOF_USER" -- /bin/sleep 600 </dev/null >/dev/null 2>&1 &
+  proof_held_sudo=$!
+  /bin/sleep 600 </dev/null >/dev/null 2>&1 &
+  proof_stranger=$!
+  /bin/sleep 600 </dev/null >/dev/null 2>&1 &
+  proof_late_stranger=$!
+  proof_pids="$proof_pid $proof_held_sudo $proof_stranger $proof_late_stranger"
   sleep 1
+  proof_command=$(command_of_sudo "$proof_pid")
+  proof_held=$(command_of_sudo "$proof_held_sudo")
+  kill -STOP "$proof_held"
   desktop_acl=$(acl_entries "$probe_home/Desktop" | head -n 1)
 
+  proof_clone_script "$STATE/proof-clone" "kill -STOP $proof_stranger"
   began=$(now_ms)
-  take_home "$PROOF_USER" "$PROOF_UID" snproof000001 >"$STATE/proof.out" || fail "The take failed: $(cat "$STATE/proof.out")"
+  take_by_way_of "$STATE/proof-clone" "$PROOF_USER" "$PROOF_UID" snproof000001 >"$STATE/proof.out" || fail "The take failed: $(cat "$STATE/proof.out")"
   echo "take: $(( $(now_ms) - began )) ms in all, the user's processes paused $(field "$STATE/proof.out" paused_ms) ms"
   proof_check "the take kept the home in the snapshot store" test -d "$(store_of "$PROOF_USER")/snproof000001/home"
-  proof_check "the user's process runs again after the take" running_not_stopped "$proof_pid"
+  proof_check "the user's process runs again after the take" running_not_stopped "$proof_command"
+  proof_check "the root sudo above the user's process runs again after the take" eventually running_not_stopped "$proof_pid"
+  proof_check "the user's process that someone else stopped before the take stays stopped" stopped "$proof_held"
+  proof_check "a root process that someone else stopped during the take stays stopped" stopped "$proof_stranger"
+  proof_check "the take left no pause record" absent "$(paused_marker "$PROOF_USER")"
   cp "$(proof_keychain)" "$STATE/proof.keychain-at-take"
+
+  proof_clone_script "$STATE/proof-clone-waits" "kill -STOP $proof_late_stranger; echo \$\$ >'$STATE/proof-cloning'; exec /bin/sleep 120"
+  rm -f "$STATE/proof-cloning"
+  (take_by_way_of "$STATE/proof-clone-waits" "$PROOF_USER" "$PROOF_UID" snproofkilled >/dev/null 2>&1) &
+  proof_taker=$!
+  eventually test -s "$STATE/proof-cloning" || fail "The take that the proof kills did not reach its clone."
+  proof_check "a take paused the user's process" eventually stopped "$proof_command"
+  proof_check "the root sudo above it stopped too" eventually stopped "$proof_pid"
+  kill -KILL "$proof_taker" "$(cat "$STATE/proof-cloning")" 2>/dev/null
+  wait "$proof_taker" 2>/dev/null
+  proof_check "the helper killed during the pause left its pause record" test -s "$(paused_marker "$PROOF_USER")"
+  proof_check "the next helper command resumes the killed take's pause" eventually next_command_resumes
+  proof_check "the user's process runs again after the killed take" running_not_stopped "$proof_command"
+  proof_check "the root sudo above it runs again after the killed take" eventually running_not_stopped "$proof_pid"
+  proof_check "the user's process that someone else stopped stays stopped after the recovery" stopped "$proof_held"
+  proof_check "a root process that someone else stopped during the killed take's pause stays stopped" stopped "$proof_late_stranger"
+  proof_check "a root process stopped during the first take stays stopped" stopped "$proof_stranger"
+  remove_tree "$(store_of "$PROOF_USER")/snproofkilled.partial"
 
   echo after >"$probe_home/proof/file.txt"
   echo later >"$probe_home/proof/new.txt"
@@ -1090,6 +1253,13 @@ prove_home_snapshots() {
     said=$( (fork_home snproof000001 "$PROOF_FORK_USER" "$PROOF_FORK_UID") 2>&1 >/dev/null)
     proof_check "a fork is refused while another user shares the Mac: $said" test -n "$said"
   fi
+  proof_check "a fork aimed at the source's own user, $PROOF_USER, is refused" refused_fork "$PROOF_USER" "$PROOF_UID"
+  echo "note: the helper said: $(cat "$STATE/proof.err")"
+  proof_check "the refused fork left $PROOF_USER with UID $PROOF_UID" test "$(attribute "$PROOF_USER" UniqueID)" = "$PROOF_UID"
+  proof_check "the refused fork left $PROOF_USER's home and files" file_says "$probe_home/proof/file.txt" after
+  proof_check "a fork aimed at a user the helper does not reserve, $PROOF_STRANGER, is refused" refused_fork "$PROOF_STRANGER" "$PROOF_FORK_UID"
+  echo "note: the helper said: $(cat "$STATE/proof.err")"
+  proof_check "the refused fork made no user $PROOF_STRANGER" no_user "$PROOF_STRANGER"
   began=$(now_ms)
   make_fork snproof000001 "$PROOF_FORK_USER" "$PROOF_FORK_UID" >"$STATE/proof.out" || fail "The fork failed: $(cat "$STATE/proof.out")"
   echo "fork: $(( $(now_ms) - began )) ms"
@@ -1099,6 +1269,10 @@ prove_home_snapshots() {
   proof_check "the fork keeps nothing of BB's machine, access file, launch agent or keychains: $(field "$STATE/proof.out" left)" test -z "$(field "$STATE/proof.out" left)"
   proof_check "the fork has no plist naming the source's home" absent "$fork/Library/Preferences/com.apple.proof-path.plist"
   proof_check "the source's home is untouched by the fork" owned_by "$probe_home/proof/file.txt" "$PROOF_UID"
+  proof_check "a fork aimed at a user on the Mac already, $PROOF_FORK_USER, is refused" refused_fork "$PROOF_FORK_USER" "$PROOF_FORK_UID"
+  echo "note: the helper said: $(cat "$STATE/proof.err")"
+  proof_check "the refused fork left $PROOF_FORK_USER with UID $PROOF_FORK_UID" test "$(attribute "$PROOF_FORK_USER" UniqueID)" = "$PROOF_FORK_UID"
+  proof_check "the refused fork left $PROOF_FORK_USER's files as they were" owned_by "$fork/proof/file.txt" "$PROOF_FORK_UID"
 
   for id in snproof000001 snproofundo01; do
     delete_snapshot "$id" >/dev/null
@@ -1120,7 +1294,6 @@ snapshot() {
       read_input
       lock 60
       lent_user "$1"
-      resume_abandoned_pauses
       exit_cleanly
       take_home "$user" "$uid" "$2"
       ;;
@@ -1166,7 +1339,6 @@ snapshot() {
 status() {
   [ $# -eq 0 ] || { [ $# -eq 1 ] && { [ "$1" = grants ] || [ "$1" = xcode ]; }; } || quit 2 "usage: machine status [grants | xcode]"
   current=$(generation)
-  resume_abandoned_pauses
   echo "helper=$VERSION"
   echo "arch=$(uname -m)"
   echo "boot=$(boot_id)"
@@ -2145,6 +2317,7 @@ init() {
 
 [ "$(id -u)" = 0 ] || quit 2 "Run it as root, through sudo."
 command -v perl >/dev/null 2>&1 || quit 1 "perl is missing, and the helper locks with it."
+resume_abandoned_pauses
 verb=${1:-}
 [ $# -eq 0 ] || shift
 case $verb in

@@ -295,7 +295,10 @@ case $tool in
     done
     command=$1
     shift
-    if [ -n "$as" ] && flag sudo-processes; then echo "$$ $(uid_of "$as") ${command##*/} 1" >>"$F/processes"; fi
+    if [ -n "$as" ] && flag sudo-processes; then
+      echo "$$ $(uid_of "$as") ${command##*/} 1" >>"$F/processes"
+      echo "$$ $(uid_of "$as")" >>"$F/process-uids"
+    fi
     if [ -x "$FAKE_MAC_BIN/${command##*/}" ]; then exec "$FAKE_MAC_BIN/${command##*/}" "$@"; fi
     if [ -x "$R$command" ]; then exec "$R$command" "$@"; fi
     exec "$command" "$@"
@@ -491,14 +494,15 @@ case $tool in
         ;;
     esac
     ;;
+  ps)
+    if [ "$*" = "-A -o pid=,ppid=,uid=,stat=,lstart=" ]; then
+      touch "$F/process-uids"
+      /bin/ps "$@" | awk 'FILENAME == ARGV[1] { box[$1] = $2; next } ($1 in box) { $3 = box[$1] } { print }' "$F/process-uids" -
+      exit 0
+    fi
+    exec /bin/ps "$@"
+    ;;
   pkill)
-    case ${1:-} in
-      -STOP | -CONT)
-        echo "${1#-} $3" >>"$F/signals"
-        if [ "$1" = -STOP ] && [ -s "$F/flags/parent-stops-too" ]; then kill -STOP "$(cat "$F/flags/parent-stops-too")"; fi
-        exit 0
-        ;;
-    esac
     if [ "${4:-}" = -x ]; then
       edit "$F/processes" awk -v u="$(uid_of "$3")" -v n="$5" '$2 == u && $3 == n { $4 -= 1; if ($4 <= 0) next } { print }'
       exit 0
@@ -552,6 +556,11 @@ case $tool in
   ditto)
     [ "$1" != --clone ] || shift
     flag no-clone && { echo "ditto: $2: Operation not supported" >&2; exit 1; }
+    if flag clone-records-states; then
+      while read -r pid uid; do echo "$pid $(/bin/ps -o stat= -p "$pid")"; done <"$F/process-uids" >"$F/states-at-clone"
+    fi
+    if [ -s "$F/flags/stop-during-clone" ]; then kill -STOP $(cat "$F/flags/stop-during-clone"); fi
+    if [ -s "$F/flags/clone-waits" ]; then : >"$F/cloning" && sleep "$(cat "$F/flags/clone-waits")"; fi
     /bin/cp -R "$1" "$2" || exit 1
     from=$(readlink -f "$1") to=$(readlink -f "$2")
     awk -v f="$from" -v t="$to" '{ p = substr($0, index($0, " ") + 1); if (p == f || index(p, f "/") == 1) print $1 " " t substr(p, length(f) + 1) }' "$F/owners" >>"$F/owners.copied"

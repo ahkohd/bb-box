@@ -17,7 +17,7 @@ const TOOL_NAMES = [
   "pkill", "date", "shutdown", "node", "npm", "git", "gh", "brew", "pmset", "softwareupdate", "mdutil", "xcode-select",
   "xcodebuild", "xcrun", "DevToolsSecurity", "open", "scutil", "ipconfig", "curl", "shasum", "osascript",
   "dsmemberutil", "csrutil", "lsof", "plutil", "codesign", "csreq", "security", "clang", "swiftc", "installer", "killall",
-  "hdiutil", "ditto", "spctl", "xxd", "diskutil", "cp", "mv", "ls", "chmod",
+  "hdiutil", "ditto", "spctl", "xxd", "diskutil", "cp", "mv", "ls", "chmod", "ps",
 ];
 /** Where the Data volume's folders appear at the top of a Mac's disk. */
 const FIRMLINKS = ["Users", "private", "Library", "Applications", "opt", "usr"];
@@ -38,7 +38,7 @@ export interface FakeMacos {
   /** Runs the helper, as root, with `input` on stdin. */
   helper(args: readonly string[], input?: string): Run;
   /** Starts the helper, as root, as the leader of its own process group, without waiting for it. */
-  start(args: readonly string[]): ChildProcess;
+  start(args: readonly string[], input?: string): ChildProcess;
   tool(name: string, args: readonly string[]): Run;
   /** Runs setup-mac.sh, as root through sudo by `sudoUser`. */
   setup(args: readonly string[], sudoUser?: string): Run;
@@ -136,7 +136,11 @@ export function fakeMacos(options: { template?: boolean; settings?: Readonly<Rec
     data,
     state,
     helper: (args, input = "") => run(join(pool, "machine-mac.sh"), args, input),
-    start: (args) => spawn("/bin/sh", [join(pool, "machine-mac.sh"), ...args], { env, stdio: "ignore", detached: true }),
+    start: (args, input) => {
+      const child = spawn("/bin/sh", [join(pool, "machine-mac.sh"), ...args], { env, stdio: [input === undefined ? "ignore" : "pipe", "ignore", "ignore"], detached: true });
+      child.stdin?.end(input);
+      return child;
+    },
     tool: (name, args) => {
       const result = spawnSync(join(bin, name), args, { encoding: "utf8", env, timeout: 60_000 });
       return { status: result.status, stdout: result.stdout, stderr: result.stderr };

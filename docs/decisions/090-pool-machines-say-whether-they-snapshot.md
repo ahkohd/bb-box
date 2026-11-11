@@ -449,10 +449,22 @@ section 2, this is what stands:
   clone moves in, and the old home is deleted. A home moved aside with no
   home in its place means the clone was complete, so asking again moves it
   in. A staging folder alone is discarded and made again.
-- **One point in time by SIGSTOP.** A take marks the pause with the
-  helper's process ID, and any later helper command, `status` included,
-  resumes a user whose pauser has gone, so a helper killed mid-take does
-  not leave the box stopped.
+- **One point in time by SIGSTOP, undone exactly.** Before a take stops
+  anything, it writes a pause record in the user's store. The record names
+  each of the box user's running processes, and each running process above
+  them that is not the box user's, such as a root `sudo`, by process ID and
+  start time. The take then stops only the box user's processes in the
+  record, in up to 5 rounds to catch processes started meanwhile. It
+  resumes only what the record names: the box user's processes, and each
+  process above them that is stopped when the pause ends, again 0.2 s
+  later, as `sudo` stops itself when its command stops. A process stopped
+  before the take, or by anyone else, stays stopped, and a process ID now
+  held by a process with another start time is left alone. The take holds a
+  lock of its own for the pause. At the start of every helper command, a
+  record whose take no longer holds that lock is resumed in the same way and
+  then removed, so a helper killed mid-take does not leave the box, or a
+  `sudo` above it, stopped. A take ended by a signal resumes its record
+  before it exits.
 - **ACLs** are kept as `find -acl` and `ls -le` read them, and put back
   with `chmod +a`, or `chmod +ai` for an inherited entry, which
   `chmod -E` refuses.
@@ -473,7 +485,12 @@ section 2, this is what stands:
   would change the helper's one-owner model; that is a later unit. The
   helper's `fork <snapshot> <user> <uid>` is built and proved: it refuses
   while another user shares the Mac, and resets the fork's home as the
-  spike lists, plists naming the source's home included.
+  spike lists, plists naming the source's home included. Before any
+  change, it refuses a user that is not one the helper reserves for box
+  users (`bbx-<n>` with UID 70000 plus n modulo 10000, or the proof's
+  `bbbox-probe-fork`), a user, home or UID already on the Mac, and the
+  user at the console. It never repairs or replaces an account to make a
+  fork.
 - **The proof** is `machine snapshot proof`, which runs only while no box
   holds the Mac, on scratch users `bbbox-probe` (UID 79999) and
   `bbbox-probe-fork` (79998), outside the names the reset and its checks
