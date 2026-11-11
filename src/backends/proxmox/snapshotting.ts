@@ -37,6 +37,28 @@ const CLONE_PRIVILEGE = "VM.Clone";
 const LXC_FORK_SAFE_FROM = 7;
 const QEMU_FORK_SAFE_FROM = 5;
 const TASK_TYPES: Readonly<Record<TaskKind, string>> = { take: "snapshot", delete: "delsnapshot", rollback: "rollback", copy: "clone" };
+const PROXMOX_UPID = /^UPID:(?<node>[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?):[0-9A-Fa-f]{8}:(?<workerStart>[0-9A-Fa-f]{8,9}):[0-9A-Fa-f]{8}:[^:\s/]+:[^:\s/]*:[^:\s/]+:$/;
+const LINUX_CLOCK_TICKS_PER_SECOND = 100;
+
+interface TaskWorker {
+  readonly node: string;
+  readonly startTicksSinceBoot: number;
+}
+
+function workerOf(upid: string): TaskWorker | null {
+  const fields = PROXMOX_UPID.exec(upid)?.groups;
+  if (!fields?.node || !fields.workerStart) return null;
+  const ticks = Number.parseInt(fields.workerStart, 16);
+  return ticks > 0 ? { node: fields.node, startTicksSinceBoot: ticks } : null;
+}
+
+function bootEndedSinceItStarted(worker: TaskWorker, uptimeSeconds: number): boolean {
+  const mostTicksSinceBoot = (uptimeSeconds + 1) * LINUX_CLOCK_TICKS_PER_SECOND;
+  return mostTicksSinceBoot <= worker.startTicksSinceBoot;
+}
+
+const ROLLBACK_LOCK = "rollback";
+const LVM_THIN = "lvmthin";
 const LOCKS_A_TASK_LEAVES = new Set(["snapshot", "snapshot-delete", "rollback", "backup", "clone", "create", "disk", "migrate", "copy"]);
 
 const CLONE_WAIT_LEAST_MS = 180_000;
@@ -160,6 +182,27 @@ function percent(used: number, total: number): number {
 
 export function storageOfVolume(value: unknown): string | null {
   return /^([A-Za-z][A-Za-z0-9_.-]*):/.exec(String(value ?? ""))?.[1] ?? null;
+}
+
+function userOfTask(upid: string): string {
+  return (upid.split(":")[7] ?? "").split("!")[0] ?? "";
+}
+
+function refusedBeforeItBegan(error: ProxmoxError): boolean {
+  return (error.status >= 400 && error.status < 500) || error.locked;
+}
+
+async function askToRollBack(api: Proxmox, vmid: number, name: string, signal?: AbortSignal): Promise<string> {
+  try {
+    return await api.startRollback(vmid, name, signal);
+  } catch (error) {
+    if (!(error instanceof ProxmoxError) || refusedBeforeItBegan(error)) throw error;
+    throw new Error(`Proxmox gave no clear answer to the rollback, so ${PRODUCT} cannot tell whether it began: ${taskWords(error)}`, { cause: error });
+  }
+}
+
+function volumeNameOf(value: unknown): string | null {
+  return /^[A-Za-z][A-Za-z0-9_.-]*:(?:[A-Za-z0-9_.+-]+\/)?([A-Za-z0-9_.+-]+)(?:,|$)/.exec(String(value ?? ""))?.[1] ?? null;
 }
 
 function memoryMiBOf(config: Record<string, unknown>): number {
@@ -329,7 +372,10 @@ export class ProxmoxSnapshotting {
         reasons.push(words.running);
         lockWhy = words.running;
         busy = words.running;
-      } else if (words.fix) locked = { lock, fix: words.fix };
+      } else if (words.fix) {
+        const remake = lock === ROLLBACK_LOCK && target ? await this.#remakeAfterACutRollback(api, config, snapshotName(target.id), signal) : null;
+        locked = { lock, fix: remake ? `${remake} ${words.fix}` : words.fix };
+      }
       else {
         reasons.push(`Proxmox has guest ${vmid} locked (${lock}), so ${PRODUCT} takes no snapshot of it.`);
         lockWhy = `Proxmox has guest ${vmid} locked (${lock}).`;
@@ -578,10 +624,11 @@ export class ProxmoxSnapshotting {
       const lock = typeof config.lock === "string" && config.lock ? config.lock : null;
       if (lock) {
         const words = await this.#lockWords(api, vmid, lock, signal);
-        throw new SnapshotFailed(words.running ?? `Proxmox has guest ${vmid} locked (${lock}), so it cannot restore the snapshot.${words.fix ? ` ${words.fix}` : ""}`);
+        const remake = words.fix && lock === ROLLBACK_LOCK ? await this.#remakeAfterACutRollback(api, config, name, signal) : null;
+        throw new SnapshotFailed(words.running ?? `Proxmox has guest ${vmid} locked (${lock}), so it cannot restore the snapshot.${remake ? ` ${remake}` : ""}${words.fix ? ` ${words.fix}` : ""}`);
       }
       await hooks.submitting();
-      upid = await api.startRollback(vmid, name, signal);
+      upid = await askToRollBack(api, vmid, name, signal);
     } catch (error) {
       if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(taskWords(error));
       throw error;
@@ -589,6 +636,22 @@ export class ProxmoxSnapshotting {
     await hooks.task({ ref: upid, host: api.node });
     const failure = await this.#waited(api, upid, signal);
     if (failure) throw new RestoreChanged(`Proxmox's rollback task failed: ${failure.replace(/\.$/, "")}.`);
+  }
+
+  async #remakeAfterACutRollback(api: Proxmox, config: Record<string, unknown>, snapshot: string, signal?: AbortSignal): Promise<string | null> {
+    const disk = this.#guests.rootDisk(config);
+    const value = disk ? config[disk] : null;
+    const storageName = storageOfVolume(value);
+    const volume = volumeNameOf(value);
+    if (!storageName || !volume) return null;
+    const configs = await api.storageConfigs(signal).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return null;
+    });
+    const storage = configs?.get(storageName);
+    if (storage?.type !== LVM_THIN || !storage.vgname) return null;
+    const group = storage.vgname;
+    return `A rollback cut short on LVM-thin can leave the guest with no volume, and Proxmox cannot roll it back again then. If \`lvs ${group}/${volume}\` on ${api.node} finds none, first make it again from the snapshot: \`lvcreate -kn -n ${volume} -s ${group}/snap_${volume}_${snapshot}\`.`;
   }
 
   async outsideRollbacks(since: number, signal?: AbortSignal): Promise<OutsideRollback[]> {
@@ -601,7 +664,8 @@ export class ProxmoxSnapshotting {
       if (!guest) continue;
       const ref = { ref: task.upid, host: api.node };
       const outcome: TaskOutcome = !task.ended || task.status === null ? await this.task(ref, signal) : task.status === "OK" || /^WARNINGS: \d+$/.test(task.status) ? { state: "ok" } : { state: "failed", words: task.status };
-      found.push({ task: ref, guest: guest.ref, user: task.user, startedAt: task.start * 1000, outcome });
+      const ours = this.#guests.tokenUser === null ? {} : { ours: userOfTask(task.upid) === this.#guests.tokenUser };
+      found.push({ task: ref, guest: guest.ref, user: task.user, ...ours, startedAt: task.start * 1000, outcome });
     }
     return found.sort((a, b) => a.startedAt - b.startedAt);
   }
@@ -677,11 +741,27 @@ export class ProxmoxSnapshotting {
 
   async task(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
     const api = await this.#guests.client();
+    const worker = workerOf(task.ref);
     const status = await api.taskStatus(task.ref, signal);
-    if (!status) return { state: "missing", words: `Proxmox has no task ${task.ref}.` };
+    if (!status) {
+      const restarted = await this.#nodeRestartedSince(api, worker, signal);
+      if (!restarted) return { state: "missing", words: `Proxmox has no task ${task.ref}.` };
+      return { state: "lost", words: `${restarted} restarted after Proxmox began task ${task.ref}, and kept no record of it, so it is not running.` };
+    }
     if (status.running) return { state: "running" };
     const exit = status.exit ?? "";
-    return exit === "OK" || /^WARNINGS: \d+$/.test(exit) ? { state: "ok" } : { state: "failed", words: exit || "the task failed" };
+    if (exit === "OK" || /^WARNINGS: \d+$/.test(exit)) return { state: "ok" };
+    const words = exit || "the task failed";
+    return (await this.#nodeRestartedSince(api, worker, signal)) ? { state: "failed", words, nodeRestarted: true } : { state: "failed", words };
+  }
+
+  async #nodeRestartedSince(api: Proxmox, worker: TaskWorker | null, signal?: AbortSignal): Promise<string | null> {
+    if (!worker) return null;
+    const uptime = await api.uptimeSeconds(worker.node, signal).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return null;
+    });
+    return uptime !== null && bootEndedSinceItStarted(worker, uptime) ? worker.node : null;
   }
 
   async findTasks(guest: Guest, operation: TaskKind, since: number, signal?: AbortSignal): Promise<TaskRef[]> {
@@ -691,7 +771,7 @@ export class ProxmoxSnapshotting {
     const from = Math.floor(since / 1000) - CLOCK_SLACK_S;
     const ours = this.#guests.tokenUser;
     return (await api.tasksSince(vmid, type, from, signal))
-      .filter((task) => task.start >= from && (ours === null || (task.upid.split(":")[7] ?? "").split("!")[0] === ours))
+      .filter((task) => task.start >= from && (ours === null || userOfTask(task.upid) === ours))
       .sort((a, b) => a.start - b.start)
       .map((task) => ({ ref: task.upid, host: api.node }));
   }

@@ -313,7 +313,7 @@ export class FakeSnapshots {
       if (!this.tasksReadable) throw new Error("cannot reach the provider's task list: timed out");
       const own = [...this.started.entries()]
         .filter(([, task]) => task.operation === "rollback")
-        .map(([key, task]): OutsideRollback => ({ task: { ref: task.ref, host: null }, guest: key.split("|")[0]!, user: "bb-box@pve!plugin", startedAt: task.at, outcome: this.tasks.get(task.ref) ?? { state: "missing", words: "" } }));
+        .map(([key, task]): OutsideRollback => ({ task: { ref: task.ref, host: null }, guest: key.split("|")[0]!, user: "bb-box@pve!plugin", ours: true, startedAt: task.at, outcome: this.tasks.get(task.ref) ?? { state: "missing", words: "" } }));
       return [...own, ...this.outside].filter((each) => each.startedAt >= since).sort((a, b) => a.startedAt - b.startedAt);
     };
     target.guestIdentity = async (guest: Guest): Promise<GuestIdentity> => ({ macs: { net0: `mac-of-${guest.data?.box ?? guest.ref}` }, smbios: null });

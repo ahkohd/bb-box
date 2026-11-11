@@ -313,6 +313,22 @@ BB Box starts an Android model cold when its unsaved marker is present. A snapsh
   LXC box restores only its newest snapshot, and its undo is a full copy
   of the stopped box. Restoring that undo moves the box to a new guest
   with the same identity, and its other snapshots then fork only.
+- A restore cut short by a Proxmox node's restart, or one whose rollback
+  BB Box cannot be sure of, fails saying the box's disk may be
+  part-restored. BB Box does not roll it back again on its own, and leaves
+  the box stopped, stopping it first if its node started it. Tell the
+  person, and do not start the box. Restoring it to a snapshot again, or
+  releasing it, is their call. A new restore first takes a fresh undo, of
+  the part-restored disk; the failed restore's undo holds the disk as it
+  was before.
+- If Proxmox left the guest locked, a new restore is refused with the
+  commands to run on the node, such as `pct unlock 214`, and on LVM-thin
+  how to make the box's volume again first. Only root on the node can run
+  them: tell the person.
+- A restore stays open, with the box held, while BB Box cannot stop the
+  box or read whether it runs. BB Box tries to stop it at each sweep,
+  never rolls it back then, and ends the restore failed only once the box
+  reads as stopped. The person can release the box.
 - `box_snapshots` lists what you may see of a box's snapshots. Delete your
   own with `box_snapshot_delete` once they are no longer needed. A box holds 5 unless the person set otherwise; when you take one
   past that, BB Box deletes the oldest one an agent of this thread took.

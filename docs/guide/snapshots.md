@@ -65,7 +65,7 @@ Keep is off on both, and says why: a kept snapshot could not outlive its box the
 
 - **Restores of a box threads run on stay off.** BB cannot yet hold every turn on a box: its "Send now" can start a turn while BB Box stops the box to restore it. Until BB can, move the threads off the box, or archive them, before you restore it. You and agents can restore every other box. See [restores of a box threads run on stay off](#restores-of-a-box-threads-run-on-stay-off).
 - **A copy made outside BB Box can keep its source's identity.** BB Box's own forks always give it up. On Docker, microsandbox and boat.dev, a box's identity is a value BB Box sets, and a copy made with the provider's own tools, such as a fork in boat.dev's dashboard, gets its source's value. So it does not reset, and comes up as its source: the same BB machine, tailnet node and thread's access. Copy a box only through BB Box.
-- **The identity reset across a Proxmox node's restart is unproved.** Held copies and earlier guests were checked not to start by themselves, and an earlier guest started by hand reset before its network. But no node was restarted in the checks, so it is not known what they do when one is. Restart a node with a held copy on it, and check that the copy stays stopped, before you rely on Keep, or on a restore's held-copy undo on ZFS, there.
+- **A Proxmox node that loses power can lose a restore's undo.** Proxmox writes changes to its guests' settings to disk in the background, so a power cut can lose recent ones, and no wait is known to make them safe. In a test it lost an undo made 41 s before the power went. BB Box shows such an undo as ready until a later sweep finds it gone, and there is no proved way to bring it back. After a power cut during or soon after a restore, check the box's undo on its Snapshots card before you rely on it. A graceful reboot lost nothing in the tests. See [a node's restart during a restore](#a-nodes-restart-during-a-restore).
 - **A Linux VM on Proxmox QEMU does not restore on ZFS yet**, until that is checked on a VM there. Proxmox LXC boxes restore on ZFS. Snapshots of VMs on ZFS are taken, deleted, forked and kept as elsewhere.
 - **Hetzner Cloud and Namespace keep no snapshot past a release, and Namespace does not fork yet.** A Hetzner Cloud host is deleted when it is idle, and a Namespace machine at its box's release or deadline, so a kept snapshot would have to move somewhere else first. Carrying a snapshot to another engine, for Namespace forks and Hetzner forks to another host, comes first, then Keep on each.
 - **An Android device's own snapshots are planned for later**: the emulator's snapshot of the device alone. Until then, Android boxes on boat.dev and Proxmox QEMU take snapshots of the whole VM.
@@ -361,9 +361,42 @@ BB Box does not restore a Linux VM on Proxmox QEMU on ZFS yet, until that is che
 
 BB Box reads Proxmox's task list at each sweep. A rollback of one of its boxes that BB Box did not make, such as `pct rollback` on the host, is logged in the box's log by how it ended: done, failed, or still running, which it looks at again at the next sweep. After one that ended well, BB Box reads the box's size back, writes its labels again, and when it runs, its access file, and starts its BB machine again. A change in a box's snapshots without such a task is not taken for a restore.
 
+A rollback whose request BB Box sent but never heard back about is BB Box's own, though Proxmox may list its task only later. So BB Box does not log a rollback of that box by its own Proxmox user that began between that request and the end of its restore, with a minute's slack either side. One by another user, such as root, is still logged.
+
 ### If BB Box restarts during a restore
 
 Each step is recorded before it runs, with Proxmox's task once it begins. When BB Box starts again, it finishes the restore from the step it reached, or puts the box back as it was if it never got past the stop. When it cannot tell how a step ended, such as a rollback whose task it cannot read or that still runs, it keeps the snapshots the restore uses, leaves the box as the restore left it, refuses to start it, and checks again at each sweep. `bb box sweep` checks at once, and `bb box doctor` names such a restore.
+
+### A node's restart during a restore
+
+A Proxmox node that restarts part way through a restore starts its boxes again at its boot. When BB Box goes on:
+
+- **Before the rollback**: a box the node started again is left as it is. BB Box restores nothing, takes no undo, and says the box started again before it was restored.
+- **During the rollback**: BB Box does not roll the box back again on its own. It stops the box if the node started it, and the restore fails with the box stopped. BB Box says its disk may be part-restored, and keeps the restore's undo, which holds the disk as it was before.
+- **After the rollback**: BB Box finishes the restore, and the box has the snapshot's disk. After a reboot its undo is there too. After a power cut the undo can be lost, as above.
+
+BB Box acts so whenever it cannot be sure whether a rollback began or what the disk holds: the node shows it restarted after the rollback's task began, Proxmox no longer has the task, or BB Box never heard back and cannot find a task. The one exception is as for a restart of BB Box alone: when its first request for the rollback had no answer and BB Box finds no task for it, it asks once more, unless the box is running. An HTTP error with no clear answer, such as a 502 from a proxy, a timeout or a lost connection, is never taken as a refusal.
+
+To use a box left so, restore it to a snapshot again, or release it. A new restore first takes a fresh undo, of the part-restored disk, so restore to the failed restore's undo to get the disk as it was before. Do not start the box until then. If Proxmox left the guest locked, the new restore is refused, with the command to run on the node, such as `pct unlock 214`.
+
+If BB Box cannot stop the box, or cannot read whether it runs, the restore stays open so that nothing starts the box, and BB Box tries to stop it again at each sweep, even while it cannot list the backend's snapshots. It never rolls back then, and never finishes the restore, whatever Proxmox later says of the rollback's task. It ends the restore only once it reads the box as stopped. You can release the box at any time.
+
+BB Box knows the node restarted only from the node's own evidence: its uptime is less than it was when the rollback's task began. Without it, a rollback whose task failed leaves the box stopped, as for a restart of BB Box alone.
+
+Two cases need more from root on the node:
+
+- On LVM-thin, Proxmox rolls back by deleting the box's volume and making it again from the snapshot. A restart between the two leaves the box with no volume, and Proxmox's rollback cannot run again. BB Box's notice for a guest locked so gives the commands with the box's own names. Check for the volume, make it again from the snapshot if it is gone, then unlock the guest. For guest 214 on volume group `pve` and the snapshot `bbsn7kq2m6xa4pdq`:
+
+  ```sh
+  lvs pve/vm-214-disk-0
+  lvcreate -kn -n vm-214-disk-0 -s pve/snap_vm-214-disk-0_bbsn7kq2m6xa4pdq
+  pct unlock 214
+  ```
+
+  Then restore the box again. The window is a few milliseconds.
+- A full copy cut short by a power cut, such as a held copy on ZFS, can leave its volume with no guest, which BB Box's token cannot see or delete. `zfs list` on the node shows it, such as `rpool/data/subvol-215-disk-0` with no guest 215. Deleting it does not bring an undo back. Once you are sure no guest uses it, root can delete it with `zfs destroy`.
+
+These were checked in part, on a node nested in a VM, rebooted and reset at steps of a restore on LVM-thin and on ZFS, with root's steps above where they were needed. A take on ZFS cut short was not run. See [097's results](../decisions/097-results.md).
 
 ## Keeping a snapshot
 

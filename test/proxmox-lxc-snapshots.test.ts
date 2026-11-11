@@ -17,12 +17,12 @@ after(async () => {
 
 const SNAPSHOT = "sn7kq2m6xa4pdq";
 
-function world() {
+function world(betweenPolls: (proxmox: FakeProxmox) => void = () => {}) {
   fakeSsh();
   const proxmox = new FakeProxmox();
   proxmox.addTemplate(9000);
   const config = lxcConfig({ "proxmox-lxc-token-id": FAKE_TOKEN.tokenId, "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret, "proxmox-lxc-vmid-first": 7000, "proxmox-lxc-vmid-last": 7009 });
-  const options: LxcBackendOptions = { fetch: proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 };
+  const options: LxcBackendOptions = { fetch: proxmox.fetch, sleep: async () => betweenPolls(proxmox), sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 };
   const context = testContext(new MemoryStorage(), "test", { id: "proxmox-lxc" });
   const backend = new ProxmoxLxcBackend(config, context, options);
   made.push(backend);
@@ -274,6 +274,190 @@ test("a take is complete only when its task succeeded; the provider is told befo
   assert.deepEqual(await state.backend.providerTask({ ref: "UPID:pve:00000000:0:0:vzsnapshot:7000:x:", host: "pve" }), { state: "missing", words: "Proxmox has no task UPID:pve:00000000:0:0:vzsnapshot:7000:x:." });
 });
 
+async function taskOnABox(state: ReturnType<typeof world>): Promise<TaskRef> {
+  const { guest, id } = await box(state);
+  const { hooks, seen } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  return seen[0]!;
+}
+
+function missing(task: TaskRef) {
+  return { state: "missing", words: `Proxmox has no task ${task.ref}.` };
+}
+
+function lost(task: TaskRef) {
+  return { state: "lost", words: `pve restarted after Proxmox began task ${task.ref}, and kept no record of it, so it is not running.` };
+}
+
+test("G16: a task the node lost in a hard restart is lost, not running, though Proxmox VE 9 answers 400 for it, whatever the node's clock did", async () => {
+  const state = world();
+  const task = await taskOnABox(state);
+
+  state.proxmox.hardResetLosingTaskLogs();
+  assert.deepEqual(await state.backend.providerTask(task), lost(task));
+
+  state.proxmox.stepWallClockOnly(-3600);
+  assert.deepEqual(await state.backend.providerTask(task), lost(task), "a clock set back does not hide the restart");
+});
+
+test("G16: a task Proxmox has no log of stays missing while the node has not restarted, though its clock moved on or its uptime reads wrong", async () => {
+  const state = world();
+  const task = await taskOnABox(state);
+  state.proxmox.loseTaskLogsWithoutRestart();
+
+  state.proxmox.stepWallClockOnly(250);
+  assert.deepEqual(await state.backend.providerTask(task), missing(task), "a clock set forward is not a restart");
+
+  state.proxmox.passOnNodeClockAndUptime(30);
+  for (const value of [null, "", false, 0, -5, 1.5, "100", undefined]) {
+    state.proxmox.uptimeAnswerInsteadOfOwn = { value };
+    assert.deepEqual(await state.backend.providerTask(task), missing(task), `an uptime of ${JSON.stringify(value)} proves nothing`);
+  }
+});
+
+test("G16: a lost task stays missing when the node's uptime cannot be read, or the task's ID has no worker start", async () => {
+  const state = world();
+  const task = await taskOnABox(state);
+  state.proxmox.hardResetLosingTaskLogs();
+
+  state.proxmox.intercept = (call) => (call.path === "/nodes/pve/status" ? { ok: false, status: 500, statusText: "Internal Server Error", text: async () => "{}" } : undefined);
+  assert.deepEqual(await state.backend.providerTask(task), missing(task));
+  state.proxmox.intercept = undefined;
+
+  const fields = task.ref.split(":");
+  const noWorkerStart = { ...task, ref: [...fields.slice(0, 3), "0", ...fields.slice(4)].join(":") };
+  assert.deepEqual(await state.backend.providerTask(noWorkerStart), missing(noWorkerStart));
+});
+
+const WHOLE_TASK_IDS = [
+  { form: "an 8-digit worker start", ref: "UPID:pve:00001F40:000F4240:6745A1B2:vzrollback:7000:root@pam:" },
+  { form: "a 9-digit worker start", ref: "UPID:pve:00001F40:1000F4240:6745A1B2:vzrollback:7000:root@pam:" },
+  { form: "a lower-case worker start and an empty ID", ref: "UPID:pve:00001f40:000f4240:6745a1b2:vzrollback::root@pam:" },
+];
+
+const MALFORMED_TASK_IDS = [
+  { fault: "a process ID that is not hex", ref: "UPID:pve:NOTHEX00:000F4240:FFFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "a process ID of 9 digits", ref: "UPID:pve:000001F40:000F4240:FFFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "a node name with an underscore", ref: "UPID:pve_1:00001F40:000F4240:FFFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "a node name ending in a hyphen", ref: "UPID:pve-:00001F40:000F4240:FFFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "a wall time of 7 digits", ref: "UPID:pve:00001F40:000F4240:FFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "a wall time that is not hex", ref: "UPID:pve:00001F40:000F4240:NOTHEX00:vzrollback:7000:root@pam:" },
+  { fault: "a worker start of 10 digits", ref: "UPID:pve:00001F40:00000F4240:FFFFFFFF:vzrollback:7000:root@pam:" },
+  { fault: "no user and no end", ref: "UPID:pve:00001F40:000F4240:FFFFFFFF:vzrollback:7000" },
+  { fault: "no closing colon", ref: "UPID:pve:00001F40:000F4240:FFFFFFFF:vzrollback:7000:root@pam" },
+  { fault: "a field too many", ref: "UPID:pve:00001F40:000F4240:FFFFFFFF:vzrollback:7000:root@pam:extra:" },
+  { fault: "a slash in its type", ref: "UPID:pve:00001F40:000F4240:FFFFFFFF:vz/rollback:7000:root@pam:" },
+];
+
+function unableToParse(): FetchResponse {
+  return { ok: false, status: 500, statusText: "unable to parse worker upid", text: async () => JSON.stringify({ data: null }) };
+}
+
+test("G16: only a task ID whole in Proxmox's own form is evidence of a restart; a malformed one stays missing, though older Proxmox answers it as no task", async () => {
+  const state = world();
+  await taskOnABox(state);
+  state.proxmox.hardResetLosingTaskLogs();
+
+  for (const { form, ref } of WHOLE_TASK_IDS) {
+    const task = { ref, host: "pve" };
+    assert.equal((await state.backend.providerTask(task)).state, "lost", form);
+  }
+
+  state.proxmox.intercept = (call) => (call.path.includes("/tasks/") ? unableToParse() : undefined);
+  for (const { fault, ref } of MALFORMED_TASK_IDS) {
+    const task = { ref, host: "pve" };
+    assert.deepEqual(await state.backend.providerTask(task), missing(task), fault);
+  }
+});
+
+test("G16: a malformed task ID that failed is not said to be cut short by a restart", async () => {
+  const state = world();
+  await taskOnABox(state);
+  state.proxmox.hardResetLosingTaskLogs();
+
+  state.proxmox.intercept = (call) => (call.path.includes("/tasks/") ? { ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify({ data: { status: "stopped", exitstatus: "unexpected status" } }) } : undefined);
+  for (const { fault, ref } of MALFORMED_TASK_IDS) {
+    assert.deepEqual(await state.backend.providerTask({ ref, host: "pve" }), { state: "failed", words: "unexpected status" }, fault);
+  }
+});
+
+test("G16: a task that failed as its node rebooted says the node restarted; one that failed with no reboot does not", async () => {
+  let rebootAtPoll = false;
+  const state = world((proxmox) => {
+    if (rebootAtPoll) proxmox.rebootEndingRunningTasksAsDied();
+  });
+  const { guest, id } = await box(state);
+  const { hooks, seen } = tasks();
+  state.proxmox.nextTaskExit.set("vzsnapshot", "snapshot feature is not available");
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks).catch(() => {});
+  assert.deepEqual(await state.backend.providerTask(seen[0]!), { state: "failed", words: "snapshot feature is not available" });
+
+  state.proxmox.taskPolls = 2;
+  rebootAtPoll = true;
+  await state.backend.snapshot(guest, { id: "sn7kq2m6xa4pdr", box: id.boxId, memory: false }, hooks).catch(() => {});
+  rebootAtPoll = false;
+  assert.deepEqual(await state.backend.providerTask(seen[1]!), { state: "failed", words: "unexpected status", nodeRestarted: true });
+});
+
+test("G16: only Proxmox VE 9's no-such-task answer from the task's status reads as no task; other 400 answers stay errors", async () => {
+  const state = world();
+  const task = await taskOnABox(state);
+  const answer = (errors: Record<string, string>) => ({ ok: false, status: 400, statusText: "Parameter verification failed.", text: async () => JSON.stringify({ data: null, errors }) });
+
+  state.proxmox.intercept = (call) => (call.path.includes("/tasks/") ? answer({ upid: "unable to parse worker upid 'UPID:pve:x'" }) : undefined);
+  await assert.rejects(state.backend.providerTask(task), /unable to parse worker upid/);
+
+  state.proxmox.intercept = (call) => (call.path.includes("/tasks/") ? answer({ upid: "value does not match the regex pattern" }) : undefined);
+  await assert.rejects(state.backend.providerTask(task), /does not match the regex pattern/);
+
+  state.proxmox.intercept = (call) => (call.path.includes("/tasks/") ? answer({ upid: "no such task" }) : undefined);
+  assert.deepEqual(await state.backend.providerTask(task), missing(task));
+});
+
+test("G16: a guest a cut rollback left locked on LVM-thin is refused with how to make its volume again before the unlock; on ZFS, or locked otherwise, only the unlock", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  await state.backend.powerOff(guest);
+  const ref = { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest };
+  const config = state.proxmox.guests.get(vmid)!.config;
+  const volume = /(vm-\d+-disk-\d+)/.exec(config.rootfs!)![1]!;
+  const refusal = async () => ((await state.backend.rollbackSnapshot(guest, ref, hooks).catch((caught: unknown) => caught)) as Error).message;
+
+  config.lock = "rollback";
+  assert.equal(
+    await refusal(),
+    `Proxmox has guest ${vmid} locked (rollback), so it cannot restore the snapshot. A rollback cut short on LVM-thin can leave the guest with no volume, and Proxmox cannot roll it back again then. If \`lvs pve/${volume}\` on pve finds none, first make it again from the snapshot: \`lvcreate -kn -n ${volume} -s pve/snap_${volume}_bbsn7kq2m6xa4pdq\`. Run \`pct unlock ${vmid}\` on pve.`,
+  );
+
+  config.lock = "snapshot";
+  assert.equal(await refusal(), `Proxmox has guest ${vmid} locked (snapshot), so it cannot restore the snapshot. Run \`pct unlock ${vmid}\` on pve.`);
+
+  config.lock = "rollback";
+  state.proxmox.storageConfigs.set("local-lvm", { storage: "local-lvm", type: "zfspool", pool: "rpool/data", content: "rootdir,images" });
+  assert.equal(await refusal(), `Proxmox has guest ${vmid} locked (rollback), so it cannot restore the snapshot. Run \`pct unlock ${vmid}\` on pve.`);
+});
+
+test("G16: a new restore's plan for a guest a cut rollback left locked on LVM-thin says how to make its volume again before the unlock, as the plan refuses first", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  await state.backend.powerOff(guest);
+  const ref = { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest };
+  const config = state.proxmox.guests.get(vmid)!.config;
+  const volume = /(vm-\d+-disk-\d+)/.exec(config.rootfs!)![1]!;
+
+  config.lock = "rollback";
+  const plan = await state.backend.planSnapshots(guest, "linux", ref);
+
+  assert.deepEqual(plan.locked, {
+    lock: "rollback",
+    fix: `A rollback cut short on LVM-thin can leave the guest with no volume, and Proxmox cannot roll it back again then. If \`lvs pve/${volume}\` on pve finds none, first make it again from the snapshot: \`lvcreate -kn -n ${volume} -s pve/snap_${volume}_bbsn7kq2m6xa4pdq\`. Run \`pct unlock ${vmid}\` on pve.`,
+  });
+  assert.deepEqual((await state.backend.planSnapshots(guest, "linux", null)).locked, { lock: "rollback", fix: `Run \`pct unlock ${vmid}\` on pve.` }, "with no snapshot named, only the unlock");
+});
 
 test("a restore's plan: rollback to any snapshot on LVM-thin, the size it goes back to from the snapshot's own config, how many are newer, and why it cannot", async () => {
   const state = world();
@@ -404,10 +588,10 @@ test("G13: rollbacks of this install's guests are read from the node's task list
   await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks).catch(() => undefined);
   const found = await state.backend.outsideRollbacks(since);
   assert.deepEqual(
-    found.map((each) => ({ guest: each.guest, user: each.user, outcome: each.outcome })),
+    found.map((each) => ({ guest: each.guest, user: each.user, ours: each.ours, outcome: each.outcome })),
     [
-      { guest: guest.ref, user: "bb-box@pve!plugin", outcome: { state: "ok" } },
-      { guest: guest.ref, user: "bb-box@pve!plugin", outcome: { state: "failed", words: "unable to rollback" } },
+      { guest: guest.ref, user: "bb-box@pve!plugin", ours: true, outcome: { state: "ok" } },
+      { guest: guest.ref, user: "bb-box@pve!plugin", ours: true, outcome: { state: "failed", words: "unable to rollback" } },
     ],
   );
 });
@@ -425,6 +609,7 @@ test("G13: a rollback the node lists as running, with no end time, is read as ru
   const [found] = await state.backend.outsideRollbacks(Date.now() - 60_000);
   assert.deepEqual(found?.outcome, { state: "running" });
   assert.equal(found?.user, "root@pam");
+  assert.equal(found?.ours, false, "another user's task is not this install's");
 });
 
 test("G16 on Proxmox LXC: a held copy is cloned into the box range, labelled, disarmed and made a template; a new guest made from it takes the box's MAC and address; the old guest is disarmed with a new MAC as the earlier guest", async () => {
@@ -856,3 +1041,57 @@ test("review: a clone's wait grows with its disk, at 3 times BB Box's estimate a
   await new Proxmox(options).waitTask(upid, undefined, 60_000);
   assert.equal(polls, 6, "a longer wait keeps polling until the task ends");
 });
+
+function failedAnswer(status: number, message: string): FetchResponse {
+  return { ok: false, status, statusText: message, text: async () => JSON.stringify({ data: null }) };
+}
+
+const UNCLEAR_ROLLBACK_ANSWERS: readonly { readonly how: string; readonly respond: () => FetchResponse }[] = [
+  { how: "an HTTP 500", respond: () => failedAnswer(500, "internal error") },
+  { how: "an HTTP 502 from a proxy", respond: () => failedAnswer(502, "Bad Gateway") },
+  { how: "an HTTP 503", respond: () => failedAnswer(503, "Service Unavailable") },
+  { how: "an HTTP 504 timeout", respond: () => failedAnswer(504, "Gateway Timeout") },
+  {
+    how: "a lost connection",
+    respond: () => {
+      throw new Error("socket hang up");
+    },
+  },
+];
+
+for (const unclear of UNCLEAR_ROLLBACK_ANSWERS) {
+  test(`G16: ${unclear.how} to the rollback's request is not a refusal, as Proxmox may have begun it`, async () => {
+    const state = world();
+    const { guest, id } = await box(state);
+    const { hooks, submitted } = tasks();
+    await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+    await state.backend.powerOff(guest);
+    state.proxmox.intercept = (call) => (call.method === "POST" && call.path.endsWith("/rollback") ? unclear.respond() : undefined);
+
+    const error = await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks).catch((caught: unknown) => caught);
+
+    assert.ok(error instanceof Error);
+    assert.ok(!(error instanceof SnapshotFailed), "not a refusal");
+    assert.ok(!(error instanceof RestoreChanged));
+    assert.match(error.message, /^Proxmox gave no clear answer to the rollback, so BB Box cannot tell whether it began: /);
+    assert.equal(submitted.length, 2, "the rollback was journalled as asked for before it was sent");
+  });
+}
+
+for (const refusal of [
+  { how: "an HTTP 400", status: 400 },
+  { how: "an HTTP 403", status: 403 },
+]) {
+  test(`G16: ${refusal.how} to the rollback's request is a refusal, as Proxmox began nothing`, async () => {
+    const state = world();
+    const { guest, id } = await box(state);
+    const { hooks } = tasks();
+    await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+    await state.backend.powerOff(guest);
+    state.proxmox.intercept = (call) => (call.method === "POST" && call.path.endsWith("/rollback") ? failedAnswer(refusal.status, "refused") : undefined);
+
+    const error = await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks).catch((caught: unknown) => caught);
+
+    assert.ok(error instanceof SnapshotFailed);
+  });
+}
