@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -328,4 +329,24 @@ test("mac-ios.sh warns when a user with no desktop session cannot set and read a
   const never = spawnSync("/bin/sh", [script, "bbbox-admin", udid], { encoding: "utf8", env: { ...desktop.env, SLOT_CLIPBOARD_GAP_S: "0" } });
   assert.equal(never.status, 1);
   assert.deepEqual([never.stdout, never.stderr], ["", "simctl pbcopy exited with 60 in gui/499: The operation couldn't be completed. Operation timed out \n"], "its words on standard error, which its callers keep");
+});
+
+test("a slot claim dispatched as the Mac's home snapshot proof starts waits for the proof, so no slot becomes held while it runs", async () => {
+  const host = poolMac();
+  const slot = made(host, "machine");
+  const record = join(host.root, "var/db/bb-box/proof-made");
+  const state = () => host.file(`${HOST}/slots/${slot}/state`) ?? "";
+  const claim = spawn("/bin/sh", [host.machineHelper, "slot", "claim", slot], { env: host.env, stdio: ["pipe", "ignore", "ignore"] });
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  const proof = spawn("/bin/sh", [host.machineHelper, "snapshot", "proof"], { env: host.env, stdio: ["ignore", "ignore", "ignore"] });
+  await host.until("the proof starts its record", () => existsSync(record));
+
+  claim.stdin!.end(SLOT_CLAIM());
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const during = state();
+  const proofStillRan = existsSync(record);
+
+  assert.ok(proofStillRan, "the proof still runs");
+  assert.match(during, /^is=ready$/m, `slot ${slot} while the proof runs: ${during}`);
+  await Promise.all([once(proof, "exit"), once(claim, "exit")]);
 });

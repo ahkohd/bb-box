@@ -316,6 +316,7 @@ case $tool in
     if [ "$2" = %Lp ]; then exec /usr/bin/stat -c %a "$3"; fi
     if [ "$2" = %g ]; then echo 20; exit 0; fi
     if [ "$2" = %i ]; then exec /usr/bin/stat -c %i "$3"; fi
+    if [ "$2" = %d:%i ]; then exec /usr/bin/stat -c %d:%i "$3"; fi
     # stat -f %u <path>: the UID owners says owns it, else root's.
     if [ "$2" = %u ]; then
       real=$(readlink -f "$3")
@@ -460,6 +461,10 @@ case $tool in
     # csreq -r- -b <out>: the requirement's text, as its compiled form.
     cat
     ;;
+  od)
+    /usr/bin/od "$@" || exit 1
+    echo
+    ;;
   xxd)
     [ "$1" = -p ] || exit 2
     od -An -v -tx1 | tr -d ' \n'
@@ -572,6 +577,14 @@ case $tool in
   mv)
     /bin/mv "$@" || exit 1
     while [ "${1#-}" != "$1" ]; do shift; done
+    if [ -s "$F/flags/die-after-moving" ]; then
+      case $2 in
+        $(cat "$F/flags/die-after-moving"))
+          rm -f "$F/flags/die-after-moving"
+          kill -KILL "-$(ps -o pgid= -p $$ | tr -d ' ')"
+          ;;
+      esac
+    fi
     [ ! -e "$1" ] && [ -e "$2" ] || exit 0
     from=$(readlink -m "$1") to=$(readlink -f "$2")
     awk -v f="$from" -v t="$to" '{ p = substr($0, index($0, " ") + 1); if (p == f || index(p, f "/") == 1) print $1 " " t substr(p, length(f) + 1) }' "$F/owners" >"$F/owners.moved"

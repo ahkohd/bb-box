@@ -285,7 +285,8 @@ A box lent a Mac whole on the SSH host pool takes snapshots of its home
 folder only: its files, settings, keychain and browser profiles, not apps
 installed on the Mac or anything running. A take pauses the box for a
 moment, then resumes only what it paused: a process you stopped yourself
-stays stopped. A restore ends the box user's session and signs it in again, so its
+before the take stays stopped, but one of the box's processes that you stop
+during that moment is resumed with the rest. A restore ends the box user's session and signs it in again, so its
 desktop goes for a few seconds. These snapshots do not fork or Keep, and go
 when the box is released. Other pool boxes take none yet: a take is refused
 with the machine's own reason, such as its box homes being on a filesystem

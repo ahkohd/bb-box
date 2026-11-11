@@ -305,7 +305,7 @@ project only. No cloud was called in the spike.
   what the machine found, and the words say both.
 - **The proof** runs before a machine's offer goes live, and again when
   the helper or hook changes: a take, a change, a restore and a delete on a
-  scratch user, `bbbox-probe`, made and removed by the helper. It runs only
+  scratch user made and removed by the helper. It runs only
   while no box holds the machine, during the reset, before the generation
   moves on. For a hook, the proof is
   `check-hook.sh`'s checks on a scratch snapshot. A machine whose proof
@@ -462,8 +462,13 @@ section 2, this is what stands:
   once it runs again after its resume, or has gone. A process above that
   has not stopped yet stays in the record for a minute after the resume,
   as `sudo` may stop itself later than the take's last check. Each helper
-  command in that minute resumes it if it has stopped. The record goes once
-  it names nothing, or once that minute has passed. A process stopped
+  command in that minute resumes it if it has stopped. A process found
+  stopped stays in the record, written before it is sent the signal to
+  resume, until a later check sees it running or gone, even after that
+  minute, so a helper cut short between the two leaves it to the next
+  command. A second take keeps what the record still names and adds its
+  own, so a process above the first take's that stops late is still
+  resumed. The record goes once it names nothing. A process stopped
   before the take stays stopped, and a process ID now held by a process
   with another start time is left alone. A process that the record names
   and that someone else stops during the pause, or within that minute, is
@@ -497,29 +502,50 @@ section 2, this is what stands:
   while another user shares the Mac, and resets the fork's home as the
   spike lists, plists naming the source's home included. Before any
   change, it refuses a user that is not one the helper reserves for box
-  users (`bbx-<n>` with UID 70000 plus n modulo 10000, or the proof's
-  `bbbox-probe-fork`), a user, home or UID already on the Mac, and the
+  users (`bbx-<n>` with UID 70000 plus n modulo 10000, or the fork
+  user the running proof picked), a user, home or UID already on the Mac, and the
   user at the console. It never repairs or replaces an account to make a
   fork.
-- **The proof** is `machine snapshot proof`, on scratch users
-  `bbbox-probe` (UID 79999) and `bbbox-probe-fork` (79998), outside the
-  names the reset and its checks look at. It takes the helper's lock first
-  and holds it until it ends, so no claim, and no iOS slot claim, promise or
-  make, starts in the middle. Under the lock, it refuses with exit 3,
-  changing nothing, while a box holds the Mac, its reset runs, an iOS slot
-  is held, being given back, being made or promised, or a take's pause
-  record is left; it runs no recovery of its own first. Then it refuses
-  with exit 5, again changing nothing, where either scratch user,
-  `bbbox-probe-stranger`, any of their homes, snapshot stores, password
-  files, `sudo` rules, crontabs or managed preferences, either UID, or any
-  file of either UID is on the Mac already. It never infers from a name
-  that something is its own: it records each user it makes, with its UID,
-  `GeneratedUID` and home's inode, and its snapshot store's inode, in
-  `/var/db/bb-box/proof-made`, and follows the home through its own
-  restores and fork. At the end it deletes only an account, home and store
-  that still match the record, and leaves anything else, with the record
-  and a note on how to check it. It never touches the user waiting at the
-  console. Its results go in [090-results.md](090-results.md).
+- **The proof** is `machine snapshot proof`. Each run makes new scratch
+  users, `bbbox-probe-` and 8 random hexadecimal digits, with UIDs from
+  90000 to 99999 that no account has at that moment, outside the box
+  users' 70000 to 79999 and the iOS slot users' 80000 to 89999. It never
+  uses a name or UID again, so it never has to decide whether an existing
+  account is its own, and it makes no scan of the Data volume.
+  - **Admission.** It takes the helper's lock, then the device host's own
+    lock, waiting up to 60 s, and holds both until it ends. Every iOS slot
+    claim, promise, make and top-up changes a slot's state only under the
+    device host's lock, so a slot command dispatched before the proof
+    either changed its state first, which the proof then sees, or waits
+    for the proof and is refused, to be asked again. This needs no change
+    to the device host, so it holds with the one already installed. Under
+    both locks it refuses with exit 3, changing nothing, while a box holds
+    the Mac, its reset runs, an iOS slot is in any state but ready, a slot
+    is promised or its user is being removed, the device host's lock stays
+    held, or a take's pause record is left; it runs no take's recovery of
+    its own. It refuses with exit 5 when it cannot list the Mac's users.
+  - **The record.** Before it makes anything, it writes
+    `/var/db/bb-box/proof-made`, and it adds each thing as it makes it:
+    each user with its UID and `GeneratedUID`, each folder and file with
+    its device and inode (homes, snapshot stores, password files and its
+    own work folder), and each process with its start time. It follows a
+    home through its own restores and fork.
+  - **Clean-up** deletes only by the record. It ends a recorded process
+    only where its start time matches; it logs a user out and removes the
+    account only where the account at that name still has the recorded
+    UID and `GeneratedUID`; and it removes a folder or file only where its
+    device and inode still match. It never sweeps a UID's files, so a
+    scratch user's files outside its home, such as its temporary folder,
+    stay. Anything it cannot prove is its own stays, with the record and
+    a note on how to check it, and the run fails.
+  - **A run cut short** leaves the record. The next run cleans only what
+    the record proves, in the same way, and goes on; where something in it
+    cannot be proved, or the record is in a form it does not read, it
+    refuses with exit 5 and keeps the record for a person to check. A
+    window of a moment between making a thing and recording it can leave
+    something unrecorded: that stays, never deleted.
+  - It never touches the user waiting at the console. Its results go in
+    [090-results.md](090-results.md).
 - **The snapshot store** takes the new scopes by rebuilding its table with
   the wider check, keeping every record.
 

@@ -194,6 +194,39 @@ describe("A Mac lent whole takes home snapshots of its box user (090)", () => {
     assert.equal(pauseRecord(mac), null);
   });
 
+  test("a second take keeps the first take's record of a process above the box command, so the next command resumes it when it stops after its command ended", async (t) => {
+    const mac = lentMac();
+    const { sudo, command, said } = await commandUnderSudo(t, mac, 4);
+    ok(mac, ["take", "0", "snaaaaaaaaaaaa"]);
+    assert.ok(recordedParent(mac, sudo), "the first take records the process above the box command");
+    process.kill(command, "SIGKILL");
+
+    ok(mac, ["take", "0", "snbbbbbbbbbbbb"]);
+    await eventually(() => said("stopping") && stopped(sudo), "the process above the box command stops itself after the second take");
+    assert.equal(mac.helper(["status"]).status, 0);
+
+    await eventually(() => said("resumed"), `the process above the box command runs again; it is ${stateOf(sudo)}`);
+  });
+
+  test("a recovery cut short after it writes its record, before it resumes, keeps every stopped process in the record, even after the minute", async (t) => {
+    const mac = lentMac();
+    mac.clock(1_790_000_000);
+    const work = processOf(t, mac);
+    stopNow(work);
+    mkdirSync(join(mac.root, STORE), { recursive: true });
+    writeFileSync(join(mac.root, STORE, ".paused"), `settle 1789999000\nbox ${work} ${startOf(work)}\n`);
+    mac.flag("die-after-moving", true, "*/.paused");
+
+    const cut = mac.start(["status"], "");
+    await once(cut, "exit");
+    assert.ok(stopped(work), "the cut short recovery sent nothing");
+    assert.match(pauseRecord(mac) ?? "", new RegExp(`^resumed ${work} `, "m"));
+    assert.equal(mac.helper(["status"]).status, 0);
+
+    assert.ok(running(work), `the process the take paused is ${stateOf(work)}`);
+    assert.equal(pauseRecord(mac), null);
+  });
+
   test("a take leaves stopped a process that another user stopped during it", (t) => {
     const mac = lentMac();
     const stranger = processOf(t, null);
@@ -587,20 +620,19 @@ describe("Forks of home snapshots on the helper (090)", () => {
 });
 
 const ACCOUNT_CHANGE = (call: string) => /^(sysadminctl|dseditgroup|createhomedir|chown) /.test(call) || /^dscl \. -(create|delete)/.test(call);
-const REPLACES_THE_PROBE_ACCOUNT = `case $2 in */snproof000001.partial/home) echo 00000000-0000-4000-8000-0000000000BB >"$F/users/bbbox-probe/GeneratedUID" ;; *) exit 1 ;; esac`;
-const REPLACES_THE_PROBE_HOME = `case $2 in */.fork-bbbox-probe-fork) mv "$R/Users/bbbox-probe" "$R/Users/bbbox-probe.moved" && mkdir "$R/Users/bbbox-probe" && echo keep >"$R/Users/bbbox-probe/keep.txt" ;; *) exit 1 ;; esac`;
+const STORE_OF_THE_TAKE = 'u=${2%/snproof000001.partial/home}; u=${u##*/}';
+const REPLACES_THE_PROBE_ACCOUNT = `case $2 in */snproof000001.partial/home) ${STORE_OF_THE_TAKE}; echo 00000000-0000-4000-8000-0000000000BB >"$F/users/$u/GeneratedUID" ;; *) exit 1 ;; esac`;
+const STORE_OF_THE_FORK = 'u=${2%/.fork-*}; u=${u##*/}';
+const REPLACES_THE_PROBE_HOME = `case $2 in */.fork-*) ${STORE_OF_THE_FORK}; mv "$R/Users/$u" "$R/Users/$u.moved" && mkdir "$R/Users/$u" && echo keep >"$R/Users/$u/keep.txt" ;; *) exit 1 ;; esac`;
+const GIVES_THE_PROBE_UID_TO_ANOTHER = `case $2 in */.fork-*) ${STORE_OF_THE_FORK}; id=$(cat "$F/users/$u/UniqueID"); rm -rf "$F/users/$u"; mkdir -p "$F/users/replacement" "$R/Users/replacement"; echo "$id" >"$F/users/replacement/UniqueID"; echo 00000000-0000-4000-8000-0000000000CC >"$F/users/replacement/GeneratedUID"; echo /Users/replacement >"$F/users/replacement/NFSHomeDirectory"; echo keep >"$R/Users/replacement/keep.txt"; echo "$id $(readlink -f "$R/Users/replacement/keep.txt")" >>"$F/owners" ;; *) exit 1 ;; esac`;
+const PLANTS_A_SUDO_RULE_STAGING_FILE = `case $2 in */snproof000001.partial/home) ${STORE_OF_THE_TAKE}; echo keep >"$R/etc/sudoers.d/$u.new" && echo "$u" >"$F/planted" ;; *) exit 1 ;; esac`;
 const HOLD_LOCK = `use Fcntl ":flock"; open(my $f, ">>", $ARGV[0]) or exit 1; flock($f, LOCK_EX) or exit 1; $| = 1; print "held\\n"; <STDIN>;`;
+const RECORD = "var/db/bb-box/proof-made";
 
-function freeMac(): FakeMacos {
-  const mac = fakeMacos();
+function freeMac(settings: Readonly<Record<string, string>> = {}): FakeMacos {
+  const mac = fakeMacos({ settings });
   assert.equal(mac.helper(["init"]).status, 0);
   return mac;
-}
-
-function account(mac: FakeMacos, name: string, uid: number): string {
-  mac.tool("dscl", [".", "-create", `/Users/${name}`, "UniqueID", String(uid)]);
-  mac.tool("dscl", [".", "-create", `/Users/${name}`, "GeneratedUID", "00000000-0000-4000-8000-0000000000AA"]);
-  return keep(mac, `Users/${name}/keep.txt`, uid);
 }
 
 function keep(mac: FakeMacos, path: string, uid: number): string {
@@ -613,11 +645,12 @@ function keep(mac: FakeMacos, path: string, uid: number): string {
 function assertChangedNothing(mac: FakeMacos, calls: number, users: readonly string[]): void {
   assert.deepEqual(mac.users(), users);
   assert.deepEqual(mac.calls().slice(calls).filter(ACCOUNT_CHANGE), []);
-  assert.equal(existsSync(join(mac.root, "var/db/bb-box/proof-made")), false);
+  assert.equal(existsSync(join(mac.root, RECORD)), false);
 }
 
-async function holdingTheLock(mac: FakeMacos): Promise<ChildProcess> {
-  const holder = spawn("perl", ["-e", HOLD_LOCK, join(mac.root, "var/db/bb-box/lock")], { stdio: ["pipe", "pipe", "ignore"] });
+async function holdingALock(path: string): Promise<ChildProcess> {
+  mkdirSync(join(path, ".."), { recursive: true });
+  const holder = spawn("perl", ["-e", HOLD_LOCK, path], { stdio: ["pipe", "pipe", "ignore"] });
   await once(createInterface({ input: holder.stdout! }), "line");
   return holder;
 }
@@ -626,8 +659,25 @@ function startOf(pid: number): string {
   return spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim().split(/\s+/).join("_");
 }
 
+interface ScratchUsers {
+  readonly user: string;
+  readonly uid: string;
+  readonly fork: string;
+  readonly forkUid: string;
+}
+
+function scratchUsers(stdout: string): ScratchUsers {
+  const found = stdout.match(/^note: scratch users (\S+) \(UID (\d+)\) and (\S+) \(UID (\d+)\)/m);
+  assert.ok(found, stdout);
+  return { user: found[1]!, uid: found[2]!, fork: found[3]!, forkUid: found[4]! };
+}
+
+function dataVolumeScans(mac: FakeMacos, from: number): string[] {
+  return mac.calls().slice(from).filter((call) => call.startsWith(`find ${mac.data} `) && call.includes("-uid"));
+}
+
 describe("The proof of home snapshots (090)", () => {
-  test("runs on a free Mac on a scratch user, passes, and leaves nothing of it", () => {
+  test("runs on a free Mac on fresh scratch users, passes, and leaves nothing of them", () => {
     const mac = freeMac();
     mac.flag("sudo-processes");
     mkdirSync(join(mac.root, "var/db/bb-box/host/slots/1"), { recursive: true });
@@ -638,6 +688,11 @@ describe("The proof of home snapshots (090)", () => {
     assert.equal(proof.status, 0, proof.stdout + proof.stderr);
     assert.match(proof.stdout, /^result: passed/m);
     assert.doesNotMatch(proof.stdout, /^FAILED/m);
+    const { user, uid, fork, forkUid } = scratchUsers(proof.stdout);
+    assert.match(user, /^bbbox-probe-[0-9a-f]{8}$/);
+    assert.match(fork, /^bbbox-probe-[0-9a-f]{8}$/);
+    assert.notEqual(user, fork);
+    for (const id of [uid, forkUid]) assert.ok(Number(id) >= 90000 && Number(id) < 100000, `UID ${id} is outside every box's and slot's`);
     assert.match(proof.stdout, /^ok: a fork is refused while another user shares the Mac: The Mac is shared \(box user bbx-0\)/m);
     for (const check of [
       "the root sudo above the user's process runs again after the take",
@@ -646,21 +701,61 @@ describe("The proof of home snapshots (090)", () => {
       "the next helper command resumes the killed take's pause",
       "the user's process that someone else stopped stays stopped after the recovery",
       "a root process that someone else stopped during the killed take's pause stays stopped",
-      "a fork aimed at a user on the Mac already, bbbox-probe-fork, is refused",
-      "the refused fork left bbbox-probe-fork with UID 79998",
-      "a fork aimed at a user the helper does not reserve, bbbox-probe-stranger, is refused",
+      `a fork aimed at a user on the Mac already, ${fork}, is refused`,
+      `the refused fork left ${fork} with UID ${forkUid}`,
       "the take left nothing paused in its record",
       "a process above the user's that stops itself 3 s after the pause, after the take's last check, stops",
       "the take keeps its record while a process above the user's may still stop",
       "the next helper command resumes the process that stopped late",
-      "the next helper command resumes the killed take's pause",
+      `removed ${user} and what the proof made for it`,
+      `removed ${fork} and what the proof made for it`,
     ]) {
       assert.ok(proof.stdout.split("\n").includes(`ok: ${check}`), check);
     }
-    assert.match(proof.stdout, /^note: made bbbox-probe, UID 79999, GeneratedUID [0-9A-F-]{36}, home inode \d+$/m);
+    assert.match(proof.stdout, new RegExp(`^note: made ${user}, UID ${uid}, GeneratedUID [0-9A-F-]{36}$`, "m"));
     assert.deepEqual(mac.users(), ["bbx-0", "person"]);
     assert.equal(existsSync(join(mac.root, "var/db/bb-box/home-snapshots")), false);
-    assert.equal(existsSync(join(mac.root, "var/db/bb-box/proof-made")), false);
+    assert.equal(existsSync(join(mac.root, RECORD)), false);
+    assert.deepEqual(readdirSync(join(mac.root, "var/db/bb-box")).filter((name) => name.startsWith("proof")), []);
+  });
+
+  test("picks new scratch users each run, so it never decides whether an earlier account is its own", () => {
+    const mac = freeMac();
+    mac.flag("sudo-processes");
+
+    const first = mac.helper(["snapshot", "proof"]);
+    const second = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    assert.equal(second.status, 0, second.stdout + second.stderr);
+    assert.notEqual(scratchUsers(first.stdout).user, scratchUsers(second.stdout).user);
+    assert.notEqual(scratchUsers(first.stdout).uid, scratchUsers(second.stdout).uid);
+  });
+
+  test("makes no scan of the Data volume, so a file of an unused UID neither stops it nor goes", () => {
+    const mac = freeMac();
+    mac.flag("sudo-processes");
+    const kept = [90000, 95000, 99999].map((uid) => keep(mac, `Users/Shared/before-proof-${uid}`, uid));
+    const calls = mac.calls().length;
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 0, proof.stdout + proof.stderr);
+    assert.deepEqual(dataVolumeScans(mac, calls), []);
+    for (const path of kept) assert.equal(mac.file(path), "keep\n", path);
+  });
+
+  test("refuses, changing nothing, when it cannot list the Mac's users", () => {
+    const mac = freeMac();
+    mac.flag("directory-down");
+    const calls = mac.calls().length;
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 5, proof.stdout + proof.stderr);
+    assert.match(proof.stderr, /could not list the Mac's users, so it does not run\. It changed nothing/);
+    mac.flag("directory-down", false);
+    assertChangedNothing(mac, calls, ["bbx-0", "person"]);
   });
 
   test("refuses while a box holds the Mac, and changes nothing", () => {
@@ -676,7 +771,7 @@ describe("The proof of home snapshots (090)", () => {
 
   test("checks that the Mac is free only once it holds the helper's lock, so a claim that holds the lock first wins", async () => {
     const mac = freeMac();
-    const claim = await holdingTheLock(mac);
+    const claim = await holdingALock(join(mac.root, "var/db/bb-box/lock"));
     const proof = mac.start(["snapshot", "proof"]);
     await new Promise((resolve) => setTimeout(resolve, 1000));
     writeFileSync(join(mac.root, "var/db/bb-box/owner"), "install=inst_a\nbox=box_a\ngeneration=0\nuser=bbx-0\nuid=70000\n");
@@ -689,10 +784,24 @@ describe("The proof of home snapshots (090)", () => {
     assertChangedNothing(mac, calls, ["bbx-0", "person"]);
   });
 
+  test("refuses, changing nothing, while another command holds the iOS slots' lock past its wait", async () => {
+    const mac = freeMac({ DEVICE_HOST_WAIT_SECONDS: "1" });
+    const slotCommand = await holdingALock(join(mac.root, "var/db/bb-box/host/lock"));
+    const calls = mac.calls().length;
+
+    const proof = mac.helper(["snapshot", "proof"]);
+    slotCommand.stdin!.end();
+
+    assert.equal(proof.status, 3, proof.stdout + proof.stderr);
+    assert.match(proof.stderr, /runs only while the Mac's iOS slots are still/);
+    assertChangedNothing(mac, calls, ["bbx-0", "person"]);
+  });
+
   for (const [what, path, text] of [
     ["held by a box", "var/db/bb-box/host/slots/2/state", "is=held\nbox=box_x\nkind=ios\n"],
     ["being given back", "var/db/bb-box/host/slots/2/state", "is=releasing\nbox=box_x\n"],
     ["being made", "var/db/bb-box/host/slots/3/state", "is=making\nstep=device\nfor=\n"],
+    ["being removed", "var/db/bb-box/host/slots/3/state", "is=resetting\nstep=sweep\n"],
     ["promised to a box", "var/db/bb-box/host/promises/box_y", "since=1790000000\n"],
   ] as const) {
     test(`refuses while an iOS slot is ${what}, and changes nothing`, () => {
@@ -704,7 +813,7 @@ describe("The proof of home snapshots (090)", () => {
       const proof = mac.helper(["snapshot", "proof"]);
 
       assert.equal(proof.status, 3, proof.stdout + proof.stderr);
-      assert.match(proof.stderr, /an iOS slot is/);
+      assert.match(proof.stderr, new RegExp(`an iOS slot is ${what}`));
       assertChangedNothing(mac, calls, ["bbx-0", "person"]);
     });
   }
@@ -727,37 +836,71 @@ describe("The proof of home snapshots (090)", () => {
     assertChangedNothing(mac, calls, ["bbx-0", "person"]);
   });
 
-  for (const [what, before] of [
-    ["an account named bbbox-probe with another UID", (mac: FakeMacos) => account(mac, "bbbox-probe", 70501)],
-    ["an account named bbbox-probe with the proof's UID", (mac: FakeMacos) => account(mac, "bbbox-probe", 79999)],
-    ["an account named bbbox-probe-fork with the fork's UID", (mac: FakeMacos) => account(mac, "bbbox-probe-fork", 79998)],
-    ["another account with the proof's UID", (mac: FakeMacos) => account(mac, "someone", 79999)],
-    ["a home named bbbox-probe with no account", (mac: FakeMacos) => keep(mac, "Users/bbbox-probe/keep.txt", 0)],
-    ["a snapshot store named bbbox-probe", (mac: FakeMacos) => keep(mac, "var/db/bb-box/home-snapshots/bbbox-probe/keep.txt", 0)],
-    ["a file of the proof's UID", (mac: FakeMacos) => keep(mac, "Users/Shared/keep.txt", 79999)],
-    ["a file of the fork's UID", (mac: FakeMacos) => keep(mac, "Users/Shared/keep.txt", 79998)],
-  ] as const) {
-    test(`refuses before any change where the Mac has ${what}`, () => {
-      const mac = freeMac();
-      const kept = before(mac);
-      const users = mac.users();
-      const accounts = users.map((name) => mac.user(name));
-      const calls = mac.calls().length;
+  test("killed after its first take, leaves a record by which the next run ends its processes and removes its user, then passes", async () => {
+    const mac = freeMac();
+    mac.flag("sudo-processes");
+    const killed = mac.start(["snapshot", "proof"]);
+    const stores = join(mac.root, "var/db/bb-box/home-snapshots");
+    const taken = () => existsSync(stores) && readdirSync(stores).some((user) => existsSync(join(stores, user, "snproof000001/home")));
+    await eventually(taken, "the proof takes its first snapshot");
+    process.kill(killed.pid!, "SIGKILL");
+    await once(killed, "exit");
+    const left = mac.file(RECORD) ?? "";
+    const made = [...left.matchAll(/^user (\S+) \d+ [0-9A-F-]{36}$/gm)].map((line) => line[1]!);
+    const processes = [...left.matchAll(/^process (\d+) /gm)].map((line) => Number(line[1]));
+    assert.equal(made.length, 1, left);
+    assert.ok(processes.some((pid) => !/^Z?$/.test(stateOf(pid))), `the killed proof left a recorded process: ${left}`);
 
-      const proof = mac.helper(["snapshot", "proof"]);
+    const proof = mac.helper(["snapshot", "proof"]);
 
-      assert.equal(proof.status, 5, proof.stdout + proof.stderr);
-      assert.match(proof.stderr, /The proof deletes only what it makes, so it does not run/);
-      assert.match(proof.stderr, /It changed nothing\. Check them with: dscl/);
-      assert.deepEqual(users.map((name) => mac.user(name)), accounts);
-      assert.equal(mac.file(kept), "keep\n");
-      assertChangedNothing(mac, calls, users);
-    });
-  }
+    assert.equal(proof.status, 0, proof.stdout + proof.stderr);
+    assert.match(proof.stdout, /^note: removed what the earlier proof made$/m);
+    for (const pid of processes) assert.match(stateOf(pid), /^Z?$/, `recorded process ${pid} is ${stateOf(pid)}`);
+    assert.equal(mac.user(made[0]!), null);
+    assert.equal(mac.file(`Users/${made[0]}/proof/file.txt`), null);
+    assert.deepEqual(mac.users(), ["bbx-0", "person"]);
+    assert.equal(existsSync(join(mac.root, RECORD)), false);
+  });
+
+  test("refuses, changing nothing, where an earlier proof's record names an account that is not the one it made", () => {
+    const mac = freeMac();
+    mac.tool("dscl", [".", "-create", "/Users/bbbox-probe-0000abcd", "UniqueID", "90001"]);
+    mac.tool("dscl", [".", "-create", "/Users/bbbox-probe-0000abcd", "GeneratedUID", "00000000-0000-4000-8000-0000000000BB"]);
+    const home = keep(mac, "Users/bbbox-probe-0000abcd/keep.txt", 90001);
+    const record = "user bbbox-probe-0000abcd 90001 00000000-0000-4000-8000-0000000000AA\n";
+    writeFileSync(join(mac.root, RECORD), record);
+    const users = mac.users();
+    const calls = mac.calls().length;
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 5, proof.stdout + proof.stderr);
+    assert.match(proof.stdout, /^note: the proof left user bbbox-probe-0000abcd, as it is not the account the proof made/m);
+    assert.match(proof.stderr, /an earlier proof left what it cannot prove it made/);
+    assert.deepEqual(mac.users(), users);
+    assert.equal(mac.user("bbbox-probe-0000abcd")?.GeneratedUID, "00000000-0000-4000-8000-0000000000BB");
+    assert.equal(mac.file(home), "keep\n");
+    assert.equal(mac.file(RECORD), record);
+    assert.deepEqual(mac.calls().slice(calls).filter(ACCOUNT_CHANGE), []);
+  });
+
+  test("refuses, changing nothing, an earlier proof's record in a form it does not read", () => {
+    const mac = freeMac();
+    const record = "user bbbox-probe 79999 00000000-0000-4000-8000-0000000000AA 1234\nstore bbbox-probe 5678\n";
+    writeFileSync(join(mac.root, RECORD), record);
+    const calls = mac.calls().length;
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 5, proof.stdout + proof.stderr);
+    assert.match(proof.stderr, /in a form this proof does not read/);
+    assert.equal(mac.file(RECORD), record);
+    assert.deepEqual(mac.calls().slice(calls).filter(ACCOUNT_CHANGE), []);
+  });
 
   for (const [what, during, left] of [
-    ["an account that another made again under the proof's user's name", REPLACES_THE_PROBE_ACCOUNT, "Users/bbbox-probe/proof/file.txt"],
-    ["a home that another put in place of the proof's user's", REPLACES_THE_PROBE_HOME, "Users/bbbox-probe/keep.txt"],
+    ["an account that another made again under the scratch user's name", REPLACES_THE_PROBE_ACCOUNT, (user: string) => `Users/${user}/proof/file.txt`],
+    ["a home that another put in place of the scratch user's", REPLACES_THE_PROBE_HOME, (user: string) => `Users/${user}/keep.txt`],
   ] as const) {
     test(`deletes only what it made, and leaves ${what}`, () => {
       const mac = freeMac();
@@ -767,12 +910,38 @@ describe("The proof of home snapshots (090)", () => {
       const proof = mac.helper(["snapshot", "proof"]);
 
       assert.equal(proof.status, 1, proof.stdout + proof.stderr);
-      assert.match(proof.stdout, /^note: the proof left bbbox-probe, as /m);
+      const { user, uid, fork } = scratchUsers(proof.stdout);
       assert.match(proof.stdout, /^result: FAILED/m);
-      assert.equal(mac.user("bbbox-probe")?.UniqueID, "79999");
-      assert.notEqual(mac.file(left), null, `${left} is left`);
-      assert.match(mac.file("var/db/bb-box/proof-made") ?? "", /^user bbbox-probe 79999 /m);
-      assert.equal(mac.user("bbbox-probe-fork"), null);
+      assert.match(proof.stdout, new RegExp(`^note: the proof left .*${user}`, "m"));
+      assert.equal(mac.user(user)?.UniqueID, uid);
+      assert.notEqual(mac.file(left(user)), null, `${left(user)} is left`);
+      assert.match(mac.file(RECORD) ?? "", new RegExp(`^user ${user} ${uid} `, "m"));
+      assert.equal(mac.user(fork), null);
     });
   }
+
+  test("leaves the files of another account that takes a scratch user's UID after the scratch user goes", () => {
+    const mac = freeMac();
+    mac.flag("sudo-processes");
+    mac.flag("during-clone", true, GIVES_THE_PROBE_UID_TO_ANOTHER);
+    const calls = mac.calls().length;
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.match(mac.user("replacement")?.UniqueID ?? "", /^\d+$/, proof.stdout);
+    assert.equal(mac.file("Users/replacement/keep.txt"), "keep\n");
+    assert.deepEqual(dataVolumeScans(mac, calls), []);
+  });
+
+  test("leaves a file it did not make in a scratch user's sudo rule staging path", () => {
+    const mac = freeMac();
+    mac.flag("sudo-processes");
+    mac.flag("during-clone", true, PLANTS_A_SUDO_RULE_STAGING_FILE);
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 0, proof.stdout + proof.stderr);
+    const planted = readFileSync(join(mac.state, "planted"), "utf8").trim();
+    assert.equal(mac.file(`etc/sudoers.d/${planted}.new`), "keep\n");
+  });
 });

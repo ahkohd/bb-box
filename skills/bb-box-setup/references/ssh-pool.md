@@ -108,9 +108,11 @@ whole take home snapshots where the Mac says its homes clone; Linux
 machines, iOS slots and hooks take none yet, so tell the person what those
 could offer, not that they snapshot. To prove home snapshots on a free Mac,
 have the person run `sudo /usr/local/libexec/bb-box/machine snapshot proof`
-there. It refuses, changing nothing, while a box or an iOS slot uses the
-Mac, or where its scratch users `bbbox-probe` and `bbbox-probe-fork`, or
-UIDs 79999 and 79998, are there already: tell the person what it says
-rather than removing them. A check that warns says what to do: run
+there. It takes about 2 to 3 minutes on new scratch users, and iOS slot
+commands wait for it. It refuses, changing nothing, while a box or an iOS
+slot uses the Mac. Where an earlier proof was cut short, it first removes
+what that proof recorded making; where it cannot prove something is its
+own, it refuses and keeps `/var/db/bb-box/proof-made`: tell the person what
+its notes say rather than removing anything yourself. A check that warns says what to do: run
 the machine's setup script again when its helper is older, or, when the
 probe could not remove its trial, remove as root what it names.

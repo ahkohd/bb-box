@@ -568,23 +568,26 @@ BB Box runs these helper commands, as root, through the same sudo rule:
 
 | Command | What it does |
 | --- | --- |
-| `machine snapshot take <generation> <snapshot>` | Pauses the box user's running processes, clones the home, resumes exactly what it paused, then keeps the home's ACLs |
+| `machine snapshot take <generation> <snapshot>` | Pauses the box user's running processes, clones the home, resumes what it paused, then keeps the home's ACLs |
 | `machine snapshot list` | This install's snapshots on the Mac, and the free space under `/Users` |
 | `machine snapshot stop <generation>` | Ends the box user's session for a restore, after clearing the automatic login |
 | `machine snapshot restore <generation> <snapshot> <operation>` | Puts a clone of the snapshot in the home's place, with its ACLs, and clears the user's temporary and cache folders. Asked again with the same operation, it finishes a restore cut short, or changes nothing |
 | `machine snapshot start <generation>` | Signs the box user in again where it was signed in, by restarting the login window, or userspace after 30 s; it exits 10 until the user is at the console |
 | `machine snapshot delete <snapshot>` | Deletes a snapshot; again, it succeeds |
 | `machine snapshot fork <snapshot> <user> <uid>` | Makes a new user from a snapshot, without BB's machine files, the access file, BB's launch agent, the login keychain or plists naming the source's home. Only where no other user shares the Mac, and only for a new box user, `bbx-<n>` with UID 70000 plus n modulo 10000, that is not on the Mac or at its console. BB Box does not call it yet |
-| `machine snapshot proof` | On a free Mac: makes a scratch user, `bbbox-probe`, as box users are made, then takes, kills a take during its pause, restores with an undo, forks, aims forks at users already there, and deletes. It checks each, including that processes others stopped stay stopped and that a process above the user's that stops late is resumed, removes only what it made, and prints a report |
+| `machine snapshot proof` | On a free Mac: makes new scratch users, `bbbox-probe-` and 8 random hexadecimal digits, as box users are made, then takes, kills a take during its pause, restores with an undo, forks, aims forks at users already there, and deletes. It checks each, including that processes others stopped before a take stay stopped and that a process above the user's that stops late is resumed, removes only what it recorded making, and prints a report |
 
 A take records the processes it pauses, with when each started, before it
 stops them. It resumes only those, and a root `sudo` above one of them that
-stopped with it. A process stopped before the take stays stopped. The
-record keeps a process above the box user's that has not stopped yet for a
-minute, so a `sudo` that stops itself later than the take's last check is
-resumed by the helper's next command in that minute. A take killed while it
-paused the box user is resumed by the helper's next command, whichever it
-is. A release deletes the box user's snapshots before it removes the
+stopped with it. A process stopped before the take stays stopped, but a
+recorded process that someone else stops during the pause, or in the minute
+after it, is resumed with the rest. The record keeps a process above the box
+user's that has not stopped yet for a minute, so a `sudo` that stops itself
+later than the take's last check is resumed by the helper's next command in
+that minute. It keeps a process it found stopped until a later check sees it
+running or gone, even after that minute, and a second take keeps what the
+first still names. A take killed while it paused the box user is resumed by
+the helper's next command, whichever it is. A release deletes the box user's snapshots before it removes the
 user, and the reset refuses to lend the Mac while a snapshot of an earlier
 box is left. A restore signs a desktop's user out for a few seconds. When
 the login window does not sign the user in again, the userspace restart
@@ -597,15 +600,31 @@ while no box holds it:
 sudo /usr/local/libexec/bb-box/machine snapshot proof
 ```
 
-It leaves the box user waiting at the console alone. It takes the helper's
-lock first and holds it until it ends, so no box or iOS slot starts in the
-middle. It refuses with exit 3, changing nothing, while a box holds the
-Mac, its reset runs, an iOS slot is held, being made or promised, or a
-take's pause record is left. It refuses with exit 5, changing nothing,
-where its scratch users, their homes or snapshot stores, or their UIDs,
-79999 and 79998, are on the Mac already, and says how to check them. It
-records what it makes in `/var/db/bb-box/proof-made`, and deletes only
-that: anything else it leaves, with a note.
+It takes about 2 to 3 minutes and leaves the box user waiting at the
+console alone. It takes the helper's lock, then the iOS slots' lock, and
+holds both until it ends, so no box and no iOS slot claim, promise or make
+starts in the middle: a slot command sent meanwhile waits for the lock, up
+to 30 s for a claim and 60 s for the others, then is refused and asked
+again. It waits up to 60 s for a slot command that
+holds the slots' lock first. It refuses with exit 3, changing nothing,
+while a box holds the Mac, its reset runs, an iOS slot is anything but
+ready (held, being given back, made or removed), a slot is promised to a
+box, the slots' lock stays held, or a take's pause record is left.
+
+Each run makes new scratch users, with random names and UIDs from 90000 to
+99999 that no account has at that moment, outside the UIDs of box users
+(70000 to 79999) and iOS slot users (80000 to 89999). It refuses with exit
+5, changing nothing, when it cannot list the Mac's users. It makes no scan
+of the Data volume. It records each thing it makes in
+`/var/db/bb-box/proof-made` as it makes it: each user with its UID and
+`GeneratedUID`, each folder and file with its device and inode, and each
+process with when it started. At the end it deletes only what still
+matches the record, and leaves anything else with a note on how to check
+it, including files a scratch user made elsewhere on the Mac. A run cut
+short leaves the record, and the next run first removes what that record
+proves, in the same way. Where it cannot prove something is its own, it
+refuses with exit 5 and keeps the record: check what the notes name,
+remove what is an earlier proof's, then remove the record.
 
 
 ### Testing on one computer
