@@ -78,15 +78,22 @@ export function forkMayMissWords(snapshot: Pick<SnapshotRecord, "unflushed">): s
   return snapshot.unflushed ? `The snapshot may miss what the box wrote in its last seconds before it: ${unflushedWords(snapshot.unflushed).replace(/, so it may miss .*$/, "")}, so the fork may lack them too.` : null;
 }
 
+function keptAsIsSpaceWords(check: KeepCheck, on: string): string {
+  if (check.price) return "";
+  const unshared = check.unsharedBytes ?? null;
+  if (unshared !== null) {
+    const upTo = check.bytes !== null && check.bytes > unshared ? `, and up to ${gbWords(check.bytes)} if what it shares is deleted` : "";
+    return `; nothing is copied then. It takes about ${gbWords(unshared)} of ${on} that nothing else there shares${upTo}`;
+  }
+  return check.bytes !== null ? `; nothing is copied then, and from then on it takes its whole size, up to ${gbWords(check.bytes)} on ${on}, as its box no longer shares its blocks` : "";
+}
+
 export function keepCostWords(check: KeepCheck): string {
   const on = `${check.host ? `${check.host}'s ` : ""}${check.storage ?? "its storage"}`;
   const until = panelDay(check.keptUntil);
   if (check.gone && check.way === "as-is") return `Its box was released, and it stays where it is${check.host ? ` on ${check.host}` : ""} until ${PRODUCT} deletes it after ${until}${check.price ? `, at ${priceWords(check.price)}` : ""}.`;
   if (check.gone) return `Its box was released, so it lives on as a held copy, guest ${check.snapshot.livesOn.ref}, a template that cannot start${check.host ? ` on ${check.host}` : ""}, which ${PRODUCT} deletes after ${until}.`;
-  if (check.way === "as-is") {
-    const whole = !check.price && check.bytes !== null ? `; nothing is copied then, and from then on it takes its whole size, up to ${gbWords(check.bytes)} on ${on}, as its box no longer shares its blocks` : "";
-    return `If ${check.snapshot.box.name} is released, it stays where it is until ${until}${check.price ? `, at ${priceWords(check.price)}` : ""}${whole}.`;
-  }
+  if (check.way === "as-is") return `If ${check.snapshot.box.name} is released, it stays where it is until ${until}${check.price ? `, at ${priceWords(check.price)}` : ""}${keptAsIsSpaceWords(check, on)}.`;
   const space = check.usedBytes !== null ? `about ${gbWords(check.usedBytes)}${check.bytes !== null && check.bytes > check.usedBytes ? `, at most ${gbWords(check.bytes)},` : ""}` : check.bytes !== null ? `up to ${gbWords(check.bytes)}` : "the space its disk uses";
   const time = check.aboutMs !== null ? `up to about ${seconds(check.aboutMs)}` : "a while";
   return `If ${check.snapshot.box.name} is released, ${PRODUCT} first copies this snapshot in full into a template that cannot start: ${time}, and ${space} on ${on} until ${until}${check.price ? `, at ${priceWords(check.price)}` : ", at no charge"}.`;

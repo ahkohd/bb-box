@@ -56,6 +56,31 @@ export function keptUntilOf(tags: readonly string[], install: string, id: string
   return ends.length ? Math.max(...ends) : null;
 }
 
+export interface KeepChange {
+  readonly to: string | null;
+}
+
+function keepChangeMade(tags: readonly string[], install: string, id: string, change: KeepChange): boolean {
+  return change.to === null || tags.includes(keptTag(install, id, change.to));
+}
+
+export function keptUntilWith(tags: readonly string[], install: string, id: string, change: KeepChange | null): number | null {
+  if (change && keepChangeMade(tags, install, id, change)) return change.to === null ? null : endOfUtcDay(change.to);
+  return keptUntilOf(tags, install, id);
+}
+
+function latestKeepTag(tags: readonly string[]): string {
+  return [...tags].sort((a, b) => endOfUtcDay(b.slice(b.lastIndexOf(":") + 1))! - endOfUtcDay(a.slice(a.lastIndexOf(":") + 1))!)[0]!;
+}
+
+export function keepTagsToRemove(tags: readonly string[], install: string, id: string, change: KeepChange | null): readonly string[] {
+  const kept = keptTagsOf(tags, install, id);
+  if (change && keepChangeMade(tags, install, id, change)) return kept.filter((tag) => change.to === null || tag !== keptTag(install, id, change.to));
+  if (kept.length <= 1) return [];
+  const latest = latestKeepTag(kept);
+  return kept.filter((tag) => tag !== latest);
+}
+
 export function restoredName(boxContainer: string, suffix: string): string {
   return `${boxContainer}-${suffix}`;
 }
@@ -101,7 +126,41 @@ export function sizeFromLabels(labels: Readonly<Record<string, string>>): Snapsh
   const volumeBytes = Number(labels["bbbox.snapshot.volume-bytes"] ?? 0);
   const store = labels["bbbox.snapshot.store"];
   if (!(layerBytes >= 0 && volumeBytes >= 0) || (store !== "overlay2" && store !== "containerd")) return null;
-  return { bytes: pauseEstimate({ layerBytes, volumeBytes, store }).addsBytes, means: "whole" };
+  return { bytes: pauseEstimate({ layerBytes, volumeBytes, store }).addsBytes, means: "own" };
+}
+
+export interface RetainedOnEngine {
+  readonly unsharedBytes: number | null;
+  readonly wholeBytes: number;
+}
+
+export interface SnapshotImageLayers {
+  readonly layers: readonly string[];
+  readonly layerBytes: readonly number[];
+  readonly imageBytes: number;
+  readonly store: ImageStore;
+  readonly volumeBytes: number;
+}
+
+function sharedLayers(layers: readonly string[], others: readonly (readonly string[])[]): number {
+  const prefixOf = (other: readonly string[]) => {
+    let same = 0;
+    while (same < layers.length && same < other.length && layers[same] === other[same]) same++;
+    return same;
+  };
+  return Math.max(0, ...others.map(prefixOf));
+}
+
+export function retainedOnEngine(image: SnapshotImageLayers, others: readonly (readonly string[])[]): RetainedOnEngine {
+  const unpacked = (from: number) => image.layerBytes.slice(from).reduce((sum, bytes) => sum + bytes, 0);
+  const keepsLayersPackedToo = image.store === "containerd";
+  const wholeBytes = (keepsLayersPackedToo ? image.imageBytes + unpacked(0) : image.imageBytes) + image.volumeBytes;
+  if (image.layerBytes.length !== image.layers.length) return { unsharedBytes: null, wholeBytes };
+  const shared = sharedLayers(image.layers, others);
+  if (shared === 0) return { unsharedBytes: wholeBytes, wholeBytes };
+  const ownLayers = unpacked(shared);
+  const packedShare = keepsLayersPackedToo && unpacked(0) > 0 ? image.imageBytes * (ownLayers / unpacked(0)) : 0;
+  return { unsharedBytes: Math.round(ownLayers + packedShare) + image.volumeBytes, wholeBytes };
 }
 
 export function pausedTooLong(task: { readonly startedAt: number; readonly estimateMs: number }, now: number): boolean {

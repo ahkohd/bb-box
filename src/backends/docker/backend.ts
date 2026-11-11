@@ -65,6 +65,7 @@ import {
   type HeldGuest,
   type HostCapacity,
   type ImageBox,
+  type LeasedAddressNow,
   type ImageBuild,
   type Limit,
   type MachineAccess,
@@ -1588,6 +1589,21 @@ export class DockerBackend implements Backend {
     const guest: Guest = { ref: name, host: placed.host, address: null, size: sizeOf(container), data: dataOf(container, made.card, made.part) };
     await hooks.claim(guest);
     return guest;
+  }
+
+  async leasedAddressNow(guest: Guest, signal?: AbortSignal): Promise<LeasedAddressNow> {
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) return { power: "gone", leased: null };
+    const address = found.addresses[this.#config.network] ?? null;
+    if (found.status === "running" || found.status === "restarting") return { power: "running", leased: address };
+    if (found.status === "paused") return { power: "suspended", leased: address };
+    return { power: "stopped", leased: null };
+  }
+
+  async addressesGivenByProvider(guest: Guest, signal?: AbortSignal): Promise<readonly string[]> {
+    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    if (!found) throw this.#gone(guest);
+    return found.status === "running" ? Object.values(found.addresses) : [];
   }
 
   async startForForkCheck(guest: Guest, signal: AbortSignal): Promise<void> {

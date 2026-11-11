@@ -956,6 +956,7 @@ export interface Backend {
   armFork?(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void>;
   readonly addressIsAnEndpoint?: boolean;
   leasedAddressNow?(guest: Guest, signal?: AbortSignal): Promise<LeasedAddressNow>;
+  addressesGivenByProvider?(guest: Guest, signal?: AbortSignal): Promise<readonly string[]>;
   startForForkCheck?(guest: Guest, signal: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void>;
   forkCheckCommand?(guest: Guest, signal?: AbortSignal): Promise<CommandTransport>;
   disarmFork?(guest: Guest, signal?: AbortSignal): Promise<void>;
@@ -1058,7 +1059,7 @@ export interface SnapshotPlan {
     readonly copyAboutMs: number | null;
     readonly costWords?: string | null;
   };
-  readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly usedBytes?: number | null; readonly price: Price | null };
+  readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly usedBytes?: number | null; readonly unsharedBytes?: number | null; readonly price: Price | null };
   readonly fork: { readonly ok: boolean; readonly why: string | null; readonly aboutMs: number; readonly bytes: number | null; readonly size: MachineSize | null };
   readonly locked: { readonly lock: string; readonly fix: string } | null;
   readonly busy?: string | null;

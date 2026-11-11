@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { DockerBackend } from "../src/backends/docker/backend.ts";
-import { keptTag, snapshotImage, snapshotVolume } from "../src/backends/docker/snapshots.ts";
+import { keptTag, retainedOnEngine, snapshotImage, snapshotVolume } from "../src/backends/docker/snapshots.ts";
 import { DockerCli } from "../src/backends/docker/cli.ts";
 import { HETZNER_KEEP_OFF, hostPartOptions } from "../src/backends/hetzner/backend.ts";
 import { instancePartOptions, NAMESPACE_KEEP_OFF } from "../src/backends/namespace/linux.ts";
 import { SnapshotFailed, type Guest } from "../src/backends/types.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
-import { keptUntilAfter, utcDay } from "../src/core/snapshot.ts";
+import { endOfUtcDay, keptUntilAfter, utcDay } from "../src/core/snapshot.ts";
 import { keepWhyOf } from "../src/plugin/snapshot-card.ts";
 import { keepCostWords } from "../src/plugin/snapshot-words.ts";
 import { dockerConfig, fakeDockerHost, type FakeDockerHost } from "./fake-docker.ts";
@@ -81,7 +83,7 @@ test("Docker writes a snapshot's keep date as a tag on its engine, moves it when
   await state.snapshots.keep(COMMAND, standing(box), taken.id, { days: 30 });
 
   assert.equal(check.way, "as-is");
-  assert.match(keepCostWords(check), /^If \S+ is released, it stays where it is until Sun 29 Nov; nothing is copied then, and from then on it takes its whole size, up to \S+ (MB|GB) on \S+ Docker's disk, as its box no longer shares its blocks\.$/);
+  assert.match(keepCostWords(check), /^If \S+ is released, it stays where it is until Sun 29 Nov; nothing is copied then\. It takes about \S+ (MB|GB) of \S+ Docker's disk that nothing else there shares, and up to \S+ (MB|GB) if what it shares is deleted\.$/);
   assert.deepEqual(keepTags(fake), [keptTag(INSTALL, taken.id, "2026-11-29")]);
   assert.equal(state.store.record(taken.id)?.keptUntil, keptUntilAfter(START, 30));
 
@@ -105,6 +107,75 @@ test("Docker keeps nothing when the engine refuses the keep tag", async () => {
 
   assert.equal(state.store.record(taken.id)?.keptUntil, null);
   assert.deepEqual(keepTags(fake), []);
+});
+
+const KEEP_TAG_REMOVALS = "^bbbox-kept/";
+
+async function interruptedKeepChange(state: World, fake: FakeDockerHost, from: string, to: string) {
+  const box = await readyDockerBox(state, fake);
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "one" })).snapshot!;
+  await state.snapshots.keep(COMMAND, standing(box), taken.id, { until: from });
+  fake.set({ failImageRmMatching: KEEP_TAG_REMOVALS });
+
+  await rejection(state.snapshots.keep(COMMAND, standing(box), taken.id, { until: to }));
+
+  assert.deepEqual(keepTags(fake).sort(), [keptTag(INSTALL, taken.id, from), keptTag(INSTALL, taken.id, to)].sort(), "the new tag was written before the old one could go");
+  fake.set({ failImageRmMatching: null });
+  return { box, taken };
+}
+
+const RECOVERY_ORDERS = [
+  { name: "the snapshot sweep, then Docker's maintenance", recover: async (state: World) => { await state.snapshots.sweep(); await dockerOf(state).maintain(); } },
+  { name: "Docker's maintenance, then the snapshot sweep", recover: async (state: World) => { await dockerOf(state).maintain(); await state.snapshots.sweep(); } },
+] as const;
+
+for (const { name, recover } of RECOVERY_ORDERS) {
+  for (const [change, from, to] of [["renewal", "2026-11-29", "2026-12-10"], ["shortening", "2026-12-10", "2026-11-20"]] as const) {
+    test(`after a keep ${change} interrupted between its new tag and the old one's removal, ${name} leave one keep tag, the date asked for, on the engine and in the record`, async () => {
+      const fake = fakeDockerHost();
+      const state = dockerWorld(fake);
+      const { taken } = await interruptedKeepChange(state, fake, from, to);
+
+      await recover(state);
+
+      assert.deepEqual(keepTags(fake), [keptTag(INSTALL, taken.id, to)]);
+      assert.equal(state.store.record(taken.id)?.keptUntil, endOfUtcDay(to));
+      const listed = await dockerOf(state).heldSnapshots();
+      assert.equal(listed.find((held) => held.id === taken.id)?.keptUntil, endOfUtcDay(to));
+    });
+  }
+}
+
+test("after an interrupted keep shortening with no record of it left, neither snapshots.db nor Docker's own, Docker keeps one keep tag, the later date", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  const { taken } = await interruptedKeepChange(state, fake, "2026-12-10", "2026-11-20");
+  state.forgetRecords();
+  const fresh = new DockerBackend(dockerConfig(), testContext(new MemoryStorage(), INSTALL, { id: "fake" }), { binary: fake.binary, readyTimeoutMs: 2_000 });
+
+  await fresh.maintain();
+
+  assert.deepEqual(keepTags(fake), [keptTag(INSTALL, taken.id, "2026-12-10")]);
+  const listed = await fresh.heldSnapshots();
+  assert.equal(listed.find((held) => held.id === taken.id)?.keptUntil, endOfUtcDay("2026-12-10"));
+  await fresh.dispose?.();
+});
+
+test("an interrupted keep change whose new tag was never written changes nothing, and Docker's maintenance drops it", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  const box = await readyDockerBox(state, fake);
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "one" })).snapshot!;
+  await state.snapshots.keep(COMMAND, standing(box), taken.id, { until: "2026-12-10" });
+  fake.set({ failImageTag: true });
+  await rejection(state.snapshots.keep(COMMAND, standing(box), taken.id, { until: "2026-11-20" }));
+  fake.set({ failImageTag: false });
+
+  await dockerOf(state).maintain();
+  await state.snapshots.sweep();
+
+  assert.deepEqual(keepTags(fake), [keptTag(INSTALL, taken.id, "2026-12-10")]);
+  assert.equal(state.store.record(taken.id)?.keptUntil, endOfUtcDay("2026-12-10"));
 });
 
 test("Docker keeps a kept snapshot on its engine past its box's release, with its Docker data and keep tag, and deletes the unkept ones with the box", async () => {
@@ -144,6 +215,70 @@ test("Docker forks a kept snapshot after its box's release into one of the perso
   assert.equal(readFileSync(join(fake.home(container), "work.txt"), "utf8"), "before the take");
   assert.match(readFileSync(join(fake.identityRoot(container), "var/lib/bb-box/identity-resets"), "utf8"), /BB machines removed: host_source/, "its boot reset ran");
   assert.equal(state.store.operation(answer.operation.id)?.state, "done");
+});
+
+function addressOf(fake: FakeDockerHost, container: string): string {
+  return Object.values(fake.inspect(container).NetworkSettings.Networks)[0]!.IPAddress;
+}
+
+function dockerOn(fake: FakeDockerHost, ...args: string[]): void {
+  const ran = spawnSync(fake.binary, args, { encoding: "utf8" });
+  assert.equal(ran.status, 0, ran.stderr);
+}
+
+async function keptSourceOnThisMachine(state: World, fake: FakeDockerHost) {
+  fake.set({ name: hostname() });
+  const { box, kept } = await keptAndPlain(state, fake);
+  assert.equal(box.guest!.address, "172.30.0.2", "an engine on this machine records the box's address");
+  return { box, kept };
+}
+
+async function forkOfKept(state: World, box: BoxRecord): Promise<BoxRecord> {
+  const answer = await state.snapshots.forkGone(state.snapshots.findGone(box.name, "kept one"), { is: "command" }, { name: "from-kept" });
+  return (await state.boxes.settled(answer.box!))!;
+}
+
+test("on an engine of this machine with no other box, Docker forks a kept snapshot after its box's release, though the engine gives the fork its source's old address", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  const { box } = await keptSourceOnThisMachine(state, fake);
+  await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+
+  const fork = await forkOfKept(state, box);
+
+  assert.equal(fork.state, "ready", fork.error ?? "");
+  assert.equal(addressOf(fake, fork.guest!.ref), "172.30.0.2", "Docker gave the fork the lowest free address, its source's");
+  assert.equal(readFileSync(join(fake.home(fork.guest!.ref), "work.txt"), "utf8"), "before the take");
+  assert.match(readFileSync(join(fake.identityRoot(fork.guest!.ref), "var/lib/bb-box/identity-resets"), "utf8"), /BB machines removed: host_source/);
+});
+
+test("Docker still refuses a fork that holds the address of its source, stopped but not released, as the source could come back to it", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  const { box, kept } = await keptSourceOnThisMachine(state, fake);
+  dockerOn(fake, "container", "stop", box.guest!.ref);
+
+  const answer = await state.snapshots.fork(COMMAND, box, standing(box), kept.id, { name: "from-kept" });
+  const fork = (await state.boxes.settled(answer.box!))!;
+
+  assert.equal(fork.state, "failed");
+  assert.match(fork.error ?? "", new RegExp(`it holds ${box.name}'s address 172\\.30\\.0\\.2`));
+  assert.ok(!fake.containers().includes(fork.guest?.ref ?? "none"), "the refused fork is removed");
+});
+
+test("Docker refuses a fork after its source's release that holds the source's old address the engine did not give it", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  const { box } = await keptSourceOnThisMachine(state, fake);
+  await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  const other = await state.boxes.settled(await state.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: BY_COMMAND }));
+  assert.equal(addressOf(fake, other!.guest!.ref), "172.30.0.2", "another box took the old address");
+  fake.set({ guestAlsoHolds: "172.30.0.2" });
+
+  const fork = await forkOfKept(state, box);
+
+  assert.equal(fork.state, "failed");
+  assert.match(fork.error ?? "", new RegExp(`it holds ${box.name}'s address 172\\.30\\.0\\.2`));
 });
 
 test("Docker's kept snapshots and their dates are found again from the engine alone after BB Box restarts without snapshots.db's records", async () => {
@@ -221,8 +356,64 @@ test("Docker's doctor says what kept snapshots hold on Docker's disk, and until 
   const report = await dockerOf(state).doctor();
 
   const kept = report.checks.find((check) => check.id === "docker.kept-snapshots");
-  assert.match(kept?.detail ?? "", /^1 kept snapshot holds about \S+ (MB|GB) on Docker's disk, whether its box is released or not, until its keep date, 2026-11-29\. BB Box refuses to remove this backend while it holds them\.$/);
+  assert.match(kept?.detail ?? "", /^1 snapshot is kept, whether its box is released or not, until its keep date, 2026-11-29\. It takes about \S+ (MB|GB) of Docker's disk that nothing else there shares, and up to \S+ (MB|GB) if what it shares is deleted\. BB Box refuses to remove this backend while it holds them\.$/);
   assert.match(kept?.fix ?? "", /bb box snapshot delete <box> <snapshot>/);
+});
+
+function keptCheckOf(report: { readonly checks: readonly { readonly id: string; readonly detail: string }[] }): string {
+  return report.checks.find((check) => check.id === "docker.kept-snapshots")?.detail ?? "";
+}
+
+test("Keep and the doctor say what a kept snapshot of a large image with a tiny change takes that nothing else shares, up to its whole size, and its whole size once its image is refreshed", async () => {
+  const fake = fakeDockerHost();
+  writeFileSync(join(fake.root, "image-sizes.json"), JSON.stringify({ "bbbox/linux:1": 795_407_487 }));
+  fake.set({ snapshotLayerBytes: 126_976, snapshotVolumeKiB: 4 });
+  const state = dockerWorld(fake);
+  const box = await readyDockerBox(state, fake);
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "one" })).snapshot!;
+
+  const check = await state.snapshots.checkKeep(COMMAND, standing(box), taken.id, { days: 30 });
+  await state.snapshots.keep(COMMAND, standing(box), taken.id, { days: 30 });
+  await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  const released = keptCheckOf(await dockerOf(state).doctor());
+  dockerOn(fake, "image", "rm", "bbbox/linux:1");
+  const refreshed = keptCheckOf(await dockerOf(state).doctor());
+
+  assert.match(keepCostWords(check), /nothing is copied then\. It takes about 1 MB of \S+ Docker's disk that nothing else there shares, and up to 796 MB if what it shares is deleted\.$/);
+  assert.match(released, /It takes about 1 MB of Docker's disk that nothing else there shares, and up to 796 MB if what it shares is deleted\./);
+  assert.match(refreshed, /It takes about 796 MB of Docker's disk that nothing else there shares\. BB Box/, "nothing shares its layers once the image it came from is gone");
+});
+
+const MEASURED_ON_CONTAINERD = { layers: ["ubuntu", "tools", "start", "own"], layerBytes: [87_633_920, 2_102_317_056, 57_344, 139_264], imageBytes: 795_410_974, store: "containerd", volumeBytes: 7_193_000 } as const;
+
+test("on containerd, a kept snapshot's unshared size counts its own layers unpacked and their share of its packed content, with its Docker data", () => {
+  const whole = 795_410_974 + 87_633_920 + 2_102_317_056 + 57_344 + 139_264 + 7_193_000;
+
+  const beside = retainedOnEngine(MEASURED_ON_CONTAINERD, [["ubuntu", "tools", "start"]]);
+  const besideUbuntu = retainedOnEngine(MEASURED_ON_CONTAINERD, [["ubuntu"]]);
+  const alone = retainedOnEngine(MEASURED_ON_CONTAINERD, []);
+  const unmatched = retainedOnEngine({ ...MEASURED_ON_CONTAINERD, layerBytes: [87_633_920, 2_102_317_056] }, []);
+
+  assert.deepEqual([beside.wholeBytes, alone.wholeBytes, alone.unsharedBytes], [whole, whole, whole]);
+  assert.equal(Math.round(beside.unsharedBytes! / 1e6), 7, "its own 139 kB layer, about 50 kB of packed content, and 7.2 MB of Docker data");
+  assert.equal(Math.round(besideUbuntu.unsharedBytes! / 1e8) / 10, 2.9, "Docker's own count was 2.898 GB with the containerd store");
+  assert.deepEqual(unmatched, { unsharedBytes: null, wholeBytes: 795_410_974 + 87_633_920 + 2_102_317_056 + 7_193_000 });
+});
+
+test("where BB Box cannot read how much of Docker's disk a snapshot takes, Keep still keeps it and claims no size, and the doctor says it could not tell", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  const box = await readyDockerBox(state, fake);
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "one" })).snapshot!;
+  fake.set({ failImageHistory: true });
+
+  const check = await state.snapshots.checkKeep(COMMAND, standing(box), taken.id, { days: 30 });
+  await state.snapshots.keep(COMMAND, standing(box), taken.id, { days: 30 });
+  const detail = keptCheckOf(await dockerOf(state).doctor());
+
+  assert.equal(keepCostWords(check), `If ${box.name} is released, it stays where it is until Sun 29 Nov.`);
+  assert.match(detail, /BB Box could not read how much of Docker's disk it takes\./);
+  assert.deepEqual(keepTags(fake), [keptTag(INSTALL, taken.id, "2026-11-29")]);
 });
 
 test("Docker lists a kept snapshot once, though its image carries two tags", async () => {

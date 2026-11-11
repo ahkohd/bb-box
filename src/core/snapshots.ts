@@ -268,6 +268,7 @@ export interface KeepCheck {
   readonly aboutMs: number | null;
   readonly bytes: number | null;
   readonly usedBytes: number | null;
+  readonly unsharedBytes?: number | null;
   readonly host: string | null;
   readonly storage: string | null;
   readonly price: Price | null;
@@ -1234,6 +1235,7 @@ export class Snapshots {
     let aboutMs: number | null = null;
     let bytes: number | null = null;
     let usedBytes: number | null = null;
+    let unsharedBytes: number | null = null;
     let storage: string | null = null;
     let warning: string | null = null;
     if (current.guest === "held-copy") {
@@ -1256,6 +1258,7 @@ export class Snapshots {
       aboutMs = plan.keep.aboutMs;
       bytes = plan.keep.bytes;
       usedBytes = plan.keep.usedBytes ?? null;
+      unsharedBytes = plan.keep.unsharedBytes ?? null;
       storage = plan.storage.name;
       const room = way === "held-copy" ? this.#copyRoom(guest.host, plan.storage, usedBytes ?? bytes ?? 0, ledger.reservedBytes(plan.storage.key)) : null;
       warning = plan.keep.why ?? (room ? `At today's size, a release would not finish: ${room}.` : null);
@@ -1282,6 +1285,7 @@ export class Snapshots {
       aboutMs,
       bytes,
       usedBytes,
+      unsharedBytes,
       host: current.livesOn.host ?? current.host,
       storage,
       price: current.price,
