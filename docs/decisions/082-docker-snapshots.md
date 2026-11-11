@@ -456,5 +456,5 @@ bytes, from its changed layer and Docker data at its take. Measured in [082 resu
 
 A fork of a kept snapshot after its box's release can get its source's old
 address, as Docker hands out the lowest free one. Its check then accepts that
-address only as [decision 087](087-a-fork-may-hold-its-gone-sources-address-when-its-provider-gave-it.md)
+address only as [decision 088](088-a-fork-may-hold-its-gone-sources-address-when-its-provider-gave-it.md)
 says.

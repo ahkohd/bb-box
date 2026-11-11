@@ -237,7 +237,7 @@ address again. The refusal is safe, and nothing of the fork acts as its
 source, but the fork does not happen. A fix needs a choice: Docker holding
 the source's last address while a fork starts, or a core rule for addresses
 an engine assigns, which never gives one address to two running guests.
-[Decision 087](087-a-fork-may-hold-its-gone-sources-address-when-its-provider-gave-it.md)
+[Decision 088](088-a-fork-may-hold-its-gone-sources-address-when-its-provider-gave-it.md)
 takes the second; see below.
 
 ## Keep's fix round, verified live
@@ -262,7 +262,7 @@ engine.
 
 The fake Docker host now gives a starting container the lowest free address,
 as Docker does, and a test runs where the BB server's hostname is the
-engine's, so BB Box records the address. Its fork test failed before 087 and
+engine's, so BB Box records the address. Its fork test failed before 088 and
 passes with it. Keep tag changes cut short between the new tag and the old
 one's removal, a renewal and a shortening, each with BB Box's recovery and
 Docker's maintenance in both orders, leave one tag, the date asked for; with

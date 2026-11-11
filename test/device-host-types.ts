@@ -8,7 +8,7 @@ const device = { model: "iPhone 18 Pro", udid: "0F5B" } as const;
 export const legal = {
   poolMac: { ...common, on: "pool-mac", machine: "mac1", state: { is: "slots" } } satisfies DeviceHost,
   tartStarting: { ...common, on: "tart", mac: "mac1", vm: "bb-box-host-1", state: { is: "starting", promised: ["bx1", "bx2"], since: 0 } } satisfies DeviceHost,
-  namespace: { ...common, on: "namespace", instance: "ns-1", endsAt: 0, state: { is: "draining", why: "ending", lends: false, since: 0 } } satisfies DeviceHost,
+  namespace: { ...common, on: "namespace", backend: "namespace:team-b", instance: "ns-1", endsAt: 0, state: { is: "draining", why: "ending", lends: false, since: 0 } } satisfies DeviceHost,
   failed: { is: "failed", error: { code: "no-slot-made", words: "three slots failed" }, since: 0 } satisfies HostState,
   whole: { is: "whole", box: "bx1" } satisfies PoolMacState,
   carried: { carried: true, generation: 2 } satisfies SlotName,
@@ -31,7 +31,9 @@ export const illegal = {
   // @ts-expect-error
   tartWithAnEnd: { ...common, on: "tart", mac: "mac1", vm: "v", endsAt: 0, state: { is: "serving" } } satisfies DeviceHost,
   // @ts-expect-error
-  namespaceWithNoEnd: { ...common, on: "namespace", instance: "ns-1", state: { is: "serving" } } satisfies DeviceHost,
+  namespaceWithNoEnd: { ...common, on: "namespace", backend: "namespace", instance: "ns-1", state: { is: "serving" } } satisfies DeviceHost,
+  // @ts-expect-error
+  namespaceWithNoBackend: { ...common, on: "namespace", instance: "ns-1", endsAt: 0, state: { is: "serving" } } satisfies DeviceHost,
   // @ts-expect-error
   startingWithNoPromise: { is: "starting", since: 0 } satisfies HostState,
   // @ts-expect-error

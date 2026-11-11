@@ -975,8 +975,20 @@ export interface Backend {
   returnToService?(ref: string, signal?: AbortSignal): Promise<void>;
   /** Building images in boxes and keeping their builds (049). Only backends that can. */
   readonly images?: BackendImages;
+  ownImages?(signal?: AbortSignal): Promise<readonly OwnImage[]>;
   dispose?(): Promise<void>;
 }
+
+export interface OwnImage {
+  readonly kind: string;
+  readonly ref: string | null;
+  readonly builtAt: number | null;
+  readonly due: string | null;
+  readonly building: boolean;
+}
+
+export type HostNoTwoBackendsShare = string;
+export type EachLabelsWhatItMakes = null;
 
 export type Holds = "disk" | "disk-and-memory";
 export type WhileRunning = "live" | "pauses" | "suspends" | "stopped-only";
@@ -1297,7 +1309,6 @@ export interface ImageBuild {
   readonly ref: string;
   /** "standard" for a kind's own image, or a project's image's name. */
   readonly image: string;
-  /** The kind boxes of it are. */
   readonly kind: string;
   /** Its build ID, or null for one built before build IDs. */
   readonly build: string | null;
@@ -1603,12 +1614,8 @@ export interface BackendDriver<C = unknown> {
    * here, so a connection is never part one backend's and part the other's.
    */
   readonly inherits?: { readonly from: string; readonly sets: readonly (readonly string[])[] };
-  /**
-   * For a type the configuration may have several backends of, each on a
-   * host of its own (042): the host its fields name, which no two of them
-   * may share, since each lists its guests on its host.
-   */
-  readonly several?: (fields: Readonly<Record<string, unknown>>) => string;
+  readonly several?: (fields: Readonly<Record<string, unknown>>) => HostNoTwoBackendsShare | EachLabelsWhatItMakes;
+  readonly longestName?: number;
   /**
    * Paths in bb-box's repository. The guide is the entry point: the settings
    * page links it first, then the scripts in the order the guide runs them.

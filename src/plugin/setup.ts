@@ -1608,7 +1608,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const state = (await configuration.state()).backends.find((candidate) => candidate.id === backendId);
       return {
         backend: backendId,
-        name: first?.offer.name ?? providerName({ label: backends.driverLabel(backendId), hosts, type: status.type }),
+        name: first?.offer.name ?? providerName({ label: backends.driverLabel(backendId), hosts, id: backendId }),
         technology: drivers.find((driver) => driver.type === status.type)?.description ?? status.label,
         nature: status.nature,
         hosts,

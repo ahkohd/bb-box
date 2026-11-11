@@ -20,7 +20,7 @@ const CONFIG: NamespaceConfig = { token: FAKE_NAMESPACE_TOKEN, region: "us", mac
 function setup(options: { config?: Partial<NamespaceConfig>; now?: () => number; cuaScript?: string } = {}) {
   fakeSsh();
   const fake = new FakeNamespace({ ...(options.now ? { now: options.now } : {}), lifeCapMs: 4 * 3600_000, maxCores: 64 });
-  const context = testContext(new MemoryStorage(), "inst1");
+  const context = testContext(new MemoryStorage(), "inst1", { id: "namespace" });
   const backend = new NamespaceBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: options.cuaScript ?? ":", ...(options.now ? { now: options.now } : {}) });
   return { fake, backend: disposed(backend), context };
 }
@@ -52,7 +52,7 @@ test("an acquire claims the box before it makes the machine, labels it with its 
   assert.equal(recorded.claims[0]?.data?.instance, undefined, "the first claim is made before the machine is");
   assert.deepEqual(fake.calls.slice(0, 2).map((call) => call.method), ["GetConcurrency", "CreateInstance"], "the workspace's limits are read, then the machine made");
   const made = [...fake.instances.values()][0]!;
-  assert.deepEqual(made.labels, { [LABELS.install]: "inst1", [LABELS.box]: "b1", [LABELS.thread]: "thr_1", [LABELS.name]: "box-b1", [LABELS.kind]: "macos", [LABELS.created]: String(Date.parse("2030-01-01T00:00:00Z")) });
+  assert.deepEqual(made.labels, { [LABELS.install]: "inst1", [LABELS.backend]: "namespace", [LABELS.box]: "b1", [LABELS.thread]: "thr_1", [LABELS.name]: "box-b1", [LABELS.kind]: "macos", [LABELS.created]: String(Date.parse("2030-01-01T00:00:00Z")) });
   assert.equal(made.uniqueTag, "bbbox-inst1-b1");
   assert.equal(made.deadline, now + KEEP_AHEAD_MS);
   assert.deepEqual(made.shape, { os: "macos", machineArch: "arm64", virtualCpu: 4, memoryMegabytes: 14336, selectors: [{ name: "macos.version", value: "26.x" }] });
@@ -106,7 +106,7 @@ test("with the usage grant, capacity reads the workspace's Mac limits from Names
   const { fake, backend } = setup();
   const small = { cores: 4, memoryMiB: 8192, diskGiB: null };
   const workspace = new FakeNamespace({ maxCores: 6, maxMacMemoryMb: 14336 });
-  const limited = disposed(new NamespaceBackend(CONFIG, testContext(new MemoryStorage(), "inst1"), { fetch: workspace.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }));
+  const limited = disposed(new NamespaceBackend(CONFIG, testContext(new MemoryStorage(), "inst1", { id: "namespace" }), { fetch: workspace.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }));
   const medium = await limited.capacity("macos", { cores: 6, memoryMiB: 16384, diskGiB: null }, []);
   assert.equal(medium.ok, false);
   assert.match(medium.message!, /at most 6 cores and 14 GB of memory, and 6 cores and 16 GiB needs its 6x28 Mac/);
@@ -257,7 +257,7 @@ test("with a tailnet, each Mac joins it with a single-use key of its own, given 
   });
   fakeSsh();
   const fake = new FakeNamespace({ maxCores: 64 });
-  const context = { ...testContext(new MemoryStorage(), "inst1"), tailnet: () => tailnet };
+  const context = { ...testContext(new MemoryStorage(), "inst1", { id: "namespace" }), tailnet: () => tailnet };
   const backend = disposed(new NamespaceBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }));
   const recorded = hooks();
   const guest = await backend.acquire(box("b1"), null, recorded.hooks, new AbortController().signal);
@@ -394,7 +394,7 @@ test("Namespace offers ios as slots on a shared host once it has measured a Mac 
     const storage = new MemoryStorage();
     await storage.set(reportKey(report.chip), report);
     const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
-    const backend = disposed(new NamespaceBackend({ ...CONFIG, ...(iosHosts ? { iosHosts } : {}) }, testContext(storage, "inst1"), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+    const backend = disposed(new NamespaceBackend({ ...CONFIG, ...(iosHosts ? { iosHosts } : {}) }, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
     await new Promise((resolve) => setTimeout(resolve, 20));
     return backend;
   };
@@ -452,7 +452,7 @@ test("box_list's ios offer on Namespace says its slots are on a Mac made for the
   await storage.set(reportKey(IOS_REPORT.chip!), IOS_REPORT);
   await storage.set("mac-machines/Apple M4 Pro (Virtual)", { "instance-a": true, "instance-b": false });
   const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
-  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1"), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.match(backend.offerNote("ios") ?? "", /^iOS slots on a Namespace Mac made for the first ios box, in about 5 minutes, and deleted after its last; as many slots as its cores, memory and video encoder allow; each slot a macOS user/);
   assert.equal(backend.offerNote("macos"), null);
@@ -473,7 +473,7 @@ test("a Namespace report from an older probe that cannot make an offer is measur
   const older: MacReport = { ...withoutProbe, capabilities: { ...IOS_REPORT.capabilities, simulator: { is: "yes", what: { xcode: "26.1.1", runtimes: ["iOS 26.2"] } } } };
   await storage.set(reportKey(IOS_REPORT.chip!), older);
   const fake = new FakeNamespace({ now: () => now, lifeCapMs: 4 * 3600_000, maxCores: 64 });
-  const context = testContext(storage, "inst1");
+  const context = testContext(storage, "inst1", { id: "namespace" });
   const made = (iosHosts?: NamespaceConfig["iosHosts"]) => disposed(new NamespaceBackend({ ...CONFIG, ...(iosHosts ? { iosHosts } : {}) }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":", now: () => now }));
   const off = made({ on: false, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 });
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -512,7 +512,7 @@ test("a Namespace report from an older probe that can still make an offer is not
   const { probe: _, ...withoutProbe } = IOS_REPORT;
   await storage.set(reportKey(IOS_REPORT.chip!), withoutProbe);
   const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
-  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1"), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(backend.slots.lends("ios"), true);
   await backend.maintain();

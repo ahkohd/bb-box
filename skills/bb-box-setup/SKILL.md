@@ -238,7 +238,8 @@ several in one save: `bb box option set boxesPerThread=4 enrol=true`.
 
 The standard images are built by each backend's setup, or by bb-box itself
 for Docker on a BB machine and the cloud backends. `bb box images list`
-shows their age and what is due. A project's own image, a script run on the
+shows their age and what is due, and after them the Linux images each
+Namespace backend builds in its own workspace. A project's own image, a script run on the
 standard image, is in the `bb-box` skill, under "A project's image".
 
 ## When it goes wrong

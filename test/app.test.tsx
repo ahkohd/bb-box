@@ -8284,10 +8284,12 @@ test("the form's words: a provider's title, the systems' hosts, the nearest choi
   expect(offersShown([offer, pool, docker, tart], "container", "any").map((shown) => shown.backend)).toEqual(["fake", "docker:1"]);
   expect(offersShown([offer, pool, docker, tart], "physical", "macos").map((shown) => shown.backend)).toEqual(["ssh-pool"]);
   // The name the server made, which `on` takes too (044).
-  expect(providerName({ type: "tart", label: "Tart", hosts: ["mac-mini", "studio"] })).toBe("Tart on 2 Macs");
-  expect(providerName({ type: "tart", label: "Tart (VMs on a Mac)", hosts: ["mac-mini"] })).toBe("Tart on mac-mini");
-  expect(providerName({ type: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
-  expect(providerKeys("docker:devpc", { type: "docker", label: "Docker", hosts: ["devpc"] })).toEqual(["docker on devpc", "docker:devpc", "devpc"]);
+  expect(providerName({ id: "tart", label: "Tart", hosts: ["mac-mini", "studio"] })).toBe("Tart on 2 Macs");
+  expect(providerName({ id: "tart", label: "Tart (VMs on a Mac)", hosts: ["mac-mini"] })).toBe("Tart on mac-mini");
+  expect(providerName({ id: "ssh-pool", label: "SSH host pool", hosts: [] })).toBe("SSH host pool");
+  expect(providerKeys({ id: "docker:devpc", label: "Docker", hosts: ["devpc"] })).toEqual(["docker on devpc", "docker:devpc", "devpc"]);
+  expect(providerName({ id: "namespace", label: "Namespace", hosts: [] })).toBe("Namespace");
+  expect(providerKeys({ id: "namespace:team-b", label: "Namespace", hosts: [] })).toEqual(["namespace (team-b)", "namespace:team-b"]);
   // The badge: a Linux kind or box without Docker, not one whose offers differ, nor another OS (041).
   expect([lacksDocker({ os: "linux", docker: false }), lacksDocker({ os: "linux", docker: null }), lacksDocker({ os: "linux", docker: true }), lacksDocker({ os: "windows", docker: false })]).toEqual([true, false, false, false]);
 });

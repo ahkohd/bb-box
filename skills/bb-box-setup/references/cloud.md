@@ -66,6 +66,23 @@ plan's limit: 3 on Developer, 5 on Team. `machines` is the most boxes, Mac
 and Linux together, at once. Prove it with `bb box acquire macos --on
 namespace`, ready in about 20 s, and release it.
 
+A person with more than one Namespace workspace adds each as a backend of its
+own, with its own token, made while signed in to that workspace, and its own
+`--id` of at most 15 characters:
+
+```sh
+grep '^NSC_TOKEN_B=' "$BB_THREAD_STORAGE/bb-box.env" | \
+  bb box backend add namespace --id team-b --secret token=NSC_TOKEN_B --secrets-stdin \
+    --field longest-life-hours=5 --field machines=2
+```
+
+Its ID is `namespace:team-b`, and kinds, `--on` and `box_list` call it
+Namespace (team-b). The first keeps the ID `namespace`. A new box goes to the
+first with room. Each labels its machines with its ID, builds its own Linux
+images, so its first Linux box of each kind waits about 4 to 9 minutes, and
+runs its own shared iOS host. Prove it with `bb box acquire linux --on
+namespace:team-b`, and release it.
+
 ## boat.dev
 
 Each box is a boat.dev sandbox, a Linux VM with KVM, billed by the second.
