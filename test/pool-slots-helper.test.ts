@@ -350,3 +350,19 @@ test("a slot claim dispatched as the Mac's home snapshot proof starts waits for 
   assert.match(during, /^is=ready$/m, `slot ${slot} while the proof runs: ${during}`);
   await Promise.all([once(proof, "exit"), once(claim, "exit")]);
 });
+
+test("the Mac's home snapshot proof refuses a slot whose claim was killed after its claim was linked and before its held state was written, and changes nothing", () => {
+  const host = poolMac();
+  const slot = made(host, "machine");
+  host.flag("killed-after-linking-a-claim");
+
+  const claim = host.run(["claim", slot], SLOT_CLAIM());
+  const proof = host.machine(["snapshot", "proof"]);
+
+  assert.equal(claim.status, null, claim.stderr);
+  assert.match(host.file(`${HOST}/slots/${slot}/state`) ?? "", /^is=ready$/m);
+  assert.match(host.file(`${HOST}/slots/${slot}/claim`) ?? "", /^box=box_a$/m);
+  assert.equal(proof.status, MACHINE_EXIT.held, proof.stdout + proof.stderr);
+  assert.match(proof.stderr, new RegExp(`an iOS slot is claimed, or its claim was cut short \\(.*/slots/${slot}/claim\\)`));
+  assert.equal(existsSync(join(host.root, "var/db/bb-box/proof-made")), false);
+});

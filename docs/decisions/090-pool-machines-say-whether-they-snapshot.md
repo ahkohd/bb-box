@@ -447,8 +447,12 @@ section 2, this is what stands:
   <generation> <snapshot> <operation>` swaps the home and is safe to ask
   again with the same operation; `start <generation>` signs the user in
   again where it was signed in, exiting 10 until it is. `list` and
-  `delete <snapshot>` take no generation, so a sweep can find snapshots of
-  any box of the install.
+  `delete <user> <snapshot>` take no generation, so a sweep can find
+  snapshots of any box of the install. A delete names the box user whose
+  store holds the snapshot, and looks nowhere else. It deletes a snapshot,
+  or a take's unfinished clone of it, only where its record names this
+  install and that user. Where either folder has no record, or a record
+  for another install or user, it refuses with exit 4 and deletes nothing.
 - **The swap clones first, then renames twice.** The snapshot's clone and
   its ACLs go to a staging folder in the store, the home moves aside, the
   clone moves in, and the old home is deleted. A home moved aside with no
@@ -503,7 +507,9 @@ section 2, this is what stands:
   source box's session and every SSH session on the Mac. The lead chose
   this over a fork beside its source without a console session, which
   would change the helper's one-owner model; that is a later unit. The
-  helper's `fork <snapshot> <user> <uid>` is built and proved: it refuses
+  helper's `fork <source user> <snapshot> <user> <uid>` is built and
+  proved. It reads the snapshot only from the source user's store, and
+  only where its record names this install and that user. It refuses
   while another user shares the Mac, and resets the fork's home as the
   spike lists, plists naming the source's home included. Before any
   change, it refuses a user that is not one the helper reserves for box
@@ -524,36 +530,73 @@ section 2, this is what stands:
     claim, promise, make and top-up changes a slot's state only under the
     device host's lock, so a slot command dispatched before the proof
     either changed its state first, which the proof then sees, or waits
-    for the proof and is refused, to be asked again. This needs no change
-    to the device host, so it holds with the one already installed. Under
-    both locks it refuses with exit 3, changing nothing, while a box holds
-    the Mac, its reset runs, an iOS slot is in any state but ready, a slot
+    for the lock. A command that waits is not refused: it goes on once the
+    proof lets go of the lock, or ends with its own refusal if its wait
+    runs out first. This needs no change to the device host, so it holds
+    with the one already installed. Under both locks it refuses with exit
+    3, changing nothing, while a box holds the Mac, its reset runs, a slot
     is promised or its user is being removed, the device host's lock stays
     held, or a take's pause record is left; it runs no take's recovery of
-    its own. It refuses with exit 5 when it cannot list the Mac's users.
+    its own. It refuses too unless every iOS slot is completely idle: its
+    folder has its slot and state records, its state says ready, and it
+    holds no claim, unfinished claim record, released claim or last-slot
+    record. So a claim cut short between linking its claim and writing its
+    held state, which leaves a ready slot with a claim, is refused. It
+    refuses with exit 5 when it cannot list the Mac's users.
   - **The record.** Before it makes anything, it writes
     `/var/db/bb-box/proof-made`, and it adds each thing as it makes it:
-    each user with its UID and `GeneratedUID`, each folder and file with
-    its device and inode (homes, snapshot stores, password files and its
-    own work folder, and the files it makes in a scratch user's temporary
-    and cache folders), and each process with its start time. It follows
-    a home through its own restores and fork.
+    each user with its UID and `GeneratedUID`, marked as picked while no
+    process ran as its UID, each folder and file with its device and inode
+    (homes, snapshot stores, each snapshot it takes, password files and
+    its own work folder, and the files it makes in a scratch user's
+    temporary and cache folders), and each process with its start time. It
+    follows a home through its own restores and fork. A record from an
+    earlier version, with no such mark, is one it does not read.
   - **One checked path.** Every process the proof or a take signals,
     every account the proof deletes, every file or folder the proof
     deletes by its record, and every file a restore clears from the
     user's temporary and cache folders goes through one function. It is given each
     object's identity as recorded: a process's ID and start time, an
     account's UID and `GeneratedUID`, a file's or folder's device and
-    inode. It reads the identity again at that moment, acts only where it
+    inode. It reads accounts and files again one at a time, just before it
+    acts on each. For processes it reads one process table for each batch,
+    then signals each process in the batch whose ID and start time match
+    that table; a process that ends and whose ID is taken again within
+    that moment is the window it leaves. It acts only where the identity
     matches, and skips and reports anything else. The proof's own
     stopping and ending of its scratch processes, at its normal exit and
     in recovery alike, takes this path, and a process it means to stop
-    during a take stops itself, so the proof sends it no signal.
-    The helper's own working folders inside the snapshot store, which only
-    root can write, are still removed by their path: a take's unfinished
-    clone, a restore's staged and replaced homes, a fork's staged home and
-    a deleted snapshot. A restore ends every process of the box user's
-    UID, as the reset does.
+    during a take stops itself, so the proof sends it no signal. The proof
+    deletes its snapshots by their record, in its own store, through this
+    function.
+  - **The one exception: every process of a UID.** Ending every process
+    of an account by its UID (a TERM to its clients, `launchctl bootout`,
+    then `pkill -KILL -u`) is the one thing chosen by UID alone. The
+    helper does it only in `end_every_process_of_the_uid`, reached in two
+    ways. For a box user it lends, `log_out` does it, as release and reset
+    always have. In the proof, it does it only through
+    `end_every_process_of_an_account_this_proof_made`: for an account this
+    run made, whose UID and `GeneratedUID` match the record at that
+    moment, and whose UID no process used when the proof picked it. Where
+    the account no longer matches, at a stop, a restore or in recovery,
+    it ends nothing, says so, and never falls back to the UID alone: the
+    stop fails, the restore refuses with exit 5 and changes nothing, and
+    recovery leaves the account with the record. The proof prints this
+    rule at its start.
+  - **Timeouts end only the helper's own child.** A command the helper
+    runs with a time limit runs as the child of a small Perl program,
+    which sends it TERM at the limit only while it has not reaped it, so
+    the signal cannot reach a process that later took its ID.
+  - **Removing a tree changes no file outside it.** The helper clears the
+    flags and ACLs that stop a delete only on folders and on files with
+    one link. A file with more than one link, which shares its flags and
+    ACLs with a name outside the tree, is unlinked as it is. Where that
+    fails, the helper leaves it, names it, and the removal fails, with
+    nothing outside it changed.
+  - **Still removed by their path.** The helper's own working folders
+    inside the snapshot store, which only root can write, are removed by
+    their path: a take's unfinished clone, a restore's staged and
+    replaced homes and a fork's staged home.
   - **Clean-up** deletes only by the record, through that function. It
     logs a user out only where the account at that name still has the
     recorded UID and `GeneratedUID`; that ends the processes of a UID that
@@ -574,8 +617,9 @@ section 2, this is what stands:
     same way, and go on. A window of a moment between making a thing and
     recording it can leave something unrecorded: that stays, never
     deleted.
-  - It never touches the user waiting at the console. Its results go in
-    [090-results.md](090-results.md).
+  - It notes the user at the console before it starts, and checks that
+    the same user is there before it deletes its snapshots, failing where
+    it changed. Its results go in [090-results.md](090-results.md).
 - **The snapshot store** takes the new scopes by rebuilding its table with
   the wider check, keeping every record.
 

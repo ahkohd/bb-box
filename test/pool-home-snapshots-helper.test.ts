@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, readdirSync, realpathSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { describe, test, type TestContext } from "node:test";
@@ -298,7 +298,7 @@ describe("A Mac lent whole takes home snapshots of its box user (090)", () => {
   for (const [command, input] of [
     [["status"], ""],
     [["snapshot", "list"], "install=inst_a\n"],
-    [["snapshot", "delete", "snzzzzzzzzzzzz"], "install=inst_a\n"],
+    [["snapshot", "delete", "bbx-0", "snzzzzzzzzzzzz"], "install=inst_a\n"],
   ] as const) {
     test(`a take killed during its pause has ${command.join(" ")} resume exactly what it stopped, with the sudo above it, and nothing stopped by others`, async (t) => {
       const mac = lentMac();
@@ -538,6 +538,13 @@ function keep(mac: FakeMacos, path: string, uid: number): string {
   return path;
 }
 
+const SNAPSHOTS = "var/db/bb-box/home-snapshots";
+
+function inodeFlags(mac: FakeMacos): string[] {
+  const file = join(mac.state, "inode-flags");
+  return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
+}
+
 function spawnMove(mac: FakeMacos, from: string, to: string): number {
   const result = mac.tool("mv", [join(mac.root, from), join(mac.root, to)]);
   return result.status ?? 1;
@@ -548,8 +555,8 @@ describe("Deleting home snapshots and releasing their box (090)", () => {
     const mac = lentMac();
     ok(mac, ["take", "0", "snaaaaaaaaaaaa"]);
 
-    ok(mac, ["delete", "snaaaaaaaaaaaa"], "install=inst_a\n");
-    ok(mac, ["delete", "snaaaaaaaaaaaa"], "install=inst_a\n");
+    ok(mac, ["delete", "bbx-0", "snaaaaaaaaaaaa"], "install=inst_a\n");
+    ok(mac, ["delete", "bbx-0", "snaaaaaaaaaaaa"], "install=inst_a\n");
 
     assert.equal(existsSync(join(mac.root, STORE, "snaaaaaaaaaaaa")), false);
   });
@@ -558,9 +565,90 @@ describe("Deleting home snapshots and releasing their box (090)", () => {
     const mac = lentMac();
     ok(mac, ["take", "0", "snaaaaaaaaaaaa"]);
 
-    assert.equal(run(mac, ["delete", "snaaaaaaaaaaaa"], "install=inst_b\n").status, 4);
+    assert.equal(run(mac, ["delete", "bbx-0", "snaaaaaaaaaaaa"], "install=inst_b\n").status, 4);
 
     assert.equal(existsSync(join(mac.root, STORE, "snaaaaaaaaaaaa")), true);
+  });
+
+  test("a delete names its box user, and leaves another store's snapshot of the same name, with a record or without", () => {
+    const mac = lentMac();
+    ok(mac, ["take", "0", "snaaaaaaaaaaaa"]);
+    const bare = keep(mac, `${SNAPSHOTS}/unrelated/snaaaaaaaaaaaa/sentinel`, 0);
+    const recorded = keep(mac, `${SNAPSHOTS}/bbx-9/snaaaaaaaaaaaa/sentinel`, 0);
+    writeFileSync(join(mac.root, SNAPSHOTS, "bbx-9/snaaaaaaaaaaaa/info"), "install=inst_a\nbox=box_a\nuser=bbx-9\n");
+
+    ok(mac, ["delete", "bbx-0", "snaaaaaaaaaaaa"], "install=inst_a\n");
+
+    assert.equal(existsSync(join(mac.root, STORE, "snaaaaaaaaaaaa")), false);
+    assert.equal(mac.file(bare), "keep\n");
+    assert.equal(mac.file(recorded), "keep\n");
+  });
+
+  for (const [what, info] of [
+    ["no record of whose it is", null],
+    ["a record naming another box user", "install=inst_a\nbox=box_a\nuser=bbx-9\n"],
+    ["a record naming another install", "install=inst_b\nbox=box_a\nuser=bbx-0\n"],
+  ] as const) {
+    test(`a delete refuses, deleting nothing, where a folder of the snapshot has ${what}`, () => {
+      const mac = lentMac();
+      ok(mac, ["take", "0", "snaaaaaaaaaaaa"]);
+      const partial = keep(mac, `${STORE}/snaaaaaaaaaaaa.partial/sentinel`, 0);
+      if (info) writeFileSync(join(mac.root, STORE, "snaaaaaaaaaaaa.partial/info"), info);
+
+      const refused = run(mac, ["delete", "bbx-0", "snaaaaaaaaaaaa"], "install=inst_a\n");
+
+      assert.equal(refused.status, 4, refused.stderr);
+      assert.match(refused.stderr, /deletes nothing/);
+      assert.equal(mac.file(partial), "keep\n");
+      assert.equal(existsSync(join(mac.root, STORE, "snaaaaaaaaaaaa/home")), true);
+    });
+  }
+
+  test("a delete with no box user is refused as a usage error", () => {
+    const mac = lentMac();
+    ok(mac, ["take", "0", "snaaaaaaaaaaaa"]);
+
+    assert.equal(run(mac, ["delete", "snaaaaaaaaaaaa"], "install=inst_a\n").status, 2);
+
+    assert.equal(existsSync(join(mac.root, STORE, "snaaaaaaaaaaaa/home")), true);
+  });
+
+  test("removing a replaced home changes no flag or ACL of a file outside it that a hard link in it shares", () => {
+    const mac = lentMac();
+    const outside = keep(mac, "Users/Shared/outside.txt", 0);
+    const full = join(mac.root, outside);
+    assert.equal(mac.tool("chflags", ["uchg", full]).status, 0);
+    assert.equal(mac.tool("chmod", ["+a", "everyone deny delete", full]).status, 0);
+    linkSync(full, join(mac.root, "Users/bbx-0/linked.txt"));
+    ok(mac, ["take", "0", "snaaaaaaaaaaaa"]);
+
+    restored(mac, "snaaaaaaaaaaaa", "opaaaaaaaaaaaa");
+
+    assert.equal(existsSync(join(mac.root, STORE, ".replaced")), false, "the replaced home is deleted");
+    assert.ok(inodeFlags(mac).includes(`${objectId(full)} uchg`), "the outside file keeps its uchg flag");
+    assert.ok(mac.lines("acls").includes(`${realpathSync(full)}\teveryone deny delete`), "the outside file keeps its ACL");
+  });
+
+  test("a restore whose replaced home holds a hard link it cannot unlink as it is fails, names it, and changes no flag or ACL of the file outside", (t) => {
+    const mac = lentMac();
+    const outside = keep(mac, "Users/Shared/outside.txt", 0);
+    const full = join(mac.root, outside);
+    mkdirSync(join(mac.root, "Users/bbx-0/locked"));
+    linkSync(full, join(mac.root, "Users/bbx-0/locked/linked.txt"));
+    chmodSync(join(mac.root, "Users/bbx-0/locked"), 0o555);
+    t.after(() => spawnSync("chmod", ["-R", "u+w", mac.root]));
+    assert.equal(mac.tool("chflags", ["uchg", full]).status, 0);
+    assert.equal(mac.tool("chmod", ["+a", "everyone deny delete", full]).status, 0);
+    ok(mac, ["take", "0", "snaaaaaaaaaaaa"]);
+    ok(mac, ["stop", "0"]);
+
+    const restore = run(mac, ["restore", "0", "snaaaaaaaaaaaa", "opaaaaaaaaaaaa"]);
+
+    assert.equal(restore.status, 1, restore.stderr);
+    assert.match(restore.stderr, /note: left \S+\/locked\/linked\.txt, a hard link to a file that is also outside/);
+    assert.equal(existsSync(join(mac.root, STORE, ".replaced/locked/linked.txt")), true);
+    assert.ok(inodeFlags(mac).includes(`${objectId(full)} uchg`), "the outside file keeps its uchg flag");
+    assert.ok(mac.lines("acls").includes(`${realpathSync(full)}\teveryone deny delete`), "the outside file keeps its ACL");
   });
 
   test("the release deletes the box user's snapshots with it", () => {
@@ -598,7 +686,7 @@ describe("Forks of home snapshots on the helper (090)", () => {
     write(mac, "Users/bbx-0/.ssh/id_ed25519", "the user's own key\n");
     ok(mac, ["take", "0", "snaaaaaaaaaaaa"]);
 
-    const fork = ok(mac, ["fork", "snaaaaaaaaaaaa", "bbx-500", "70500"], "install=inst_a\n");
+    const fork = ok(mac, ["fork", "bbx-0", "snaaaaaaaaaaaa", "bbx-500", "70500"], "install=inst_a\n");
 
     assert.equal(fork.get("left"), "");
     assert.equal(fork.get("from"), "snaaaaaaaaaaaa");
@@ -618,7 +706,7 @@ describe("Forks of home snapshots on the helper (090)", () => {
     mkdirSync(join(mac.state, "users", "bbx-7"), { recursive: true });
     writeFileSync(join(mac.state, "users", "bbx-7", "UniqueID"), "70007\n");
 
-    const refused = run(mac, ["fork", "snaaaaaaaaaaaa", "bbx-500", "70500"], "install=inst_a\n");
+    const refused = run(mac, ["fork", "bbx-0", "snaaaaaaaaaaaa", "bbx-500", "70500"], "install=inst_a\n");
 
     assert.equal(refused.status, 5);
     assert.match(refused.stderr, /The Mac is shared \(box user bbx-7\), so it makes no fork/);
@@ -647,7 +735,7 @@ describe("Forks of home snapshots on the helper (090)", () => {
       const users = mac.users();
       const calls = mac.calls().length;
 
-      const refused = run(mac, ["fork", "snaaaaaaaaaaaa", target, uid], "install=inst_a\n");
+      const refused = run(mac, ["fork", "bbx-0", "snaaaaaaaaaaaa", target, uid], "install=inst_a\n");
 
       assert.equal(refused.status, 5, refused.stderr);
       assert.match(refused.stderr, reason);
@@ -671,6 +759,8 @@ const GIVES_THE_PROBE_UID_TO_ANOTHER = `case $2 in */.fork-*) ${STORE_OF_THE_FOR
 const PLANTS_A_SUDO_RULE_STAGING_FILE = `case $2 in */snproof000001.partial/home) ${STORE_OF_THE_TAKE}; echo keep >"$R/etc/sudoers.d/$u.new" && echo "$u" >"$F/planted" ;; *) exit 1 ;; esac`;
 const PLANTS_IN_THE_PROBES_TEMPORARY_FOLDER = `case $2 in */snproof000001.partial/home) ${STORE_OF_THE_TAKE}; id=$(cat "$F/users/$u/UniqueID"); echo keep >"$R/private/var/folders/zz/user$id/T/planted" && echo "$id $(readlink -f "$R/private/var/folders/zz/user$id/T/planted")" >>"$F/owners" && echo "$id" >"$F/planted" ;; *) exit 1 ;; esac`;
 const RECORDS_A_STOPPED_ROOT_PROCESS_AS_STARTED_EARLIER = `case $2 in */snproof000001.partial/home) record="$R/var/db/bb-box/proof-made"; awk '$1 == "process" { print $2 }' "$record" | while read -r pid; do ps -o stat= -p "$pid" | grep -q '^T' && ! awk -v p="$pid" '$1 == p { found = 1 } END { exit !found }' "$F/process-uids" && echo "$pid"; done >"$F/mismatched"; awk -v list="$F/mismatched" 'BEGIN { while ((getline p < list) > 0) m[p] = 1 } $1 == "process" && ($2 in m) { $3 = "Thu_Jan_1_00:00:00_1970" } { print }' "$record" >"$record.x" && mv "$record.x" "$record" ;; *) exit 1 ;; esac`;
+const REPLACES_THE_PROBE_ACCOUNT_BESIDE_A_PROCESS = `case $2 in */snproof000001.partial/home) ${STORE_OF_THE_TAKE}; echo "4242 $(cat "$F/users/$u/UniqueID") stranger 1" >>"$F/processes"; echo 00000000-0000-4000-8000-0000000000BB >"$F/users/$u/GeneratedUID" ;; *) exit 1 ;; esac`;
+const PUTS_A_PERSON_AT_THE_CONSOLE = `case $2 in */snproof000001.partial/home) echo person >"$F/console" ;; *) exit 1 ;; esac`;
 const HOLD_LOCK = `use Fcntl ":flock"; open(my $f, ">>", $ARGV[0]) or exit 1; flock($f, LOCK_EX) or exit 1; $| = 1; print "held\\n"; <STDIN>;`;
 const RECORD = "var/db/bb-box/proof-made";
 
@@ -723,6 +813,7 @@ describe("The proof of home snapshots (090)", () => {
     const mac = freeMac();
     mac.flag("sudo-processes");
     mkdirSync(join(mac.root, "var/db/bb-box/host/slots/1"), { recursive: true });
+    writeFileSync(join(mac.root, "var/db/bb-box/host/slots/1/slot"), "user=bbbox-slot-1\n");
     writeFileSync(join(mac.root, "var/db/bb-box/host/slots/1/state"), "is=ready\n");
 
     const proof = mac.helper(["snapshot", "proof"]);
@@ -864,6 +955,66 @@ describe("The proof of home snapshots (090)", () => {
     });
   }
 
+  for (const [what, files, words] of [
+    ["claimed while its state still says ready", { slot: "user=bbbox-slot-1\n", state: "is=ready\n", claim: "box=box_x\n" }, "claimed, or its claim was cut short"],
+    ["half claimed, its claim record unfinished", { slot: "user=bbbox-slot-1\n", state: "is=ready\n", "claim.new.4242": "box=box_x\n" }, "claimed, or its claim was cut short"],
+    ["given back, its claim kept as released", { slot: "user=bbbox-slot-1\n", state: "is=ready\n", released: "box=box_x\n" }, "claimed, or its claim was cut short"],
+    ["a folder with no state record", { slot: "user=bbbox-slot-1\n" }, "being made or removed"],
+    ["a folder with no slot record", { state: "is=ready\n" }, "being made or removed"],
+  ] as const) {
+    test(`refuses while an iOS slot is ${what}, and changes nothing`, () => {
+      const mac = freeMac();
+      const slot = join(mac.root, "var/db/bb-box/host/slots/1");
+      mkdirSync(slot, { recursive: true });
+      for (const [name, text] of Object.entries(files)) writeFileSync(join(slot, name), text);
+      const calls = mac.calls().length;
+
+      const proof = mac.helper(["snapshot", "proof"]);
+
+      assert.equal(proof.status, 3, proof.stdout + proof.stderr);
+      assert.match(proof.stderr, new RegExp(`an iOS slot is ${words}`));
+      assertChangedNothing(mac, calls, ["bbx-0", "person"]);
+    });
+  }
+
+  test("deletes no snapshot in another store, of the names it uses, with a record or without", () => {
+    const mac = freeMac();
+    mac.flag("sudo-processes");
+    const bare = keep(mac, `${SNAPSHOTS}/unrelated/snproofundo01/sentinel`, 0);
+    const recorded = keep(mac, `${SNAPSHOTS}/other/snproof000001/sentinel`, 0);
+    writeFileSync(join(mac.root, SNAPSHOTS, "other/snproof000001/info"), "install=bb-box-proof\nbox=proof\nuser=other\n");
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 0, proof.stdout + proof.stderr);
+    assert.equal(mac.file(bare), "keep\n");
+    assert.equal(mac.file(recorded), "keep\n");
+    assert.ok(proof.stdout.split("\n").includes("ok: deleted snapshot snproofundo01, which it recorded making in its own store"), proof.stdout);
+  });
+
+  test("ends no process of a scratch user's UID once the account is not the one it made, and says so", () => {
+    const mac = freeMac();
+    mac.flag("sudo-processes");
+    mac.flag("during-clone", true, REPLACES_THE_PROBE_ACCOUNT_BESIDE_A_PROCESS);
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 1, proof.stdout + proof.stderr);
+    assert.match(proof.stderr, /note: left every process of user \S+, UID \d+, as it is not now the account the proof made/);
+    assert.match(readFileSync(join(mac.state, "processes"), "utf8"), /^4242 \d+ stranger 1$/m);
+  });
+
+  test("checks the user at the console before and after, and fails where it changed", () => {
+    const mac = freeMac();
+    mac.flag("sudo-processes");
+    mac.flag("during-clone", true, PUTS_A_PERSON_AT_THE_CONSOLE);
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 1, proof.stdout + proof.stderr);
+    assert.match(proof.stdout, /^FAILED: the user at the console is as before the proof: /m);
+  });
+
   test("refuses while a take's pause record is left, and leaves what it paused to the helper's recovery", (t) => {
     const mac = freeMac();
     const work = processOf(t, mac);
@@ -892,7 +1043,7 @@ describe("The proof of home snapshots (090)", () => {
     process.kill(killed.pid!, "SIGKILL");
     await once(killed, "exit");
     const left = mac.file(RECORD) ?? "";
-    const made = [...left.matchAll(/^user (\S+) \d+ [0-9A-F-]{36}$/gm)].map((line) => line[1]!);
+    const made = [...left.matchAll(/^user (\S+) \d+ [0-9A-F-]{36} unused-when-picked$/gm)].map((line) => line[1]!);
     const processes = [...left.matchAll(/^process (\d+) /gm)].map((line) => Number(line[1]));
     assert.equal(made.length, 1, left);
     assert.ok(processes.some((pid) => !/^Z?$/.test(stateOf(pid))), `the killed proof left a recorded process: ${left}`);
@@ -908,12 +1059,33 @@ describe("The proof of home snapshots (090)", () => {
     assert.equal(existsSync(join(mac.root, RECORD)), false);
   });
 
+  test("in its recovery, ends no process whose start time is not the one recorded for its PID", async (t) => {
+    const mac = freeMac();
+    mac.flag("sudo-processes");
+    const killed = mac.start(["snapshot", "proof"]);
+    const stores = join(mac.root, "var/db/bb-box/home-snapshots");
+    const taken = () => existsSync(stores) && readdirSync(stores).some((user) => existsSync(join(stores, user, "snproof000001/home")));
+    await eventually(taken, "the proof takes its first snapshot");
+    process.kill(killed.pid!, "SIGKILL");
+    await once(killed, "exit");
+    const left = mac.file(RECORD) ?? "";
+    const recorded = [...left.matchAll(/^process (\d+) /gm)].map((line) => Number(line[1]));
+    const reused = processOf(t, null);
+    writeFileSync(join(mac.root, RECORD), `${left}process ${reused} ${BEFORE_ANY_PROCESS}\n`);
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 0, proof.stdout + proof.stderr);
+    assert.doesNotMatch(stateOf(reused), /^Z?$/, `process ${reused} was ended: ${stateOf(reused)}`);
+    for (const pid of recorded) assert.match(stateOf(pid), /^Z?$/, `recorded process ${pid} is ${stateOf(pid)}`);
+  });
+
   test("refuses, changing nothing, where an earlier proof's record names an account that is not the one it made", () => {
     const mac = freeMac();
     mac.tool("dscl", [".", "-create", "/Users/bbbox-probe-0000abcd", "UniqueID", "90001"]);
     mac.tool("dscl", [".", "-create", "/Users/bbbox-probe-0000abcd", "GeneratedUID", "00000000-0000-4000-8000-0000000000BB"]);
     const home = keep(mac, "Users/bbbox-probe-0000abcd/keep.txt", 90001);
-    const record = "user bbbox-probe-0000abcd 90001 00000000-0000-4000-8000-0000000000AA\n";
+    const record = "user bbbox-probe-0000abcd 90001 00000000-0000-4000-8000-0000000000AA unused-when-picked\n";
     writeFileSync(join(mac.root, RECORD), record);
     const users = mac.users();
     const calls = mac.calls().length;

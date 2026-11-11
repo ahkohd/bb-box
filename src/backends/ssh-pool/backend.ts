@@ -81,6 +81,7 @@ import {
   homeRef,
   homeStorage,
   homeTaskRef,
+  homeUserOf,
   olderHelperWhy,
   parseHomeListing,
   parseHomeTask,
@@ -644,13 +645,15 @@ export class SshPoolBackend implements Backend {
   async deleteSnapshot(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
     const machine = this.#machines.get(ref.guest.ref);
     if (!machine) return;
+    const user = homeUserOf(ref.ref);
+    if (!user) throw new Error(`Snapshot ${ref.id} on ${machine.name} does not name the box user whose store holds it, so BB Box deletes nothing.`);
     await hooks.submitting();
-    await hooks.task({ ref: homeTaskRef({ kind: "delete", id: ref.id }), host: machine.name });
-    await this.#deleteHome(machine, ref.id, signal);
+    await hooks.task({ ref: homeTaskRef({ kind: "delete", user, id: ref.id }), host: machine.name });
+    await this.#deleteHome(machine, user, ref.id, signal);
   }
 
-  async #deleteHome(machine: SshPoolMachine, id: string, signal?: AbortSignal): Promise<void> {
-    const result = await this.#helper(machine, ["snapshot", "delete", id], releaseInput(this.#context.installId, null), HOME_RESTORE_TIMEOUT_MS, signal);
+  async #deleteHome(machine: SshPoolMachine, user: string, id: string, signal?: AbortSignal): Promise<void> {
+    const result = await this.#helper(machine, ["snapshot", "delete", user, id], releaseInput(this.#context.installId, null), HOME_RESTORE_TIMEOUT_MS, signal);
     if (result.exitCode !== EXIT.ok) throw new Error(`Machine ${machine.name} could not delete the snapshot: ${said(result)}`);
   }
 
@@ -687,7 +690,7 @@ export class SshPoolBackend implements Backend {
     if (!machine || !home) return { state: "missing", words: `${task.ref} is not a home snapshot task on a machine in the SSH host pool's settings.` };
     if (home.kind === "restore") return this.#restoreHome(machine, home, signal);
     if (home.kind === "delete") {
-      await this.#deleteHome(machine, home.id, signal);
+      await this.#deleteHome(machine, home.user, home.id, signal);
       return { state: "ok" };
     }
     const listed = (await this.#homeListing(machine, signal)).snapshots.find((each) => each.id === home.id);

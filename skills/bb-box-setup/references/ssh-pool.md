@@ -109,8 +109,9 @@ machines, iOS slots and hooks take none yet, so tell the person what those
 could offer, not that they snapshot. To prove home snapshots on a free Mac,
 have the person run `sudo /usr/local/libexec/bb-box/machine snapshot proof`
 there. It takes about 2 to 3 minutes on new scratch users, and iOS slot
-commands wait for it. It refuses, changing nothing, while a box or an iOS
-slot uses the Mac. Where an earlier proof was cut short, it first checks
+commands wait for it, then go on. It refuses, changing nothing, while a box
+uses the Mac or any iOS slot is not idle, a slot whose claim was cut short
+included. Where an earlier proof was cut short, it first checks
 that proof's whole record, then removes what that proof recorded making;
 where it cannot list the Mac's users or prove something is its own, it
 refuses, changing nothing, and keeps `/var/db/bb-box/proof-made`: tell the person what

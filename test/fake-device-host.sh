@@ -285,6 +285,11 @@ case $tool in
     exec "$@"
     ;;
   plutil) exec "$FAKE_MACOS_BIN/plutil" "$@" ;;
+  ln)
+    /bin/ln "$@" || exit 1
+    eval "linked=\${$#}"
+    case $linked in */claim) ! flag killed-after-linking-a-claim || kill -KILL "$PPID" ;; esac
+    ;;
   *)
     echo "fake-device-host.sh: no fake $tool" >&2
     exit 127

@@ -156,8 +156,11 @@ function homeSnapshot(verb, args) {
     return console.log("store.total_kib=104857600\nstore.used_kib=52428800\nstore.free_kib=52428800");
   }
   if (verb === "delete") {
-    rmSync(join(homeSnapshots, args[0]), { recursive: true, force: true });
-    return console.log(`deleted=${args[0]}`);
+    const [user, id] = args;
+    if (args.length !== 2) quit(EXIT.usage, "usage: machine snapshot delete <user> <snapshot>");
+    if (existsSync(join(homeSnapshots, id)) && field(read(join("home-snapshots", id, "info")), "user") !== user) quit(EXIT.notOurs, `Snapshot ${id} is not ${user}'s.`);
+    rmSync(join(homeSnapshots, id), { recursive: true, force: true });
+    return console.log(`deleted=${id}`);
   }
   if (verb === "stop") {
     lentTo(args[0]);

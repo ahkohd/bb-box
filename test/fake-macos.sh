@@ -48,6 +48,15 @@ kcpassword_of() {
     $password =~ s/\0.*//s;
     print $password;' <"$R/etc/kcpassword"
 }
+acls_of_inodes_removed() {
+  inodes=$(for path; do /usr/bin/stat -c %d:%i "$path" 2>/dev/null; done)
+  touch "$F/acls"
+  while IFS= read -r line; do
+    inode=$(/usr/bin/stat -c %d:%i "${line%%	*}" 2>/dev/null || echo none)
+    printf '%s\n' "$inodes" | grep -qxF "$inode" || printf '%s\n' "$line"
+  done <"$F/acls" >"$F/acls.new.$$"
+  /bin/mv -f "$F/acls.new.$$" "$F/acls"
+}
 # Rewrites a state file through a filter.
 edit() {
   file=$1
@@ -346,7 +355,26 @@ case $tool in
   fdesetup) if flag filevault-on; then echo "FileVault is On."; else echo "FileVault is Off."; fi ;;
   ioreg) echo '  |   "IOPlatformUUID" = "0A1B2C3D-0000-4000-8000-000000000001"' ;;
   visudo) ! flag visudo-refuses && grep -q NOPASSWD "$2" ;;
-  chflags) ;;
+  chflags)
+    deep=no
+    while [ "${1#-}" != "$1" ]; do
+      [ "$1" != -R ] || deep=yes
+      shift
+    done
+    changes=$1
+    shift
+    for given; do
+      if [ "$deep" = yes ]; then /usr/bin/find "$given"; else printf '%s\n' "$given"; fi
+    done | while IFS= read -r path; do
+      inode=$(/usr/bin/stat -c %d:%i "$path" 2>/dev/null) || continue
+      for change in $(printf '%s' "$changes" | tr ',' ' '); do
+        case $change in
+          no*) edit "$F/inode-flags" awk -v i="$inode" -v f="${change#no}" '!($1 == i && $2 == f)' ;;
+          *) printf '%s %s\n' "$inode" "$change" >>"$F/inode-flags" ;;
+        esac
+      done
+    done
+    ;;
 
   chown)
     deep=no
@@ -611,9 +639,20 @@ case $tool in
     exec /bin/ls "$@"
     ;;
   chmod)
+    [ "${1:-}" != -h ] || shift
     case ${1:-} in
-      -N) edit "$F/acls" awk -v p="$(readlink -f "$2")" -F '\t' '$1 != p' ;;
-      -R) [ "$2" = -N ] && exit 0; exec /bin/chmod "$@" ;;
+      -N)
+        shift
+        acls_of_inodes_removed "$@"
+        ;;
+      -R)
+        [ "$2" = -N ] || exec /bin/chmod "$@"
+        /usr/bin/find "$3" | {
+          set --
+          while IFS= read -r path; do set -- "$@" "$path"; done
+          acls_of_inodes_removed "$@"
+        }
+        ;;
       +a) printf '%s\t%s\n' "$(readlink -f "$3")" "$2" >>"$F/acls" ;;
       +ai) printf '%s\t%s\n' "$(readlink -f "$3")" "$(printf '%s' "$2" | sed 's/:\([a-z]*\) \(allow\|deny\)/:\1 inherited \2/')" >>"$F/acls" ;;
       *) exec /bin/chmod "$@" ;;

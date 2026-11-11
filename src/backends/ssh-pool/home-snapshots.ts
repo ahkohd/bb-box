@@ -105,6 +105,10 @@ export function homeRef(machine: string, user: string, id: string): string {
   return `${machine}:${user}/${id}`;
 }
 
+export function homeUserOf(ref: string): string | null {
+  return /:([A-Za-z0-9_-]+)\/[A-Za-z0-9_-]+$/.exec(ref)?.[1] ?? null;
+}
+
 export function homeStorage(machine: string, homes: string, store: HomeStore | null): SnapshotStorage {
   const totalBytes = store ? store.totalKiB * 1024 : null;
   const usedBytes = store ? store.usedKiB * 1024 : null;
@@ -178,15 +182,20 @@ export function heldHome(machine: Guest, listed: ListedHome, homes: string): Hel
   };
 }
 
-export type HomeTask = { readonly kind: "take" | "delete"; readonly id: string } | { readonly kind: "restore"; readonly box: string; readonly generation: number; readonly id: string; readonly operation: string };
+export type HomeTask =
+  | { readonly kind: "take"; readonly id: string }
+  | { readonly kind: "delete"; readonly user: string; readonly id: string }
+  | { readonly kind: "restore"; readonly box: string; readonly generation: number; readonly id: string; readonly operation: string };
 
 export function homeTaskRef(task: HomeTask): string {
-  return task.kind === "restore" ? `restore:${task.box}:${task.generation}:${task.id}:${task.operation}` : `${task.kind}:${task.id}`;
+  if (task.kind === "restore") return `restore:${task.box}:${task.generation}:${task.id}:${task.operation}`;
+  return task.kind === "delete" ? `delete:${task.user}:${task.id}` : `take:${task.id}`;
 }
 
 export function parseHomeTask(ref: string): HomeTask | null {
   const parts = ref.split(":");
-  if ((parts[0] === "take" || parts[0] === "delete") && parts.length === 2 && parts[1]) return { kind: parts[0], id: parts[1] };
+  if (parts[0] === "take" && parts.length === 2 && parts[1]) return { kind: "take", id: parts[1] };
+  if (parts[0] === "delete" && parts.length === 3 && parts[1] && parts[2]) return { kind: "delete", user: parts[1], id: parts[2] };
   if (parts[0] === "restore" && parts.length === 5 && /^\d+$/.test(parts[2]!)) return { kind: "restore", box: parts[1]!, generation: Number(parts[2]), id: parts[3]!, operation: parts[4]! };
   return null;
 }
