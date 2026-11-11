@@ -428,3 +428,8 @@ Namespace machine at its box's release. They offer no snapshots yet, so the
 reason shows once items 7 and 8 pass snapshots through. The doctor's Kept
 snapshots check says what kept snapshots hold on Docker's disk and until
 when. Measured in [082 results](082-results.md#keep-verified-live).
+
+Left open: a fork of a kept snapshot after its box's release is refused when
+Docker gives the fork its source's old address, as it does when no other box
+took that address since the release. The refusal is safe. The results say
+why, and the fix needs its own choice.

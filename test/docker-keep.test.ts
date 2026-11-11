@@ -221,7 +221,7 @@ test("Docker's doctor says what kept snapshots hold on Docker's disk, and until 
   const report = await dockerOf(state).doctor();
 
   const kept = report.checks.find((check) => check.id === "docker.kept-snapshots");
-  assert.match(kept?.detail ?? "", /^1 kept snapshot holds about \S+ (MB|GB) on Docker's disk, whether their boxes are released or not, until their keep dates, the latest 2026-11-29\. BB Box refuses to remove this backend while it holds them\.$/);
+  assert.match(kept?.detail ?? "", /^1 kept snapshot holds about \S+ (MB|GB) on Docker's disk, whether its box is released or not, until its keep date, 2026-11-29\. BB Box refuses to remove this backend while it holds them\.$/);
   assert.match(kept?.fix ?? "", /bb box snapshot delete <box> <snapshot>/);
 });
 

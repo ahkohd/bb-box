@@ -46,12 +46,14 @@ function keptCheck(listed: readonly HeldSnapshot[]): DoctorCheck {
   if (!kept.length) return { id: "docker.kept-snapshots", name: "Kept snapshots", status: "ok", detail: "No snapshot here is kept.", fix: null };
   const bytes = kept.reduce((sum, held) => sum + (held.size?.bytes ?? 0), 0);
   const latest = utcDay(Math.max(...kept.map((held) => held.keptUntil!)));
-  const these = kept.length === 1 ? "1 kept snapshot holds" : `${kept.length} kept snapshots hold`;
+  const these = kept.length === 1
+    ? `1 kept snapshot holds about ${gbWords(bytes)} on Docker's disk, whether its box is released or not, until its keep date, ${latest}`
+    : `${kept.length} kept snapshots hold about ${gbWords(bytes)} on Docker's disk, whether their boxes are released or not, until their keep dates, the latest ${latest}`;
   return {
     id: "docker.kept-snapshots",
     name: "Kept snapshots",
     status: "ok",
-    detail: `${these} about ${gbWords(bytes)} on Docker's disk, whether their boxes are released or not, until their keep dates, the latest ${latest}. ${PRODUCT} refuses to remove this backend while it holds them.`,
+    detail: `${these}. ${PRODUCT} refuses to remove this backend while it holds them.`,
     fix: "Delete one with bb box snapshot delete <box> <snapshot>, as bb box snapshot list --all names them.",
   };
 }
