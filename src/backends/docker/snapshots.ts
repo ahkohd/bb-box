@@ -1,5 +1,5 @@
 import { endOfUtcDay } from "../../core/snapshot.ts";
-import { NO_PAUSE, type MachineSize, type SnapshotSize, type Snapshotting, type TakePause } from "../types.ts";
+import { NO_PAUSE, type DoctorCheck, type MachineSize, type SnapshotSize, type Snapshotting, type TakePause } from "../types.ts";
 import { LXCFS_TARGETS } from "./lxcfs.ts";
 import { ENV_A_BOX_IS_GIVEN, IMAGE_HOLDS_FORKS, labelsOf } from "./box-container.ts";
 
@@ -205,4 +205,18 @@ export function dockerOffer(keepOffBecause: string | null = null): Snapshotting 
     excludes: "running programs, memory, /run and /dev/shm",
     ...(keepOffBecause ? { keepWhy: keepOffBecause } : {}),
   };
+}
+
+export interface SnapshotLines {
+  readonly status: DoctorCheck["status"];
+  readonly detail: string;
+}
+
+const STATUS_ORDER: readonly DoctorCheck["status"][] = ["skipped", "ok", "warn", "fail"];
+
+export function snapshotLinesOf(checks: readonly DoctorCheck[]): SnapshotLines | null {
+  const lines = checks.filter((check) => check.id.startsWith("docker.snapshot"));
+  if (!lines.length) return null;
+  const status = lines.map((check) => check.status).reduce((worst, each) => (STATUS_ORDER.indexOf(each) > STATUS_ORDER.indexOf(worst) ? each : worst));
+  return { status, detail: lines.map((check) => `${check.name}: ${check.detail}`).join(" ") };
 }

@@ -7,7 +7,8 @@ import { DOCKER_KEYS, parseDockerPart, type DockerConfig } from "../docker/confi
 import { scopedStorage } from "../index.ts";
 import type { Ssh } from "../../transports/ssh.ts";
 import type { SshAccess } from "../../transports/types.ts";
-import type { AcquireHooks, BackendContext, BoxIdentity, BoxKind, MachineSize, Guest } from "../types.ts";
+import type { AcquireHooks, BackendContext, BoxIdentity, BoxKind, MachineSize, Guest, SnapshotPlan, Snapshotting } from "../types.ts";
+import { dockerOffer } from "../docker/snapshots.ts";
 import { LINUX_IMAGE_TARGETS, type LinuxImageKind, type LinuxImages } from "./linux-images.ts";
 import { PRODUCT } from "../../brand.ts";
 
@@ -22,7 +23,43 @@ const LOCAL_IMAGE: Readonly<Record<LinuxImageKind, string>> = {
 };
 const PULL_TIMEOUT_MS = 15 * 60_000;
 export const CONTAINER_MEMORY_MARGIN_MIB = 512;
-export const NAMESPACE_KEEP_OFF = "each Namespace box is a machine of its own, deleted at its release, so a snapshot cannot outlive its box there yet";
+export const NAMESPACE_KEEP_OFF = "a box's snapshots stay on its Namespace machine and end with it, at the box's release or at the machine's deadline";
+export const NAMESPACE_FORK_OFF = `a fork needs a Namespace machine of its own, and ${PRODUCT} cannot carry a snapshot from one machine to another yet`;
+const SNAPSHOTS_TAKEN_ON = "snapshots-taken-on:";
+const RELEASING_THE_BOX_ON = "releasing-the-box-on:";
+const BOX_CONTAINER_SEEN_ON = "box-container-seen-on:";
+const TAKE_ENDS_BEFORE_DEADLINE_MS = 2 * 60_000;
+
+export function namespaceOffer(): Snapshotting {
+  return { ...dockerOffer(NAMESPACE_KEEP_OFF), lives: "host", fork: "none", forkWhy: NAMESPACE_FORK_OFF };
+}
+
+export function snapshotStorageOnMachine(endsAt: number | null): string {
+  return endsAt === null ? "Docker's disk on the box's Namespace machine" : `Docker's disk on the box's Namespace machine, which ends at ${clock(endsAt)} with its snapshots`;
+}
+
+export function deadlineRefusal(endsAt: number | null, now: number, aboutMs: number, what: "snapshot" | "restore"): string | null {
+  if (endsAt === null || now + aboutMs + TAKE_ENDS_BEFORE_DEADLINE_MS < endsAt) return null;
+  const done = what === "snapshot" ? "this snapshot would be ready" : "this restore would finish";
+  return `The box's Namespace machine ends at ${clock(endsAt)}, the plan's longest life, before ${done}, and its snapshots end with it. Make a new box to go on working`;
+}
+
+export function withMachineDeadline(plan: SnapshotPlan, endsAt: number | null, now: number): SnapshotPlan {
+  const storage = { ...plan.storage, name: snapshotStorageOnMachine(endsAt) };
+  const takeWhy = plan.take.ok ? deadlineRefusal(endsAt, now, plan.take.aboutMs, "snapshot") : null;
+  const restoreWhy = plan.restore.way === "none" ? null : deadlineRefusal(endsAt, now, plan.restore.undoAboutMs, "restore");
+  return {
+    ...plan,
+    storage,
+    take: takeWhy ? { ...plan.take, ok: false, why: takeWhy } : plan.take,
+    restore: restoreWhy ? { ...plan.restore, way: "none", why: restoreWhy, undo: "none" } : plan.restore,
+    fork: { ...plan.fork, ok: false, why: NAMESPACE_FORK_OFF },
+  };
+}
+
+function clock(ms: number): string {
+  return `${new Date(ms).toISOString().slice(11, 16)} UTC`;
+}
 
 export function instancePartOptions(given: DockerBackendOptions | undefined, cli: DockerCli, ssh: string | null): DockerBackendOptions {
   return { ...given, ...(ssh ? { ssh } : {}), cliReachingAHostAnotherBackendMade: cli, keepOffBecause: NAMESPACE_KEEP_OFF };
@@ -115,8 +152,45 @@ export class NamespaceLinux {
     return part;
   }
 
-  forget(instance: string): void {
+  async forget(instance: string): Promise<void> {
     this.#parts.delete(instance);
+    await this.#deps.context.storage.delete(SNAPSHOTS_TAKEN_ON + instance);
+    await this.#deps.context.storage.delete(BOX_CONTAINER_SEEN_ON + instance);
+    await this.#deps.context.storage.delete(RELEASING_THE_BOX_ON + instance);
+  }
+
+  async markSnapshotsOn(instance: string, now: number): Promise<void> {
+    await this.#deps.context.storage.set(SNAPSHOTS_TAKEN_ON + instance, true);
+    await this.markBoxContainerSeen(instance, now);
+  }
+
+  async markReleasingTheBox(instance: string): Promise<void> {
+    await this.#deps.context.storage.set(RELEASING_THE_BOX_ON + instance, true);
+  }
+
+  async releasingTheBox(instance: string): Promise<boolean> {
+    return (await this.#deps.context.storage.get(RELEASING_THE_BOX_ON + instance)) === true;
+  }
+
+  async machinesReleasingTheirBox(): Promise<readonly string[]> {
+    return (await this.#deps.context.storage.list(RELEASING_THE_BOX_ON)).map((key) => key.slice(RELEASING_THE_BOX_ON.length));
+  }
+
+  async markBoxContainerSeen(instance: string, now: number): Promise<void> {
+    await this.#deps.context.storage.set(BOX_CONTAINER_SEEN_ON + instance, now);
+  }
+
+  async boxContainerLastSeen(instance: string): Promise<number | null> {
+    const seen = await this.#deps.context.storage.get<number>(BOX_CONTAINER_SEEN_ON + instance);
+    return typeof seen === "number" ? seen : null;
+  }
+
+  async snapshotsTakenOn(instance: string): Promise<boolean> {
+    return (await this.#deps.context.storage.get(SNAPSHOTS_TAKEN_ON + instance)) === true;
+  }
+
+  async machinesWithSnapshots(): Promise<readonly string[]> {
+    return (await this.#deps.context.storage.list(SNAPSHOTS_TAKEN_ON)).map((key) => key.slice(SNAPSHOTS_TAKEN_ON.length));
   }
 
   #wrapperPaths(): Promise<{ docker: string; ssh: string }> {

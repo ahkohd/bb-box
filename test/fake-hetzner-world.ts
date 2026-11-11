@@ -24,7 +24,7 @@ export function hetznerConfig(overrides: Partial<HetznerConfig> = {}, dockerFiel
   };
 }
 
-export function hetznerWorld(hostFacts: Record<string, unknown> = {}) {
+export function hetznerWorld(hostFacts: Record<string, unknown> = {}, prepare: (host: FakeDockerHost) => void = () => {}) {
   const api = new FakeHetzner();
   const dockerHosts = new Map<string, FakeDockerHost>();
   const silentFromTheStart = new Set<string>();
@@ -32,6 +32,7 @@ export function hetznerWorld(hostFacts: Record<string, unknown> = {}) {
     let host = dockerHosts.get(record.hostId);
     if (!host) {
       host = fakeDockerHost({ name: record.serverName, cpus: 8, memoryMiB: CPX42_MEMORY_MiB, ...hostFacts, ...(silentFromTheStart.has(record.hostId) ? { down: true } : {}) });
+      prepare(host);
       dockerHosts.set(record.hostId, host);
     }
     return new DockerCli(`unix:///run/bb-box/hetzner/${record.hostId}.sock`, host.binary, async () => {});
