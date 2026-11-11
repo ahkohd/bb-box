@@ -427,3 +427,26 @@ test("070 unit 11b review, Astra 6: a provider's kept snapshot found again after
   assert.equal(state.provider.held.has(kept.id), false, "past its date, it went, as any kept snapshot does");
   assert.equal(state.store.record(kept.id), null);
 });
+
+test("a new-guest restore of a box whose backend is no longer kept for its thread's project, after the reservation changed or the thread moved, is refused before anything changes; the box keeps running (#1458)", async () => {
+  const state = world({ projectsFromBb: true });
+  onProvider(state, 10);
+  state.threadProjects.set(THREAD, "proj_work");
+  const box = await readyBox(state);
+  const target = (await state.snapshots.take(COMMAND, box, standing(box), { name: "then" })).snapshot!;
+  const keptForOthers = /^.+ is kept for certain projects, and this thread's project is not one of them, so BB Box cannot make box \S+ a new guest there, as this restore would\. BB Box changed nothing\.$/;
+
+  state.keptFor = ["proj_home"];
+  assert.match((await rejection(state.snapshots.checkRestore(COMMAND, box, standing(box), target.id))).message, keptForOthers);
+  assert.match((await rejection(state.snapshots.restore(COMMAND, box, standing(box), target.id))).message, keptForOthers);
+
+  state.keptFor = ["proj_work"];
+  state.threadProjects.set(THREAD, "proj_home");
+  assert.match((await rejection(state.snapshots.restore(COMMAND, box, standing(box), target.id))).message, keptForOthers, "the thread moved");
+  const after = (await state.boxes.find(box.id))!;
+  assert.equal(after.guest!.ref, box.guest!.ref, "the box keeps its guest");
+  assert.equal(after.state, "ready");
+
+  state.threadProjects.set(THREAD, "proj_work");
+  assert.equal((await state.snapshots.restore(COMMAND, box, standing(box), target.id)).newGuest, true, "allowed while the thread is in the project");
+});

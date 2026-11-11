@@ -112,7 +112,7 @@ reference file here. Read it when a step fails or the person asks why.
 | Command | What it changes |
 | --- | --- |
 | `bb box backend add <type> [--id <name>]` | A new backend, on unless `--off` |
-| `bb box backend set <id>` | A backend's fields, secrets, switch, name and warm boxes |
+| `bb box backend set <id>` | A backend's fields, secrets, switch, name, warm boxes and the projects it is kept for |
 | `bb box backend remove <id> --yes` | Removes a backend, with its secrets. Refused while it has boxes |
 | `bb box backend host add\|set\|remove <id> <host>` | The hosts of a backend that has them, such as Tart's Macs |
 | `bb box kind set <kind>` | A kind's switch, sizes, default size, largest size and spares, or makes it the default kind |
@@ -129,6 +129,13 @@ They take these options:
 - `--on` and `--off` turn a backend or host on and off. Off, it makes no new
   boxes, and its boxes keep working.
 - `--warm kind=count` keeps ready boxes of a kind waiting on that backend.
+- `--projects "Work, Client"` keeps a backend for those BB projects, by name
+  or ID: only their threads see it, and they use it before shared backends,
+  falling back to shared ones when it is full. Threads elsewhere, or in no
+  project, never see it. `--projects ""` gives it back to every project.
+  Ask which projects first: it is the person's choice, such as a work
+  account kept for work. `bb box doctor` warns when none of its projects is
+  still in BB.
 - `--check` saves nothing. It says what would change, lists the problems
   and runs the backend's checks.
 - `--revision n` saves only while the configuration is at revision `n`.

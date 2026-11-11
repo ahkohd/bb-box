@@ -494,6 +494,10 @@ export class Backends {
     return this.#entries.get(id)?.backend ?? null;
   }
 
+  projects(id: string): readonly string[] {
+    return this.#config(id)?.projects ?? [];
+  }
+
   async #dockerDaemonsReached(signal?: AbortSignal): Promise<readonly DockerDaemonReached[] | null> {
     const answers = await Promise.all([...this.#entries.values()].map((entry) => entry.backend.dockerDaemons?.(signal) ?? Promise.resolve([]))).catch(() => null);
     return answers ? answers.flat() : null;

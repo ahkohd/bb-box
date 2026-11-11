@@ -31,6 +31,45 @@ export interface BackendEdit extends FieldEdits {
   readonly enabled?: boolean;
   readonly label?: string | null;
   readonly warm?: readonly (readonly [string, number])[];
+  readonly projects?: readonly string[];
+}
+
+export interface ProjectChoice {
+  readonly id: string;
+  readonly name: string;
+}
+
+export function projectIdsOf(text: string, known: readonly ProjectChoice[]): string[] {
+  const asked = text.split(",").map((each) => each.trim()).filter((each) => each.length);
+  const names = known.map((project) => project.name).join(", ");
+  return [
+    ...new Set(
+      asked.map((each) => {
+        const byId = known.find((project) => project.id === each);
+        if (byId) return byId.id;
+        const byName = known.filter((project) => project.name.toLowerCase() === each.toLowerCase());
+        if (byName.length === 1) return byName[0]!.id;
+        if (byName.length > 1) throw invalid(`${byName.length} projects are called "${each}": ${byName.map((project) => project.id).join(", ")}. Give its ID.`);
+        throw invalid(`BB has no project called "${each}".${names ? ` Its projects are: ${names}.` : ""}`, "Give names or IDs, separated by commas, or an empty list for every project.");
+      }),
+    ),
+  ];
+}
+
+function projectsChange(backend: BackendConfig, projects: readonly string[] | undefined, path: string): { readonly projects: readonly string[]; readonly changes: Change[] } {
+  const before = backend.projects ?? [];
+  if (projects === undefined || sameProjects(before, projects)) return { projects: before, changes: [] };
+  const words = (list: readonly string[]) => (list.length ? list.join(", ") : "every project");
+  return { projects, changes: [{ path: `${path}.projects`, words: `${words(before)} → ${words(projects)}` }] };
+}
+
+function sameProjects(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((project) => b.includes(project));
+}
+
+function withProjects(backend: BackendConfig, projects: readonly string[]): BackendConfig {
+  const { projects: _before, ...rest } = backend;
+  return projects.length ? { ...rest, projects } : rest;
 }
 
 export interface DriverShape {
@@ -246,10 +285,11 @@ export function addBackend(document: ConfigDocument, drivers: readonly DriverSha
   const fields = editedFields({}, driver.fields, edit, `Backend ${id}`, path, true);
   const warm = warmChanges(base, driver, edit.warm, path);
   const label = edit.label?.trim();
-  const backend = withoutEmpty({ ...base, ...(label ? { label } : {}), fields: fields.fields, warm: warm.warm }, "warm");
+  const projects = projectsChange(base, edit.projects, path);
+  const backend = withProjects(withoutEmpty({ ...base, ...(label ? { label } : {}), fields: fields.fields, warm: warm.warm }, "warm"), projects.projects);
   return {
     document: { ...document, backends: [...document.backends, backend] },
-    changes: [{ path, words: `added, ${backend.enabled ? "on" : "off"}` }, ...fields.changes, ...warm.changes],
+    changes: [{ path, words: `added, ${backend.enabled ? "on" : "off"}` }, ...fields.changes, ...warm.changes, ...projects.changes],
   };
 }
 
@@ -272,8 +312,9 @@ export function setBackend(document: ConfigDocument, drivers: readonly DriverSha
   const fields = editedFields(backend.fields, driver.fields, edit, `Backend ${backend.id}`, path, true);
   const warm = warmChanges(backend, driver, edit.warm, path);
   const { label: _dropped, ...rest } = backend;
-  const next = withoutEmpty({ ...rest, ...(label ? { label } : {}), enabled, fields: fields.fields, warm: warm.warm }, "warm");
-  return { document: withBackend(document, next), changes: [...changes, ...fields.changes, ...warm.changes] };
+  const projects = projectsChange(backend, edit.projects, path);
+  const next = withProjects(withoutEmpty({ ...rest, ...(label ? { label } : {}), enabled, fields: fields.fields, warm: warm.warm }, "warm"), projects.projects);
+  return { document: withBackend(document, next), changes: [...changes, ...fields.changes, ...warm.changes, ...projects.changes] };
 }
 
 export function removeBackend(document: ConfigDocument, ref: string): Edited {

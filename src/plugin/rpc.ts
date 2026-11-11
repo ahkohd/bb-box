@@ -255,7 +255,9 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   // What each method starts is counted as for it.
   bb.rpc.register(contract, withPurposes("rpc", {
     async state({ threadId }) {
-      const [list, kinds, machine, project, desktopOnDemand, access] = await Promise.all([boxes.list(threadId), app.kinds(), app.runsOn(threadId), app.projectOf(threadId).catch(() => null), app.desktopOnDemand().catch(() => null), app.machineAccess().catch(() => null)]);
+      const project = await app.projectOf(threadId).catch(() => null);
+      const audience = await boxes.audienceNow(threadId, project);
+      const [list, kinds, machine, desktopOnDemand, access] = await Promise.all([boxes.list(threadId), app.kinds(audience), app.runsOn(threadId), app.desktopOnDemand(audience).catch(() => null), app.machineAccess().catch(() => null)]);
       const imageOffer = !!project && !Object.values(app.configuration.exported().images ?? {}).some((image) => image.projects.includes(project));
       const images = await app.imageOptions(project).catch(() => []);
       const yours = machine !== null && (machine.threadId === OPERATOR || machine.threadId === SPARES);
@@ -458,7 +460,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     async "snapshot.fork"({ box: boxId, snapshot, name, asMachine, gpu, request }) {
       try {
         const { standing, box } = await standingFor(boxId, snapshot);
-        const answer = await snapshots.fork(PERSON, { id: standing.box!.id }, standing, snapshot, { ...(name?.trim() ? { name: name.trim() } : {}), asMachine: asMachine === true || !box, ...(gpu ? { gpu } : {}), request, projectId: box?.projectId ?? null });
+        const answer = await snapshots.fork(PERSON, { id: standing.box!.id }, standing, snapshot, { ...(name?.trim() ? { name: name.trim() } : {}), asMachine: asMachine === true || !box, ...(gpu ? { gpu } : {}), request });
         return { error: null, box: answer.box ? { id: answer.box.id, name: answer.box.name } : null };
       } catch (error) {
         return { error: describeError(error, "Forking the snapshot"), box: null };
@@ -494,6 +496,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       }
     },
     kinds: () => app.kinds(),
+    projects: async () => [...(await app.projects())],
     provider: ({ backend }) => app.providerProfile(backend),
     rooms: ({ kind, size }) => app.offerRooms(kind, size),
     "kind.cards": ({ kind }) => app.kindCards(kind),

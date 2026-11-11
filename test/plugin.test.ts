@@ -261,7 +261,7 @@ async function start(
         },
       },
       projects: {
-        list: async () => [{ id: PROJECT, kind: world.projectKind, sources: world.projectKind === "personal" ? [] : world.sources }] as never,
+        list: async () => [{ id: PROJECT, name: "Project one", kind: world.projectKind, sources: world.projectKind === "personal" ? [] : world.sources }] as never,
         sources: {
           add: async ({ hostId, type }: { hostId: string; type: string }) => {
             world.sources.push({ hostId, type });
@@ -2556,6 +2556,83 @@ test("box_thread starts a child thread on a box's BB machine, with the thread's 
   assert.equal(world.sources.length, 1, "later threads use the same clone");
 });
 
+test("box_thread, the panel and bb box thread start no child on a box whose backend is no longer kept for the thread's project now, after the thread moved or the reservation changed, or when BB cannot say the project (#1458)", async (t) => {
+  const { app, harness, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const keepFor = async (projects: readonly string[]) => {
+    const document = app.configuration.exported();
+    const result = await app.configuration.apply({ ...document, backends: document.backends.map((backend) => ({ ...backend, projects })) }, document.revision);
+    assert.ok(result.ok, JSON.stringify(result));
+  };
+  const inProject = (projectId: string) => world.threads.set(THREAD, makeThreadResponse({ id: THREAD, projectId, environmentId: "env_one", providerId: "claude-code" }));
+  await keepFor([PROJECT]);
+  await tool("box_acquire", {});
+  const [box] = await app.boxes.list(THREAD);
+  await app.boxes.settled(box!);
+  const name = box!.name;
+  const everyWay = async () => [
+    text(await tool("box_thread", { box: name, prompt: "Run uname -a" })),
+    ((await harness.behavior.callRpc("thread", { threadId: THREAD, box: name, prompt: "Again" })) as { error: string | null }).error ?? "",
+    (await harness.behavior.runCli(["thread", name, "--prompt", "Once more", "--thread", THREAD])).stderr ?? "",
+  ];
+  const kept = /is kept for certain projects, and this thread's project is not one of them, so a new thread cannot start on box \S+\. The box itself keeps working\./;
+
+  inProject("prj_two");
+  for (const said of await everyWay()) assert.match(said, kept, said);
+
+  inProject(PROJECT);
+  await keepFor(["prj_other"]);
+  for (const said of await everyWay()) assert.match(said, kept, said);
+
+  await keepFor([PROJECT]);
+  world.threadErrors.set(THREAD, new Error("thread not readable"));
+  for (const said of await everyWay()) assert.match(said, /BB could not say which project this thread is in just now\. \S.* is kept for certain projects, so a new thread cannot start on box \S+\. The box itself keeps working\. Try again in a minute\./, said);
+  world.threadErrors.delete(THREAD);
+  assert.deepEqual(world.spawned, [], "no child was started");
+  assert.deepEqual(world.sources, [], "nothing was cloned");
+
+  assert.match(text(await tool("box_thread", { box: name, prompt: "Run uname -a" })), /^Started thread thr_child1 on box /);
+  await app.boxes.idle();
+});
+
+test("box_thread on a backend kept for no project starts the child in the box's own project, as before, when BB cannot read the thread or it moved (#1458)", async (t) => {
+  const { app, tool, harness, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  await tool("box_acquire", {});
+  const [box] = await app.boxes.list(THREAD);
+  await app.boxes.settled(box!);
+
+  world.threadErrors.set(THREAD, new Error("thread not readable"));
+  const unreadable = text(await tool("box_thread", { box: box!.name, prompt: "Run uname -a" }));
+  world.threadErrors.delete(THREAD);
+  world.threads.set(THREAD, makeThreadResponse({ id: THREAD, projectId: "prj_two", environmentId: "env_one", providerId: "claude-code" }));
+  const moved = text(await tool("box_thread", { box: box!.name, prompt: "Again" }));
+
+  assert.match(unreadable, /^Started thread thr_child1 on box /);
+  assert.match(moved, /^Started thread thr_child2 on box /);
+  assert.deepEqual(
+    (world.spawned as { projectId: string }[]).map((spawned) => spawned.projectId),
+    [PROJECT, PROJECT],
+  );
+  await app.boxes.idle();
+});
+
+test("bb box doctor in a thread says whether a kept backend serves the thread's project, without naming its projects; in the person's own terminal it names them (#1458)", async (t) => {
+  const { app, harness } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const document = app.configuration.exported();
+  assert.ok((await app.configuration.apply({ ...document, backends: document.backends.map((backend) => ({ ...backend, projects: [PROJECT] })) }, document.revision)).ok);
+
+  const outside = (await harness.behavior.runCli(["doctor"], { threadId: "thr_two", projectId: "prj_two" } as never)).stdout ?? "";
+  const inside = (await harness.behavior.runCli(["doctor"], { threadId: THREAD, projectId: PROJECT } as never)).stdout ?? "";
+  const person = (await harness.behavior.runCli(["doctor"])).stdout ?? "";
+
+  assert.match(outside, /Projects of [^:\n]+: Kept for certain projects, not this thread's: only their threads see it\./);
+  assert.match(inside, /Projects of [^:\n]+: Kept for certain projects, this thread's among them: only their threads see it\./);
+  for (const said of [outside, inside]) assert.doesNotMatch(said, /Project one|prj_one/);
+  assert.match(person, /Projects of [^:\n]+: Kept for Project one: only their threads see it\./);
+});
+
 test("box_thread starts the child on its parent's provider and model when the box has them, a CLI the box has otherwise, and refuses a box with no agent CLI (#561)", async (t) => {
   const { harness, tool, world } = await start();
   t.after(() => harness.lifecycle.dispose());
@@ -2838,6 +2915,68 @@ test("New box: a create cut short is cleaned up, and a key that is no thread fai
   await app.boxes.acquire({ threadId: THREAD, projectId: PROJECT, kind: "linux", role: "machine" });
   assert.deepEqual(await provider.reconcileCleanup({ key: THREAD, report: { step: () => {}, log: () => {} }, signal: new AbortController().signal } as never), { status: "removed" });
   assert.deepEqual(await app.boxes.list(THREAD), []);
+});
+
+async function newBoxWorld() {
+  const started = await start({ "fake-enabled": true });
+  const { app, harness } = started;
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box-new")!;
+  const keepFor = async (projects: readonly string[]) => {
+    const document = app.configuration.exported();
+    const result = await app.configuration.apply({ ...document, backends: document.backends.map((backend) => ({ ...backend, projects })) }, document.revision);
+    assert.ok(result.ok, JSON.stringify(result));
+  };
+  const create = async () => (await provider.create(createContext(THREAD, { kind: "linux" }).context)) as { status: string; message?: string };
+  return { ...started, keepFor, create };
+}
+
+test("New box: a create that resumes a half-made box whose backend is now kept for other projects installs nothing on it and releases it (#1458)", async (t) => {
+  const { harness, app, world, keepFor, create } = await newBoxWorld();
+  t.after(() => harness.lifecycle.dispose());
+  const halfMade = await app.boxes.acquire({ threadId: THREAD, projectId: PROJECT, kind: "linux", role: "machine" });
+  await app.boxes.settled(halfMade);
+  await keepFor(["prj_other"]);
+
+  const resumed = await create();
+
+  assert.equal(resumed.status, "failed");
+  assert.match(resumed.message ?? "", /Every backend here is kept for certain projects, and none for this thread's/);
+  assert.deepEqual(world.bootstraps, [], "nothing was installed on the half-made box");
+  assert.deepEqual((await app.boxes.list(THREAD)).filter((box) => box.state !== "gone").map((box) => box.id), [], "the half-made box was released");
+  await app.boxes.idle();
+});
+
+test("New box: a create again for the thread's machine, once its backend is kept for other projects, installs nothing, and the machine keeps working (#1458)", async (t) => {
+  const { harness, app, world, keepFor, create } = await newBoxWorld();
+  t.after(() => harness.lifecycle.dispose());
+  assert.equal((await create()).status, "created");
+  const [machine] = await app.boxes.list(THREAD);
+  await keepFor(["prj_other"]);
+
+  const again = await create();
+
+  assert.equal(again.status, "failed");
+  assert.match(again.message ?? "", /is kept for certain projects, and this thread's project is not one of them, so this thread cannot start on box \S+\. Start it on a new box\./);
+  assert.equal(world.bootstraps.length, 1, "BB's installer ran only for the box made while the backend served the thread");
+  const after = await app.boxes.find(machine!.id);
+  assert.equal(after?.state, "ready", "the thread's machine keeps working");
+  assert.equal(after?.enrol.state, "enrolled");
+  await app.boxes.idle();
+});
+
+test("New box: with no backend kept for a project, a create resumes the box it made before, as it always has (#1458)", async (t) => {
+  const { harness, app, world } = await start({ "fake-enabled": true });
+  t.after(() => harness.lifecycle.dispose());
+  const provider = harness.inspection.registrations.machineProviders.get("bb-box-new")!;
+  const halfMade = await app.boxes.acquire({ threadId: THREAD, projectId: PROJECT, kind: "linux", role: "machine" });
+  await app.boxes.settled(halfMade);
+
+  const resumed = (await provider.create(createContext(THREAD, { kind: "linux" }).context)) as { status: string; resource?: { boxId: string } };
+
+  assert.equal(resumed.status, "created", JSON.stringify(resumed));
+  assert.deepEqual(resumed.resource, { boxId: halfMade.id });
+  assert.deepEqual(world.bootstraps, [THREAD]);
+  await app.boxes.idle();
 });
 
 /** One of your machines added over RPC, waited for until it is a BB machine. */
@@ -7865,4 +8004,40 @@ test("files stay on the panel: an agent has no files tool, and another plugin ca
   assert.deepEqual(refused, { error: FILES_FROM_PANEL });
   const gone = await harness.behavior.callRpc("files.home", { box: "bx_missing" });
   assert.deepEqual(gone, { error: "That box is gone." });
+});
+
+test("a backend kept for other projects is not in box_list, box_acquire, bb box kinds or bb box acquire for this thread, naming it is refused, and the doctor warns when its projects are gone (#1458)", async (t) => {
+  const { app, harness, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const keepFor = async (projects: readonly string[]) => {
+    const document = app.configuration.exported();
+    const result = await app.configuration.apply({ ...document, backends: document.backends.map((backend) => ({ ...backend, projects })) }, document.revision);
+    assert.ok(result.ok, JSON.stringify(result));
+  };
+
+  await keepFor(["prj_other"]);
+  const listed = text(await tool("box_list", {}));
+  assert.doesNotMatch(listed, /- linux:/);
+  assert.match(listed, /Every backend here is kept for certain projects, and none for this thread's, so it has no kinds to acquire\./);
+  const acquired = await tool("box_acquire", { kind: "linux" });
+  assert.ok(isError(acquired));
+  assert.match(text(acquired), /Every backend here is kept for certain projects/);
+  const named = await tool("box_acquire", { kind: "linux", on: "fake" });
+  assert.ok(isError(named));
+  assert.doesNotMatch(text(named), /prj_other/);
+  assert.match((await harness.behavior.runCli(["kinds", "--thread", THREAD])).stdout ?? "", /^Every backend here is kept for certain projects/);
+  assert.match((await harness.behavior.runCli(["kinds"])).stdout ?? "", /^linux: /m, "the person's own terminal lists every kind");
+  const refused = await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD]);
+  assert.equal(refused.exitCode, 1);
+  assert.equal((await app.boxes.list(THREAD)).length, 0);
+
+  const doctor = await harness.behavior.runCli(["doctor"]);
+  assert.match(doctor.stdout ?? "", /Projects of [^:\n]+: Kept for 1 project that is no longer in BB, so it serves no project and no thread can use it\./);
+
+  await keepFor([PROJECT]);
+  assert.match(text(await tool("box_list", {})), /- linux: /);
+  const made = await tool("box_acquire", { kind: "linux", wait: false });
+  assert.ok(!isError(made), text(made));
+  assert.match((await harness.behavior.runCli(["doctor"])).stdout ?? "", /Projects of [^:\n]+: Kept for Project one: only their threads see it\./);
+  await app.boxes.idle();
 });

@@ -9,6 +9,8 @@ A spare is a box made ahead and joined to BB as a machine, which belongs to no t
 
 The row then says how many spares the kind keeps. BB Box makes them in the background, and makes another when a thread takes one.
 
+A spare on a backend [kept for certain projects](settings.md#backends-kept-for-projects) goes only to a thread in one of them. Such a thread takes a spare from its projects' backends first, in the order of the backend list, and one from a shared backend only once those are full. Spares are made on the first backend with room, in the order of the backend list.
+
 A project's [image](images.md) keeps its own spare too: one on each backend and kind it covers, while the image is in use. A box of the standard image does not take it.
 
 ## Spares that wait stopped

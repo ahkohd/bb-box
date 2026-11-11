@@ -26,7 +26,7 @@ export const COMMAND: Caller = { is: "command" };
 export const HOUR = 60 * 60_000;
 export const DAY = 24 * HOUR;
 
-export function world(options: { readonly identityTool?: string; readonly identityRoot?: string; readonly markersOn?: boolean; readonly forkWaitMs?: number; readonly wholeCards?: boolean; readonly backend?: (storage: BackendStorage) => Backend } = {}) {
+export function world(options: { readonly identityTool?: string; readonly identityRoot?: string; readonly markersOn?: boolean; readonly forkWaitMs?: number; readonly wholeCards?: boolean; readonly backend?: (storage: BackendStorage) => Backend; readonly projectsFromBb?: boolean } = {}) {
   const root = tempDir("snapshots");
   const kv = new MemoryStorage();
   const backendStorage = scopedStorage(kv, "backend/fake/");
@@ -49,6 +49,8 @@ export function world(options: { readonly identityTool?: string; readonly identi
     guard: { threads: [], threadsUnread: null, control: false, terminals: 0 } as RestoreGuard,
     undoByCopy: false,
     machineRestores: false,
+    keptFor: [] as string[],
+    threadProjects: new Map<string, string | null | Error>(),
     unenrolled: [] as string[],
     marksChanged: 0,
     screen: null as ((box: BoxRecord, signal: AbortSignal) => Promise<Uint8Array | null>) | null,
@@ -92,6 +94,7 @@ export function world(options: { readonly identityTool?: string; readonly identi
     active: (): Backend[] => (state.active ? [state.backend] : []),
     on: (): Backend[] => (state.active ? [state.backend] : []),
     kinds: () => (state.active ? state.backend.kinds().map((kind) => ({ kind, backend: state.backend as Backend })) : []),
+    projects: (): readonly string[] => state.keptFor,
   };
   const general: GeneralConfig = { perThreadLimit: null, enrol: false, sizes: {}, spares: {}, identityResetBackends: options.markersOn === false ? [] : ["fake"], wholeCards: options.wholeCards ?? true } as unknown as GeneralConfig;
   const build = () => {
@@ -103,6 +106,7 @@ export function world(options: { readonly identityTool?: string; readonly identi
       general: async () => general,
       notify: () => {},
       thread: async () => ({ state: state.threadState, said: state.threadState }),
+      ...(options.projectsFromBb ? { projectOf: (threadId: string) => projectFromBb(state.threadProjects, threadId) } : {}),
       logError: (operation, error) => state.errors.push(`${operation}: ${error instanceof Error ? error.message : String(error)}`),
       events: state.log,
       log: (message) => state.boxLogs.push(message),
@@ -148,6 +152,12 @@ export function world(options: { readonly identityTool?: string; readonly identi
 }
 
 export type World = ReturnType<typeof world>;
+
+async function projectFromBb(projects: ReadonlyMap<string, string | null | Error>, threadId: string): Promise<string | null> {
+  const project = projects.get(threadId) ?? null;
+  if (project instanceof Error) throw project;
+  return project;
+}
 
 export async function readyBox(state: World): Promise<BoxRecord> {
   const box = await state.boxes.acquire({ threadId: THREAD, projectId: null, kind: "linux", who: BY_COMMAND });

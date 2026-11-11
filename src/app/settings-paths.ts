@@ -157,6 +157,7 @@ export type BackendAt =
   | { readonly at: "backend"; readonly id: string }
   | { readonly at: "enabled"; readonly id: string }
   | { readonly at: "label"; readonly id: string }
+  | { readonly at: "projects"; readonly id: string }
   | { readonly at: "field"; readonly id: string; readonly key: string }
   | { readonly at: "warm"; readonly id: string; readonly kind: string }
   | { readonly at: "host"; readonly id: string; readonly host: string }
@@ -164,12 +165,27 @@ export type BackendAt =
   | { readonly at: "host-enabled"; readonly id: string; readonly host: string }
   | { readonly at: "host-field"; readonly id: string; readonly host: string; readonly key: string };
 
+export function backendProjectsPath(id: string): Path {
+  return `${backendPath(id)}/projects`;
+}
+
+const PROJECTS_APART = ",";
+
+export function projectsText(projects: readonly string[]): string {
+  return projects.join(PROJECTS_APART);
+}
+
+export function projectIdsIn(text: string): string[] {
+  return [...new Set(text.split(PROJECTS_APART).map((each) => each.trim()).filter((each) => each.length))];
+}
+
 export function backendAt(path: Path): BackendAt | null {
   const [section, id, ...rest] = path.split("/");
   if (section !== "backends" || !id) return null;
   if (!rest.length) return { at: "backend", id };
   if (rest.length === 1 && rest[0] === "enabled") return { at: "enabled", id };
   if (rest.length === 1 && rest[0] === "label") return { at: "label", id };
+  if (rest.length === 1 && rest[0] === "projects") return { at: "projects", id };
   if (rest.length === 2 && rest[0] === "fields" && rest[1]) return { at: "field", id, key: rest[1] };
   if (rest.length === 2 && rest[0] === "warm" && rest[1]) return { at: "warm", id, kind: rest[1] };
   if (rest[0] !== "hosts" || !rest[1]) return null;
@@ -587,6 +603,8 @@ function storedAtBackend(state: ConfigState, at: BackendAt, path: Path): Stored 
       return { kind: "value", value: backend.enabled };
     case "label":
       return { kind: "value", value: backend.label ?? null };
+    case "projects":
+      return { kind: "value", value: projectsText(backend.projects ?? []) };
     case "warm":
       return { kind: "value", value: backend.warm?.[at.kind] ?? 0 };
     case "field": {
@@ -761,6 +779,7 @@ function withBackendEdits(state: ConfigState, input: ConfigDocument, edits: read
     }
     const fields: DraftFields = { ...backend.fields };
     let label = backend.label;
+    let projects = backend.projects ?? [];
     let enabled = backend.enabled;
     const warm: Record<string, number> = { ...backend.warm };
     let hosts: HostDraft[] = (backend.hosts ?? []).map((host) => ({ host, from: hostPath(id, host.name) }));
@@ -775,6 +794,7 @@ function withBackendEdits(state: ConfigState, input: ConfigDocument, edits: read
         const value = documentValue(state, edit.path, edit.value.value);
         if (at.at === "enabled" && typeof value === "boolean") enabled = value;
         else if (at.at === "label") label = typeof value === "string" ? value : undefined;
+        else if (at.at === "projects" && typeof value === "string") projects = projectIdsIn(value);
         else if (at.at === "field") setField(fields, at.key, value);
         else if (at.at === "warm" && typeof value === "number") {
           if (value) warm[at.kind] = value;
@@ -815,13 +835,14 @@ function withBackendEdits(state: ConfigState, input: ConfigDocument, edits: read
     hosts.forEach((each, index) => {
       sentAs[`backends.${backend.id}.hosts.${index}`] = each.from;
     });
-    const { label: _label, hosts: _hosts, warm: _warm, ...rest } = backend;
+    const { label: _label, hosts: _hosts, warm: _warm, projects: _projects, ...rest } = backend;
     document = withBackend(document, {
       ...rest,
       ...(label ? { label } : {}),
       enabled,
       fields,
       ...(Object.keys(warm).length ? { warm } : {}),
+      ...(projects.length ? { projects } : {}),
       ...(hosts.length || backend.hosts ? { hosts: hosts.map((each) => each.host) } : {}),
     });
   }
@@ -1062,6 +1083,7 @@ function backendLabelOf(path: Path, value: EditValue | undefined, state: ConfigS
   const at = backendAt(path);
   if (!at) return null;
   if (at.at === "label") return "Name";
+  if (at.at === "projects") return "Projects";
   if (at.at === "warm") {
     return `Warm boxes on ${state?.backends.find((each) => each.id === at.id)?.label ?? (state && backendIn(state.document, at.id)?.label) ?? at.id}`;
   }

@@ -15,6 +15,7 @@
 import { DOCKER_KEYS } from "../backends/docker/config.ts";
 import type { BackendStorage, GuestOs } from "../backends/types.ts";
 import { kindOn, type BackendConfig, type ConfigDocument } from "../core/document.ts";
+import { EVERYONE, servesAudience, type Audience } from "../core/reserved.ts";
 import type { DockerInfo } from "../backends/docker/cli.ts";
 import type { ImageBuild } from "./docker-images.ts";
 import type { DockerFix } from "./setup-offer.ts";
@@ -236,11 +237,11 @@ export interface DesktopOnDemand {
  * image is turned off, as first-run setup leaves it, and the desktop kind is on. An image set to another reference, or
  * left at its default, is not this: it is offered, or not, as configured.
  */
-export function desktopsOnDemand(document: ConfigDocument): DesktopOnDemand[] {
+export function desktopsOnDemand(document: ConfigDocument, audience: Audience = EVERYONE): DesktopOnDemand[] {
   const kinds = (Object.keys(DESKTOPS_ON_DEMAND) as DesktopOnDemandKind[]).filter((kind) => kindOn(document, kind));
   return document.backends.flatMap((backend) => {
     const host = typeof backend.fields.host === "string" ? /^bb:(.+)$/.exec(backend.fields.host)?.[1] : undefined;
-    if (backend.type !== "docker" || !backend.enabled || !host) return [];
+    if (backend.type !== "docker" || !backend.enabled || !host || !servesAudience(backend.projects ?? [], audience)) return [];
     return kinds.filter((kind) => backend.fields[DESKTOPS_ON_DEMAND[kind]] === "").map((kind) => ({ hostId: host, backend: backend.id, kind }));
   });
 }

@@ -12,6 +12,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `config.<path>` | Settings | A part of BB Box's configuration that needs fixing, by its path, such as general.defaultKind. |
 | `offers.<kind>` | Offers of &lt;kind> | Where several backends offer a kind: they agree on what the kind promises, and each has the features it requires. |
 | `overlap.<backend>.<backend>` | &lt;backend> and &lt;backend> | Two backends whose boxes could take the same guest IDs or addresses. |
+| `projects.<backend>` | Projects of &lt;backend> | A backend kept for certain BB projects (#1458): the projects it serves, and a warning when none of them is still in BB, so no thread can use it. |
 | `warm.<kinds>` | Warm pool of &lt;kinds> | A warm pool that has fewer ready boxes than its count asks for, and no room for another. |
 | `sizes.<kind>.<preset>` | Box sizes | A Linux preset with less than 2 GiB memory, so its boxes can run out of memory as they become BB machines. |
 | `box-files` | Files for every box | The files BB Box writes into each box as it joins BB, and whether the last write worked. |

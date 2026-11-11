@@ -49,7 +49,7 @@ Get a fresh box for this thread: a Linux or macOS computer for commands, builds,
 | `memory_gib` | integer | no | Memory in GiB, for a custom size: at least 2 for a Linux box. |
 | `disk_gib` | integer | no | Root disk in GiB, for a custom size. Presets keep the kind's own disk. |
 | `wait` | boolean | no | Wait until the box answers, and up to 20 s more while it becomes a BB machine. Defaults to true. |
-| `on` | string or array of string | no | Where the box goes, from box_list: a provider such as Docker on devpc, or a list of them for the first with room among them. Leave it out for the first with room. |
+| `on` | string or array of string | no | Where the box goes, from box_list: a provider such as Docker on devpc, or a list of them for the first with room among them. Leave it out for the first with room: the providers kept for this thread's project first, then the shared ones. A provider kept for other projects is refused. |
 | `image` | string | no | The image the box starts from, from box_list: a project's image by name, or "standard" for bb-box's own. Leave it out for this project's image for the kind, or the standard one. |
 | `device` | string | no | For an ios or android box, the device it boots, from box_list, such as iPhone 18 Pro or Pixel Fold. Defaults to the kind's first. |
 | `slim` | boolean | no | For an ios box: its iOS Simulator runs without the services a device box does not need, such as widgets, Siri, iCloud, Health and Wallet, for about a quarter of the memory and almost no idle CPU. Defaults to true. Set false for an app that uses one of them. |

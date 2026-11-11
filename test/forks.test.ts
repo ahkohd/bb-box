@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { BackendError, type Backend, type Guest, type GuestIdentity, type LeasedAddressNow } from "../src/backends/types.ts";
 import { BoxError, OPERATOR, errorForAgent, type BoxRecord } from "../src/core/boxes.ts";
 import type { Caller, Standing } from "../src/core/snapshot.ts";
+import { BY_COMMAND } from "../src/core/box-log.ts";
 import { quote } from "../src/transports/process.ts";
 import { tempDir } from "./helpers.ts";
 import { forkCheckText, forkedText } from "../src/plugin/snapshot-words.ts";
@@ -70,10 +71,10 @@ function withLease(root: string, clientId: string): void {
   writeFileSync(join(root, "run/systemd/netif/leases/2"), `# This is private data. Do not parse.\nADDRESS=10.0.0.5\nCLIENTID=${clientId}\n`);
 }
 
-function forkWorld(options: { readonly forkWaitMs?: number; readonly markersOn?: boolean; readonly wholeCards?: boolean } = {}): Forks {
+function forkWorld(options: { readonly forkWaitMs?: number; readonly markersOn?: boolean; readonly wholeCards?: boolean; readonly projectsFromBb?: boolean } = {}): Forks {
   const source = identityGuest();
   withIdentity(source.root);
-  const state = world({ identityTool: source.tool, identityRoot: source.root, forkWaitMs: options.forkWaitMs ?? 300, ...(options.markersOn === false ? { markersOn: false } : {}), ...(options.wholeCards !== undefined ? { wholeCards: options.wholeCards } : {}) });
+  const state = world({ identityTool: source.tool, identityRoot: source.root, forkWaitMs: options.forkWaitMs ?? 300, ...(options.markersOn === false ? { markersOn: false } : {}), ...(options.wholeCards !== undefined ? { wholeCards: options.wholeCards } : {}), ...(options.projectsFromBb ? { projectsFromBb: true } : {}) });
   withIdentitySource(state, "eth");
   const macs = new Map<string, string>();
   const roots = new Map<string, string>();
@@ -876,4 +877,60 @@ test("071 unit 7 round 2, Astra 4: a fork whose card the backend refuses keeps t
   assert.match(fork.error ?? "", /^Not forked: no card has room\. Release a desktop box\./);
   assert.match(errorForAgent(fork) ?? "", /^Not forked: no card has room\. Fork it with gpu none, or ask the user\. BB Box copied nothing\. BB Box released it, so nothing of it acts as /);
   assert.doesNotMatch(errorForAgent(fork) ?? "", /release a desktop/i);
+});
+
+test("a fork of a box or a snapshot on a backend kept for other projects goes to no thread outside them, the check refusing as the fork would; the person may still fork it as one of their machines (#1458)", async () => {
+  const forks = forkWorld({ projectsFromBb: true });
+  const { state } = forks;
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" });
+  state.keptFor = ["proj_work"];
+  const agent: Caller = { is: "agent", threadId: THREAD };
+  const keptForOthers = /is kept for certain projects, and this thread('s project is not one of them| has no project), so a fork there cannot be this thread's box\. Only the person can fork it, as one of their machines\./;
+
+  for (const projectId of [null, "proj_home"]) {
+    state.threadProjects.set(THREAD, projectId);
+    assert.match((await rejection(state.snapshots.checkFork(agent, box, standing(box), "set up", { projectId: "proj_work" }))).message, keptForOthers, "the project BB gives now, not one the caller says");
+    assert.match((await rejection(state.snapshots.fork(agent, box, standing(box), "set up", { projectId: "proj_work" }))).message, keptForOthers);
+    assert.match((await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box), { projectId: "proj_work" }))).message, keptForOthers);
+  }
+  state.threadProjects.set(THREAD, "proj_home");
+  assert.match((await rejection(state.snapshots.fork(COMMAND, box, standing(box), "set up"))).message, keptForOthers, "the person's fork into the box's own thread");
+  assert.deepEqual(state.store.operations({ box: box.id, kind: "fork" }), [], "nothing recorded");
+
+  const mine = await forked(state, (await state.snapshots.fork(COMMAND, box, standing(box), "set up", { asMachine: true })).box);
+  assert.equal(mine.threadId, OPERATOR);
+  assert.equal(mine.state, "ready", mine.error ?? "");
+
+  const kept = (await state.snapshots.take(COMMAND, box, standing(box), { name: "kept" })).snapshot!;
+  state.store.updateRecord(kept.id, { keptUntil: state.now + 30 * 24 * 60 * 60_000, keptAt: state.now, owner: "person" });
+  const keptCheck = await state.snapshots.checkFork(COMMAND, box, standing(box), "kept");
+  assert.equal(keptCheck.threadId, OPERATOR, "a kept snapshot's fork is the person's machine, which may be on any backend");
+
+  state.threadProjects.set(THREAD, "proj_work");
+  const work = await forked(state, (await state.snapshots.fork(agent, box, standing(box), "set up", { projectId: "proj_work" })).box);
+  assert.equal(work.threadId, THREAD, "a thread of the project the backend is kept for may fork there");
+  assert.equal(work.projectId, "proj_work");
+});
+
+test("a command's or the panel's fork of a box whose thread moved out of the project its backend is kept for is refused, though the box was made in that project, and one BB cannot place has no project (#1458)", async () => {
+  const forks = forkWorld({ projectsFromBb: true });
+  const { state } = forks;
+  state.threadProjects.set(THREAD, "proj_work");
+  state.keptFor = ["proj_work"];
+  const box = await state.boxes.settled(await state.boxes.acquire({ threadId: THREAD, projectId: "proj_work", kind: "linux", who: BY_COMMAND }));
+  assert.equal(box?.projectId, "proj_work");
+  await state.snapshots.take(COMMAND, box!, standing(box!), { name: "set up" });
+  const person: Caller = { is: "person" };
+  const keptForOthers = /is kept for certain projects, and this thread('s project is not one of them| has no project), so a fork there cannot be this thread's box\./;
+  assert.equal((await state.snapshots.checkFork(COMMAND, box!, standing(box!), "set up")).threadId, THREAD, "allowed while the thread is in the project");
+
+  for (const now of ["proj_home", new Error("BB did not answer")]) {
+    state.threadProjects.set(THREAD, now);
+    for (const caller of [COMMAND, person]) {
+      assert.match((await rejection(state.snapshots.checkFork(caller, box!, standing(box!), "set up"))).message, keptForOthers);
+      assert.match((await rejection(state.snapshots.fork(caller, box!, standing(box!), "set up"))).message, keptForOthers);
+    }
+  }
+  assert.deepEqual(state.store.operations({ box: box!.id, kind: "fork" }), [], "nothing recorded");
 });

@@ -23,6 +23,8 @@ import { ImageJobs } from "./images.ts";
 import { namedImage, projectImage, withImage } from "../core/project-images.ts";
 import { readableState } from "./monitor.ts";
 import { BoxError, Boxes, SPARES, forgetRefusal, ownedByThread, type BoxRecord, type ThreadAnswer , type ResizeAnswer } from "../core/boxes.ts";
+import { EVERYONE, reservedChecks, threadAudience, type Audience } from "../core/reserved.ts";
+import type { ProjectChoice } from "./config-edits.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, swayKeyboardScript, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
@@ -201,7 +203,7 @@ export interface BbBox {
   /** Why the desktop box a thread asked to build first was not made once its image was built, and when, or null. */
   desktopProblem(threadId: string): { message: string; at: number } | null;
   /** The BB machine whose desktop image the New box form can build, with its name, or null for none (the setup plan's PR 4). */
-  desktopOnDemand(): Promise<DesktopOnDemandView | null>;
+  desktopOnDemand(audience?: Audience): Promise<DesktopOnDemandView | null>;
   /**
    * Turns on the desktop image of BB machine `hostId`'s Docker and builds it, then makes a desktop box for the thread
    * once it is built. Returns once the configuration is saved; the panel shows the build.
@@ -235,7 +237,7 @@ export interface BbBox {
   checkNow(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord>;
   joinAgain(threadId: string, ref: string, options?: { readonly waitMs?: number; readonly signal?: AbortSignal }): Promise<JoinAgain>;
   /** With each kind's sizes from bb-box's settings. */
-  kinds(): Promise<KindView[]>;
+  kinds(audience?: Audience): Promise<KindView[]>;
   /** The projects' images a box can choose (049), marked as `project`'s or not, with their projects' names and builds. */
   imageOptions(project: string | null): Promise<ImageOptionView[]>;
   backendViews(): BackendView[];
@@ -243,7 +245,7 @@ export interface BbBox {
   providerProfile(backendId: string, signal?: AbortSignal): Promise<ProviderProfile>;
   offerRooms(kindId: string, size?: SizeRequest): Promise<OfferRoom[]>;
   kindCards(kindId: string): Promise<KindCards[]>;
-  doctor(signal?: AbortSignal): Promise<DoctorView>;
+  doctor(signal?: AbortSignal, audience?: Audience): Promise<DoctorView>;
   gpuMark(options: { readonly check: boolean; readonly undo: boolean; readonly on?: string }, signal?: AbortSignal): Promise<GpuMarking[]>;
   /**
    * Takes back an install ID this install had before it lost its storage
@@ -259,6 +261,7 @@ export interface BbBox {
   ancestorStorages(threadId: string, limit: number, signal?: AbortSignal): Promise<{ threadId: string; hostId: string; path: string }[]>;
   /** A thread's project, for boxes the panel or the CLI acquires. */
   projectOf(threadId: string): Promise<string | null>;
+  projects(): Promise<readonly ProjectChoice[]>;
   /**
    * Starts a child thread of `threadId` on a box's BB machine, with the
    * parent's project, in a worktree of the project's repository there. The
@@ -705,12 +708,29 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   reloadTimes.phase("configuration and backends");
   const general = async () => configuration.general();
 
+  const listProjects = async (): Promise<readonly ProjectChoice[]> => ((await bb.sdk.projects.list({ includePersonal: true })) as { id: string; name: string }[]).map(({ id, name }) => ({ id, name }));
+
   const projectOf = async (threadId: string): Promise<string | null> => {
     try {
       return (await bb.sdk.threads.get({ threadId })).projectId;
     } catch {
       return null;
     }
+  };
+
+  const projectServedOnKeptBox = async (box: BoxRecord, threadId: string): Promise<string> => {
+    const cannot = `a new thread cannot start on box ${box.name}. The box itself keeps working`;
+    const answer = await bb.sdk.threads.get({ threadId }).then(
+      (thread) => ({ read: true, projectId: thread.projectId ?? null }) as const,
+      () => ({ read: false }) as const,
+    );
+    if (!answer.read) {
+      throw new BoxError("unreachable", `BB could not say which project this thread is in just now. ${box.backendLabel} is kept for certain projects, so ${cannot}. Try again in a minute.`);
+    }
+    const kept = boxes.keptFrom(box, threadAudience(answer.projectId), cannot);
+    if (kept) throw kept;
+    if (answer.projectId === null) throw new BoxError("unsupported", "This thread has no project, so a thread on its box would have none either.");
+    return answer.projectId;
   };
 
   // Names only: BB never gives plugins the values. Every command in an
@@ -1449,8 +1469,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return result;
     },
     desktopProblem: (threadId) => desktopProblems.get(threadId) ?? null,
-    async desktopOnDemand() {
-      const all = desktopsOnDemand(configuration.document);
+    async desktopOnDemand(audience = EVERYONE) {
+      const all = desktopsOnDemand(configuration.document, audience);
       const first = all[0];
       const backend = first ? backends.get(first.backend) : undefined;
       if (!first || !backend) return null;
@@ -1477,6 +1497,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       const document = configuration.document;
       const found = desktopsOnDemand(document).find((candidate) => candidate.hostId === hostId && candidate.kind === kind);
       if (!found) throw new BoxError("not_found", `BB machine ${hostId} has no Docker desktop image to build for ${kind}: its Docker is off, or that image is set already.`);
+      const kept = await boxes.keptFromThread({ threadId, backend: found.backend, backendLabel: backends.statuses().find((status) => status.id === found.backend)?.label ?? found.backend }, "it builds no desktop for this thread");
+      if (kept) throw kept;
       const result = await configuration.apply(withDesktopImage(document, found.backend, kind), document.revision);
       if (!result.ok) return result;
       const projectId = await api.projectOf(threadId).catch(() => null);
@@ -1590,9 +1612,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       }
       return options.sort((a, b) => Number(b.mine) - Number(a.mine) || a.name.localeCompare(b.name));
     },
-    kinds: async () => {
+    kinds: async (audience = EVERYONE) => {
       const config = await general();
-      const offered = backends.kinds();
+      const offered = boxes.offers(audience);
       return kindViews(offered, config.sizes, await boxes.spareCounts(), config.spares, await boxes.typicalReady(), await boxes.spareReadyByBackend(), (id) => backends.driverLabel(id), await gpuRooms(offered), boxes.sharedHostsByKind(), config.gpuWhenNotAsked);
     },
     async providerProfile(backendId, signal) {
@@ -1643,7 +1665,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         ...backend,
         setup: drivers.find((driver) => driver.type === backend.type)?.setup ?? { guide: "", scripts: [] },
       })),
-    async doctor(signal) {
+    async doctor(signal, audience = EVERYONE) {
       const sections: { title: string; report: DoctorReport }[] = [];
       // The general and kinds parts are checked on every write; one the move brought may still need fixing.
       const unsettled = (await configuration.problems()).filter((problem) => !problem.path.startsWith("backends."));
@@ -1695,6 +1717,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       sections.push(...reports);
       const tailnet = backends.tailnet();
       if (tailnet) sections.push({ title: "Tailnet", report: await tailnetDoctor(tailnet, backends.installId, signal) });
+      const kept = configuration.document.backends.map((backend) => ({ id: backend.id, label: `${backends.statuses().find((status) => status.id === backend.id)?.label ?? backend.id} (${backend.id})`, projects: backend.projects ?? [] }));
+      if (kept.some((backend) => backend.projects.length)) {
+        const existing = await listProjects().then((projects) => new Map(projects.map((project) => [project.id, project.name])), () => null);
+        const checks = reservedChecks(kept, existing, audience);
+        sections.push({ title: "Projects", report: { ok: true, summary: "The backends kept for certain projects, which only those projects' threads see.", checks, notes: [] } });
+      }
       const offers = offerChecks(backends.kinds());
       if (offers.length) {
         sections.push({
@@ -1826,6 +1854,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return found;
     },
     projectOf,
+    projects: listProjects,
     async runsOn(threadId, signal) {
       // A thread's host does not change once it has an environment, and the panel asks on every update.
       let hostId = threadHosts.get(threadId);
@@ -1914,6 +1943,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     async startThread({ threadId, box: ref, prompt, title, signal }) {
       let box = await boxes.get(threadId, ref);
       if (box.state !== "ready") throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. Start a thread on it once it is ready.`);
+      const projectOnKeptBox = boxes.keptForProjects(box.backend) ? await projectServedOnKeptBox(box, threadId) : null;
       box = await boxes.enrolled(box, signal);
       if (box.enrol.state !== "enrolled" || !box.enrol.hostId) {
         const why =
@@ -1929,7 +1959,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
                 : `it is not a BB machine. Its kind does not enrol, or enrolment is off in ${PRODUCT}'s settings`;
         throw new BoxError("unsupported", `A thread cannot run on box ${box.name}: ${why}.`);
       }
-      const projectId = box.projectId ?? (await projectOf(threadId));
+      const projectId = projectOnKeptBox ?? box.projectId ?? (await projectOf(threadId));
       if (!projectId) throw new BoxError("unsupported", "This thread has no project, so a thread on its box would have none either.");
       const hostId = box.enrol.hostId;
       // Before the clone: a box with none of BB's agent CLIs is refused (#561).

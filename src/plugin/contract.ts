@@ -356,6 +356,7 @@ export const contract = defineRpcContract({
   rooms: { input: z.object({ kind: z.string().min(1), size: size.optional() }), output: z.custom<OfferRoom[]>() },
   "kind.cards": { input: z.object({ kind: z.string().min(1) }), output: z.custom<KindCards[]>() },
   kinds: { input: z.null(), output: z.custom<KindView[]>() },
+  projects: { input: z.null(), output: z.custom<{ readonly id: string; readonly name: string }[]>() },
   /** Starts a child thread on a box's BB machine. */
   thread: { input: oneBox.extend({ prompt: z.string().min(1) }), output: z.custom<ThreadResult>() },
   backends: { input: z.null(), output: z.custom<BackendView[]>() },

@@ -61,6 +61,13 @@ export interface BackendConfig {
   readonly fields: Readonly<Record<string, FieldValue | SecretState>>;
   /** Ready guests to keep, by kind. */
   readonly warm?: Readonly<Record<string, number>>;
+  /**
+   * The BB projects it is kept for, by their IDs (#1458). Left out or empty, it serves every project. With a list, only
+   * threads in those projects place boxes and forks on it or claim its spares, and they use it before the backends every
+   * project shares. Threads elsewhere, or in no project, never see it. Spares are made on it in the backend list's
+   * order, as on any backend. Your own machines may still be made on it.
+   */
+  readonly projects?: readonly string[];
   /** For a driver with host fields. */
   readonly hosts?: readonly HostConfig[];
 }
@@ -829,8 +836,8 @@ function readBackend(
     return null;
   }
   const path = `backends.${id}`;
-  const known = new Set(["id", "type", "label", "enabled", "fields", "warm", "hosts"]);
-  for (const key of Object.keys(value)) if (!known.has(key)) problem(`${path}.${key}`, `A backend has id, type, label, enabled, fields, warm and hosts, not "${key}".`);
+  const known = new Set(["id", "type", "label", "enabled", "fields", "warm", "projects", "hosts"]);
+  for (const key of Object.keys(value)) if (!known.has(key)) problem(`${path}.${key}`, `A backend has id, type, label, enabled, fields, warm, projects and hosts, not "${key}".`);
   let label: string | undefined;
   if (value.label !== undefined && value.label !== null) {
     if (typeof value.label === "string" && value.label.trim() && value.label.length <= 64) label = value.label.trim();
@@ -850,6 +857,8 @@ function readBackend(
       else if (count !== 0) warm[kind] = count;
     }
   }
+
+  const projects = readBackendProjects(`${path}.projects`, value.projects, problem);
 
   let hosts: HostConfig[] | undefined;
   if (value.hosts !== undefined && value.hosts !== null) {
@@ -874,8 +883,23 @@ function readBackend(
     enabled: value.enabled === true,
     fields,
     ...(Object.keys(warm).length ? { warm } : {}),
+    ...(projects.length ? { projects } : {}),
     ...(hosts ? { hosts } : {}),
   };
+}
+
+export const MOST_BACKEND_PROJECTS = 100;
+
+function readBackendProjects(path: string, value: unknown, problem: (path: string, message: string) => void): string[] {
+  if (value === undefined || value === null) return [];
+  const listed = Array.isArray(value) && value.every((item) => typeof item === "string" && item.trim() && item.length <= 200);
+  if (!listed) {
+    problem(path, "projects is a list of BB project IDs, or empty for every project.");
+    return [];
+  }
+  const projects = [...new Set((value as string[]).map((project) => project.trim()))];
+  if (projects.length > MOST_BACKEND_PROJECTS) problem(path, `Keep a backend for up to ${MOST_BACKEND_PROJECTS} projects, or for every project with an empty list.`);
+  return projects;
 }
 
 /**
