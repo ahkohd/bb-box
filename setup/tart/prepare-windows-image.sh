@@ -167,6 +167,44 @@ qpid=
 dog=
 done_ok=
 step() { printf '%s  %s\n' "$(date +%H:%M:%S)" "$*"; }
+lock_opens() { mkdir -p "${1%/*}" 2>/dev/null && (: >>"$1") 2>/dev/null; }
+hold_turn() {
+  _turn_lock=$HOME/.bb-box/turn.lock
+  lock_opens "$_turn_lock" || {
+    echo "prepare-windows-image: could not open $_turn_lock, which BB Box's restores and image refreshes on this Mac take turns by. Check that $(id -un) can write to it." >&2
+    return 2
+  }
+  exec 9>>"$_turn_lock"
+  perl -MFcntl=:flock -e 'open(my $h, ">&=", 9) or exit 2; for (1 .. $ARGV[0]) { exit 0 if flock($h, LOCK_EX | LOCK_NB); select(undef, undef, undef, 0.1) } exit 1' "$1" && return 0
+  exec 9>&-
+  return 1
+}
+free_turn() { exec 9>&-; }
+publish_build() {
+  _turn=0
+  hold_turn 1 || _turn=$?
+  case $_turn in
+    0) ;;
+    1)
+      step "waiting up to 10 minutes for BB Box's restore or image refresh on this Mac to end"
+      hold_turn 6000 || {
+        echo "prepare-windows-image: another BB Box task on this Mac kept the build waiting for 10 minutes. Run the build again once BB Box's restores and image refreshes have ended." >&2
+        return 1
+      } ;;
+    *) return 1 ;;
+  esac
+  mv "$d" "$images/$build" || { free_turn; return 1; }
+  d=
+  _was=$(cd "$images/current" 2>/dev/null && pwd -P) && _was=${_was##*/}
+  if [ -n "$_was" ] && [ "$_was" != "$build" ] && [ -f "$images/$_was/disk.qcow2" ]; then
+    ln -sfn "$_was" "$images/rollback" || { free_turn; return 1; }
+  fi
+  rm -f "$images/current.new"
+  ln -s "$build" "$images/current.new" && perl -e 'rename($ARGV[0], $ARGV[1]) or exit 1' "$images/current.new" "$images/current"
+  _published=$?
+  free_turn
+  return "$_published"
+}
 cleanup() {
   status=$?
   if [ -n "$qpid" ]; then kill "$qpid" 2>/dev/null; wait "$qpid" 2>/dev/null; fi
@@ -185,12 +223,18 @@ mkdir "$d"
 # The Mac stays awake for the build.
 caffeinate -i -w $$ >/dev/null 2>&1 &
 
+signal_pidfile() {
+  _p=$(cat "$1" 2>/dev/null)
+  case $_p in '' | 0* | *[!0-9]*) return 1 ;; esac
+  kill "$_p" 2>/dev/null
+}
+
 # QEMU stops, and the build with it, should the disk fill below the reserve.
 (
   while :; do
     if [ "$(kib)" -lt "$floor" ]; then
       : >"$w/low"
-      kill "$(cat "$w/pid" 2>/dev/null)" 2>/dev/null
+      signal_pidfile "$w/pid"
       exit 0
     fi
     sleep 5
@@ -585,18 +629,18 @@ printf 'built=%s\niso=%s\niso-sha256=%s\nedition=%s\nvirtio-win=%s\npwsh=%s\ngit
   "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$(qemu-system-aarch64 --version | head -n 1)" "$machine" "$(printf '%s\n' "$key" | awk '{ print "key=" $2 }')" \
   >"$d/info"
 printf '%s\n' "$record" >"$d/image.json"
-mv "$d" "$images/$build"
-d=
-ln -s "$build" "$images/current.new"
-/bin/mv -fh "$images/current.new" "$images/current"
+publish_build || die "$build was not made current: see above"
 done_ok=1
 rm -f "$png" "$log"
-old=
-for b in "$images"/build.*; do
-  b=${b##*/}
-  case $b in "$build" | *.new | *.png | *.log) continue ;; esac
-  [ -d "$images/$b" ] || continue
-  grep -qx "build=$b" "$q"/vms/*/config 2>/dev/null || old="$old $b"
-done
-[ -z "$old" ] || step "no VM uses these older builds in $images, which can go:$old"
+note_older_builds() {
+  _older=
+  for _b in "$images"/build.*; do
+    _b=${_b##*/}
+    case $_b in "$build" | *.new | *.png | *.log) continue ;; esac
+    [ -d "$images/$_b" ] || continue
+    _older="$_older $_b"
+  done
+  [ -z "$_older" ] || step "older builds stay in $images while a VM, a snapshot or a restore stands on them, and BB Box's next image refresh removes those that nothing stands on. Do not delete them by hand:$_older"
+}
+note_older_builds
 step "done: $name is $build ($(du -sh "$images/$build" | cut -f1) on disk, $(($(kib) / 1048576)) GiB free)"
