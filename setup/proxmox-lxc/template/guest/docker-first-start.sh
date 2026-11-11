@@ -1,5 +1,6 @@
 #!/bin/bash
 set -u
+shopt -s nullglob
 limit_ms=${BBBOX_DOCKER_START_LIMIT_MS:-2000}
 ceiling_ms=${BBBOX_DOCKER_START_CEILING_MS:-30000}
 cgroup_root=${BBBOX_CGROUP_ROOT:-/sys/fs/cgroup}
@@ -23,14 +24,23 @@ docker_unit_cgroups() {
   fi
 }
 
-docker_waits_for_disk() {
-  local group pids=()
+docker_thread_stats() {
+  local group pid
+  if [ ! -d "$systemd_run_dir" ]; then
+    printf '%s\n' "$proc_root"/[0-9]*/task/*/stat
+    return
+  fi
   for group in "$@"; do
     [ -r "$group/cgroup.procs" ] || continue
-    while read -r pid; do pids+=("$proc_root/$pid/task/"*/stat); done <"$group/cgroup.procs"
+    while read -r pid; do printf '%s\n' "$proc_root/$pid/task/"*/stat; done <"$group/cgroup.procs"
   done
-  [ "${#pids[@]}" -gt 0 ] || return 1
-  awk '$3 == "D" { found = 1; exit } END { exit !found }' "${pids[@]}" 2>/dev/null
+}
+
+docker_waits_for_disk() {
+  local stats=()
+  mapfile -t stats < <(docker_thread_stats "$@")
+  [ "${#stats[@]}" -gt 0 ] || return 1
+  awk '$3 == "D" { found = 1; exit } END { exit !found }' "${stats[@]}" 2>/dev/null
 }
 
 time_docker_waited_for_disk_us() {

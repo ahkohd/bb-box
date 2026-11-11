@@ -59,7 +59,7 @@ ${start.answers === false ? 'echo "Cannot connect to the Docker daemon at unix:/
   return dir;
 }
 
-function judge(dir: string, limitMs: number) {
+function judge(dir: string, limitMs: number, runtime: "systemd" | "no systemd" = "systemd") {
   const ran = spawnSync("bash", [HELPER], {
     encoding: "utf8",
     env: {
@@ -67,7 +67,7 @@ function judge(dir: string, limitMs: number) {
       BBBOX_DOCKER_START_LIMIT_MS: String(limitMs),
       BBBOX_CGROUP_ROOT: join(dir, "cgroup"),
       BBBOX_PROC_ROOT: join(dir, "proc"),
-      BBBOX_SYSTEMD_RUN_DIR: join(dir, "systemd"),
+      BBBOX_SYSTEMD_RUN_DIR: join(dir, runtime === "systemd" ? "systemd" : "no-systemd"),
     },
   });
   return { status: ran.status, line: `${ran.stdout}${ran.stderr}`.trim() };
@@ -94,6 +94,17 @@ test("a start that waits for something other than its host fails, as a broken so
 
   assert.equal(judged.status, 1, judged.line);
   assert.ok(ownMs(judged.line) >= 800, judged.line);
+});
+
+test("in a box without systemd, as a Docker box is, any of the box's threads waiting for the disk counts as the host's", () => {
+  const waiting = fakeBox({ seconds: 0.9, dockerdState: "D" });
+  const sleeping = fakeBox({ seconds: 0.9, dockerdState: "S" });
+
+  const forDisk = judge(waiting, 400, "no systemd");
+  const forSleep = judge(sleeping, 400, "no systemd");
+
+  assert.equal(forDisk.status, 0, forDisk.line);
+  assert.equal(forSleep.status, 1, forSleep.line);
 });
 
 test("the time Docker waited for a CPU, and the time its host took its CPUs, are not its own", () => {
