@@ -35,6 +35,10 @@ async function machineOf(boxes: Boxes, threadId: string): Promise<BoxRecord | nu
   return (await boxes.list(threadId)).find((box) => box.role === "machine" && isActive(box)) ?? null;
 }
 
+function isEstablished(box: BoxRecord): boolean {
+  return box.enrol.state === "enrolled";
+}
+
 /** The parts of BB's API that say which of BB's machines a box is. */
 export interface MachineLookup {
   list(args: { includeCreating: true }): Promise<readonly { id: string; machineProviderId: string | null; lifecycle: { phase: string } }[]>;
@@ -88,6 +92,12 @@ export function newBoxProvider(deps: NewBoxDeps): PluginMachineProviderDeclarati
       if (!thread) return { status: "failed", message: `${PRODUCT} makes a new box for the thread that starts on it, and BB named none (key ${key}).` };
       try {
         let box = await machineOf(boxes, thread.id);
+        const kept = box ? await boxes.keptFromThread(box, `this thread cannot start on box ${box.name}. Start it on a new box`) : null;
+        if (box && kept && isEstablished(box)) return { status: "failed", message: kept.message };
+        if (box && kept) {
+          await boxes.release(box.threadId, box.id, "BB was still making it the thread's machine, and its backend no longer serves the thread's project");
+          box = null;
+        }
         if (!box) {
           await releaseFailed(boxes, thread.id);
           report.step("Making a box");

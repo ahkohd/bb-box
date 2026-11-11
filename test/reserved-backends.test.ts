@@ -36,7 +36,15 @@ function threadsInProjects(): Map<string, string | null | Error> {
   ]);
 }
 
-function world(providers: readonly Provider[]) {
+function idsInMakingOrder(): (bytes: number) => Uint8Array {
+  let made = 0;
+  return (bytes) => {
+    const count = made++;
+    return Uint8Array.from({ length: bytes }, (_, at) => Math.floor(count / 32 ** (bytes - 1 - at)) % 32);
+  };
+}
+
+function world(providers: readonly Provider[], random?: (bytes: number) => Uint8Array) {
   const kv = new MemoryStorage();
   const built = providers.map(
     (provider) =>
@@ -56,6 +64,7 @@ function world(providers: readonly Provider[]) {
   const state = { general: { perThreadLimit: null, enrol: true, sizes: {}, spares: {} } as GeneralConfig };
   const boxes = new Boxes({
     kv,
+    ...(random ? { random } : {}),
     backends: {
       get: (id) => asBackends.find((backend) => backend.id === id) ?? null,
       active: () => asBackends,
@@ -308,7 +317,7 @@ test("a thread's spares on its project's kept backends are claimed in settings o
     { id: "fake", hosts: ["devpc"] },
     { id: "fake:work-a", hosts: ["work-a"], projects: [WORK] },
     { id: "fake:work-b", hosts: ["work-b"], projects: [WORK] },
-  ]);
+  ], idsInMakingOrder());
   state.general = { ...state.general, spares: { linux: 2 } };
   const onB = await settled(boxes, await boxes.acquire({ threadId: SPARES, projectId: null, kind: "linux", on: "fake:work-b" }));
   const onA = await settled(boxes, await boxes.acquire({ threadId: SPARES, projectId: null, kind: "linux", on: "fake:work-a" }));
@@ -355,6 +364,24 @@ for (const kind of ["ios", "macos"] as const) {
     const work = [];
     for (let n = 0; n < 3; n++) work.push((await boxes.acquire({ threadId: WORK_THREAD, projectId: WORK, ...shared })).backend);
     assert.deepEqual(work, ["fake:work", "fake:work", "fake"], "a new host on the kept backend, not the ready shared one, and the shared host once the kept one is full");
+    await boxes.idle();
+  });
+}
+
+for (const kind of ["ios", "macos"] as const) {
+  test(`a shared ${kind} box of a thread takes a slot on its project's kept backends in their settings order, even when a later one has a ready host, then on a shared host (#1458)`, async () => {
+    const { boxes } = world([
+      { id: "fake", hosts: ["devpc"], kinds: [slotKind(kind)], slots: { kinds: [kind], most: 2 } },
+      { id: "fake:work-a", hosts: ["work-a"], kinds: [slotKind(kind)], slots: { kinds: [kind], most: 2 }, projects: [WORK] },
+      { id: "fake:work-b", hosts: ["work-b"], kinds: [slotKind(kind)], slots: { kinds: [kind], most: 2 }, projects: [WORK] },
+    ]);
+    const shared = { threadId: WORK_THREAD, projectId: WORK, kind, shared: true } as const;
+    await boxes.acquire({ ...shared, on: "fake:work-b" });
+
+    const placed = [];
+    for (let n = 0; n < 4; n++) placed.push((await boxes.acquire(shared)).backend);
+
+    assert.deepEqual(placed, ["fake:work-a", "fake:work-a", "fake:work-b", "fake"], "the first kept backend starts a host though the second has one ready, then the second, then the shared one");
     await boxes.idle();
   });
 }

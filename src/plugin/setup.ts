@@ -23,7 +23,7 @@ import { ImageJobs } from "./images.ts";
 import { namedImage, projectImage, withImage } from "../core/project-images.ts";
 import { readableState } from "./monitor.ts";
 import { BoxError, Boxes, SPARES, forgetRefusal, ownedByThread, type BoxRecord, type ThreadAnswer , type ResizeAnswer } from "../core/boxes.ts";
-import { EVERYONE, reservedChecks, type Audience } from "../core/reserved.ts";
+import { EVERYONE, reservedChecks, threadAudience, type Audience } from "../core/reserved.ts";
 import type { ProjectChoice } from "./config-edits.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
@@ -716,6 +716,21 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     } catch {
       return null;
     }
+  };
+
+  const projectServedOnKeptBox = async (box: BoxRecord, threadId: string): Promise<string> => {
+    const cannot = `a new thread cannot start on box ${box.name}. The box itself keeps working`;
+    const answer = await bb.sdk.threads.get({ threadId }).then(
+      (thread) => ({ read: true, projectId: thread.projectId ?? null }) as const,
+      () => ({ read: false }) as const,
+    );
+    if (!answer.read) {
+      throw new BoxError("unreachable", `BB could not say which project this thread is in just now. ${box.backendLabel} is kept for certain projects, so ${cannot}. Try again in a minute.`);
+    }
+    const kept = boxes.keptFrom(box, threadAudience(answer.projectId), cannot);
+    if (kept) throw kept;
+    if (answer.projectId === null) throw new BoxError("unsupported", "This thread has no project, so a thread on its box would have none either.");
+    return answer.projectId;
   };
 
   // Names only: BB never gives plugins the values. Every command in an
@@ -1928,10 +1943,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     async startThread({ threadId, box: ref, prompt, title, signal }) {
       let box = await boxes.get(threadId, ref);
       if (box.state !== "ready") throw new BoxError("not_ready", `Box ${box.name} is ${box.state}. Start a thread on it once it is ready.`);
-      const projectId = await projectOf(threadId);
-      if (!projectId) throw new BoxError("unsupported", "This thread has no project, so a thread on its box would have none either.");
-      const kept = await boxes.keptFromThread(box, `a new thread cannot start on box ${box.name}. The box itself keeps working`);
-      if (kept) throw kept;
+      const projectOnKeptBox = boxes.keptForProjects(box.backend) ? await projectServedOnKeptBox(box, threadId) : null;
       box = await boxes.enrolled(box, signal);
       if (box.enrol.state !== "enrolled" || !box.enrol.hostId) {
         const why =
@@ -1947,6 +1959,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
                 : `it is not a BB machine. Its kind does not enrol, or enrolment is off in ${PRODUCT}'s settings`;
         throw new BoxError("unsupported", `A thread cannot run on box ${box.name}: ${why}.`);
       }
+      const projectId = projectOnKeptBox ?? box.projectId ?? (await projectOf(threadId));
+      if (!projectId) throw new BoxError("unsupported", "This thread has no project, so a thread on its box would have none either.");
       const hostId = box.enrol.hostId;
       // Before the clone: a box with none of BB's agent CLIs is refused (#561).
       const agent = await agentFor(bb.sdk, threadId, hostId, box.name, logError);

@@ -104,7 +104,7 @@ import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSiz
 import { BY_OUTSIDE, EVENT_WORDS_BYTES, UNKNOWN_ACTOR, byBbBox, openStop, utf8Prefix, type Actor, type BoxEvent, type BoxEventKind, type BoxLog, type Observation } from "./box-log.ts";
 import { POWER_CHECK_GAP_MS } from "./reach.ts";
 import { forkCapacityWords } from "./snapshot-refusals.ts";
-import { EVERYONE, NONE_SERVES_THREAD, inAcquireOrder, keptForOthersWords, reservedRank, servesAudience, threadAudience, tiersFor, type Audience } from "./reserved.ts";
+import { EVERYONE, NONE_SERVES_THREAD, inAcquireOrder, isShared, keptForOthersWords, reservedRank, servesAudience, threadAudience, tiersFor, type Audience } from "./reserved.ts";
 import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, WHOLE_CARDS_OFF_FOR_RESIZE, chooseGpu, claimOf, configuredGpu, gpuForSpare, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, gpuResizingWords, hasGpuPart, holdsCard, kindWithGpu, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
 import {
   DESKTOP_GPU_CHECK,
@@ -790,6 +790,12 @@ function reservedFirst<T>(tiers: { readonly reserved: readonly T[]; readonly sha
   return tiers.reserved.length ? { first: tiers.reserved, fallback: tiers.shared } : { first: tiers.shared, fallback: [] };
 }
 
+function eachBackendInOrder<T extends { readonly backend: { readonly id: string } }>(offers: readonly T[]): (readonly T[])[] {
+  const byBackend = new Map<string, T[]>();
+  for (const offer of offers) byBackend.set(offer.backend.id, [...(byBackend.get(offer.backend.id) ?? []), offer]);
+  return [...byBackend.values()];
+}
+
 class Unplaced extends BoxError {
   readonly full: readonly string[];
   constructor(code: BoxErrorCode, message: string, full: readonly string[]) {
@@ -1319,9 +1325,16 @@ export class Boxes {
   }
 
   async keptFromThread(owner: { readonly threadId: string; readonly backend: string; readonly backendLabel: string }, cannot: string): Promise<BoxError | null> {
-    const audience = await this.audienceNow(owner.threadId);
+    return this.keptFrom(owner, await this.audienceNow(owner.threadId), cannot);
+  }
+
+  keptFrom(owner: { readonly backend: string; readonly backendLabel: string }, audience: Audience, cannot: string): BoxError | null {
     if (this.serves(owner.backend, audience)) return null;
     return new BoxError("unsupported", keptForOthersWords(owner.backendLabel, audience, cannot));
+  }
+
+  keptForProjects(backendId: string): boolean {
+    return !isShared(this.#projectsOf(backendId));
   }
 
   async #withheldFor(kind: string, audience: Audience, signal?: AbortSignal): Promise<readonly WithheldOffer[]> {
@@ -1383,15 +1396,17 @@ export class Boxes {
     return new BoxError("no_capacity", `${error.message}${sharedMacosHint()}`);
   }
 
-  async #placeInSlotReservedFirst(first: readonly OfferedKind[], fallback: readonly OfferedKind[], kind: SlotKind, model: string | null, box: BoxIdentity): Promise<{ readonly chosen: OfferedKind; readonly guest: Guest }> {
-    const lendsFirst = lendersOf(first, kind).length > 0;
-    if (!fallback.length || !lendsFirst) return this.#placeInSlot(lendsFirst ? first : fallback, kind, model, box);
-    try {
-      return await this.#placeInSlot(first, kind, model, box);
-    } catch (error) {
-      if (!(error instanceof BoxError) || error.code !== "no_capacity" || !lendersOf(fallback, kind).length) throw error;
-      return this.#placeInSlot(fallback, kind, model, box);
+  async #placeInSlotInOrder(groups: readonly (readonly OfferedKind[])[], kind: SlotKind, model: string | null, box: BoxIdentity): Promise<{ readonly chosen: OfferedKind; readonly guest: Guest }> {
+    const lending = groups.filter((group) => lendersOf(group, kind).length > 0);
+    for (const [at, group] of lending.entries()) {
+      const lastToAsk = at === lending.length - 1;
+      try {
+        return await this.#placeInSlot(group, kind, model, box);
+      } catch (error) {
+        if (lastToAsk || !(error instanceof BoxError) || error.code !== "no_capacity") throw error;
+      }
     }
+    return this.#placeInSlot([], kind, model, box);
   }
 
   async #placeInSlot(offers: readonly OfferedKind[], kind: SlotKind, model: string | null, box: BoxIdentity): Promise<{ readonly chosen: OfferedKind; readonly guest: Guest }> {
@@ -1500,7 +1515,9 @@ export class Boxes {
     const namedForKind = input.on !== undefined ? this.#on(input.on, input.kind, everywhere, audience) : null;
     const named = namedForKind && askedDevice ? this.#namedWithDevice(namedForKind, askedDevice, withDevice) : namedForKind;
     const offered = this.#takingGpu(named ? named.offers : withDevice, wanted, askedGpu, gpuAsked, forAgent, gpuFromSetting);
-    const { first, fallback } = named ? { first: offered, fallback: [] } : reservedFirst(tiersFor(offered, this.#projectsOf, audience));
+    const tiers = named ? null : tiersFor(offered, this.#projectsOf, audience);
+    const { first, fallback } = tiers ? reservedFirst(tiers) : { first: offered, fallback: [] };
+    const slotGroups = tiers ? [...eachBackendInOrder(tiers.reserved), tiers.shared] : [offered];
     const spareRank = reservedRank(offered, this.#projectsOf, audience);
     const role = input.role ?? "box";
     const yours = input.threadId === OPERATOR;
@@ -1554,9 +1571,9 @@ export class Boxes {
         const identity = { boxId: id, threadId: input.threadId, name, kind: wanted, createdAt, size: withGpu(sized.size, askedGpu) };
         let noSlotWords: string | null = null;
         const slot = inSlotAsked
-          ? await this.#placeInSlotReservedFirst(first, fallback, wanted as SlotKind, askedDevice, identity)
+          ? await this.#placeInSlotInOrder(slotGroups, wanted as SlotKind, askedDevice, identity)
           : slotByDefault
-            ? await this.#placeInSlotReservedFirst(first, fallback, "ios", askedDevice, identity).catch((error: unknown) => {
+            ? await this.#placeInSlotInOrder(slotGroups, "ios", askedDevice, identity).catch((error: unknown) => {
                 if (!(error instanceof BoxError) || error.code !== "no_capacity") throw error;
                 noSlotWords = error.message;
                 const ownVmOffered = offered.some(({ kind }) => kind.id === "ios" && !kind.slotsOnly);

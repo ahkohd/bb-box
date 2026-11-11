@@ -77,7 +77,8 @@ A backend kept for projects serves only threads in those projects:
 - Spare and warm boxes on the backend go only to threads in its projects. Spares are made in the order of the backend list, as before, so put a shared backend first if every thread should have them.
 - A fork of a box or a snapshot on the backend goes only to a thread in its projects. You can still fork it as one of your machines.
 - You can still make your own machines on any backend.
-- A thread's boxes stay its own when it moves to another project, or when you change a backend's projects. They keep running and can still stop, start, shrink and be released. They cannot grow, be restored onto a new guest, be forked there or start a child thread until the thread is in one of the backend's projects again.
+- A thread's boxes stay its own when it moves to another project, or when you change a backend's projects. They keep running and can still stop, start, shrink and be released. They cannot grow, be restored onto a new guest, be forked there or start a child thread until the thread is in one of the backend's projects again. A New box that BB had not finished setting up is released, and the thread gets a box where its project may go.
+- BB Box asks BB for the thread's project each time. If BB cannot say just then, the thread uses only the backends every project shares, and a child thread on a box on a kept backend is refused until BB answers. On a backend every project shares, a child thread starts as before.
 
 `bb box doctor` lists each backend's projects. In a thread, it says only whether each backend serves that thread's project. It warns when none of them is still in BB, as after the projects were deleted: no thread can use that backend until you choose its projects again or let every project use it.
 

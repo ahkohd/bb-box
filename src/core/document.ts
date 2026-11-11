@@ -62,9 +62,10 @@ export interface BackendConfig {
   /** Ready guests to keep, by kind. */
   readonly warm?: Readonly<Record<string, number>>;
   /**
-   * The BB projects it is kept for, by their IDs (#1458). Left out or empty, it serves every project. With a list, it
-   * makes boxes, spares and forks only for threads in those projects, before the backends every project shares, and
-   * threads elsewhere, or in no project, never see it. Your own machines may still be made on it.
+   * The BB projects it is kept for, by their IDs (#1458). Left out or empty, it serves every project. With a list, only
+   * threads in those projects place boxes and forks on it or claim its spares, and they use it before the backends every
+   * project shares. Threads elsewhere, or in no project, never see it. Spares are made on it in the backend list's
+   * order, as on any backend. Your own machines may still be made on it.
    */
   readonly projects?: readonly string[];
   /** For a driver with host fields. */
