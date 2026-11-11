@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { quote } from "../transports/process.ts";
 import { freshFetch } from "./fresh-fetch.ts";
 import { DEFAULT_TAILNET_TAGS } from "./tailnet-settings.ts";
@@ -217,11 +218,31 @@ export function keyDescription(text: string): string {
 
 export function isInstallDevice(hostname: string, installId: string): boolean {
   const install = tailnetHostname(installId);
-  return [`bb-box-${install}-`, `bb-box-hz-${install}-`, `bb-box-ns-${install}-`, `bb-box-nsb-${install}-`].some((prefix) => hostname.startsWith(prefix));
+  const short = shortTailnetInstall(installId);
+  return [`bb-box-${install}-`, `bb-box-hz-${install}-`, `bb-box-ns-${install}-`, `bb-box-nsb-${install}-`, `bb-box-nsb-${short}-`].some((prefix) => hostname.startsWith(prefix));
+}
+
+export const TAILNET_HASH_LENGTH = 6;
+const READABLE_INSTALL_LETTERS = 16;
+
+export function tailnetHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, TAILNET_HASH_LENGTH);
+}
+
+export function shortTailnetInstall(installId: string): string {
+  return `${tailnetHostname(installId).slice(0, READABLE_INSTALL_LETTERS).replace(/-+$/, "")}-${tailnetHash(installId)}`;
+}
+
+function cleanHostname(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 export function tailnetHostname(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, HOSTNAME_LIMIT) || "bb-box";
+  return cleanHostname(name).slice(0, HOSTNAME_LIMIT) || "bb-box";
+}
+
+export function fitsTailnetHostname(name: string): boolean {
+  return cleanHostname(name).length <= HOSTNAME_LIMIT;
 }
 
 const AS_ROOT = `as_root() { if [ "$(id -u)" = 0 ]; then "$@"; else sudo -n "$@"; fi; }`;

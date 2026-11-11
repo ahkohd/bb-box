@@ -94,6 +94,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `namespace.machines` | Machines | The Namespace machines BB Box has, each with its age and when it ends, and any no box claims. |
 | `namespace.limits` | Workspace limits | The Mac cores and memory the workspace allows at once and has in use, read from Namespace, from which BB Box refuses a Mac up front; a warning when the token may not read them. |
 | `namespace.snapshots.<machine>` | Snapshots on &lt;machine> | On a Linux machine where its box took snapshots: Docker's snapshot lines for that machine, and when the machine ends with them. |
+| `namespace.grants` | macOS permissions on Namespace's Macs | Whether box_grant works on Namespace's Macs: whether System Integrity Protection is off and TCC's database is one BB Box knows, as measured on the Macs that macos and macos-desktop boxes started on most recently, and their macOS; a warning, with the reason, when the latest measurement of a Mac failed (058). |
 | `namespace.images` | Linux images | BB Box's Linux images in the workspace's registry: when each was built, whether a new one is due, and whether one is being built. |
 | `ios-hosts.<mac>` | Shared iOS hosts on &lt;mac> | The shared iOS hosts on the Mac (064), or on Namespace (065): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; Namespace's host's end and how its video is encoded; or, with none, whether one can start. |
 
@@ -144,7 +145,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `gpu.<gpu>.whole` | GPU &lt;gpu> whole | A card a box holds whole has no other holder. It fails, naming the guests, when a claim went wrong (071). |
 | `gpu.<gpu>.limit` | GPU &lt;gpu> boxes | A card has no more boxes than the boxes per card. It warns, naming the boxes over the limit, which keep running while no new box goes on the card (071). |
 | `docker.snapshots` | Snapshots | Docker's image store, the space snapshots need and the disk's use. |
-| `docker.snapshot-leftovers` | Snapshot leftovers | Interrupted snapshot tasks and paused boxes waiting for recovery. |
+| `docker.snapshot-leftovers` | Snapshot leftovers | Interrupted snapshot tasks and paused boxes waiting for recovery, and Docker volumes a restore's copy left that maintenance could not remove after 3 tries, by name. |
 | `docker.kept-snapshots` | Kept snapshots | What kept snapshots hold on Docker's disk, and until when. Removing the backend is refused while it holds any snapshot. |
 | `docker.snapshot-layers` | Snapshot layers | Box images near Docker's layer limit. A take refuses from 120 layers. |
 | `docker.cli` | docker CLI | The docker CLI runs on BB's server. |

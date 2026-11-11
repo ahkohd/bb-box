@@ -2,15 +2,16 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { KEEP_AHEAD_MS, LABELS, NamespaceBackend } from "../src/backends/namespace/backend.ts";
 import { HOST_RECORD_KEY, NAMESPACE_HOST_ROLE, type NamespaceHostRecord } from "../src/backends/namespace/ios-hosts.ts";
-import { NamespaceOwner } from "../src/backends/namespace/owner.ts";
+import { LONGEST_NAMESPACE_BACKEND_NAME, NamespaceOwner } from "../src/backends/namespace/owner.ts";
 import type { NamespaceConfig } from "../src/backends/namespace/config.ts";
 import { reportKey, PROBE_VERSION, type MacReport } from "../src/core/mac-capabilities.ts";
-import { Tailnet, isInstallDevice, tailnetHostname } from "../src/core/tailnet.ts";
+import { LONGEST_INSTALL_ID } from "../src/core/install.ts";
+import { Tailnet, isInstallDevice } from "../src/core/tailnet.ts";
 import type { AcquireHooks, BackendStorage, BoxIdentity, Guest } from "../src/backends/types.ts";
 import { ImageJobs } from "../src/plugin/images.ts";
 import { ownImageLines } from "../src/plugin/views.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace, type FakeInstance } from "./fake-namespace.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
 const disposed = disposedOnceTheFileEnds();
 const CONFIG: NamespaceConfig = { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
@@ -59,7 +60,7 @@ function backendOn(fake: FakeNamespace, id: string, options: BackendOptions = {}
   return disposed(
     new NamespaceBackend({ ...CONFIG, token: fake.token, ...options.config }, context, {
       fetch: fake.fetch,
-      sshBinary: FAKE_SSH_BINARY,
+      sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER,
       sleep: async () => {},
       readyTimeoutMs: 20_000,
       cuaScript: ":",
@@ -207,7 +208,7 @@ function tailnetOf(devices: readonly StaleDevice[]): { readonly tailnet: Tailnet
 }
 
 function tailnetNameOf(backendId: string, installId: string, box: string): string {
-  return tailnetHostname(`${new NamespaceOwner(backendId, installId).tailnetPrefix()}${box}`);
+  return new NamespaceOwner(backendId, installId).tailnetHostname(box);
 }
 
 test("each backend's upkeep removes only its own machines' stale tailnet devices, and the doctor counts both as the install's", async () => {
@@ -242,22 +243,57 @@ test("namespace:team-339 and namespace:team-3245, whose earlier tailnet codes ma
   assert.deepEqual(removed, ["belongs-to-339", "belongs-to-3245"]);
 });
 
-test("no Namespace backend's tailnet names start with another's prefix, for names that look alike and the longest install ID and name (#1455)", () => {
+test("no Namespace backend holds another's tailnet names, for names that look alike and the longest install ID and name (#1455)", () => {
   const names = ["a", "a-1", "1-a", "1", "11", "1-1", "a1", "1a", "team-339", "team-3245", "team-b", "team-bb", "b-team", "10-x", "x-10", "a".repeat(14), "a".repeat(15), `${"a".repeat(14)}b`];
   const ids = [FIRST, ...names.map((name) => `namespace:${name}`)];
 
-  for (const installId of ["inst1", "x".repeat(32)]) {
+  for (const installId of ["inst1", "x".repeat(LONGEST_INSTALL_ID)]) {
     for (const mine of ids) {
-      const prefix = new NamespaceOwner(mine, installId).tailnetPrefix();
-      assert.ok(prefix.length <= 63, `${mine}'s prefix fits a tailnet name on install ${installId}`);
+      const owner = new NamespaceOwner(mine, installId);
       for (const theirs of ids.filter((id) => id !== mine)) {
         for (const box of ["", "b", "gone-box", "z".repeat(63)]) {
           const theirName = tailnetNameOf(theirs, installId, box);
-          assert.ok(!theirName.startsWith(prefix), `${mine} would take ${theirs}'s ${theirName} on install ${installId}`);
+          assert.ok(!owner.holdsTailnetHostname(theirName), `${mine} would take ${theirs}'s ${theirName} on install ${installId}`);
         }
       }
     }
   }
+});
+
+test("on the longest install ID, each Namespace backend gives every machine its own tailnet name, which it holds and the doctor counts, and keeps names that fit as they were", () => {
+  const longest = "x".repeat(LONGEST_INSTALL_ID);
+  const ids = [FIRST, "namespace:a", TEAM_B, `namespace:${"n".repeat(LONGEST_NAMESPACE_BACKEND_NAME)}`];
+  const boxes = ["gentle-marsh", "happy-reef", "nimble-sparrow-a1b2", "nimble-sparrow-a1b3", "box-b1", "box-b2"];
+
+  for (const id of ids) {
+    const owner = new NamespaceOwner(id, longest);
+    const hostnames = boxes.map((box) => owner.tailnetHostname(box));
+    assert.equal(new Set(hostnames).size, boxes.length, `${id} gives each machine its own name: ${hostnames.join(", ")}`);
+    for (const hostname of hostnames) {
+      assert.ok(hostname.length <= 63 && /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(hostname), `${hostname} is a tailnet name`);
+      assert.ok(owner.holdsTailnetHostname(hostname), `${id} holds ${hostname}`);
+      assert.ok(isInstallDevice(hostname, longest), `the doctor counts ${hostname} as the install's`);
+    }
+  }
+  assert.equal(tailnetNameOf(FIRST, "inst1", "gentle-marsh"), "bb-box-ns-inst1-gentle-marsh");
+  assert.equal(tailnetNameOf(TEAM_B, "inst1", "gentle-marsh"), "bb-box-nsb-inst1-6-team-b-gentle-marsh");
+  assert.equal(tailnetNameOf(FIRST, longest, "gentle-marsh"), `bb-box-ns-${longest}-gentle-marsh`);
+});
+
+test("on the longest install ID with the longest backend name, upkeep removes a gone machine's tailnet device and keeps a held one's", async () => {
+  const longest = "x".repeat(LONGEST_INSTALL_ID);
+  const id = `namespace:${"n".repeat(LONGEST_NAMESPACE_BACKEND_NAME)}`;
+  const { tailnet, removed } = tailnetOf([
+    { nodeId: "gone-b1", hostname: tailnetNameOf(id, longest, "box-b1") },
+    { nodeId: "held-b2", hostname: tailnetNameOf(id, longest, "box-b2") },
+  ]);
+  const fake = workspace();
+  const storage = new MemoryStorage();
+  await acquire(backendOn(fake, id, { storage, installId: longest }), "b2");
+
+  await backendOn(fake, id, { storage, installId: longest, tailnet }).maintain();
+
+  assert.deepEqual(removed, ["gone-b1"]);
 });
 
 test("two Namespace backends on two workspaces each start a shared iOS host with their own token, labelled with the backend and recorded as on it", async () => {

@@ -1,4 +1,4 @@
-# 093 results: G16, restores through a node's restart
+# 097 results: G16, restores through a node's restart
 
 Run on 11 November 2026, on main `73d24449` and then this change. The
 sections on the first three changes record heads whose rule, rolling back

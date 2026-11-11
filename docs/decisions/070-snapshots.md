@@ -10,12 +10,12 @@ in [What changed after the reviews](#what-changed-after-the-reviews). See
 [How it is built](#13-how-it-is-built) and its [gates](#gated-in-unit-n).
 
 G16's node reboot was run in part, on a nested node, in
-[093](093-proxmox-restores-recover-from-a-nodes-restart.md). 093
+[097](097-proxmox-restores-recover-from-a-nodes-restart.md). 097
 supersedes G16's condition only for what that run proves: a restore
 through a graceful reboot at the steps it ran, and held copies and
 earlier guests that stay stopped through a reboot and a hard reset. A
 power cut can still lose a recent undo, and G16 still holds for unit 8's
-Keep. 093 also supersedes two of G6's rules for a rollback: one whose task
+Keep. 097 also supersedes two of G6's rules for a rollback: one whose task
 Proxmox no longer has fails with the box stopped, rather than staying
 unknown, and a rollback request with no answer is sent again once at most.
 

@@ -11,7 +11,7 @@ through a restart of its node, not only a restart of BB Box.
 restores on with G16 unproved on both LVM-thin and ZFS, to be run on a
 Proxmox node nested in a VM.
 
-That run is in [093's results](093-results.md). A node was rebooted, and
+That run is in [097's results](097-results.md). A node was rebooted, and
 reset hard, at steps a restore journals, on LVM-thin and on ZFS. Some
 cells needed root on the node before BB Box could go on, and a ZFS take
 cut short was not run. It showed four things BB Box did wrong:

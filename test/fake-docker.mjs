@@ -152,16 +152,108 @@ function probeCards(devices) {
   for (const card of cardsGiven(devices, false)) console.log(`${card.index}, GPU-${card.uuid}, ${card.name}, ${card.totalMiB}, ${card.freeMiB}`);
 }
 
+const COPY_INTO = "bbbox.snapshot.copy-into";
+const COPY_LANDING = "copy-landing.json";
+const COPY_MAY_LAND = "copy-may-land";
+const COPY_LANDED = "copy-landed";
+
+function copyVolumes(rest) {
+  return {
+    source: rest.find((arg) => arg.endsWith(":/from:ro"))?.split(":")[0],
+    target: rest.find((arg) => arg.endsWith(":/to"))?.split(":")[0],
+  };
+}
+
+function copyNameOf(rest) {
+  return rest.includes("--name") ? rest[rest.indexOf("--name") + 1] : `copy-${randomBytes(4).toString("hex")}`;
+}
+
+function registerCopyContainer(rest, status) {
+  const { source, target } = copyVolumes(rest);
+  const name = copyNameOf(rest);
+  if (find(name)) fail(`docker: Error response from daemon: Conflict. The container name "/${name}" is already in use.`, 125);
+  const labels = Object.fromEntries(rest.flatMap((arg, i) => (rest[i - 1] === "--label" ? [arg.split(/=(.*)/s).slice(0, 2)] : [])));
+  const volumes = read("volumes.json", {});
+  for (const volume of [source, target]) if (!(volume in volumes)) volumes[volume] = { Name: volume, Labels: null, Anonymous: false };
+  write("volumes.json", volumes);
+  mkdirSync(dir(name), { recursive: true });
+  const container = {
+    Id: randomBytes(32).toString("hex"),
+    Name: `/${name}`,
+    Image: "copy",
+    Config: { Labels: labels, Env: [] },
+    State: { Status: status, Running: status === "running", Paused: false, ExitCode: 0 },
+    HostConfig: { AutoRemove: rest.includes("--rm"), Mounts: [{ Type: "volume", Name: source, Source: "", Target: "/from", ReadOnly: true }, { Type: "volume", Name: target, Source: "", Target: "/to", ReadOnly: false }] },
+    NetworkSettings: { Networks: {} },
+  };
+  save(container);
+  return container;
+}
+
+function engineFinishesTheCreateLater(rest) {
+  write(COPY_LANDING, { target: copyVolumes(rest).target });
+  spawn(process.execPath, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], { detached: true, stdio: "ignore", env: { ...process.env, FAKE_DOCKER_FINISHES_CREATE: "1" } }).unref();
+  waitFor(join(root, COPY_LANDED));
+  return find(copyNameOf(rest)) ?? fail(`Error response from daemon: No such container: ${copyNameOf(rest)}`);
+}
+
+function finishTheCreateOnceAllowed(rest) {
+  waitFor(join(root, COPY_MAY_LAND));
+  registerCopyContainer(rest, "created");
+  writeFileSync(join(root, COPY_LANDED), "");
+}
+
+function copyContainer(rest, status) {
+  if (process.env.FAKE_DOCKER_FINISHES_CREATE) {
+    finishTheCreateOnceAllowed(rest);
+    process.exit(0);
+  }
+  return host.restoreCopyLandsLate ? engineFinishesTheCreateLater(rest) : registerCopyContainer(rest, status);
+}
+
+function letALateCopyLandAfterRemoving(volume) {
+  if (read(COPY_LANDING, null)?.target === volume) writeFileSync(join(root, COPY_MAY_LAND), "");
+}
+
+function createCopy(rest) {
+  console.log(copyContainer(rest, "created").Id);
+}
+
+function endTheCopy(found, exitCode) {
+  if (found.HostConfig.AutoRemove) return rmSync(dir(found.Name.slice(1)), { recursive: true, force: true });
+  found.State = { Status: "exited", Running: false, Paused: false, ExitCode: exitCode };
+  save(found);
+}
+
+function runCopy(found) {
+  const name = found.Name.slice(1);
+  const source = found.HostConfig.Mounts.find((mount) => mount.Target === "/from").Name;
+  const target = found.HostConfig.Mounts.find((mount) => mount.Target === "/to").Name;
+  const restoring = source.startsWith("bbbox-snapshot-");
+  found.State = { Status: "running", Running: true, Paused: false, ExitCode: 0 };
+  save(found);
+  if (host.holdRestoreCopy && restoring) waitFor(host.holdRestoreCopy);
+  if (!existsSync(join(dir(name), "config.json"))) fail("The copy's container was removed while it ran", 137);
+  endTheCopy(found, host.failRestoreCopy && restoring ? 1 : 0);
+  if (host.failRestoreCopy && restoring) fail("Restore copy failed");
+  const volumes = read("volumes.json", {});
+  if (!volumes[source] || !volumes[target]) fail("Snapshot copy has a missing volume");
+  volumes[target].Files = structuredClone(volumes[source].Files ?? {});
+  write("volumes.json", volumes);
+}
+
 function run(rest) {
   if (rest.at(-1) === "du -sk /from") return console.log(`${host.snapshotVolumeKiB ?? 1024} /from`);
   if (rest.at(-1) === "df -Pk /space") return console.log(`Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/fake 1000000 ${host.snapshotUsedKiB ?? 100000} 900000 10% /space`);
   if (rest.includes("/from/.")) {
     if (host.failSnapshotCopy) fail("Snapshot copy failed");
-    const source = rest.find((arg) => arg.endsWith(":/from:ro"))?.split(":")[0];
-    const target = rest.find((arg) => arg.endsWith(":/to"))?.split(":")[0];
+    const { source, target } = copyVolumes(rest);
     const volumes = read("volumes.json", {});
+    const copier = copyContainer(rest, "running").Name.slice(1);
     if (host.holdRestoreCopy && source.startsWith("bbbox-snapshot-")) waitFor(host.holdRestoreCopy);
     if (host.holdTakeCopy && !source.startsWith("bbbox-snapshot-")) waitFor(host.holdTakeCopy);
+    if (!existsSync(join(dir(copier), "config.json"))) fail("The copy's container was removed while it ran", 137);
+    rmSync(dir(copier), { recursive: true, force: true });
     if (host.failRestoreCopy && source.startsWith("bbbox-snapshot-")) fail("Restore copy failed");
     if (!volumes[source] || !read("volumes.json", {})[target]) fail("Snapshot copy has a missing volume");
     const now = read("volumes.json", {});
@@ -227,6 +319,7 @@ function volumeMount(spec) {
 }
 
 function create(rest) {
+  if (rest.includes("/from/.")) return createCopy(rest);
   const labels = {};
   const env = [];
   const devices = [];
@@ -414,6 +507,7 @@ function container(command, rest) {
     }
     case "start": {
       const found = find(rest.at(-1)) ?? fail(`Error response from daemon: No such container: ${rest.at(-1)}`);
+      if (found.Config.Labels[COPY_INTO]) return runCopy(found);
       const name = found.Name.slice(1);
       mkdirSync(join(dir(name), "run", "bb-box"), { recursive: true });
       if (host.holdStartUntil && new RegExp(host.holdStartMatching ?? "").test(name)) waitFor(host.holdStartUntil);
@@ -712,6 +806,7 @@ switch (command) {
         }
       }
       write("volumes.json", known);
+      for (const name of wanted) if (!(name in known)) letALateCopyLandAfterRemoving(name);
       if (errors.length) fail(errors.join("\n"));
     } else fail(`fake docker: unknown command volume ${sub}`, 2);
     break;

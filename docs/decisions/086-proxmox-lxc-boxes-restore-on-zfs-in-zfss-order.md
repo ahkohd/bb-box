@@ -1,7 +1,7 @@
 # Proxmox LXC boxes restore on ZFS in ZFS's order
 
 Status: accepted, with limited coverage of G16 accepted by the owner; G16
-run in part in [093](093-proxmox-restores-recover-from-a-nodes-restart.md)
+run in part in [097](097-proxmox-restores-recover-from-a-nodes-restart.md)
 Date: 10 November 2026
 
 ## Context
@@ -67,8 +67,8 @@ piece of work.
 
 - G4 on ZFS ran on a test ZFS storage: [results](070-results.md#zfs-restores-on-proxmox-lxc).
 - G16 was run in part on 11 November 2026, on a node nested in a VM, on
-  ZFS and on LVM-thin: see [093](093-proxmox-restores-recover-from-a-nodes-restart.md)
-  and [its results](093-results.md). With 093's rule, a restore cut
+  ZFS and on LVM-thin: see [097](097-proxmox-restores-recover-from-a-nodes-restart.md)
+  and [its results](097-results.md). With 097's rule, a restore cut
   short before its rollback ends as it was, reported as not done, and one
   cut short during its rollback fails with the box stopped and its undo
   kept, to be restored again; where Proxmox left a lock, once root unlocks
@@ -80,7 +80,7 @@ piece of work.
   undo are proved. A ZFS rollback being transactional keeps the disk whole,
   but does not keep its undo. A ZFS take cut short was not run.
 - ZFS restores stay on as the owner's explicit acceptance of this limited
-  coverage, as decided on 10 November 2026. 093's results do not widen
+  coverage, as decided on 10 November 2026. 097's results do not widen
   that acceptance; whether to keep it in the light of them is the owner's
   call.
 - A held copy is made only on a backend whose

@@ -8,7 +8,7 @@ import { NamespaceBackend } from "../src/backends/namespace/backend.ts";
 import { WORKSPACE_FROM_METADATA, buildProgressScript, buildWaitWords, linuxImageBuildScript, linuxImageFingerprint, linuxImageKey, readBuildProgress, startDetachedBuildScript } from "../src/backends/namespace/linux-images.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace } from "./fake-namespace.ts";
 import { Tailnet } from "../src/core/tailnet.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
 const disposed = disposedOnceTheFileEnds();
 const CONFIG = { token: FAKE_NAMESPACE_TOKEN, region: "us" as const, macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
@@ -25,7 +25,7 @@ function setup(options: { failBuild?: boolean; slowBuild?: boolean; app?: () => 
   const context = { ...testContext(new MemoryStorage(), "inst1", { id: "namespace" }), bbUrl: () => "https://bb.example", images: { bbApp: async () => app() }, log: (line: string) => void lines.push(line) } as never;
   const make = () => new NamespaceBackend(CONFIG, context, {
     fetch: fake.fetch,
-    sshBinary: FAKE_SSH_BINARY,
+    sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER,
     sleep: async () => {},
     readyTimeoutMs: 20_000,
     now: () => now,
@@ -187,7 +187,7 @@ test("with the tailnet on, a build machine joins it with a one-off key of its ow
     const order: string[] = [];
     const backend = new NamespaceBackend(CONFIG, context, {
       fetch: fake.fetch,
-      sshBinary: FAKE_SSH_BINARY,
+      sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER,
       sleep: async () => {},
       readyTimeoutMs: 20_000,
       setupArchive: async () => Buffer.from("setup"),

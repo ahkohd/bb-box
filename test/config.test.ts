@@ -1037,7 +1037,7 @@ test("the configuration takes several Namespace backends, even on one workspace 
   assert.deepEqual(document.backends.map((backend) => [backend.id, backend.fields.machines]), [["namespace", 2], ["namespace:team-b", 4]]);
 });
 
-test("a Namespace backend's name is at most 15 characters, so each of its machines keeps a tailnet name of its own, whatever the install's ID (#1455)", () => {
+test("a Namespace backend's name is at most 15 characters, so its tailnet names have room for each box's own name, whatever the install's ID (#1455)", () => {
   const namespace = (id: string) => ({ id, type: "namespace", enabled: true, fields: { token: "nsct_one" } });
   const read = (id: string) => readDraft({ schema: 1, backends: [namespace("namespace"), namespace(id)], kinds: {}, general: {} }, DRIVERS);
   const docker = (id: string) => readDraft({ schema: 1, backends: [{ id, type: "docker", enabled: true, fields: {} }], kinds: {}, general: {} }, DRIVERS);
@@ -1048,9 +1048,26 @@ test("a Namespace backend's name is at most 15 characters, so each of its machin
   assert.deepEqual(longest.problems, []);
   assert.deepEqual(longest.document.backends.map((backend) => backend.id), ["namespace", `namespace:${"a".repeat(15)}`]);
   assert.deepEqual(tooLong.problems.map((problem) => `${problem.path}: ${problem.message}`), [
-    `backends.1.id: A Namespace backend's name is at most 15 characters, so each of its machines keeps a tailnet name of its own. Give namespace:${"a".repeat(16)} a shorter name.`,
+    `backends.1.id: A Namespace backend's name is at most 15 characters, so its tailnet names have room for each box's own name. Give namespace:${"a".repeat(16)} a shorter name.`,
   ]);
   assert.deepEqual(docker(`docker:${"a".repeat(40)}`).problems, [], "a type with no limit takes any name the ID allows");
+});
+
+test("the configuration takes several boat.dev backends, even on one account with one key, each with its own fields, and a name of at most 13 characters (#1455)", () => {
+  const boat = (id: string, mostBoxes: number) => ({ id, type: "boat", enabled: true, fields: { "api-key": "boat_one", "most-boxes": mostBoxes, "lease-minutes": 20 } });
+  const read = (second: string) => readDraft({ schema: 1, backends: [boat("boat", 2), boat(second, 4)], kinds: {}, general: {} }, DRIVERS);
+
+  const { document, secrets, problems } = read("boat:team-b");
+  const longest = read(`boat:${"a".repeat(13)}`);
+  const tooLong = read(`boat:${"a".repeat(14)}`);
+
+  assert.deepEqual(problems, []);
+  assert.deepEqual(checkDocument(document, secrets as Secrets, DRIVERS), []);
+  assert.deepEqual(document.backends.map((backend) => [backend.id, backend.fields["most-boxes"]]), [["boat", 2], ["boat:team-b", 4]]);
+  assert.deepEqual(longest.problems, []);
+  assert.deepEqual(tooLong.problems.map((problem) => `${problem.path}: ${problem.message}`), [
+    `backends.1.id: A boat.dev backend's name is at most 13 characters, so its tailnet names have room for each box's own name. Give boat:${"a".repeat(14)} a shorter name.`,
+  ]);
 });
 
 test("files for every box: paths checked, contents kept as secrets only, and never in a problem, an export or the stored document (#455)", () => {

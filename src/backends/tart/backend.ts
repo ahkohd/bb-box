@@ -29,16 +29,15 @@
 import type { CheckId } from "../../core/checks.ts";
 import { withDesktopForkSafety } from "../../core/identity.ts";
 import { spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { quote } from "../../transports/process.ts";
-import { setupDir } from "../setup-dir.ts";
 import { startMacInput, tartTypesAsCharacter } from "../../core/mac-input.ts";
 import { accessSetup } from "../../core/in-box.ts";
 import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
-import { EXIT, grantInput, parseGrant, parseGranted } from "../ssh-pool/protocol.ts";
+import { MacVmHelper, macVmHelperCommand } from "../mac-vm-helper.ts";
 import { pause, waitUntilAnswers } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
 import {
@@ -357,6 +356,7 @@ export interface TartBackendOptions {
   readonly readyTimeoutMs?: number;
   /** What runs the Mac helper's VM commands in a macOS VM, instead of machine-mac.sh through sudo: a fake, in tests. */
   readonly macHelper?: string;
+  readonly macHelperReadyTimeoutMs?: number;
   /** Where a macOS VM's bb-box-stream is, instead of MAC_STREAM: a fake, in tests. */
   readonly macStream?: string;
   /** Where a Linux desktop's image has Selkies' launcher, instead of SELKIES_LAUNCHER: a file the test finds, in tests. */
@@ -886,8 +886,7 @@ export class TartBackend implements Backend {
   readonly #streams = new Map<string, boolean>();
   /** Whether each Windows box has bb-box-stream.exe, as its image gives it or not (060). */
   readonly #windowsStreams = new Map<string, boolean>();
-  /** The command that runs machine-mac.sh in a macOS VM, made once, for its grants (058). */
-  #macHelper: string | null = null;
+  #macHelper: MacVmHelper | null = null;
   /** VMs being started for boxes or warm pools, by VM, until they run or their start ends. */
   readonly #placing = new Map<string, Placing>();
   /** Placement is one at a time, so two acquires, or an acquire and a fill, never take the last slot of one Mac. */
@@ -1741,33 +1740,13 @@ export class TartBackend implements Backend {
     hooks.timing("delete", Math.round(performance.now() - started));
   }
 
-  /**
-   * The pool Mac's helper, machine-mac.sh, run in a macOS VM through sudo for
-   * the VM's user (058): the VM is the box, so it grants with no owner marker
-   * and needs no reset.
-   */
-  async #vmHelper(command: SshTransport, verb: "vm-ready" | "vm-grant" | "vm-granted", input: string | null, signal?: AbortSignal): Promise<RunResult> {
-    return command.run(`${this.#helperCommand()} ${verb} "$(id -un)"`, {
-      ...(input !== null ? { stdin: input } : {}),
-      timeoutMs: 60_000,
-      signal,
-      maxOutputBytes: 64 * 1024,
-    });
-  }
-
-  /** The command that runs machine-mac.sh in a macOS VM, made once. */
-  #helperCommand(): string {
-    this.#macHelper ??= this.#options.macHelper ?? `sudo -n /bin/sh -c ${quote(readFileSync(join(setupDir(), "ssh-pool", "machine-mac.sh"), "utf8"))} machine`;
+  #helper(): MacVmHelper {
+    this.#macHelper ??= new MacVmHelper(this.#options.macHelper ?? macVmHelperCommand(), this.#options.macHelperReadyTimeoutMs ? { readyMs: this.#options.macHelperReadyTimeoutMs } : {});
     return this.#macHelper;
   }
 
-  /**
-   * A short hash of that command, which holds the helper's whole script: a
-   * warm VM filled with another helper, older or newer, may lack what this
-   * one's vm-ready makes, so its claim runs vm-ready again.
-   */
   #helperHash(): string {
-    return createHash("sha256").update(this.#helperCommand()).digest("hex").slice(0, 16);
+    return this.#helper().hash;
   }
 
   /**
@@ -1778,9 +1757,9 @@ export class TartBackend implements Backend {
   async #vmReady(host: TartHost, address: string, vm: string, signal?: AbortSignal): Promise<boolean> {
     const { ssh } = await this.#keys();
     const command = new SshTransport(ssh, this.#vm(await this.#mac(host), address, "macos"), "macos");
-    const result = await this.#vmHelper(command, "vm-ready", null, signal).catch((error: unknown) => ({ exitCode: null, stdout: "", stderr: message(error) }));
-    if (result.exitCode !== 0 || !result.stdout.includes("signing=1")) {
-      this.#context.logError("ready the box's grants", new Error(`${vm} on ${host.name}: the box's signing identity was not made: ${result.stderr.trim() || `exit code ${result.exitCode}`}`));
+    const { state, failure } = await this.#helper().ready(command, signal);
+    if (!state?.signingIdentity) {
+      this.#context.logError("ready the box's grants", new Error(`${vm} on ${host.name}: the box's signing identity was not made: ${failure ?? "the helper said signing=0"}`));
       return false;
     }
     return true;
@@ -1810,18 +1789,13 @@ export class TartBackend implements Backend {
     if (slotRefOf(guest)) throw new BackendError("unsupported", "A box on a shared iOS host has no console session, so there is nothing to grant macOS permissions to.");
     const command = await this.#macCommand(guest);
     const box = typeof guest.data?.box === "string" ? guest.data.box : guest.ref;
-    const result = await this.#vmHelper(command, "vm-grant", grantInput(this.#context.installId, box, request), signal);
-    const said = result.stderr.trim() || `exit code ${result.exitCode}`;
-    if (result.exitCode === EXIT.protected || result.exitCode === EXIT.refused) throw new BackendError("unsupported", said);
-    if (result.exitCode !== 0) throw new Error(`The VM ${guest.ref} did not grant: ${said}`);
-    return parseGrant(result.stdout);
+    return this.#helper().grant(command, `The VM ${guest.ref}`, this.#context.installId, box, request, signal);
   }
 
   async grants(guest: Guest, signal?: AbortSignal): Promise<BoxGrants | null> {
     if (slotRefOf(guest)) return null;
     if (this.#osOf(guest) !== "macos") return null;
-    const result = await this.#vmHelper(await this.#macCommand(guest), "vm-granted", null, signal).catch(() => null);
-    return result?.exitCode === 0 ? parseGranted(result.stdout) : null;
+    return (await this.#helper().grants(await this.#macCommand(guest), signal))?.grants ?? null;
   }
 
   #slots(guest: Guest): IosHosts {

@@ -78,8 +78,11 @@ The core uses only the two `types.ts` files.
      backend's fields name, which no two may share
      ([042](decisions/042-a-docker-host-can-be-a-bb-machine.md)). For
      backends that label what they make with their own ID, as Namespace's
-     do, it gives null, so any number may share an account
-     ([087](decisions/087-each-namespace-workspace-is-a-backend-that-labels-what-it-makes.md));
+     and boat.dev's do, it gives null, so any number may share an account
+     ([087](decisions/087-each-namespace-workspace-is-a-backend-that-labels-what-it-makes.md),
+     [093](decisions/093-each-boat-dev-account-is-a-backend-that-labels-what-it-makes.md)).
+     `src/backends/labelled-owner.ts` holds what such backends share: their
+     labels, which backend owns what, and their tailnet names;
    - `longestName`, the most characters a second backend's name may have,
      where the backend puts its name in something with a length limit,
      such as a tailnet name;
@@ -164,6 +167,19 @@ checks against any backend:
   lists the windows, and the OS's editor opens and shows text typed into
   it), stop and start (with the box's clock right, and connected to BB
   again within 3 s), recovery by a new instance, and repeated release;
+- for each kind that takes snapshots, as its offer says: a take, the list,
+  a restore as a new guest that can be undone, a delete, Keep dates that a
+  new instance reads from the provider and that outlive the box's release,
+  and a fork whose identity reset passes the same check BB Box makes
+  before it hands a fork over;
+- a take and a restore run in a second process, which the suite kills part
+  way through, as when BB stops: a new instance on that process's storage
+  settles the take, releases the restore's part-made guest and starts the
+  box as it was. On Docker it kills the restore while its copy of the
+  Docker data runs, trying again up to 3 times if the restore finishes
+  first, and checks that no copy, volume or note of it is left. Only
+  `npm run conformance` makes the second process, so `npm test` skips
+  these two and says why;
 - for each preset: a box of that size, measured as soon as it is ready;
 - interrupted acquires that leave nothing behind, a small image build, two
   installs on one backend that leave each other alone, and a reused
@@ -190,6 +206,26 @@ Against real hosts:
   echo '{ "backends": [{ "id": "docker", "type": "docker", "enabled": true, "fields": {} }] }' > /tmp/docker.json
   npm run conformance -- --backend docker --settings /tmp/docker.json
   ```
+
+  To check a Docker host over SSH, give its address as the host, and leave
+  out the desktop images you have not built. With `--kind linux` the run
+  checks Linux boxes alone:
+
+  ```sh
+  echo '{ "backends": [{ "id": "docker", "type": "docker", "enabled": true, "fields": { "host": "ssh://box@192.0.2.10", "desktop-image": "", "wayland-desktop-image": "" } }] }' > /tmp/docker-ssh.json
+  npm run conformance -- --backend docker --settings /tmp/docker-ssh.json --kind linux
+  ```
+
+  A run of Linux boxes takes about 3.5 minutes on a VM with 8 cores, about
+  6 minutes over SSH, and under a minute on overlay2. Most of it is the
+  interrupted take on the containerd store: Docker settles a take whose
+  process stopped only once the pause it planned has run three times
+  over, plus a minute, and the suite writes 1 GiB into the box first so
+  that the take is still running when it is killed. Run it on the containerd image
+  store, Docker's default, and on overlay2
+  (`"features": { "containerd-snapshotter": false }` in
+  `/etc/docker/daemon.json`, then restart Docker and build the images
+  again), as their commits differ.
 
 - **The SSH host pool**, on a rig of Docker containers on one computer
   ([its guide](../setup/ssh-pool/README.md#testing-on-one-computer)):

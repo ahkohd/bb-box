@@ -524,7 +524,7 @@ test("box_grant grants a program in a Mac's box its permissions, says how to run
   const box = await only(app);
   const refused = await tool("box_grant", { box: box.name, program: "/home/box/tool", permissions: ["accessibility"] });
   assert.ok(isError(refused));
-  assert.match(text(refused), /cannot grant macOS permissions: only Tart's macOS boxes and Macs of the SSH host pool with SIP off can\./);
+  assert.match(text(refused), /cannot grant macOS permissions: only macOS boxes on Tart and Namespace, and Macs of the SSH host pool with SIP off, can\./);
   assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /macOS permissions/);
   // A backend's refusal names the box, not its guest.
   Object.assign(app.backends.get(box.backend)!, {
@@ -544,7 +544,7 @@ test("box_grant grants a program in a Mac's box its permissions, says how to run
       for (const permission of request.permissions) grants.push({ permission, client, target: null });
       return { client, granted: request.permissions, refused: [] };
     },
-    grants: async () => ({ canGrant: true, signingIdentity, grants }),
+    grants: async () => ({ blockedBy: null, signingIdentity, grants }),
   });
   assert.match(text(await tool("box_status", { box: box.name })), /\nmacOS permissions granted with box_grant: none\./);
   const granted = await tool("box_grant", { box: box.name, program: "/Users/bbx-0/Applications/Probe.app", permissions: ["accessibility", "screen-recording"] });
@@ -554,11 +554,20 @@ test("box_grant grants a program in a Mac's box its permissions, says how to run
   const cli = await tool("box_grant", { box: box.name, program: "/Users/bbx-0/bin/tool", permissions: ["microphone"] });
   assert.match(text(cli), /Start it through launchd from a box_run command with desktop true, as launchctl submit -l <label> -o <log> -- \/Users\/bbx-0\/bin\/tool <arguments>/);
   assert.match(ownProcessHint("ssh-pool:macs", "/Users/bbx-0/bin/tool"), /^Run it through bb-box-own, as bb-box-own \/Users\/bbx-0\/bin\/tool <arguments>/, "the SSH host pool's Macs have bb-box-own");
+  for (const namespace of ["namespace", "namespace:team-b"]) {
+    assert.match(ownProcessHint(namespace, "/Users/runner/bin/tool"), /^Start it through launchd in the box user's session, as sudo launchctl asuser "\$\(id -u\)" sudo -u "\$\(id -un\)" launchctl submit -l <label> -o <log> -- \/Users\/runner\/bin\/tool <arguments>/, "box_run's commands on Namespace run outside the box user's session");
+  }
   assert.match(text(await tool("box_status", { box: box.name })), /\nmacOS permissions granted with box_grant: accessibility to dev\.example\.probe, screen-recording to dev\.example\.probe, microphone to \/Users\/bbx-0\/bin\/tool\./);
   await assert.rejects(tool("box_grant", { box: box.name, program: "/Users/bbx-0/bin/tool", permissions: ["telepathy"] }), /expected one of "accessibility"/);
   assert.doesNotMatch(text(await tool("box_status", { box: box.name })), /Signing identity/);
   signingIdentity = false;
   assert.match(text(await tool("box_status", { box: box.name })), /\nSigning identity: missing, so codesign -s "bb-box local code signing" fails in this box\. Tell the Mac's operator: its helper could not make it\.\n/);
+
+  let blockedBy: string | null = "sip-on";
+  Object.assign(app.backends.get(box.backend)!, { grants: async () => ({ blockedBy, signingIdentity: true, grants: [] }) });
+  assert.match(text(await tool("box_status", { box: box.name })), /\nmacOS permissions: box_grant cannot grant them on this Mac, as System Integrity Protection is on\.\n/);
+  blockedBy = "unknown-database";
+  assert.match(text(await tool("box_status", { box: box.name })), /\nmacOS permissions: box_grant cannot grant them on this Mac, as its TCC database has columns BB Box does not know, as a newer macOS may have\.\n/);
 });
 
 test("an agent acquires a box, runs commands, copies files both ways and releases it", async (t) => {

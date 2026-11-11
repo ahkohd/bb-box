@@ -74,7 +74,7 @@ function setup(options: { paid?: boolean; identityBootScript?: string } = {}) {
     fake.sizes = { small: true, default: true, large: true, xlarge: false };
   } else fake.planKey = "trial";
   const storage = new MemoryStorage();
-  const context = testContext(storage, "inst1");
+  const context = testContext(storage, "inst1", { id: "boat" });
   const backend = disposed(
     new BoatBackend(CONFIG, context, {
       fetch: fake.fetch,

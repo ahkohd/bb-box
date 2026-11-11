@@ -72,7 +72,7 @@ be forked there or start a child thread.
 - Docker snapshots pause the box while copying its disk and Docker data, for about as long as `box_snapshot` with `check` says. They hold no memory or running programs. Take, list, delete, restore and fork are available, and the person can keep one: it stays on the box's Docker engine after the release, until its date. A restore makes a new container with the box's ID and name, after an undo, and deletes the old one once the new one runs. A fork is a new container with the fork's own ID, from a snapshot taken with identity reset version 7, or 9 for a desktop, of a box made from an image built with the fork hold, and it has no GPU. Nothing in a fork runs, not even its inner Docker or its desktop, until BB Box's check passes. Release deletes the snapshots nobody kept. Other writable mounts are refused before pausing.
 - Linux boxes on Hetzner Cloud and Namespace take snapshots as Docker boxes do, on the box's host or machine. Hetzner Cloud forks on the same host, and refuses a fork the host has no room for before it makes anything. Namespace does not fork, and refuses a take or restore its machine would end before. Neither keeps a snapshot past the box's release: a release deletes them, and a Namespace machine's deadline ends them. A Namespace box whose container stopped keeps its machine, and its cost, until it is released.
 - Docker boxes keep their Docker data in a volume labelled for the box and install. A failed removal is reported. Maintenance retries removal after the container has gone, leaving live boxes and boxes being made alone.
-  A held volume does not stop other maintenance.
+  A held volume does not stop other maintenance. A volume a killed restore's copy made again has no labels: BB Box removes it by its own note of the copy, retries each maintenance run until it goes, and the doctor names it after 3 failed tries.
 - Ask for `linux-vm` when you need a kernel of your own: to load kernel
   modules, or for systemd as on a real machine. Ask for `linux-kvm` when
   the box must run VMs or emulators itself, through `/dev/kvm`: a VM on
@@ -169,7 +169,8 @@ be forked there or start a child thread.
   life whatever you do: `box_status` says when ("Ends"), and the thread is
   told an hour before. Copy out what you need before then. Where the user
   has several Namespace workspaces, `box_list` names each, such as
-  Namespace (team-b), and `on` takes that name.
+  Namespace (team-b), and `on` takes that name. Several boat.dev accounts
+  are named the same way, such as boat.dev (team-b).
 - Windows boxes have Visual Studio Build Tools (MSVC and the Windows SDK),
   LLVM (`clang`), Rust (`cargo`, `rustc`), Node.js, and the Claude Code,
   Codex and Pi CLIs. They have no GPU: DirectX apps render on WARP,
@@ -201,13 +202,14 @@ BB Box restarts. Beyond those:
 
 ### macOS permissions
 
-On Tart's macOS boxes, and on Macs of the SSH host pool with System
-Integrity Protection off, `box_grant` grants a program macOS permissions
+On Tart's and Namespace's macOS boxes, and on Macs of the SSH host pool
+with System Integrity Protection off, `box_grant` grants a program macOS permissions
 with no prompt: Accessibility, Screen Recording, Input Monitoring, the
 microphone, the camera, the system's audio (`system-audio`, which Screen
 Recording does not cover), or Automation of one app. `box_status` lists the
-box's grants. They go with the box: a Tart VM is deleted, and a pool Mac's
-reset removes them. Linux and Windows boxes refuse.
+box's grants. They go with the box: a Tart VM or a Namespace Mac is
+deleted, and a pool Mac's reset removes them. Linux, Windows and shared
+boxes refuse.
 
 - Grant only the program that needs it, under the box user's home or in
   `/Applications`. BB Box grants nothing to Apple's programs, shells,
@@ -224,6 +226,12 @@ reset removes them. Linux and Windows boxes refuse.
   <arguments>`, then `launchctl remove <label>`. A program `box_run` runs directly is
   charged to SSH instead, which has Accessibility, Screen Recording, the
   microphone and the camera already.
+- On Namespace, `box_run`'s commands run outside the box user's session,
+  and are charged to Namespace's agent, which has neither the microphone
+  nor the camera. Run `codesign` and `launchctl submit` in the user's
+  session: `sudo launchctl asuser "$(id -u)" sudo -u "$(id -un)" codesign
+  ...`, and the same for `launchctl submit` and `launchctl remove`. `open`
+  works as it is.
 - Start the program again after a grant: macOS reads some permissions only
   at launch.
 - The Mac's microphone is BlackHole 2ch, as above. A box has a camera only

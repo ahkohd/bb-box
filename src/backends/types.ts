@@ -1232,10 +1232,11 @@ export interface GrantAnswer {
   readonly refused: readonly { readonly permission: string; readonly reason: string }[];
 }
 
+export type GrantBlock = "sip-on" | "unknown-database";
+
 /** A box's grants, for box_status. */
 export interface BoxGrants {
-  /** False where the machine cannot grant, as a Mac with SIP on. */
-  readonly canGrant: boolean;
+  readonly blockedBy: GrantBlock | null;
   /** Whether the box user has its code-signing identity, "bb-box local code signing". Null where the machine does not say. */
   readonly signingIdentity: boolean | null;
   readonly grants: readonly { readonly permission: string; readonly client: string; readonly target: string | null }[];

@@ -3,6 +3,7 @@ import { PRODUCT } from "../../brand.ts";
 import { endOfUtcDay, gbWords, utcDay } from "../../core/snapshot.ts";
 import { NO_PAUSE, SnapshotFailed, type BoxOwner, type SnapshotStorage, type BackendContext, type DoctorCheck, type Guest, type HeldSnapshot, type MachineSize, type SnapshotHooks, type SnapshotPlan, type SnapshotRef, type SnapshotTake, type SnapshotTaken, type TaskOutcome, type TaskRef } from "../types.ts";
 import type { z } from "zod";
+import type { VolumeLeftByACopy } from "./restore-copies.ts";
 import { DockerCli, LABELS, snapshotContainersSchema, snapshotImagesSchema, snapshotVolumesSchema, snapshotStoreSchema } from "./cli.ts";
 import { commitChanges, FORK_HOLD_MISSING, holdsForks, keepTagsToRemove, keptTag, keptTagsOf, keptUntilWith, KILL_ABOUT_MS, type KeepChange, layerRefusal, mountRefusal, pauseEstimate, pausedTooLong, restoreAboutMs, retainedOnEngine, sizeFromLabels, sizeTakenAt, snapshotImage, snapshotLabels, snapshotVolume, SNAPSHOT_BOX_NAME, SNAPSHOT_INSTALL, SNAPSHOT_THREAD, takePause, type ImageStore, type RetainedOnEngine } from "./snapshots.ts";
 
@@ -84,6 +85,31 @@ function keepPlan(keepOffBecause: string | null, retained: RetainedOnEngine | nu
 function forkPlan(refusal: string | null, volumeBytes: number, size: MachineSize | null): SnapshotPlan["fork"] {
   const aboutMs = restoreAboutMs(volumeBytes);
   return refusal ? { ok: false, why: refusal, aboutMs, bytes: null, size: null } : { ok: true, why: null, aboutMs, bytes: volumeBytes, size };
+}
+
+function volumesLeftWords(volumesLeft: readonly VolumeLeftByACopy[]): string {
+  return volumesLeft.map((left) => `${left.volume}, after ${left.failedRemovals} tries`).join("; ");
+}
+
+function leftoversCheck(pending: number, incomplete: number, dangling: number, volumesLeft: readonly VolumeLeftByACopy[]): DoctorCheck {
+  const tasksLeft = pending || incomplete || dangling;
+  const detail: string[] = [];
+  const fix: string[] = [];
+  if (tasksLeft) {
+    detail.push(`${pending} snapshot tasks await recovery; ${incomplete} copies are incomplete; images without tags: ${dangling}.`);
+    fix.push("Wait for BB Box's maintenance, which runs every few minutes: it unpauses an interrupted take once its time bound has passed, and prunes snapshot images no container uses.");
+  }
+  if (volumesLeft.length) {
+    detail.push(`Maintenance could not remove the Docker volumes a restore's copy left: ${volumesLeftWords(volumesLeft)}.`);
+    fix.push("Find what holds each volume with docker ps --all --filter volume=<name>, and remove it: maintenance then removes the volume.");
+  }
+  return {
+    id: "docker.snapshot-leftovers",
+    name: "Snapshot leftovers",
+    status: detail.length ? "warn" : "ok",
+    detail: detail.length ? detail.join(" ") : "No snapshot tasks await recovery.",
+    fix: fix.length ? fix.join(" ") : null,
+  };
 }
 
 export class DockerSnapshotEngine {
@@ -242,17 +268,6 @@ export class DockerSnapshotEngine {
 
   async #retainedIfKept(snapshot: RestorableSnapshot, signal?: AbortSignal): Promise<RetainedOnEngine | null> {
     return this.#keepOffBecause ? null : this.#retained(snapshot.image, signal);
-  }
-
-  async copyDockerData(snapshot: RestorableSnapshot, into: string, signal?: AbortSignal): Promise<void> {
-    if (!snapshot.volume) return;
-    await this.#cli.ok([
-      "run", "--rm", "--pull", "never", "--privileged", "--network", "none",
-      "--label", `${SNAPSHOT_INSTALL}=${this.#context.installId}`, "--label", `bbbox.snapshot=${snapshot.id}`,
-      "--entrypoint", "cp",
-      "--volume", `${snapshot.volume}:/from:ro`, "--volume", `${into}:/to`,
-      snapshot.image, "-a", "--reflink=auto", "/from/.", "/to/",
-    ], { signal, timeoutMs: 15 * 60_000 });
   }
 
   #key(id: string): string { return `docker-snapshot-take:${id}`; }
@@ -439,7 +454,7 @@ export class DockerSnapshotEngine {
     return result;
   }
 
-  async doctor(signal?: AbortSignal): Promise<readonly DoctorCheck[]> {
+  async doctor(signal?: AbortSignal, volumesLeft: readonly VolumeLeftByACopy[] = []): Promise<readonly DoctorCheck[]> {
     const containers = await this.#cli.list({ [LABELS.install]: this.#context.installId }, signal);
     const box = containers.find((container) => container.labels[LABELS.box]);
     const pending: string[] = [];
@@ -459,7 +474,7 @@ export class DockerSnapshotEngine {
     const retained = await this.#retainedOfKept(listed, signal);
     return [
       { id: "docker.snapshots", name: "Snapshots", status: facts ? facts.storage.percentFull >= 85 ? "warn" : "ok" : "skipped", detail: facts ? `${facts.store}: allow about ${facts.store === "containerd" ? "twice" : "once"} the changed disk bytes. ${facts.volume ? "Add the box's Docker data." : "This box has no Docker volume: snapshots hold its disk only."} Docker's disk is ${facts.storage.percentFull.toFixed(1)}% full.` : "Make a box to measure snapshot space on this engine.", fix: null },
-      { id: "docker.snapshot-leftovers", name: "Snapshot leftovers", status: pending.length || incomplete.length || dangling.length ? "warn" : "ok", detail: pending.length || incomplete.length || dangling.length ? `${pending.length} snapshot tasks await recovery; ${incomplete.length} copies are incomplete; images without tags: ${dangling.length}. Maintenance unpauses interrupted takes after their time bound and prunes images no container uses.` : "No snapshot tasks await recovery.", fix: null },
+      leftoversCheck(pending.length, incomplete.length, dangling.length, volumesLeft),
       keptCheck(listed, retained),
       { id: "docker.snapshot-layers", name: "Snapshot layers", status: deep.length ? "warn" : "ok", detail: deep.length ? `Images near the layer limit: ${deep.join(", ")}. Make new boxes and move their files.` : "No box image has 110 or more layers.", fix: null },
     ];
