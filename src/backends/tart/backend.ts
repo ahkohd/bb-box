@@ -186,6 +186,7 @@ import {
   qemuEndedScript,
   qemuPowerScript,
   qemuStartScript,
+  type PowerButton,
   qemuStateBody,
   qemuStopScript,
   qemuWarmScript,
@@ -221,7 +222,10 @@ import {
   tartOffer,
   type Listing,
   type SnapshotLabel,
+  type SnapshotOs,
+  type VmEngine,
 } from "./snapshots.ts";
+import { BASE_GONE_EXIT, parseWindowsPlanRead, qemuPlanScript, qemuRollbackRecordScript, qemuRollbackScript, qemuTakeScript, windowsPlanOf } from "./qemu-snapshots.ts";
 import { identityInstallScript } from "./identity.ts";
 import { PRODUCT } from "../../brand.ts";
 
@@ -2006,18 +2010,22 @@ export class TartBackend implements Backend {
     return { ...guest, address: this.#addresses.get(ref) ?? guest.address, size: read };
   }
 
-  async #shutDownWindows(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<void> {
+  async #shutDownWindows(host: TartHost, guest: Guest, signal?: AbortSignal, button: PowerButton = "leave"): Promise<string> {
     const port = this.#sshPort(guest) ?? (await this.#ports(host, guest, signal)).ssh;
+    let asked = false;
     try {
       const { ssh } = await this.#keys();
-      await new SshTransport(ssh, this.#windows(await this.#mac(host), port), "windows").run(WINDOWS_POWER_OFF, { timeoutMs: 20_000, signal, maxOutputBytes: 4096 });
+      const said = await new SshTransport(ssh, this.#windows(await this.#mac(host), port), "windows").run(WINDOWS_POWER_OFF, { timeoutMs: 20_000, signal, maxOutputBytes: 4096 });
+      asked = said.exitCode === 0 && said.stdout.includes("powering off");
     } catch (error) {
       if (signal?.aborted) throw error;
     }
     await this.#forget(host, guest.ref, "windows", port);
     const wait = this.#options.windowsShutdownWaitS ?? WINDOWS_SHUTDOWN_WAIT_S;
-    const result = await this.#run(host, qemuShutdownScript(guest.ref, this.#context.installId, this.#boxOf(guest), wait), { timeoutMs: (wait + 60) * 1000, signal });
-    if (result.stdout.trim() === "gone") throw this.#gone(guest);
+    const result = await this.#run(host, qemuShutdownScript(guest.ref, this.#context.installId, this.#boxOf(guest), wait, asked ? "leave" : button), { timeoutMs: (wait + 60) * 1000, signal });
+    const how = result.stdout.trim();
+    if (how === "gone") throw this.#gone(guest);
+    return how;
   }
 
   async #shutDownMac(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<void> {
@@ -2148,14 +2156,14 @@ export class TartBackend implements Backend {
   }
 
 
-  #snapshotOs(kind: string): "macos" | "linux" | null {
+  #snapshotOs(kind: string): SnapshotOs | null {
     if (!this.kinds().some((offer) => offer.id === kind)) return null;
-    const os = guestOsOf(kind);
-    return os === "windows" ? null : os;
+    return guestOsOf(kind);
   }
 
   snapshotting(kind: string): Snapshotting | null {
     const os = this.#snapshotOs(kind);
+    if (os === "windows") return tartOffer(os);
     return os ? withDesktopForkSafety(kind, tartOffer(os, os === "macos" || LINUX_FORK_KINDS.includes(kind))) : null;
   }
 
@@ -2163,11 +2171,13 @@ export class TartBackend implements Backend {
     return this.snapshotting(kind)?.fork === "copy" ? "device" : null;
   }
 
-  #snapshotGuest(guest: Guest): { host: TartHost; os: "macos" | "linux" } {
+  #snapshotGuest(guest: Guest): { host: TartHost; os: SnapshotOs } {
     if (slotRefOf(guest)) throw new BackendError("unsupported", `A box on a shared iOS host has no VM of its own, so ${PRODUCT} takes no snapshot of it.`);
-    const os = this.#osOf(guest);
-    if (os === "windows") throw new BackendError("unsupported", `${this.label} takes no snapshots of Windows boxes.`);
-    return { host: this.#hostOf(guest), os };
+    return { host: this.#hostOf(guest), os: this.#osOf(guest) };
+  }
+
+  #engineOf(guest: Guest): VmEngine {
+    return this.#osOf(guest) === "windows" ? "qemu" : "tart";
   }
 
   async #runSnapshot(host: TartHost, body: string, timeoutMs: number, signal?: AbortSignal): Promise<RunResult> {
@@ -2185,12 +2195,17 @@ export class TartBackend implements Backend {
   async planSnapshots(guest: Guest, kind: string, snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
     const { host, os } = this.#snapshotGuest(guest);
     const asked = snapshot ? snapshot.ref || snapshot.id : null;
+    if (os === "windows") {
+      const read = await this.#windowsPlanRead(host, guest, asked, signal);
+      return windowsPlanOf(host.name, read, asked, tartOffer(os), this.#copyFloorGiB());
+    }
     const read = parsePlanRead((await this.#run(host, planScript(guest.ref, this.#context.installId, this.#boxOf(guest), asked), { timeoutMs: 30_000, signal })).stdout);
     return planOf(host.name, os, read, asked, this.snapshotting(kind) ?? tartOffer(os, false), this.#copyFloorGiB());
   }
 
   async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
     const { host, os } = this.#snapshotGuest(guest);
+    if (os === "windows") return this.#snapshotWindows(host, guest, take, hooks, signal);
     const power = await this.power(guest, signal);
     if (power === null) throw new SnapshotFailed(`The VM ${guest.ref} is no longer on ${host.name}.`);
     const suspends = power === "running";
@@ -2229,6 +2244,89 @@ export class TartBackend implements Backend {
     if (taken === "gone") throw new SnapshotFailed(`The VM ${guest.ref} on ${host.name} is not box ${take.box}'s any more.`, notResumed);
     if (!taken) throw new Error(`${host.name} copied ${guest.ref}, but ${PRODUCT} could not read what it said: ${result.stdout.trim().slice(0, 300)}`);
     return { ref: take.id, holds: taken.label.holds, capturedAt, size: taken.kib !== null ? { bytes: taken.kib * 1024, means: "whole" } : null, pausedMs, notResumed };
+  }
+
+  async #windowsPlanRead(host: TartHost, guest: Guest, asked: string | null, signal?: AbortSignal) {
+    return parseWindowsPlanRead((await this.#run(host, qemuPlanScript(guest.ref, this.#context.installId, this.#boxOf(guest), asked), { timeoutMs: 30_000, signal })).stdout);
+  }
+
+  async #snapshotWindows(host: TartHost, guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
+    const before = await this.#windowsPlanRead(host, guest, null, signal);
+    if (before.vm === null) throw new SnapshotFailed(`The VM ${guest.ref} is no longer on ${host.name}.`);
+    const short = roomShort(before, this.#copyFloorGiB());
+    if (short) throw new SnapshotFailed(`${short.charAt(0).toUpperCase()}${short.slice(1)}. ${PRODUCT} stopped nothing.`);
+    if (before.sameVolume === false) throw new SnapshotFailed(`The snapshots folder on ${host.name} is on another volume than the VMs, so a copy there would be a full copy. Move it to the VMs' volume. ${PRODUCT} stopped nothing.`);
+    await hooks.submitting();
+    await hooks.task({ ref: taskRef({ kind: "take", id: take.id }), host: host.name });
+
+    const now = this.#options.now ?? Date.now;
+    const runs = before.vm === "running";
+    let stoppedAt: number | null = null;
+    if (before.vm !== "stopped") {
+      stoppedAt = now();
+      try {
+        await this.#shutDownWindowsWhole(host, guest, signal);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        const notResumed = runs ? (await this.#resumeWindowsAfterTake(guest, now, signal)).notResumed : null;
+        throw new SnapshotFailed(`${PRODUCT} could not shut Windows down in ${guest.ref} on ${host.name} to copy it, so it copied nothing: ${message(error)}`, notResumed);
+      }
+    }
+
+    const capturedAt = Date.now();
+    let result: RunResult;
+    let resumed: TakeResumed = NOTHING_TO_RESUME;
+    try {
+      result = await this.#runSnapshot(host, qemuTakeScript({ vm: guest.ref, install: this.#context.installId, box: take.box, snapshot: take.id, takenAt: capturedAt, minFreeGiB: this.#copyFloorGiB() }), 10 * 60_000, signal);
+    } finally {
+      if (runs) resumed = await this.#resumeWindowsAfterTake(guest, now, signal);
+    }
+
+    const { notResumed } = resumed;
+    if (result.exitCode !== 0) throw new SnapshotFailed(this.#said(result), notResumed);
+    const taken = parseTaken(result.stdout);
+    if (taken === "gone") throw new SnapshotFailed(`The VM ${guest.ref} on ${host.name} is not box ${take.box}'s any more.`, notResumed);
+    if (!taken) throw new Error(`${host.name} copied ${guest.ref}, but ${PRODUCT} could not read what it said: ${result.stdout.trim().slice(0, 300)}`);
+    const pausedMs = runs ? pauseBetween(stoppedAt, resumed.resumedAt) : null;
+    return { ref: take.id, holds: "disk", capturedAt, size: taken.kib !== null ? { bytes: taken.kib * 1024, means: "whole" } : null, pausedMs, notResumed };
+  }
+
+  async #resumeWindowsAfterTake(guest: Guest, now: () => number, signal?: AbortSignal): Promise<TakeResumed> {
+    const resumed = await this.#resumeAfterTake(guest, now, signal);
+    if (resumed.notResumed) return resumed;
+    try {
+      const host = this.#hostOf(guest);
+      const access = this.#windows(await this.#mac(host), (await this.#ports(host, guest, signal)).ssh);
+      await this.#windowsDesktop(host, guest.ref, access, Date.now() + WINDOWS_READY_TIMEOUT_MS, signal);
+      const desktopUpAt = now();
+      this.#compileDisplay(guest.ref, access);
+      return { resumedAt: desktopUpAt, notResumed: null };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return { ...resumed, notResumed: message(error) };
+    }
+  }
+
+  async #shutDownWindowsWhole(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<void> {
+    const box = this.#boxOf(guest);
+    const power = (await this.#run(host, qemuPowerScript(guest.ref, this.#context.installId, box), { timeoutMs: 30_000, signal })).stdout.trim().split("\n").pop();
+    if (power === "gone") throw this.#gone(guest);
+    if (power === "stopped") return;
+    if (power === "suspended") await this.#resumeToShutDown(host, guest, signal);
+    const wait = this.#options.windowsShutdownWaitS ?? WINDOWS_SHUTDOWN_WAIT_S;
+    const how = await this.#shutDownWindows(host, guest, signal, "press");
+    if (how === "ended") throw new Error(`Windows did not shut down within ${wait} s, so ${PRODUCT} ended QEMU, and the disk is not as Windows leaves it at a shutdown`);
+  }
+
+  async #resumeToShutDown(host: TartHost, guest: Guest, signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? WINDOWS_READY_TIMEOUT_MS);
+    await this.#start(host, guest.ref, "windows", deadline, signal, true, this.#boxOf(guest));
+    try {
+      const access = this.#windows(await this.#mac(host), (await this.#ports(host, guest, signal)).ssh);
+      await this.#waitReady(host, guest.ref, access, "windows", deadline, signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+    }
   }
 
   #copyFloorGiB(): number {
@@ -2274,7 +2372,7 @@ export class TartBackend implements Backend {
       const guestOf = (label: SnapshotLabel) => {
         const fields = state.owners.get(label.vm);
         const owner = fields && fields.install === this.#context.installId && fields.box === label.box ? ownerOf(fields) : null;
-        const data: Readonly<Record<string, string>> = label.os === "linux" ? { box: label.box, os: "linux" } : { box: label.box };
+        const data: Readonly<Record<string, string>> = label.os === "darwin" ? { box: label.box } : { box: label.box, os: label.os };
         return { guest: { ref: label.vm, host: host.name, address: null, size: null, data }, owner };
       };
       for (const entry of listing.entries) {
@@ -2295,16 +2393,17 @@ export class TartBackend implements Backend {
     const host = this.#hostNamed(task.host);
     if (!parsed || !host) return { state: "missing", words: `${task.ref} is not a task ${PRODUCT} knows on ${this.label}` };
     const listing = await this.#listing(host, signal);
-    const rollback = parsed.kind === "rollback" ? (await this.#run(host, rollbackRecordScript(parsed.vm), { timeoutMs: 30_000, signal })).stdout : null;
+    const rollback = parsed.kind === "rollback" ? (await this.#run(host, this.#rollbackRecord(parsed.engine ?? "tart", parsed.vm), { timeoutMs: 30_000, signal })).stdout : null;
     return taskOutcome(parsed, listing, rollback);
   }
 
   async findTasks(guest: Guest, kind: TaskKind, since: number, signal?: AbortSignal): Promise<readonly TaskRef[]> {
     const host = this.#hostOf(guest);
     if (kind === "rollback") {
-      const said = (await this.#run(host, rollbackRecordScript(guest.ref), { timeoutMs: 30_000, signal })).stdout.trim().split("\n").at(-1) ?? "";
+      const engine = this.#engineOf(guest);
+      const said = (await this.#run(host, this.#rollbackRecord(engine, guest.ref), { timeoutMs: 30_000, signal })).stdout.trim().split("\n").at(-1) ?? "";
       const found = /^(?:copying|swapping|done|undone) (sn[a-z2-7]{12}) ([a-z0-9]{8,32})\b/.exec(said);
-      return found ? [{ ref: taskRef({ kind: "rollback", vm: guest.ref, id: found[1]!, attempt: found[2]! }), host: host.name }] : [];
+      return found ? [{ ref: taskRef({ kind: "rollback", engine, vm: guest.ref, id: found[1]!, attempt: found[2]! }), host: host.name }] : [];
     }
     if (kind !== "take") return [];
     const listing = await this.#listing(host, signal);
@@ -2313,15 +2412,21 @@ export class TartBackend implements Backend {
       .map((entry) => ({ ref: taskRef({ kind: "take", id: entry.snapshot }), host: host.name }));
   }
 
+  #rollbackRecord(engine: VmEngine, vm: string): string {
+    return engine === "qemu" ? qemuRollbackRecordScript(vm) : rollbackRecordScript(vm);
+  }
+
   async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
+    if (!slotRefOf(guest) && this.#osOf(guest) === "windows") return this.#shutDownWindowsWhole(this.#hostOf(guest), guest, signal);
     await this.stop(guest, signal);
   }
 
   async rollbackSnapshot(guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
-    const { host } = this.#snapshotGuest(guest);
+    const { host, os } = this.#snapshotGuest(guest);
     const box = this.#boxOf(guest);
     if (!box) throw new SnapshotFailed(`The VM ${guest.ref} names no box, so ${PRODUCT} puts no snapshot in its place.`);
     const id = ref.ref || ref.id;
+    if (os === "windows") return this.#rollbackWindows(host, guest, box, id, hooks, signal);
     const read = parsePlanRead((await this.#run(host, planScript(guest.ref, this.#context.installId, box, id), { timeoutMs: 30_000, signal })).stdout);
     const another = savedUnder(read.snapshot?.label ?? null, read.snapshot?.saved ?? false, read);
     if (another) throw new SnapshotFailed(`${another}.`);
@@ -2331,6 +2436,17 @@ export class TartBackend implements Backend {
     await this.#forget(host, guest.ref, this.#osOf(guest));
     const result = await this.#runSnapshot(host, rollbackScript(guest.ref, this.#context.installId, box, id, this.#copyFloorGiB(), attempt), 10 * 60_000, signal);
     if (result.exitCode !== 0 || result.stdout.trim() !== "restored") throw new SnapshotFailed(result.stdout.trim() === "gone" ? `The VM ${guest.ref} on ${host.name} is not box ${box}'s any more.` : this.#said(result));
+  }
+
+  async #rollbackWindows(host: TartHost, guest: Guest, box: string, id: string, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    const attempt = randomBytes(6).toString("hex");
+    await hooks.submitting();
+    await hooks.task({ ref: taskRef({ kind: "rollback", engine: "qemu", vm: guest.ref, id, attempt }), host: host.name });
+    await this.#forget(host, guest.ref, "windows", this.#sshPort(guest));
+    const result = await this.#runSnapshot(host, qemuRollbackScript(guest.ref, this.#context.installId, box, id, this.#copyFloorGiB(), attempt), 10 * 60_000, signal);
+    if (result.exitCode === 0 && result.stdout.trim() === "restored") return;
+    if (result.stdout.trim() === "gone") throw new SnapshotFailed(`The VM ${guest.ref} on ${host.name} is not box ${box}'s any more.`);
+    throw new SnapshotFailed(result.exitCode === BASE_GONE_EXIT ? `${PRODUCT} cannot restore snapshot ${id}: ${this.#said(result)}` : this.#said(result));
   }
 
   async labelKept(ref: SnapshotRef, kept: string | null, signal?: AbortSignal): Promise<void> {

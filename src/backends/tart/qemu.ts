@@ -266,6 +266,8 @@ export type QemuDisplay = "none" | "dbus";
  */
 export function qemuStartScript(vm: string, waitSeconds: number, display: QemuDisplay = "dbus"): string {
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
+if rollback_running "$vm"; then echo "BB Box is putting a snapshot in the place of $vm on the Mac, so it does not start it until that has ended." >&2; exit 1; fi
+heal_rollback "$vm" "$v" || { echo "The folder of $vm is missing after a restore cut short, and the Mac has nothing whole to put back." >&2; exit 1; }
 [ -f "$v/config" ] || { echo "There is no VM $vm." >&2; exit 1; }
 if qrunning "$vm"; then echo running; exit 0; fi
 command -v qemu-system-aarch64 >/dev/null 2>&1 || { echo "QEMU is not installed, or not on the PATH of $(id -un)'s SSH sessions." >&2; exit 1; }
@@ -378,6 +380,8 @@ echo warm
 export function qemuPowerScript(vm: string, installId: string, boxId: string | null): string {
   return qemu(String.raw`vm=${quote(vm)}
 mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} || { echo gone; exit 0; }
+if rollback_running "$vm"; then echo stopped; exit 0; fi
+heal_rollback "$vm" "$q/vms/$vm" || :
 qstate "$vm" | grep . || echo gone
 `);
 }
@@ -394,19 +398,23 @@ ended "$v/out" "$v/exit" qemu-system-aarch64
 `);
 }
 
+export type PowerButton = "press" | "leave";
+
 /**
  * Waits for VM $vm, which was asked to shut down, to end its QEMU, for up to
  * `waitSeconds`, then ends QEMU, and drops any saved state (061). Prints
  * "stopped", "ended" when QEMU had to be ended, or "gone".
  */
-export function qemuShutdownScript(vm: string, installId: string, boxId: string | null, waitSeconds: number): string {
+export function qemuShutdownScript(vm: string, installId: string, boxId: string | null, waitSeconds: number, button: PowerButton = "leave"): string {
+  const press = button === "press" ? String.raw`  if qmp_open "$vm"; then qmp '{"execute":"system_powerdown"}' >/dev/null; qmp_close; fi
+` : "";
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
 mine "$vm" ${quote(installId)} ${quote(boxId ?? "")} && [ -d "$v" ] || { echo gone; exit 0; }
 qvideostop "$vm"
 how=stopped
 if qrunning "$vm"; then
   pid=$(cat "$v/pid")
-  i=0; while signal_pid 0 "$pid" && [ "$i" -lt ${waitSeconds * 10} ]; do sleep 0.1; i=$((i + 1)); done
+${press}  i=0; while signal_pid 0 "$pid" && [ "$i" -lt ${waitSeconds * 10} ]; do sleep 0.1; i=$((i + 1)); done
   if signal_pid 0 "$pid"; then
     how=ended; signal_pid TERM "$pid"
     i=0; while signal_pid 0 "$pid" && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
@@ -454,6 +462,8 @@ export function qemuDiscardScript(vm: string): string {
 export function qemuDeleteScript(vm: string, installId: string, boxId: string | null): string {
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
 if [ -f "$d/owners/$vm" ] && ! mine "$vm" ${quote(installId)} ${quote(boxId ?? "")}; then echo gone; exit 0; fi
+if rollback_running "$vm"; then echo "BB Box is putting a snapshot in the place of $vm on the Mac, so it deletes it once that has ended." >&2; exit 1; fi
+heal_rollback "$vm" "$v" || :
 if qrunning "$vm"; then
   pid=$(cat "$v/pid"); signal_pid TERM "$pid"
   i=0; while signal_pid 0 "$pid" && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
@@ -461,6 +471,7 @@ if qrunning "$vm"; then
 fi
 qvideostop "$vm"
 rm -rf "$v" "$v.new" || exit 1
+if s=$(snaps_dir); then rm -rf "$s/.restore-$vm" "$s/.replaced-$vm"; rm -f "$s/.rollbacks/$vm"; fi
 rm -f "$d/owners/$vm"
 echo deleted
 `);

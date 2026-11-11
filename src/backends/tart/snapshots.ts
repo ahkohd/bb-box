@@ -10,6 +10,8 @@ export const LINUX_FORK_SAFE_FROM = 8;
 export const LINUX_FORK_KINDS: readonly string[] = ["linux-arm64", "linux-arm64-desktop-cpu"];
 export const TART_EXCLUDES = "the VM's network address, which the Mac's DHCP gives again";
 export const LINUX_NO_FORKS = "this Linux kind has no supported identity reset";
+export const WINDOWS_NO_FORKS = `Windows has no identity reset in ${PRODUCT}, so a fork or a kept copy would come up as its source, with its computer name, its machine identity and its BB machine`;
+export const WINDOWS_EXCLUDES = "Windows' memory and the apps open in it: Windows shuts down for the copy, and a restore starts it afresh";
 export const MIN_FREE_GIB = 20;
 export const NO_IMAGE_ATTACH = `the Mac's diskutil has no image attach, which ${PRODUCT} needs to clean a fork's disk of its source's identity before the fork first boots, and which macOS 27 has. So ${PRODUCT} makes no macOS forks on it, and keeps no macOS snapshot past its box's release`;
 const GiB = 1024 ** 3;
@@ -22,20 +24,39 @@ const MACOS_BOOT_MS = 90_000;
 const LINUX_BOOT_MS = 40_000;
 const LINUX_SHUTDOWN_MS = 20_000;
 
-export type TartTask = { readonly kind: "take" | "delete"; readonly id: string } | { readonly kind: "rollback"; readonly vm: string; readonly id: string; readonly attempt: string };
+export type VmEngine = "tart" | "qemu";
+
+export type TartTask = { readonly kind: "take" | "delete"; readonly id: string } | { readonly kind: "rollback"; readonly vm: string; readonly id: string; readonly attempt: string; readonly engine?: VmEngine };
 
 export function taskRef(task: TartTask): string {
-  return task.kind === "rollback" ? `tart-rollback:${task.vm}:${task.id}:${task.attempt}` : `tart-${task.kind}:${task.id}`;
+  return task.kind === "rollback" ? `${task.engine ?? "tart"}-rollback:${task.vm}:${task.id}:${task.attempt}` : `tart-${task.kind}:${task.id}`;
 }
 
 export function parseTaskRef(ref: string): TartTask | null {
-  const rollback = /^tart-rollback:([A-Za-z0-9._-]+):(sn[a-z2-7]{12}):([a-z0-9]{8,32})$/.exec(ref);
-  if (rollback) return { kind: "rollback", vm: rollback[1]!, id: rollback[2]!, attempt: rollback[3]! };
+  const rollback = /^(tart|qemu)-rollback:([A-Za-z0-9._-]+):(sn[a-z2-7]{12}):([a-z0-9]{8,32})$/.exec(ref);
+  if (rollback) return { kind: "rollback", vm: rollback[2]!, id: rollback[3]!, attempt: rollback[4]!, ...(rollback[1] === "qemu" ? { engine: "qemu" as const } : {}) };
   const other = /^tart-(take|delete):(sn[a-z2-7]{12})$/.exec(ref);
   return other ? { kind: other[1] as "take" | "delete", id: other[2]! } : null;
 }
 
-export function tartOffer(os: "macos" | "linux", forks = true): Snapshotting {
+export type SnapshotOs = "macos" | "linux" | "windows";
+
+export function tartOffer(os: SnapshotOs, forks = true): Snapshotting {
+  if (os === "windows") {
+    return {
+      scope: "box",
+      holds: ["disk"],
+      whileRunning: "stopped-only",
+      restore: "in-place",
+      fork: "none",
+      keepsPastRelease: "no",
+      lives: "host",
+      outlivesGuest: true,
+      price: null,
+      excludes: WINDOWS_EXCLUDES,
+      forkWhy: WINDOWS_NO_FORKS,
+    };
+  }
   if (os === "linux" && forks) {
     return {
       scope: "box",
@@ -87,13 +108,15 @@ export interface SnapshotLabel {
   readonly snapshot: string;
   readonly takenAt: number | null;
   readonly holds: Holds;
-  readonly os: "darwin" | "linux";
+  readonly os: "darwin" | "linux" | "windows";
   readonly macosBuild: string | null;
   readonly tart: string | null;
   readonly reset: number | null;
   readonly kept: string | null;
   readonly kind: string | null;
   readonly diskGB: number | null;
+  readonly image?: string | null;
+  readonly build?: string | null;
 }
 
 export function labelText(label: SnapshotLabel): string {
@@ -111,6 +134,8 @@ export function labelText(label: SnapshotLabel): string {
     ["kept", label.kept],
     ["kind", label.kind],
     ["diskgb", label.diskGB],
+    ["image", label.image ?? null],
+    ["build", label.build ?? null],
   ];
   return lines.flatMap(([key, value]) => (value === null || value === "" ? [] : [`${key}=${value}`])).join("\n") + "\n";
 }
@@ -128,13 +153,15 @@ export function parseLabel(text: string): SnapshotLabel | null {
     snapshot: fields.snapshot!,
     takenAt: taken === null ? null : taken * 1000,
     holds: fields.holds === "disk-and-memory" ? "disk-and-memory" : "disk",
-    os: fields.os === "linux" ? "linux" : "darwin",
+    os: fields.os === "linux" || fields.os === "windows" ? fields.os : "darwin",
     macosBuild: fields.macos || null,
     tart: fields.tart || null,
     reset: number(fields.reset),
     kept,
     kind: fields.kind || null,
     diskGB: number(fields.diskgb),
+    image: fields.image || null,
+    build: fields.build || null,
   };
 }
 
@@ -144,7 +171,7 @@ export function keptUntilOf(date: string | null): number | null {
   return Number.isNaN(start) ? null : start + DAY_MS - 1;
 }
 
-const SNAPSHOT_SH = String.raw`snaps_root() {
+export const SNAPSHOT_SH = String.raw`snaps_root() {
   _v=$(cd "$tart_vms" 2>/dev/null && pwd -P) || { echo "Tart has no VMs folder at $tart_vms." >&2; return 1; }
   printf '%s/${SNAPSHOTS_FOLDER}\n' "$(dirname "$_v")"
 }
@@ -532,7 +559,7 @@ echo @disk; disk_gb "$v"
 `);
 }
 
-function storageOf(host: string, read: Pick<PlanRead, "volume" | "totalKiB" | "freeKiB">): SnapshotStorage {
+export function storageOf(host: string, read: Pick<PlanRead, "volume" | "totalKiB" | "freeKiB">): SnapshotStorage {
   const totalBytes = read.totalKiB * 1024;
   const usedBytes = Math.max(0, (read.totalKiB - read.freeKiB) * 1024);
   return {

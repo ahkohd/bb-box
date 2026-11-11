@@ -92,3 +92,4 @@ which records still stand as written. The current design as a whole is in
 | [084](084-a-take-says-how-long-it-pauses-the-box-before-and-after.md) | A take says how long it pauses the box, before and after | Accepted |
 | [085](085-an-image-is-due-when-its-guest-folder-or-build-files-change.md) | An image is due when its guest folder or build files change | Accepted; extends 049 |
 | [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md) | Proxmox LXC boxes restore on ZFS in ZFS's order | Accepted; supersedes 070's "ZFS restores ship off" for Proxmox LXC; G16's node reboot is still unproved |
+| [087](087-windows-snapshots-on-tart-copy-a-disk-windows-shut-down.md) | Windows snapshots on Tart copy a disk Windows shut down | Accepted; extends 070 to Windows on Tart; fork and Keep wait for a Windows identity reset |

@@ -504,6 +504,19 @@ snapshot. Nothing is installed for them on the Mac; they use the Mac's
   own stop, and keeps the reading with each VM file's modification time
   and size, which it reads again at a take. A run of the VM, even outside
   bb-box, changes them.
+- **A Windows box's snapshot is a clone of three files** of its QEMU VM in
+  `~/.bb-box/qemu/vms/<vm>`: `disk.qcow2`, its overlay on a build of the
+  Windows image, `vars.fd` and `config`. Never QEMU's saved memory in
+  `state`, its pid file, its output or its QMP socket. bb-box clones them
+  only once Windows has shut down: it asks Windows over SSH, and presses
+  QEMU's ACPI power button when that cannot be sent. A box whose memory an
+  ordinary Stop saved starts from it, then shuts down. A restore keeps the
+  VM's two ports, leaves no `state`, and boots Windows afresh. Its label
+  names the image and build its overlay stands on; a restore whose build an
+  image refresh has removed is refused and says so. `~/.tart/vms` must be
+  on the same volume as `~/.bb-box`, as the clones need, and bb-box makes
+  it when Tart has not. Windows snapshots do not fork, and Keep is refused:
+  Windows has no identity reset.
 - **Kept snapshots stay on the Mac** when bb-box, or this backend, is
   removed: delete them in bb-box first, or remove the folder as Remove
   says.

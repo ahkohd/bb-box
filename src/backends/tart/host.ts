@@ -104,7 +104,7 @@ heal_rollback() {
   read -r _rb_phase _rb_id _rb_try _rb_pid _rb_start < "$_rb_j" || return 0
   case $_rb_phase in copying | swapping) ;; *) return 0 ;; esac
   ! runs_still "$_rb_pid" "$_rb_start" || return 0
-  _rb_v="$tart_vms/$1" _rb_r="$_rb_s/.restore-$1" _rb_a="$_rb_s/.replaced-$1" _rb_to=undone
+  _rb_v=${"$"}{2:-$tart_vms/$1} _rb_r="$_rb_s/.restore-$1" _rb_a="$_rb_s/.replaced-$1" _rb_to=undone
   if [ "$_rb_phase" = swapping ]; then
     if [ ! -e "$_rb_v" ]; then
       if [ -f "$_rb_r/.complete" ]; then mv "$_rb_r" "$_rb_v" || return 1; _rb_to=done
@@ -115,7 +115,7 @@ heal_rollback() {
     fi
   fi
   rm -f "$_rb_v/.complete"
-  if [ "$_rb_to" = done ]; then
+  if [ "$_rb_to" = done ] && [ -z "$2" ]; then
     _rb_g=$(sed -n 's/^diskgb=//p' "$_rb_s/$_rb_id/label" 2>/dev/null | head -n 1); [ -z "$_rb_g" ] || note_disk_gb "$_rb_v" "$_rb_g"
     grep -E '^(macos|tart)=' "$_rb_s/$_rb_id/label" 2>/dev/null > "$d/run/$1.saved-under" || :
   fi
