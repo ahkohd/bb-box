@@ -571,7 +571,7 @@ BB Box runs these helper commands, as root, through the same sudo rule:
 | `machine snapshot take <generation> <snapshot>` | Pauses the box user's running processes, clones the home, resumes what it paused, then keeps the home's ACLs |
 | `machine snapshot list` | This install's snapshots on the Mac, and the free space under `/Users` |
 | `machine snapshot stop <generation>` | Ends the box user's session for a restore, after clearing the automatic login |
-| `machine snapshot restore <generation> <snapshot> <operation>` | Puts a clone of the snapshot in the home's place, with its ACLs, and clears the user's temporary and cache folders. Asked again with the same operation, it finishes a restore cut short, or changes nothing |
+| `machine snapshot restore <generation> <snapshot> <operation>` | Puts a clone of the snapshot in the home's place, with its ACLs, and clears what the user made in its temporary and cache folders: the user's own files, made since macOS made the user. Asked again with the same operation, it finishes a restore cut short, or changes nothing |
 | `machine snapshot start <generation>` | Signs the box user in again where it was signed in, by restarting the login window, or userspace after 30 s; it exits 10 until the user is at the console |
 | `machine snapshot delete <snapshot>` | Deletes a snapshot; again, it succeeds |
 | `machine snapshot fork <snapshot> <user> <uid>` | Makes a new user from a snapshot, without BB's machine files, the access file, BB's launch agent, the login keychain or plists naming the source's home. Only where no other user shares the Mac, and only for a new box user, `bbx-<n>` with UID 70000 plus n modulo 10000, that is not on the Mac or at its console. BB Box does not call it yet |
@@ -612,19 +612,22 @@ ready (held, being given back, made or removed), a slot is promised to a
 box, the slots' lock stays held, or a take's pause record is left.
 
 Each run makes new scratch users, with random names and UIDs from 90000 to
-99999 that no account has at that moment, outside the UIDs of box users
-(70000 to 79999) and iOS slot users (80000 to 89999). It refuses with exit
-5, changing nothing, when it cannot list the Mac's users. It makes no scan
-of the Data volume. It records each thing it makes in
+99999 that no account and no process has at that moment, outside the UIDs
+of box users (70000 to 79999) and iOS slot users (80000 to 89999). It
+refuses with exit 5, changing nothing, when it cannot list the Mac's users.
+It makes no scan of the Data volume. It records each thing it makes in
 `/var/db/bb-box/proof-made` as it makes it: each user with its UID and
 `GeneratedUID`, each folder and file with its device and inode, and each
-process with when it started. At the end it deletes only what still
-matches the record, and leaves anything else with a note on how to check
-it, including files a scratch user made elsewhere on the Mac. A run cut
-short leaves the record, and the next run first removes what that record
-proves, in the same way. Where it cannot prove something is its own, it
-refuses with exit 5 and keeps the record: check what the notes name,
-remove what is an earlier proof's, then remove the record.
+process with when it started. It signals and deletes only what still
+matches the record at that moment, and leaves anything else with a note on
+how to check it. Its restores clear only the temporary files it recorded
+making, so files of a scratch user's UID that it did not make stay, even in
+that user's temporary folders. A run cut short leaves the record. The next
+run first checks all of it: where it cannot list the Mac's users or cannot
+prove something is its own, it refuses with exit 5, changing nothing, and
+keeps the record. Check what the notes name, remove what is an earlier
+proof's, then remove the record. Only when every check passes does it
+remove what the record proves, in the same way.
 
 
 ### Testing on one computer

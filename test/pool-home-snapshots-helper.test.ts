@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { describe, test, type TestContext } from "node:test";
@@ -481,19 +481,62 @@ describe("A restore of a home snapshot (090)", () => {
     assert.equal(run(mac, ["restore", "0", "snbbbbbbbbbbbb", "opaaaaaaaaaaaa"]).status, 4);
   });
 
-  test("clears the user's temporary and cache folders outside the home", () => {
+  test("clears what the box user made in its temporary and cache folders outside the home", () => {
     const mac = lentMac();
+    madeAMinuteAgo(mac, "bbx-0");
     ok(mac, ["take", "0", "snaaaaaaaaaaaa"]);
     write(mac, "private/var/folders/zz/user70000/T/module.cache", "stale\n");
     write(mac, "private/var/folders/zz/user70000/C/cache.db", "stale\n");
-    mac.own("private/var/folders/zz/user70000", UID);
+    for (const folder of ["", "/T", "/C"]) mac.own(`private/var/folders/zz/user70000${folder}`, UID);
 
     restored(mac, "snaaaaaaaaaaaa", "opaaaaaaaaaaaa");
 
     assert.equal(mac.file("private/var/folders/zz/user70000/T/module.cache"), null);
     assert.equal(mac.file("private/var/folders/zz/user70000/C/cache.db"), null);
   });
+
+  test("leaves in the temporary folders what is older than the box user, or not its own", () => {
+    const mac = lentMac();
+    madeAMinuteAgo(mac, "bbx-0");
+    ok(mac, ["take", "0", "snaaaaaaaaaaaa"]);
+    write(mac, "private/var/folders/zz/user70000/T/made-by-the-box.txt", "stale\n");
+    const older = madeLongAgo(mac, "private/var/folders/zz/user70000/T/older-than-the-box.txt");
+    const anothers = keep(mac, "private/var/folders/zz/user70000/T/anothers.txt", 501);
+    for (const folder of ["", "/T"]) mac.own(`private/var/folders/zz/user70000${folder}`, UID);
+    const before = madeLongAgo(mac, "private/var/folders/yy/before70000/T/sentinel");
+    for (const folder of ["", "/T"]) madeLongAgoBy(mac, `private/var/folders/yy/before70000${folder}`);
+
+    restored(mac, "snaaaaaaaaaaaa", "opaaaaaaaaaaaa");
+
+    assert.equal(mac.file("private/var/folders/zz/user70000/T/made-by-the-box.txt"), null);
+    for (const path of [older, anothers, before]) assert.equal(mac.file(path), "keep\n", path);
+  });
 });
+
+function madeAMinuteAgo(mac: FakeMacos, user: string): void {
+  const then = Math.floor(Date.now() / 1000) - 60;
+  writeFileSync(join(mac.state, "users", user, "accountPolicyData"), `<plist><dict><key>creationTime</key><real>${then}.25</real></dict></plist>\n`);
+}
+
+const LONG_AGO = new Date("2000-01-01T00:00:00Z");
+
+function madeLongAgo(mac: FakeMacos, path: string, uid = UID): string {
+  keep(mac, path, uid);
+  utimesSync(join(mac.root, path), LONG_AGO, LONG_AGO);
+  return path;
+}
+
+function madeLongAgoBy(mac: FakeMacos, folder: string, uid = UID): void {
+  mac.own(folder, uid);
+  utimesSync(join(mac.root, folder), LONG_AGO, LONG_AGO);
+}
+
+function keep(mac: FakeMacos, path: string, uid: number): string {
+  mkdirSync(join(mac.root, path, ".."), { recursive: true });
+  writeFileSync(join(mac.root, path), "keep\n");
+  if (uid) mac.own(path, uid);
+  return path;
+}
 
 function spawnMove(mac: FakeMacos, from: string, to: string): number {
   const result = mac.tool("mv", [join(mac.root, from), join(mac.root, to)]);
@@ -626,6 +669,8 @@ const STORE_OF_THE_FORK = 'u=${2%/.fork-*}; u=${u##*/}';
 const REPLACES_THE_PROBE_HOME = `case $2 in */.fork-*) ${STORE_OF_THE_FORK}; mv "$R/Users/$u" "$R/Users/$u.moved" && mkdir "$R/Users/$u" && echo keep >"$R/Users/$u/keep.txt" ;; *) exit 1 ;; esac`;
 const GIVES_THE_PROBE_UID_TO_ANOTHER = `case $2 in */.fork-*) ${STORE_OF_THE_FORK}; id=$(cat "$F/users/$u/UniqueID"); rm -rf "$F/users/$u"; mkdir -p "$F/users/replacement" "$R/Users/replacement"; echo "$id" >"$F/users/replacement/UniqueID"; echo 00000000-0000-4000-8000-0000000000CC >"$F/users/replacement/GeneratedUID"; echo /Users/replacement >"$F/users/replacement/NFSHomeDirectory"; echo keep >"$R/Users/replacement/keep.txt"; echo "$id $(readlink -f "$R/Users/replacement/keep.txt")" >>"$F/owners" ;; *) exit 1 ;; esac`;
 const PLANTS_A_SUDO_RULE_STAGING_FILE = `case $2 in */snproof000001.partial/home) ${STORE_OF_THE_TAKE}; echo keep >"$R/etc/sudoers.d/$u.new" && echo "$u" >"$F/planted" ;; *) exit 1 ;; esac`;
+const PLANTS_IN_THE_PROBES_TEMPORARY_FOLDER = `case $2 in */snproof000001.partial/home) ${STORE_OF_THE_TAKE}; id=$(cat "$F/users/$u/UniqueID"); echo keep >"$R/private/var/folders/zz/user$id/T/planted" && echo "$id $(readlink -f "$R/private/var/folders/zz/user$id/T/planted")" >>"$F/owners" && echo "$id" >"$F/planted" ;; *) exit 1 ;; esac`;
+const RECORDS_A_STOPPED_ROOT_PROCESS_AS_STARTED_EARLIER = `case $2 in */snproof000001.partial/home) record="$R/var/db/bb-box/proof-made"; awk '$1 == "process" { print $2 }' "$record" | while read -r pid; do ps -o stat= -p "$pid" | grep -q '^T' && ! awk -v p="$pid" '$1 == p { found = 1 } END { exit !found }' "$F/process-uids" && echo "$pid"; done >"$F/mismatched"; awk -v list="$F/mismatched" 'BEGIN { while ((getline p < list) > 0) m[p] = 1 } $1 == "process" && ($2 in m) { $3 = "Thu_Jan_1_00:00:00_1970" } { print }' "$record" >"$record.x" && mv "$record.x" "$record" ;; *) exit 1 ;; esac`;
 const HOLD_LOCK = `use Fcntl ":flock"; open(my $f, ">>", $ARGV[0]) or exit 1; flock($f, LOCK_EX) or exit 1; $| = 1; print "held\\n"; <STDIN>;`;
 const RECORD = "var/db/bb-box/proof-made";
 
@@ -633,13 +678,6 @@ function freeMac(settings: Readonly<Record<string, string>> = {}): FakeMacos {
   const mac = fakeMacos({ settings });
   assert.equal(mac.helper(["init"]).status, 0);
   return mac;
-}
-
-function keep(mac: FakeMacos, path: string, uid: number): string {
-  mkdirSync(join(mac.root, path, ".."), { recursive: true });
-  writeFileSync(join(mac.root, path), "keep\n");
-  if (uid) mac.own(path, uid);
-  return path;
 }
 
 function assertChangedNothing(mac: FakeMacos, calls: number, users: readonly string[]): void {
@@ -653,6 +691,10 @@ async function holdingALock(path: string): Promise<ChildProcess> {
   const holder = spawn("perl", ["-e", HOLD_LOCK, path], { stdio: ["pipe", "pipe", "ignore"] });
   await once(createInterface({ input: holder.stdout! }), "line");
   return holder;
+}
+
+function objectId(path: string): string {
+  return spawnSync("stat", ["-c", "%d:%i", path], { encoding: "utf8" }).stdout.trim();
 }
 
 function startOf(pid: number): string {
@@ -709,6 +751,10 @@ describe("The proof of home snapshots (090)", () => {
       "the next helper command resumes the process that stopped late",
       `removed ${user} and what the proof made for it`,
       `removed ${fork} and what the proof made for it`,
+      "the restore cleared a temporary file the user made",
+      "the restore cleared a cache file the user made",
+      "the restore left a temporary file older than the user",
+      "the restore left a temporary file the proof did not give it to clear",
     ]) {
       assert.ok(proof.stdout.split("\n").includes(`ok: ${check}`), check);
     }
@@ -882,6 +928,75 @@ describe("The proof of home snapshots (090)", () => {
     assert.equal(mac.file(home), "keep\n");
     assert.equal(mac.file(RECORD), record);
     assert.deepEqual(mac.calls().slice(calls).filter(ACCOUNT_CHANGE), []);
+  });
+
+  test("deletes no temporary file it did not record, made before it ran or since", () => {
+    const mac = freeMac({ PROOF_UID_SPAN: "4" });
+    mac.flag("sudo-processes");
+    const before = [90000, 90001, 90002, 90003].map((uid) => {
+      const path = madeLongAgo(mac, `private/var/folders/xx/before${uid}/T/sentinel`, uid);
+      for (const folder of ["", "/T"]) madeLongAgoBy(mac, `private/var/folders/xx/before${uid}${folder}`, uid);
+      return path;
+    });
+    mac.flag("during-clone", true, PLANTS_IN_THE_PROBES_TEMPORARY_FOLDER);
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 0, proof.stdout + proof.stderr);
+    for (const path of before) assert.equal(mac.file(path), "keep\n", path);
+    const planted = readFileSync(join(mac.state, "planted"), "utf8").trim();
+    assert.equal(mac.file(`private/var/folders/zz/user${planted}/T/planted`), "keep\n");
+    assert.ok(proof.stdout.split("\n").includes("ok: the restore cleared a temporary file the user made"), proof.stdout);
+  });
+
+  test("on its normal exit, ends no recorded process whose start time no longer matches", async (t) => {
+    const mac = freeMac();
+    mac.flag("sudo-processes");
+    mac.flag("during-clone", true, RECORDS_A_STOPPED_ROOT_PROCESS_AS_STARTED_EARLIER);
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    const mismatched = readFileSync(join(mac.state, "mismatched"), "utf8").split("\n").filter(Boolean).map(Number);
+    ending(t, ...mismatched);
+    assert.ok(mismatched.length > 0, proof.stdout + proof.stderr);
+    for (const pid of mismatched) assert.doesNotMatch(stateOf(pid), /^Z?$/, `process ${pid} was ended: ${stateOf(pid)}`);
+  });
+
+  test("refuses, changing nothing, an earlier proof's record that proves one folder and not another", () => {
+    const mac = freeMac();
+    const proven = join(mac.root, "var/db/bb-box/proof-run.earlier");
+    mkdirSync(proven);
+    writeFileSync(join(proven, "sentinel"), "keep\n");
+    const unproven = keep(mac, "var/db/bb-box/proof-run.other", 0);
+    const record = `dir - ${objectId(proven)} ${proven}\nfile - 1:1 ${join(mac.root, unproven)}\n`;
+    writeFileSync(join(mac.root, RECORD), record);
+    const calls = mac.calls().length;
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 5, proof.stdout + proof.stderr);
+    assert.match(proof.stderr, /It changed nothing/);
+    assert.equal(readFileSync(join(proven, "sentinel"), "utf8"), "keep\n");
+    assert.equal(mac.file(unproven), "keep\n");
+    assert.equal(mac.file(RECORD), record);
+    assert.deepEqual(mac.calls().slice(calls).filter(ACCOUNT_CHANGE), []);
+  });
+
+  test("refuses, changing nothing, an earlier proof's record while it cannot list the Mac's users", () => {
+    const mac = freeMac();
+    const proven = join(mac.root, "var/db/bb-box/proof-run.earlier");
+    mkdirSync(proven);
+    writeFileSync(join(proven, "sentinel"), "keep\n");
+    const record = `dir - ${objectId(proven)} ${proven}\n`;
+    writeFileSync(join(mac.root, RECORD), record);
+    mac.flag("directory-down");
+
+    const proof = mac.helper(["snapshot", "proof"]);
+
+    assert.equal(proof.status, 5, proof.stdout + proof.stderr);
+    assert.match(proof.stderr, /could not list the Mac's users, so it does not run\. It changed nothing/);
+    assert.equal(readFileSync(join(proven, "sentinel"), "utf8"), "keep\n");
+    assert.equal(mac.file(RECORD), record);
   });
 
   test("refuses, changing nothing, an earlier proof's record in a form it does not read", () => {

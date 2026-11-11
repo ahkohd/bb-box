@@ -183,6 +183,7 @@ case $tool in
         echo "$home" >"$F/users/$user/NFSHomeDirectory"
         echo /bin/zsh >"$F/users/$user/UserShell"
         tr a-z A-Z </proc/sys/kernel/random/uuid >"$F/users/$user/GeneratedUID"
+        printf '<plist><dict><key>creationTime</key><real>%s.25</real></dict></plist>\n' "$(/bin/date +%s)" >"$F/users/$user/accountPolicyData"
         printf '%s\n' "$password" >"$F/secrets/$user"
         ;;
       -deleteUser)
@@ -296,6 +297,7 @@ case $tool in
     done
     command=$1
     shift
+    [ -z "$as" ] || uid_of "$as" >"$F/getconf-uid"
     if [ -n "$as" ] && flag sudo-processes; then
       echo "$$ $(uid_of "$as") ${command##*/} 1" >>"$F/processes"
       echo "$$ $(uid_of "$as")" >>"$F/process-uids"
@@ -317,6 +319,7 @@ case $tool in
     if [ "$2" = %g ]; then echo 20; exit 0; fi
     if [ "$2" = %i ]; then exec /usr/bin/stat -c %i "$3"; fi
     if [ "$2" = %d:%i ]; then exec /usr/bin/stat -c %d:%i "$3"; fi
+    if [ "$2" = %B ]; then exec /usr/bin/stat -c %Y "$3"; fi
     # stat -f %u <path>: the UID owners says owns it, else root's.
     if [ "$2" = %u ]; then
       real=$(readlink -f "$3")
@@ -517,6 +520,13 @@ case $tool in
     edit "$F/processes" awk -v u="$3" '$2 == u { $4 -= 1; if ($4 <= 0) next } { print }'
     ;;
 
+  getconf)
+    case ${1:-} in DARWIN_USER_TEMP_DIR) kind=T ;; DARWIN_USER_CACHE_DIR) kind=C ;; *) exec /usr/bin/getconf "$@" ;; esac
+    uid=$(cat "$F/getconf-uid" 2>/dev/null) || exit 1
+    folder=$R/private/var/folders/zz/user$uid
+    [ -d "$folder/$kind" ] || { mkdir -p "$folder/$kind" && own "$uid" no "$folder" "$folder/$kind"; }
+    echo "$folder/$kind/"
+    ;;
   date) if [ "${1:-}" = +%s ] && [ -e "$F/clock" ]; then cat "$F/clock"; else exec /bin/date "$@"; fi ;;
   shutdown) ;;
   node) echo v24.9.0 ;;

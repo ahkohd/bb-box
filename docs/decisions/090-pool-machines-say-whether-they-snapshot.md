@@ -175,9 +175,13 @@ machine snapshot hook <operation> <command> ...    runs the operator's hook, sec
   3. Take the undo, a snapshot of the stopped home.
   4. Move the home aside, put a writable clone of the target in its place,
      put back the ACLs kept at the take, and delete the old home.
-  5. Clear the user's temporary and cache folders outside the home
-     (`/private/var/folders/<xx>/<user>/T` and `C` on a Mac), which may
-     not match the restored home.
+  5. Clear what the user made in its temporary and cache folders outside
+     the home (`/private/var/folders/<xx>/<user>/T` and `C` on a Mac),
+     which may not match the restored home. On a Mac, the helper clears
+     only entries the user owns, in folders the user owns, all made after
+     the second macOS made the account (its `creationTime`), so a file
+     older than the user stays. It lists each with its device and inode,
+     and removes it only while they still match.
   6. Start the user again: on a Mac, set the automatic login and restart
      loginwindow; on Linux, start `user@<uid>.service`, whose units come
      back from the home.
@@ -393,7 +397,8 @@ It needs:
 - **Room.** Snapshots grow as the home changes and share the machine's
   disk with the next boxes. 070's room rule applies to the homes' volume,
   and 064's disk reserve for slots counts snapshots.
-- **Stale state outside the home** after a restore: caches are cleared;
+- **Stale state outside the home** after a restore: what the user made in
+  its temporary and cache folders is cleared;
   daemons' per-user state is not, and has not been seen to matter.
 - **Hooks are root code BB Box does not write.** One froze a filesystem in
   the spike. The contract check runs before a hook goes live, and a hook
@@ -509,9 +514,11 @@ section 2, this is what stands:
 - **The proof** is `machine snapshot proof`. Each run makes new scratch
   users, `bbbox-probe-` and 8 random hexadecimal digits, with UIDs from
   90000 to 99999 that no account has at that moment, outside the box
-  users' 70000 to 79999 and the iOS slot users' 80000 to 89999. It never
-  uses a name or UID again, so it never has to decide whether an existing
-  account is its own, and it makes no scan of the Data volume.
+  users' 70000 to 79999 and the iOS slot users' 80000 to 89999. It picks
+  a name and a UID that no account has, and a UID no process runs as, at
+  that moment, so it never has to decide whether an existing account is
+  its own. A later run may pick a UID an earlier run used. It makes no
+  scan of the Data volume.
   - **Admission.** It takes the helper's lock, then the device host's own
     lock, waiting up to 60 s, and holds both until it ends. Every iOS slot
     claim, promise, make and top-up changes a slot's state only under the
@@ -528,22 +535,45 @@ section 2, this is what stands:
     `/var/db/bb-box/proof-made`, and it adds each thing as it makes it:
     each user with its UID and `GeneratedUID`, each folder and file with
     its device and inode (homes, snapshot stores, password files and its
-    own work folder), and each process with its start time. It follows a
-    home through its own restores and fork.
-  - **Clean-up** deletes only by the record. It ends a recorded process
-    only where its start time matches; it logs a user out and removes the
-    account only where the account at that name still has the recorded
-    UID and `GeneratedUID`; and it removes a folder or file only where its
-    device and inode still match. It never sweeps a UID's files, so a
-    scratch user's files outside its home, such as its temporary folder,
-    stay. Anything it cannot prove is its own stays, with the record and
-    a note on how to check it, and the run fails.
-  - **A run cut short** leaves the record. The next run cleans only what
-    the record proves, in the same way, and goes on; where something in it
-    cannot be proved, or the record is in a form it does not read, it
-    refuses with exit 5 and keeps the record for a person to check. A
-    window of a moment between making a thing and recording it can leave
-    something unrecorded: that stays, never deleted.
+    own work folder, and the files it makes in a scratch user's temporary
+    and cache folders), and each process with its start time. It follows
+    a home through its own restores and fork.
+  - **One checked path.** Every process the proof or a take signals,
+    every account the proof deletes, every file or folder the proof
+    deletes by its record, and every file a restore clears from the
+    user's temporary and cache folders goes through one function. It is given each
+    object's identity as recorded: a process's ID and start time, an
+    account's UID and `GeneratedUID`, a file's or folder's device and
+    inode. It reads the identity again at that moment, acts only where it
+    matches, and skips and reports anything else. The proof's own
+    stopping and ending of its scratch processes, at its normal exit and
+    in recovery alike, takes this path, and a process it means to stop
+    during a take stops itself, so the proof sends it no signal.
+    The helper's own working folders inside the snapshot store, which only
+    root can write, are still removed by their path: a take's unfinished
+    clone, a restore's staged and replaced homes, a fork's staged home and
+    a deleted snapshot. A restore ends every process of the box user's
+    UID, as the reset does.
+  - **Clean-up** deletes only by the record, through that function. It
+    logs a user out only where the account at that name still has the
+    recorded UID and `GeneratedUID`; that ends the processes of a UID that
+    no process ran as when the proof picked it. It never sweeps a UID's
+    files. Its restores clear only the temporary and cache files the proof
+    recorded making, and of those only what a restore would clear for a
+    box: the proof checks that one older than its user stays, and that one
+    it did not give the restore stays. What macOS made for a scratch user
+    outside the record, such as its temporary folders, stays. Anything it
+    cannot prove is its own stays, with the record and a note on how to
+    check it, and the run fails.
+  - **A run cut short** leaves the record. The next run first checks the
+    whole record, and that it can list the Mac's users. Where it cannot
+    list them, where anything in the record cannot be proved, or where
+    the record is in a form it does not read, it refuses with exit 5,
+    changing nothing, and keeps the record for a person to check. Only
+    once every check passes does it clean what the record proves, in the
+    same way, and go on. A window of a moment between making a thing and
+    recording it can leave something unrecorded: that stays, never
+    deleted.
   - It never touches the user waiting at the console. Its results go in
     [090-results.md](090-results.md).
 - **The snapshot store** takes the new scopes by rebuilding its table with

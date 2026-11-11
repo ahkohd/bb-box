@@ -115,6 +115,7 @@ SNAPSHOT_HOOK_ERR=$STATE/snapshot-hook.err
 SNAPSHOT_REPORT=$STATE/snapshots
 CLONE_TRIALS=$STATE/snapshot-trials
 CLONE_TRIAL=$CLONE_TRIALS/$$
+STOPS_ITSELF_ON_A_SIGN='until (-e $ARGV[0]) { select(undef, undef, undef, 0.05) } kill "STOP", $$; sleep 600'
 STOPS_LATE_ABOVE='use POSIX ":sys_wait_h"; $| = 1; my $child = fork(); if (!$child) { exec @ARGV[1 .. $#ARGV] } print "$child\n"; while (1) { last if waitpid($child, WUNTRACED) <= 0; last unless WIFSTOPPED(${^CHILD_ERROR_NATIVE}); sleep $ARGV[0]; kill "STOP", $$ }'
 IN_OWN_SESSION='use POSIX (); POSIX::setsid() >= 0 or exit 126; exec { $ARGV[0] } @ARGV or exit 127'
 HOME_SNAPSHOTS=$STATE/home-snapshots
@@ -129,6 +130,8 @@ PROOF_UID_SPAN=10000
 PROOF_PICKS=20
 PROOF_RECORD=$STATE/proof-made
 PROOF_LATE_STOP_SECONDS=3
+NEWLINE='
+'
 DEVICE_HOST_LOCK=$SLOTS_STATE/lock
 DEVICE_HOST_WAIT_SECONDS=60
 PAUSE_LOCK=$STATE/pause-lock
@@ -546,6 +549,8 @@ pausing_user=''
 then_on_exit=''
 when_a_user_is_made=''
 on_a_half_made_user=remove_half_made_user
+on_what_changed=say_what_changed
+which_temporary_entries=every_temporary_entry
 proof_uids=''
 proof_fork_identity=''
 
@@ -635,6 +640,58 @@ process_table() {
   ps -A -o pid=,ppid=,uid=,stat=,lstart= 2>/dev/null | awk 'NF >= 9 { printf "%s %s %s %s %s_%s_%s_%s_%s\n", $1, $2, $3, $4, $5, $6, $7, $8, $9 }'
 }
 
+identity_now() {
+  case $1 in
+    process) printf '%s\n' "$checked_table" | awk -v p="$2" '$1 == p { print $5; found = 1; exit } END { if (!found) print "gone" }' ;;
+    account)
+      if ! directory; then
+        echo unknown
+      elif ! dscl . -read "/Users/$2" >/dev/null 2>&1; then
+        echo gone
+      else
+        echo "$(attribute "$2" UniqueID):$(attribute "$2" GeneratedUID)"
+      fi
+      ;;
+    object)
+      if absent "$2"; then echo gone; else object_id "$2" || echo unknown; fi
+      ;;
+  esac
+}
+
+say_what_changed() { echo "note: left $1 $2, as it is not what was recorded" >&2; }
+
+change_only_what_is_still() {
+  checked_kind=$1 checked_action=$2 checked_failed=no checked_table=''
+  [ "$checked_kind" != process ] || checked_table=$(process_table)
+  while read -r checked_recorded checked_target; do
+    [ -n "$checked_target" ] || continue
+    checked_now=$(identity_now "$checked_kind" "$checked_target")
+    if [ "$checked_now" = gone ]; then
+      continue
+    elif [ "$checked_now" = "$checked_recorded" ]; then
+      "$checked_action" "$checked_target" </dev/null || checked_failed=yes
+    elif [ "$checked_kind" != process ]; then
+      "$on_what_changed" "$checked_kind" "$checked_target" "$checked_now" </dev/null
+      checked_failed=yes
+    fi
+  done
+  [ "$checked_failed" = no ]
+}
+
+stop_process() { kill -STOP "$1" 2>/dev/null; }
+continue_process() { kill -CONT "$1" 2>/dev/null; }
+end_process() { kill -KILL "$1" 2>/dev/null; }
+
+remove_object() {
+  if [ -d "$1" ] && [ ! -L "$1" ]; then remove_tree "$1"; else rm -f "$1" 2>/dev/null && absent "$1"; fi
+}
+
+remove_as_it_stands() { rm -rf "$1" 2>/dev/null; absent "$1"; }
+
+remove_empty_folder() { rmdir "$1" 2>/dev/null || holds_others "$1"; }
+
+holds_others() { [ -n "$(ls -A "$1" 2>/dev/null)" ]; }
+
 hold_pause_lock() {
   mkdir -p "$STATE"
   exec 8>>"$PAUSE_LOCK"
@@ -676,7 +733,9 @@ pause_user() {
     round=$(process_table | box_processes_to_pause "$journal" "$uid")
     [ -n "$round" ] || break
     printf '%s\n' "$round" >>"$journal"
-    kill -STOP $(printf '%s\n' "$round" | awk '$1 == "box" { print $2 }') 2>/dev/null
+    change_only_what_is_still process stop_process <<ROUND
+$(printf '%s\n' "$round" | awk '$1 == "box" { print $3, $2 }')
+ROUND
     rounds=$((rounds + 1))
   done
 }
@@ -706,7 +765,7 @@ journal_step() {
         if (!(key in state)) continue
         if (state[key] ~ /^T/) {
           split(key, recorded, " ")
-          print "continue " recorded[1]
+          print "continue " recorded[2], recorded[1]
           print "keep resumed " key
         } else if (!settled && kind[key] == "parent") print "keep parent " key
       }
@@ -717,13 +776,10 @@ step_journal() {
   step=$(journal_step "$1")
   printf '%s\n' "$step" | sed -n 's/^keep //p' | put "$1"
   resumed=$(printf '%s\n' "$step" | sed -n 's/^continue //p')
-  continue_processes "$resumed"
+  change_only_what_is_still process continue_process <<RESUMED
+$resumed
+RESUMED
   printf '%s\n' "$resumed"
-}
-
-continue_processes() {
-  [ -z "$1" ] || kill -CONT $1 2>/dev/null
-  return 0
 }
 
 journal_holds_processes() { grep -q -e '^box ' -e '^parent ' -e '^resumed ' "$1" 2>/dev/null; }
@@ -848,13 +904,45 @@ end_session() {
   echo "console=$(field "$session" console)"
 }
 
-clear_temporary_folders() {
-  uid=$1
-  find "$DATA/private/var/folders" -mindepth 2 -maxdepth 2 -type d -uid "$uid" 2>/dev/null | while IFS= read -r folder; do
+born_after() {
+  born=$(stat -f %B "$1" 2>/dev/null) && number "$born" && [ "$born" -gt "$2" ]
+}
+
+one_line() { case $1 in *"$NEWLINE"*) return 1 ;; *) return 0 ;; esac; }
+
+made_by_the_box_user() {
+  ! absent "$1" && one_line "$1" && owned_by "$1" "$temporary_uid" && born_after "$1" "$temporary_user_born"
+}
+
+a_folder_of_the_box_user() { [ -d "$1" ] && [ ! -L "$1" ] && made_by_the_box_user "$1"; }
+
+account_made_at() {
+  dscl . -read "/Users/$1" accountPolicyData 2>/dev/null | tr -d ' \t\n' | sed -n 's|.*<key>creationTime</key><real>\([0-9]*\).*|\1|p'
+}
+
+temporary_entries_of() {
+  temporary_uid=$2
+  temporary_user_born=$(account_made_at "$1")
+  number "$temporary_user_born" || return 0
+  find "$DATA/private/var/folders" -mindepth 2 -maxdepth 2 -type d -uid "$temporary_uid" 2>/dev/null | while IFS= read -r folder; do
+    a_folder_of_the_box_user "$folder" || continue
     for kind in T C; do
-      [ -d "$folder/$kind" ] && find "$folder/$kind" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null
+      a_folder_of_the_box_user "$folder/$kind" || continue
+      for entry in "$folder/$kind"/* "$folder/$kind"/.[!.]* "$folder/$kind"/..?*; do
+        made_by_the_box_user "$entry" && printf '%s %s\n' "$(object_id "$entry")" "$entry"
+      done
     done
   done
+  return 0
+}
+
+every_temporary_entry() { cat; }
+
+clear_temporary_folders() {
+  cleared=$(temporary_entries_of "$1" "$2" | "$which_temporary_entries")
+  change_only_what_is_still object remove_as_it_stands <<CLEARED
+$cleared
+CLEARED
   return 0
 }
 
@@ -892,7 +980,7 @@ restore_home() {
   printf 'operation=%s\nsnapshot=%s\nstate=running\n' "$operation" "$id" | put "$record"
   log_out "$user" "$uid"
   swap_home "$user" "$uid" "$snapshot"
-  clear_temporary_folders "$uid"
+  clear_temporary_folders "$user" "$uid"
   printf 'operation=%s\nsnapshot=%s\nstate=done\n' "$operation" "$id" | put "$record"
   printf 'restored=%s\noperation=%s\n' "$id" "$operation"
 }
@@ -1174,6 +1262,43 @@ plant_proof_home() {
   chown -R "$proof_uid:20" "$home"
 }
 
+sign_to_stop() {
+  printf ": >'%s'; tries=0; until ps -o stat= -p %s | grep -q T; do tries=\$((tries + 1)); [ \"\$tries\" -lt 100 ] || break; sleep 0.05; done" "$1" "$2"
+}
+
+proof_temporary_folder() { as_probe getconf "$1" 2>/dev/null | sed 's|/*$||'; }
+
+plant_a_temporary_file() {
+  as_probe sh -c 'echo proof >"$1"' sh "$1" && chown -h "$proof_uid:20" "$1"
+}
+
+plant_proof_temporary_files() {
+  temporary_folder=$(proof_temporary_folder DARWIN_USER_TEMP_DIR) cache_folder=$(proof_temporary_folder DARWIN_USER_CACHE_DIR)
+  proof_temporary=$temporary_folder/bb-box-proof-made proof_cache=$cache_folder/bb-box-proof-made
+  proof_older_temporary=$temporary_folder/bb-box-proof-older proof_ungiven_temporary=$temporary_folder/bb-box-proof-not-given
+  if [ -z "$temporary_folder" ] || [ -z "$cache_folder" ] || [ ! -d "$temporary_folder" ] || [ ! -d "$cache_folder" ]; then
+    proof_temporary=''
+    echo "note: macOS gave $proof_user no temporary folders, so the proof did not check what a restore clears there"
+    return 0
+  fi
+  for planted in "$proof_temporary" "$proof_cache" "$proof_older_temporary" "$proof_ungiven_temporary"; do plant_a_temporary_file "$planted"; done
+  as_probe touch -t 200001010000 "$proof_older_temporary"
+  for planted in "$proof_temporary" "$proof_cache" "$proof_older_temporary"; do record_file "$proof_user" "$planted" temp; done
+  record_file "$proof_user" "$proof_ungiven_temporary"
+}
+
+temporary_entries_the_proof_made() {
+  awk 'FILENAME == ARGV[1] { if ($1 == "temp") made[$3] = 1; next } ($1 in made)' "$PROOF_RECORD" -
+}
+
+check_what_the_restore_cleared() {
+  [ -n "$proof_temporary" ] || return 0
+  proof_check "the restore cleared a temporary file the user made" absent "$proof_temporary"
+  proof_check "the restore cleared a cache file the user made" absent "$proof_cache"
+  proof_check "the restore left a temporary file older than the user" test -f "$proof_older_temporary"
+  proof_check "the restore left a temporary file the proof did not give it to clear" test -f "$proof_ungiven_temporary"
+}
+
 made_by_the_proof() {
   number "${1:-}" || return 1
   case " $proof_uids " in *" $1 "*) return 0 ;; *) return 1 ;; esac
@@ -1190,7 +1315,7 @@ record_dir() {
 
 record_file() {
   [ -f "$2" ] && [ ! -L "$2" ] || return 0
-  record_line "file $1 $(object_id "$2") $2"
+  record_line "${3:-file} $1 $(object_id "$2") $2"
 }
 
 recorded_objects() {
@@ -1237,47 +1362,42 @@ proof_left() {
   proof_left_any=yes
 }
 
-holds_others() { [ -n "$(ls -A "$1" 2>/dev/null)" ]; }
-
-remove_recorded() {
-  kind=$1 recorded_id=$2 path=$3
-  absent "$path" && return 0
-  if [ "$(object_id "$path")" != "$recorded_id" ]; then
-    proof_left "$path, as it is not what the proof made. Check it with: ls -lid $path"
-    return 1
-  fi
-  case $kind in
-    dir) remove_tree "$path" ;;
-    file) rm -f "$path" && absent "$path" ;;
-    emptydir) rmdir "$path" 2>/dev/null || holds_others "$path" ;;
-  esac && return 0
-  proof_left "$path, which it could not remove"
+remove_what_the_proof_made() {
+  remove_object "$1" && return 0
+  proof_left "$1, which it could not remove"
   return 1
+}
+
+remove_an_empty_folder_the_proof_made() {
+  remove_empty_folder "$1" && return 0
+  proof_left "$1, which it could not remove"
+  return 1
+}
+
+proof_left_what_changed() {
+  case $1:$3 in
+    account:unknown) proof_left "user $2, as the Mac's directory service did not answer" ;;
+    account:*) proof_left "user $2, as it is not the account the proof made: UID $(attribute "$2" UniqueID), GeneratedUID $(attribute "$2" GeneratedUID). Check it with: dscl . -read /Users/$2 UniqueID GeneratedUID" ;;
+    *) proof_left "$2, as it is not what the proof made. Check it with: ls -lid $2" ;;
+  esac
 }
 
 remove_recorded_of() {
   removed_all=yes
-  for kind_of_object in dir file emptydir; do
-    objects=$(recorded_objects "$kind_of_object" "$1")
-    while read -r object_id_made object_path; do
-      [ -n "$object_path" ] || continue
-      remove_recorded "$kind_of_object" "$object_id_made" "$object_path" || removed_all=no
-    done <<OBJECTS
-$objects
+  for kind_of_object in dir file temp emptydir; do
+    removal=remove_what_the_proof_made
+    [ "$kind_of_object" != emptydir ] || removal=remove_an_empty_folder_the_proof_made
+    change_only_what_is_still object "$removal" <<OBJECTS || removed_all=no
+$(recorded_objects "$kind_of_object" "$1")
 OBJECTS
   done
   [ "$removed_all" = yes ]
 }
 
-account_state() {
-  directory || { echo unknown; return 0; }
-  if ! dscl . -read "/Users/$1" >/dev/null 2>&1; then
-    echo gone
-  elif [ "$3" != - ] && [ "$(attribute "$1" UniqueID)" = "$2" ] && [ "$(attribute "$1" GeneratedUID)" = "$3" ]; then
-    echo ours
-  else
-    echo another
-  fi
+remove_one_recorded() {
+  change_only_what_is_still object remove_what_the_proof_made <<OBJECT
+$(awk -v path="$1" '{ rest = $0; sub(/^[^ ]* [^ ]* [^ ]* /, "", rest) } ($1 == "dir" || $1 == "file") && rest == path { id = $3 } END { if (id != "") print id, path }' "$PROOF_RECORD")
+OBJECT
 }
 
 left_in_place_of() {
@@ -1286,21 +1406,36 @@ left_in_place_of() {
   done
 }
 
+recorded_id_of() {
+  awk -v path="$1" '{ rest = $0; sub(/^[^ ]* [^ ]* [^ ]* /, "", rest) } ($1 == "dir" || $1 == "file") && rest == path { id = $3 } END { print id }' "$PROOF_RECORD"
+}
+
+unrecorded_place_of() {
+  left_in_place_of "$1" | while IFS= read -r place; do
+    [ "$(recorded_id_of "$place")" = "$(object_id "$place")" ] || { printf '%s\n' "$place"; break; }
+  done
+}
+
+delete_the_account() {
+  sysadminctl -deleteUser "$1" >/dev/null 2>&1
+  ! dscl . -read "/Users/$1" >/dev/null 2>&1 || dscl . -delete "/Users/$1" >/dev/null 2>&1
+  ! dscl . -read "/Users/$1" >/dev/null 2>&1 && return 0
+  proof_left "user $1, which it could not remove"
+  return 1
+}
+
 remove_proof_user() {
   name_made=$1 uid_made=$2 guid_made=$3
-  account=$(account_state "$name_made" "$uid_made" "$guid_made")
+  account=$(identity_now account "$name_made")
   case $account in
-    unknown)
-      proof_left "user $name_made, as the Mac's directory service did not answer"
-      return 1
-      ;;
-    another)
-      proof_left "user $name_made, as it is not the account the proof made: UID $(attribute "$name_made" UniqueID), GeneratedUID $(attribute "$name_made" GeneratedUID). Check it with: dscl . -read /Users/$name_made UniqueID GeneratedUID"
-      return 1
-      ;;
-    ours)
+    gone) ;;
+    "$uid_made:$guid_made")
       proof_uids="$proof_uids $uid_made"
       (log_out "$name_made" "$uid_made") >/dev/null 2>&1 || { proof_left "user $name_made, as its processes did not end"; return 1; }
+      ;;
+    *)
+      proof_left_what_changed account "$name_made" "$account"
+      return 1
       ;;
   esac
   remove_recorded_of "$name_made" || return 1
@@ -1310,16 +1445,33 @@ remove_proof_user() {
     proof_left "$unproven, and user $name_made with it, as the proof did not record making it. Check it with: ls -lid $unproven"
     return 1
   fi
-  [ "$account" = ours ] || return 0
-  sysadminctl -deleteUser "$name_made" >/dev/null 2>&1
-  ! dscl . -read "/Users/$name_made" >/dev/null 2>&1 || dscl . -delete "/Users/$name_made" >/dev/null 2>&1
-  ! dscl . -read "/Users/$name_made" >/dev/null 2>&1 || { proof_left "user $name_made, which it could not remove"; return 1; }
+  [ "$account" != gone ] || return 0
+  change_only_what_is_still account delete_the_account <<ACCOUNT
+$uid_made:$guid_made $name_made
+ACCOUNT
 }
 
 end_recorded_processes() {
-  table=$(process_table)
-  awk '$1 == "process" { print $2, $3 }' "$PROOF_RECORD" | while read -r pid_made start_made; do
-    printf '%s\n' "$table" | awk -v p="$pid_made" -v s="$start_made" '$1 == p && $5 == s { found = 1 } END { exit !found }' && kill -KILL "$pid_made" 2>/dev/null
+  change_only_what_is_still process end_process <<PROCESSES
+$(awk '$1 == "process" { print $3, $2 }' "$PROOF_RECORD")
+PROCESSES
+  return 0
+}
+
+signal_what_the_proof_recorded() {
+  signal_action=$1
+  shift
+  change_only_what_is_still process "$signal_action" <<PROCESSES
+$(awk -v pids=" $* " '$1 == "process" && index(pids, " " $2 " ") { print $3, $2 }' "$PROOF_RECORD")
+PROCESSES
+  return 0
+}
+
+ended() { state=$(ps -o stat= -p "$1" 2>/dev/null); case $state in '' | Z*) true ;; *) false ;; esac; }
+
+reap_if_ended() {
+  for child; do
+    if eventually ended "$child"; then wait "$child" 2>/dev/null; fi
   done
   return 0
 }
@@ -1341,17 +1493,52 @@ USERS
 a_record_the_proof_reads() {
   awk '
     $1 == "user" && NF == 4 { next }
-    ($1 == "dir" || $1 == "file" || $1 == "emptydir") && NF >= 4 && $3 ~ /^[0-9]+:[0-9]+$/ { next }
+    ($1 == "dir" || $1 == "file" || $1 == "temp" || $1 == "emptydir") && NF >= 4 && $3 ~ /^[0-9]+:[0-9]+$/ { next }
     $1 == "process" && NF == 3 { next }
     { bad = 1 }
     END { exit bad }' "$PROOF_RECORD"
+}
+
+check_a_recorded_account() {
+  account_now=$(identity_now account "$1")
+  case $account_now in
+    gone | "$2:$3") ;;
+    *)
+      proof_left_what_changed account "$1" "$account_now"
+      return 0
+      ;;
+  esac
+  place=$(unrecorded_place_of "$1")
+  [ -z "$place" ] || proof_left "$place, and user $1 with it, as the proof did not record making it. Check it with: ls -lid $place"
+}
+
+check_a_recorded_object() {
+  object_now=$(identity_now object "$2")
+  [ "$object_now" = gone ] || [ "$object_now" = "$1" ] || proof_left_what_changed object "$2" "$object_now"
+}
+
+the_record_holds_what_it_cannot_prove() {
+  proof_left_any=no
+  recorded_lines=$(cat "$PROOF_RECORD")
+  while read -r line_kind line_owner line_id line_rest; do
+    case $line_kind in
+      user) check_a_recorded_account "$line_owner" "$line_id" "$line_rest" </dev/null ;;
+      dir | file | temp | emptydir) check_a_recorded_object "$line_id" "$line_rest" </dev/null ;;
+    esac
+  done <<LINES
+$recorded_lines
+LINES
+  [ "$proof_left_any" = yes ]
 }
 
 recover_an_earlier_proof() {
   [ -e "$PROOF_RECORD" ] || return 0
   a_record_the_proof_reads ||
     quit "$EXIT_REFUSED" "An earlier proof left $PROOF_RECORD in a form this proof does not read, so it does not run. It changed nothing. Remove what it lists yourself, then the record."
-  echo "note: an earlier proof was cut short; removing what its record in $PROOF_RECORD proves it made"
+  echo "note: an earlier proof was cut short; checking that its record in $PROOF_RECORD proves it made each thing it lists"
+  if the_record_holds_what_it_cannot_prove; then
+    quit "$EXIT_REFUSED" "The proof does not run: an earlier proof left what it cannot prove it made, as the notes above say. It changed nothing. Check each, remove what is an earlier proof's yourself, then remove $PROOF_RECORD."
+  fi
   earlier_uids=$(awk '$1 == "user" { print $3 }' "$PROOF_RECORD" | sort -u | paste -sd ' ' -)
   if clean_what_the_record_proves; then
     rm -f "$PROOF_RECORD"
@@ -1360,22 +1547,17 @@ recover_an_earlier_proof() {
     note_what_stays_outside_the_record "${1:-}" "${2:-${1:-}}"
     return 0
   fi
-  quit "$EXIT_REFUSED" "The proof does not run: an earlier proof left what it cannot prove it made, as the notes above say. Check each, remove what is an earlier proof's yourself, then remove $PROOF_RECORD."
+  quit "$EXIT_REFUSED" "The proof does not run: what an earlier proof made changed while this proof removed it, as the notes above say. It removed the rest, and kept $PROOF_RECORD. Check each, remove what is an earlier proof's yourself, then remove $PROOF_RECORD."
 }
 
 note_what_stays_outside_the_record() {
-  echo "note: files the scratch users' processes made outside what the proof recorded, such as their temporary folders, stay. List them with: sudo find /System/Volumes/Data -xdev \( -uid $1 -o -uid $2 \)"
-}
-
-end_the_proofs_children() {
-  [ -n "$proof_pids" ] || return 0
-  kill -KILL $proof_pids 2>/dev/null
-  wait $proof_pids 2>/dev/null
+  echo "note: the proof deletes only what it recorded, so what macOS made for the scratch users outside the record, such as their temporary folders, stays. List it with: sudo find /System/Volumes/Data -xdev \( -uid $1 -o -uid $2 \)"
 }
 
 end_proof() {
   code=$1
-  end_the_proofs_children
+  end_recorded_processes
+  reap_if_ended $proof_children
   clean_what_the_record_proves
   cleaned=$?
   for each_made in "$proof_fork_user" "$proof_user" "$proof_stranger"; do
@@ -1486,7 +1668,7 @@ fresh_name() {
 }
 
 fresh_uid() {
-  number "$1" && [ "$1" -ge "$PROOF_UID_BASE" ] && [ "$1" -lt $((PROOF_UID_BASE + PROOF_UID_SPAN)) ] && ! uid_taken "$1"
+  number "$1" && [ "$1" -ge "$PROOF_UID_BASE" ] && [ "$1" -lt $((PROOF_UID_BASE + PROOF_UID_SPAN)) ] && ! uid_taken "$1" && ! pgrep -u "$1" >/dev/null 2>&1
 }
 
 pick() {
@@ -1529,10 +1711,13 @@ prove_home_snapshots() {
   hold_the_device_hosts_lock
   refuse_while_slots_are_lent
   refuse_while_a_pause_is_left
+  on_what_changed=proof_left_what_changed
+  which_temporary_entries=temporary_entries_the_proof_made
+  read_the_accounts
   recover_an_earlier_proof
   pick_proof_identities
   install=bb-box-proof box=proof
-  proof_failed=no proof_pids='' proof_made_the_store=no
+  proof_failed=no proof_made_the_store=no proof_children=''
   proof_started=$(now_ms)
   start_the_record
   when_a_user_is_made=note_proof_user
@@ -1558,22 +1743,23 @@ prove_home_snapshots() {
   proof_pid=$!
   sudo -n -H -u "$proof_user" -- /bin/sleep 600 </dev/null >/dev/null 2>&1 6>&- 9>&- &
   proof_held_sudo=$!
-  /bin/sleep 600 </dev/null >/dev/null 2>&1 6>&- 9>&- &
+  perl -e "$STOPS_ITSELF_ON_A_SIGN" "$proof_run/stop-during-the-take" </dev/null >/dev/null 2>&1 6>&- 9>&- &
   proof_stranger_pid=$!
-  /bin/sleep 600 </dev/null >/dev/null 2>&1 6>&- 9>&- &
+  perl -e "$STOPS_ITSELF_ON_A_SIGN" "$proof_run/stop-during-the-killed-take" </dev/null >/dev/null 2>&1 6>&- 9>&- &
   proof_late_stranger=$!
   perl -e "$STOPS_LATE_ABOVE" "$PROOF_LATE_STOP_SECONDS" sudo -n -H -u "$proof_user" -- /bin/sleep 600 </dev/null >"$proof_run/late-child" 2>/dev/null 6>&- 9>&- &
   proof_late_parent=$!
-  proof_pids="$proof_pid $proof_held_sudo $proof_stranger_pid $proof_late_stranger $proof_late_parent"
-  record_processes $proof_pids
+  proof_children="$proof_pid $proof_held_sudo $proof_stranger_pid $proof_late_stranger $proof_late_parent"
+  record_processes $proof_children
   sleep 1
   proof_command=$(command_of_sudo "$proof_pid")
   proof_held=$(command_of_sudo "$proof_held_sudo")
   record_processes "$proof_command" "$proof_held" $(cat "$proof_run/late-child")
-  kill -STOP "$proof_held"
+  signal_what_the_proof_recorded stop_process "$proof_held"
   desktop_acl=$(acl_entries "$probe_home/Desktop" | head -n 1)
+  plant_proof_temporary_files
 
-  proof_clone_script "$proof_run/clone" "kill -STOP $proof_stranger_pid"
+  proof_clone_script "$proof_run/clone" "$(sign_to_stop "$proof_run/stop-during-the-take" "$proof_stranger_pid")"
   began=$(now_ms)
   take_by_way_of "$proof_run/clone" "$proof_user" "$proof_uid" snproof000001 >"$proof_run/out" || fail "The take failed: $(cat "$proof_run/out")"
   echo "take: $(( $(now_ms) - began )) ms in all, the user's processes paused $(field "$proof_run/out" paused_ms) ms"
@@ -1586,20 +1772,21 @@ prove_home_snapshots() {
   proof_check "a process above the user's that stops itself $PROOF_LATE_STOP_SECONDS s after the pause, after the take's last check, stops" eventually stopped "$proof_late_parent"
   proof_check "the take keeps its record while a process above the user's may still stop" test -s "$(paused_marker "$proof_user")"
   proof_check "the next helper command resumes the process that stopped late" next_command_resumes_late
-  { kill -KILL "$proof_late_parent" $(cat "$proof_run/late-child") && wait "$proof_late_parent"; } 2>/dev/null
-  proof_pids="$proof_pid $proof_held_sudo $proof_stranger_pid $proof_late_stranger"
+  signal_what_the_proof_recorded end_process "$proof_late_parent" $(cat "$proof_run/late-child")
+  reap_if_ended "$proof_late_parent"
   cp "$(proof_keychain)" "$proof_run/keychain-at-take"
 
-  proof_clone_script "$proof_run/clone-waits" "kill -STOP $proof_late_stranger; echo \$\$ >'$proof_run/cloning'; exec /bin/sleep 120"
+  proof_clone_script "$proof_run/clone-waits" "$(sign_to_stop "$proof_run/stop-during-the-killed-take" "$proof_late_stranger"); echo \$\$ >'$proof_run/cloning'; exec /bin/sleep 120"
   (take_by_way_of "$proof_run/clone-waits" "$proof_user" "$proof_uid" snproofkilled >/dev/null 2>&1) 6>&- 9>&- &
   proof_taker=$!
   record_processes "$proof_taker"
   eventually test -s "$proof_run/cloning" || fail "The take that the proof kills did not reach its clone."
   record_processes "$(cat "$proof_run/cloning")"
+  record_dir "$proof_user" "$(store_of "$proof_user")/snproofkilled.partial"
   proof_check "a take paused the user's process" eventually stopped "$proof_command"
   proof_check "the root sudo above it stopped too" eventually stopped "$proof_pid"
-  kill -KILL "$proof_taker" "$(cat "$proof_run/cloning")" 2>/dev/null
-  wait "$proof_taker" 2>/dev/null
+  signal_what_the_proof_recorded end_process "$proof_taker" "$(cat "$proof_run/cloning")"
+  reap_if_ended "$proof_taker"
   proof_check "the helper killed during the pause left its pause record" test -s "$(paused_marker "$proof_user")"
   proof_check "the next helper command resumes the killed take's pause" eventually next_command_resumes
   proof_check "the user's process runs again after the killed take" running_not_stopped "$proof_command"
@@ -1607,7 +1794,7 @@ prove_home_snapshots() {
   proof_check "the user's process that someone else stopped stays stopped after the recovery" stopped "$proof_held"
   proof_check "a root process that someone else stopped during the killed take's pause stays stopped" stopped "$proof_late_stranger"
   proof_check "a root process stopped during the first take stays stopped" stopped "$proof_stranger_pid"
-  remove_tree "$(store_of "$proof_user")/snproofkilled.partial"
+  remove_one_recorded "$(store_of "$proof_user")/snproofkilled.partial"
 
   echo after >"$probe_home/proof/file.txt"
   echo later >"$probe_home/proof/new.txt"
@@ -1636,6 +1823,7 @@ prove_home_snapshots() {
   fi
   proof_check "the restored home is the user's" owned_by "$probe_home/proof/file.txt" "$proof_uid"
   if [ -n "$desktop_acl" ]; then proof_check "the home's ACLs are back: Desktop has $desktop_acl" has_acl "$probe_home/Desktop" "$desktop_acl"; fi
+  check_what_the_restore_cleared
   proof_check "the same restore asked again changes nothing" restore_home "$proof_user" "$proof_uid" snproof000001 opproof000001
 
   end_session "$proof_user" "$proof_uid" >/dev/null
