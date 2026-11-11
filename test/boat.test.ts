@@ -10,6 +10,7 @@ import { BoatBackend, LABELS, knownHostsLine, ownKeyScript, powerOf, sandboxName
 import { ARCHIVE_WITHIN_MS, BoatTemplates, BuildLeftRunning, FAILED_BUILD_RETRY_MS, LEFT_BUILD_WHY, TEMPLATE_FILES, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, failedChecks, guestBuildFrom, guestStep, templateArchive, templateFingerprint, templateName, type Reached, type TemplateDeps, type TemplateRecord } from "../src/backends/boat/templates.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { bbReach, isPrivateAddress } from "../src/backends/boat/reach-bb.ts";
+import { BoatOwner } from "../src/backends/boat/owner.ts";
 import { setupDir } from "../src/backends/setup-dir.ts";
 import { FAKE_BOAT_KEY, FakeBoat } from "./fake-boat.ts";
 import { FakeBoatGuest, GUEST_TOOLS_HERE, guestScriptsArchive } from "./fake-boat-guest.ts";
@@ -26,7 +27,7 @@ function setup(options: { now?: () => number; config?: Partial<typeof CONFIG>; t
   fakeSsh();
   const fake = new FakeBoat(options.now ? { now: options.now } : {});
   const storage = new MemoryStorage();
-  const context = testContext(storage, "inst1");
+  const context = testContext(storage, "inst1", { id: "boat" });
   const backend = disposed(new BoatBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, busyGivesUpAfterMs: 0, ownKeyScript: () => ":", settledScript: "true", cuaReadyScript: "true", kinds: ["linux", "linux-desktop-cpu", "android"], templates: { fingerprint: () => "fp1", setupArchive: NO_BUILDS }, ...(options.now ? { now: options.now } : {}) }));
   const templates: Record<string, string> = {};
   if (options.templates !== false) {
@@ -102,7 +103,7 @@ test("an acquire claims the box before boat makes anything, forks the kind's tem
   assert.equal(made.type, "small");
   assert.equal(made.ttlSeconds, 30 * 60);
   assert.equal(made.idempotencyKey, "bbbox-inst1-b1");
-  assert.deepEqual(made.labels, { [LABELS.install]: "inst1", [LABELS.box]: "b1", [LABELS.thread]: "thr_1", [LABELS.name]: "box-b1", [LABELS.kind]: "linux", [LABELS.created]: String(Date.parse("2030-01-01T00:00:00Z")) });
+  assert.deepEqual(made.labels, { [LABELS.install]: "inst1", [LABELS.backend]: "boat", [LABELS.box]: "b1", [LABELS.thread]: "thr_1", [LABELS.name]: "box-b1", [LABELS.kind]: "linux", [LABELS.created]: String(Date.parse("2030-01-01T00:00:00Z")) });
   assert.equal(made.name, sandboxName(box("b1")));
   assert.equal(fake.calls.find((call) => call.path.endsWith("/fork"))?.body.noEnv, true, "a box never gets the account's secrets");
   assert.equal(fake.calls.find((call) => call.path.endsWith("/fork"))?.body.monitoring, false, "boat keeps no process log of a box, which costs it CPU");
@@ -169,7 +170,7 @@ test("capacity says when BB Box's most boxes, the plan's sandboxes, the starts a
   await backend.acquire(box("b1"), null, hooks().hooks, signal());
   const full = await backend.capacity("linux", SMALL, []);
   assert.equal(full.ok, false);
-  assert.match(full.message!, /1 of the 1 boat sandboxes/);
+  assert.match(full.message!, /^boat.dev has 1 of the 1 sandboxes BB Box may run on it at once/);
   const large = await setup().backend.capacity("linux", { cores: 8, memoryMiB: 16384, diskGiB: null }, []);
   assert.equal(large.ok, false);
   assert.match(large.message!, /large size would hold 8 cores and 16 GiB, but the plan does not allow it now/);
@@ -284,7 +285,8 @@ function templateWorld(options: { readonly holdSteps?: boolean; readonly guestRe
   const deps = (overrides: Partial<TemplateDeps> = {}): TemplateDeps => ({
     api: new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, sleep: async () => {} }),
     storage,
-    installId: "inst1",
+    owner: new BoatOwner("boat", "inst1"),
+    logName: "boat",
     labelKeys: LABEL_KEYS,
     publicKey: async () => "ssh-ed25519 AAAAkey",
     reach: async (sandbox, user) => reached(sandbox, user),
@@ -325,7 +327,7 @@ test("with no template, the first box waits for its build and says so; the build
 
     const built = world.fake.sandboxes.get(record.sandbox)!;
     assert.equal(built.state, "archived", "a template waits stopped");
-    assert.deepEqual(built.labels, { [LABELS.install]: "inst1", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" });
+    assert.deepEqual(built.labels, { [LABELS.install]: "inst1", [LABELS.backend]: "boat", [LABELS.role]: TEMPLATE_ROLE, [LABELS.kind]: "linux", [LABELS.key]: "fp1" });
     assert.equal(built.type, "default");
     assert.equal(built.name, templateName("linux", "ready"), "named a template only once its fork passed the check");
 
@@ -791,7 +793,8 @@ test("the upkeep keeps a build and a trial the next BB Box follows, and deletes 
   const templates = new BoatTemplates({
     api: new BoatApi({ key: FAKE_BOAT_KEY, fetch: fake.fetch, sleep: async () => {} }),
     storage: new MemoryStorage(),
-    installId: "inst1",
+    owner: new BoatOwner("boat", "inst1"),
+    logName: "boat",
     labelKeys: LABEL_KEYS,
     publicKey: async () => "ssh-ed25519 AAAAkey",
     reach: async () => ({ run: async () => OK_RUN }),
@@ -834,7 +837,7 @@ test("the guest's answers read as the build's step: a code wins, then a process 
 
 test("boat offers linux and the CPU desktop, both VMs with KVM, the desktop with BB Box's own VNC, Selkies and Cua Driver", () => {
   fakeSsh();
-  const backend = disposed(new BoatBackend(CONFIG, testContext(new MemoryStorage(), "inst1"), { fetch: new FakeBoat().fetch, sshBinary: FAKE_SSH_BINARY, templates: { setupArchive: NO_BUILDS } }));
+  const backend = disposed(new BoatBackend(CONFIG, testContext(new MemoryStorage(), "inst1", { id: "boat" }), { fetch: new FakeBoat().fetch, sshBinary: FAKE_SSH_BINARY, templates: { setupArchive: NO_BUILDS } }));
   assert.deepEqual(backend.kinds().map((kind) => kind.id), ["linux", "linux-desktop-cpu"]);
   assert.deepEqual(backend.kinds()[0]!.capabilities.features, ["docker", "kernel", "kvm"]);
   const desktop = backend.kinds()[1]!.capabilities;
@@ -869,7 +872,7 @@ test("BB's URL on a private network, with no tailnet, is said plainly with its f
 
   fakeSsh();
   const fake = new FakeBoat();
-  const context = { ...testContext(new MemoryStorage(), "inst1"), bbUrl: () => "https://bb.example.com" };
+  const context = { ...testContext(new MemoryStorage(), "inst1", { id: "boat" }), bbUrl: () => "https://bb.example.com" };
   const backend = disposed(new BoatBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, busyGivesUpAfterMs: 0, resolve: async () => ["10.0.0.69"], ownKeyScript: () => ":", settledScript: "true", templates: { fingerprint: () => "fp1", setupArchive: NO_BUILDS } }));
   const check = (await backend.doctor()).checks.find((each) => each.id === "boat.bb")!;
   assert.equal(check.status, "warn");

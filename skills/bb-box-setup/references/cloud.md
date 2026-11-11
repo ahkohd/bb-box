@@ -102,6 +102,24 @@ grep '^BOAT_API_KEY=' "$BB_THREAD_STORAGE/bb-box.env" | \
 A plain `linux` box goes to boat.dev only when no other backend has room.
 Prove it with `bb box acquire linux --on boat`, and release it.
 
+A person with more than one boat.dev account adds each as a backend of its
+own, with its own key, made while signed in to that account, and its own
+`--id` of at most 13 characters:
+
+```sh
+grep '^BOAT_API_KEY_B=' "$BB_THREAD_STORAGE/bb-box.env" | \
+  bb box backend add boat --id team-b --secret api-key=BOAT_API_KEY_B --secrets-stdin \
+    --field most-boxes=2
+```
+
+Its ID is `boat:team-b`, and kinds, `--on` and `box_list` call it
+boat.dev (team-b). The first keeps the ID `boat`. A new box goes to the
+first with room. Each labels its sandboxes with its ID, counts only its own
+against Most boxes, names its own saved snapshots, and builds its own
+templates, so its first box of each kind waits about 6 minutes, or 13 for a
+desktop. Add `--projects` to keep it for some BB projects. Prove it with
+`bb box acquire linux --on boat:team-b`, and release it.
+
 ## After each
 
 `bb box doctor` checks the token, the limits and what bb-box has made there.

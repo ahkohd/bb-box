@@ -410,7 +410,7 @@ export function configCommands(configuration: Configuration, projects: () => Pro
       summary:
         "Add a backend, on unless --off, through the same checked save as the settings page, then run its checks. Secrets come only from a dotenv file or stdin. Exits 2 when it saved and its checks failed.",
       positionals: [{ name: "type", description: "The type, from bb box backend types, such as docker or ssh-pool.", required: true }],
-      options: { ...backendOptions(), id: { type: "string", description: "Its ID, for a second backend of a type that allows several, such as docker:build-1 for another Docker host or namespace:team-b for another Namespace workspace, or just build-1 or team-b. The type by default." } },
+      options: { ...backendOptions(), id: { type: "string", description: "Its ID, for a second backend of a type that allows several, such as docker:build-1 for another Docker host or namespace:team-b for another Namespace workspace or boat:team-b for another boat.dev account, or just build-1 or team-b. The type by default." } },
       run: async ({ positionals, options }, ctx) => {
         const id = backendIdOf(positionals.type, options.id);
         const enabled = options.off ? false : true;

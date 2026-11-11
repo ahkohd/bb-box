@@ -28,7 +28,7 @@
 | [`bb box image list`](#bb-box-image-list) | List projects' images (049): each one's kinds, projects, how it is baked, where its script came from, and its builds. |
 | [`bb box image show`](#bb-box-image-show) | Print a project's image's script, and its check, as BB Box keeps them (049). |
 | [`bb box image try`](#bb-box-image-try) | Try a project's image's script as a build runs it (049), on a kind it covers, and remove what the try made. It prints each check's result and the build's last lines, and exits 1 if one failed. |
-| [`bb box images list`](#bb-box-images-list) | List the standard images BB Box rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first. Then the images a backend builds and refreshes by itself, such as each Namespace backend's Linux images in its workspace's registry; `--json` gives only the first. |
+| [`bb box images list`](#bb-box-images-list) | List the standard images BB Box rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first. Then the images a backend builds and refreshes by itself, such as each Namespace backend's Linux images in its workspace's registry and each boat.dev backend's templates; `--json` gives only the first. |
 | [`bb box images refresh`](#bb-box-images-refresh) | Rebuild the standard images that are due (049), one at a time, most needed first, and start none after the time limit. A BB script automation runs it each night. It ends with a line per image, and exits 1 if one failed. Should this command end first, the run goes on. |
 | [`bb box images build`](#bb-box-images-build) | Rebuild one standard image now, due or not, and whatever its last rebuild did (049), and replace it when its trial box passes. `--try` checks a new build and keeps the old one. |
 | [`bb box images versions`](#bb-box-images-versions) | Show what a rebuild of the standard Linux images would take now (049): upstream's latest stable Claude Code, Codex, pi, gh and Chrome, each with the SHA-256 it publishes, and the day's apt snapshot, against this BB Box's pins. |
@@ -467,7 +467,7 @@ Options:
 
 ## bb box images list
 
-List the standard images BB Box rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first. Then the images a backend builds and refreshes by itself, such as each Namespace backend's Linux images in its workspace's registry; `--json` gives only the first.
+List the standard images BB Box rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first. Then the images a backend builds and refreshes by itself, such as each Namespace backend's Linux images in its workspace's registry and each boat.dev backend's templates; `--json` gives only the first.
 
 ```text
 Usage:
@@ -716,7 +716,7 @@ Options:
   --warm <kind=count>         Ready boxes of a kind to keep waiting here, such as linux=1; 0 keeps none. (repeatable)
   --projects <names>          The BB projects it is kept for, by name or ID, separated by commas. Only their threads see it and get boxes, spares and forks from it, before the shared backends. Empty serves every project, as by default.
   --no-doctor                 Do not run the backend's checks after saving.
-  --id <value>                Its ID, for a second backend of a type that allows several, such as docker:build-1 for another Docker host or namespace:team-b for another Namespace workspace, or just build-1 or team-b. The type by default.
+  --id <value>                Its ID, for a second backend of a type that allows several, such as docker:build-1 for another Docker host or namespace:team-b for another Namespace workspace or boat:team-b for another boat.dev account, or just build-1 or team-b. The type by default.
   --help, -h                  Show this help and exit
 ```
 
