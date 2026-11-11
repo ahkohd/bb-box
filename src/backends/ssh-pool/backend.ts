@@ -73,6 +73,18 @@ import { EXAMPLE, SLOT_KIND, hostKeysFor, type SshPoolConfig, type SshPoolHost, 
 import { PoolSlots, lendingSlots, lendingWords, listsSlots, poolSlotOf, slotDeviceOffer, slotsSetUp, type PoolMacView } from "./slots.ts";
 import { EXIT, HELPER_COMMAND, HELPER_VERSION, claimInput, fields, grantInput, parseDisplay, parseGrant, parseGranted, parseStatus, releaseInput, type MacStatus, type MachineStatus, type Marker, type Xcode } from "./protocol.ts";
 import { storedKeyPair } from "../ssh-key.ts";
+import {
+  SNAPSHOT_REPORT_KEY_PREFIX,
+  machineSnapshotsCheck,
+  noSnapshotsWhy,
+  offersOf,
+  parseSnapshotReport,
+  poolSnapshotsSummary,
+  snapshotReportFromJson,
+  snapshotReportKey,
+  type PoolMachineOffers,
+  type PoolSnapshotReport,
+} from "./snapshot-report.ts";
 import { PRODUCT } from "../../brand.ts";
 
 const SSH_KEY = "ssh-key";
@@ -86,6 +98,7 @@ const POOL_HOST = "SSH host pool";
 const READY_TIMEOUT_MS = 60_000;
 const STATUS_TIMEOUT_MS = 20_000;
 const CLAIM_TIMEOUT_MS = 60_000;
+const SNAPSHOT_PROBE_TIMEOUT_MS = 60_000;
 /** The helper waits this long for its lock, and a whole-machine reset may take as long. */
 const RESET_TIMEOUT_MS = 15 * 60_000;
 const RESET_POLL_MS = 2_000;
@@ -237,7 +250,12 @@ interface SshKeys {
 
 type Check = readonly [id: CheckId, name: string];
 /** What a machine's checks are of: machine.<name>.<what> in the catalog. */
-type MachineCheck = "ssh" | "sizes" | "helper" | "arch" | "tools" | "docker" | "state" | "filevault" | "signin" | "fulldisk" | "homes" | "sip" | "screensharing" | "grants" | "xcode" | "input" | "slots";
+type MachineCheck = "ssh" | "sizes" | "helper" | "arch" | "tools" | "docker" | "state" | "filevault" | "signin" | "fulldisk" | "homes" | "sip" | "screensharing" | "grants" | "xcode" | "input" | "slots" | "snapshots";
+
+interface SnapshotProbe {
+  readonly report: PoolSnapshotReport | null;
+  readonly why: string | null;
+}
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 const MACHINES_CHECK: Check = ["machines", "Machines"];
 const DOCKER_CHECK: Check = ["docker", "Docker"];
@@ -431,6 +449,7 @@ export class SshPoolBackend implements Backend {
   readonly slots: PoolSlots;
   #slotDevice: DeviceOffer | null = null;
   readonly #probes: MacProbeCache;
+  readonly #snapshotReports = new Map<string, PoolSnapshotReport>();
 
   constructor(config: SshPoolConfig, context: BackendContext, options: SshPoolBackendOptions = {}) {
     this.id = context.id;
@@ -452,7 +471,44 @@ export class SshPoolBackend implements Backend {
     void loadReports(context.storage)
       .then((reports) => reports.forEach((report) => this.#machines.has(report.mac) && this.#probes.remember(report)))
       .catch((error) => this.#context.logError("read what the pool's Macs offer", error));
+    void this.#loadSnapshotReports().catch((error) => this.#context.logError("read whether the pool's machines snapshot", error));
     this.slots = this.#poolSlots();
+  }
+
+  async #loadSnapshotReports(): Promise<void> {
+    for (const key of await this.#context.storage.list(SNAPSHOT_REPORT_KEY_PREFIX)) {
+      const report = snapshotReportFromJson(await this.#context.storage.get<unknown>(key));
+      if (report && this.#machines.has(report.machine)) this.#rememberSnapshotReport(report, false);
+    }
+  }
+
+  #rememberSnapshotReport(report: PoolSnapshotReport, keep = true): void {
+    const known = this.#snapshotReports.get(report.machine);
+    if (known && known.at >= report.at) return;
+    this.#snapshotReports.set(report.machine, report);
+    if (keep) void this.#context.storage.set(snapshotReportKey(report.machine), report).catch((error) => this.#context.logError(`keep whether ${report.machine} snapshots`, error));
+  }
+
+  async #probeSnapshots(machine: SshPoolMachine, signal?: AbortSignal): Promise<SnapshotProbe> {
+    let result: RunResult;
+    try {
+      result = await this.#helper(machine, ["snapshot", "probe"], null, SNAPSHOT_PROBE_TIMEOUT_MS, signal);
+    } catch (error) {
+      signal?.throwIfAborted();
+      return { report: null, why: `it did not answer its snapshot probe: ${message(error)}` };
+    }
+    if (result.exitCode === EXIT.usage) return { report: null, why: `its helper is older than this ${PRODUCT}'s, and does not probe whether it can snapshot` };
+    if (result.exitCode !== EXIT.ok) return { report: null, why: `its snapshot probe failed: ${said(result)}` };
+    const report = parseSnapshotReport(result.stdout, machine.name);
+    if (!report) return { report: null, why: "its snapshot probe gave no report" };
+    this.#rememberSnapshotReport(report);
+    return { report, why: null };
+  }
+
+  noSnapshotsWhy(guest: Guest): string | null {
+    const machine = this.#machines.get(poolSlotOf(guest)?.mac ?? guest.ref);
+    if (!machine) return null;
+    return noSnapshotsWhy(machine, this.#snapshotReports.get(machine.name) ?? null, listsSlots(machine));
   }
 
   async #probeRun(mac: string, script: string, signal?: AbortSignal): Promise<string> {
@@ -1303,6 +1359,8 @@ export class SshPoolBackend implements Backend {
       );
     }
 
+    checks.push(...(await this.#snapshotChecks(views, signal)));
+
     for (const machine of this.#measuredMacs()) {
       const reachable = views.some((view) => view.machine === machine && !view.probe.unreachable);
       const report = reachable ? await this.#probes.measure(machine.name, signal).catch(() => this.#probes.report(machine.name)) : this.#probes.report(machine.name);
@@ -1318,6 +1376,26 @@ export class SshPoolBackend implements Backend {
       checks,
       notes,
     };
+  }
+
+  async #snapshotChecks(views: readonly View[], signal?: AbortSignal): Promise<DoctorCheck[]> {
+    if (!this.#config.machines.length) return [];
+    const answering = (machine: SshPoolMachine) => views.some((view) => view.machine === machine && view.probe.status?.helper != null);
+    const probes = await Promise.all(this.#config.machines.map(async (machine) => [machine, answering(machine) ? await this.#probeSnapshots(machine, signal) : null] as const));
+
+    const now = Date.now();
+    const checks: DoctorCheck[] = [];
+    const offers: PoolMachineOffers[] = [];
+    for (const [machine, probe] of probes) {
+      const report = probe?.report ?? this.#snapshotReports.get(machine.name) ?? null;
+      const unknownWhy = probe?.why ?? (probe ? null : "it did not answer the doctor");
+      const setupCommand = `${setupWords(machine)} on ${machine.name} ${setupAs(machine)}`;
+      checks.push(machineSnapshotsCheck({ id: `machine.${machine.name}.snapshots`, name: `${machine.name}: snapshots`, machine, listsSlots: listsSlots(machine), report, unknownWhy, setupCommand, now }));
+      offers.push({ machine, offers: report ? offersOf(report, machine, listsSlots(machine)) : null });
+    }
+
+    checks.push(poolSnapshotsSummary("snapshot-offers", offers));
+    return checks;
   }
 
   /**
@@ -1523,7 +1601,11 @@ export class SshPoolBackend implements Backend {
   async #status(machine: SshPoolMachine, signal?: AbortSignal, extra: "grants" | "xcode" | null = null): Promise<Probe> {
     try {
       const result = await this.#helper(machine, ["status", ...(extra ? [extra] : [])], null, STATUS_TIMEOUT_MS, signal);
-      if (result.exitCode === 0) return { status: parseStatus(result.stdout), unreachable: false, problem: null };
+      if (result.exitCode === 0) {
+        const snapshots = parseSnapshotReport(result.stdout, machine.name);
+        if (snapshots) this.#rememberSnapshotReport(snapshots);
+        return { status: parseStatus(result.stdout), unreachable: false, problem: null };
+      }
       return { status: null, unreachable: result.exitCode === 255 || result.timedOut, problem: said(result) };
     } catch (error) {
       signal?.throwIfAborted();

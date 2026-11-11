@@ -1,6 +1,6 @@
-import type { MachineSize, Holds, Price, SnapshotSize } from "../backends/types.ts";
+import type { MachineSize, Holds, Price, SnapshotScope, SnapshotSize } from "../backends/types.ts";
 import { SNAPSHOT_LIMITS } from "../core/document.ts";
-import { keptUntilAfter, utcDay } from "../core/snapshot.ts";
+import { keptUntilAfter, scopeFootnote, scopeHoldsWords, utcDay } from "../core/snapshot.ts";
 import type { BoxSnapshotsView, RestorePreview, SnapshotRowView } from "../plugin/contract.ts";
 import { PRODUCT } from "./product.ts";
 import { THIS_BOX_THREAD } from "./thread-title.ts";
@@ -97,15 +97,14 @@ export function snapshotPriceWords(price: Price | null): string | null {
   return `${symbol}${price.amount} ${price.per === "GB-month" ? "a GB a month" : `a ${price.per}`}${price.included ? ` past the plan's ${price.included}` : ""}`;
 }
 
-export function holdsWords(holds: Holds, scope: "box" | "device" = "box"): string {
-  if (scope === "device") return "device";
-  return holds === "disk" ? "disk" : "disk and memory";
+export function holdsWords(holds: Holds, scope: SnapshotScope = "box"): string {
+  return scopeHoldsWords(scope, holds);
 }
 
 export function offerHoldsWords(view: Pick<BoxSnapshotsView, "offer">): string {
   const offer = view.offer;
   if (!offer) return "";
-  if (offer.scope === "device") return "device";
+  if (offer.scope !== "box") return holdsWords(offer.holds[0] ?? "disk", offer.scope);
   return offer.holds.map((holds) => holdsWords(holds)).join(", or ");
 }
 
@@ -118,7 +117,7 @@ export function footerWords(view: BoxSnapshotsView, boxName: string): string {
   const offer = view.offer;
   if (!offer) return view.noneWhy ?? "";
   const leaves = offer.excludes ? ` They leave out ${offer.excludes}.` : "";
-  if (offer.scope === "device") return `Snapshots hold the device: its disk and memory, the apps open on it. A restore puts back the device only, not the rest of ${boxName}.${leaves} They go when ${boxName} is released.`;
+  if (offer.scope !== "box") return `${scopeFootnote(offer.scope, boxName)}${leaves} They go when ${boxName} is released.`;
   const holds = offer.holds.length === 2 ? "Snapshots hold the disk, or the disk and memory when asked." : offer.holds[0] === "disk" ? "Snapshots hold the disk." : `Snapshots hold the disk and memory: ${boxName} pauses for each.`;
   return `${holds}${leaves} They go when ${boxName} is released${offer.keeps ? ", unless kept" : ""}.`;
 }
@@ -201,4 +200,15 @@ export function undoLabel(preview: RestorePreview): string {
 
 export function requestId(): string {
   return crypto.randomUUID().replace(/-/g, "");
+}
+
+export function narrowerScopeHoldsLine(scope: Exclude<SnapshotScope, "box">, boxName: string): string {
+  switch (scope) {
+    case "device":
+      return `It holds the device: its disk and memory, with the apps open on it. The rest of ${boxName} is not in it.`;
+    case "home":
+      return `It holds ${boxName}'s home folder: its files, settings and keychain. Not apps installed on the machine, files outside the home, or anything running.`;
+    case "machine":
+      return "It holds the whole machine's disk, by its operator's snapshot hook. Not its memory or anything running.";
+  }
 }

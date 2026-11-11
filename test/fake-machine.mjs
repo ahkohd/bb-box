@@ -101,6 +101,25 @@ function macLines(extra) {
   return lines;
 }
 
+function snapshotReport() {
+  const homes = mac ? "/Users" : "/home";
+  const way = flag("homes-snapshot");
+  const lines = ["snapshot.probe=1", `snapshot.at=${Math.floor(Date.now() / 1000)}`, `snapshot.homes=${homes}`, `snapshot.filesystem=${flag("homes-fs") ?? (mac ? "apfs" : "ext4")}`, "snapshot.free_kib=41943040"];
+  if (way) lines.push("snapshot.home=yes", `snapshot.home.how=${way}`, ...(way === "zfs" ? ["snapshot.zfs.dataset=rpool/home"] : []));
+  else lines.push("snapshot.home=no", ...(flag("homes-why") ? [`snapshot.home.why=${flag("homes-why")}`] : []));
+  if (flag("snapshot-left") !== null) lines.push(`snapshot.left=${flag("snapshot-left")}`);
+  if (flag("hook-fails") !== null) lines.push("snapshot.hook=failed", `snapshot.hook.why=it exited with 1: ${flag("hook-fails")}`);
+  else if (flag("snapshot-hook") !== null) lines.push("snapshot.hook=found", `snapshot.hook.describe=${flag("snapshot-hook")}`);
+  else lines.push("snapshot.hook=none");
+  return `${lines.join("\n")}\n`;
+}
+
+function snapshot(what) {
+  if (flag("no-snapshot") !== null || what !== "probe") quit(EXIT.usage, "usage: machine status | claim | release | reset | init");
+  writeFileSync(join(state, "snapshots"), snapshotReport());
+  process.stdout.write(read("snapshots"));
+}
+
 function status(...args) {
   if (mac && flag("no-status-xcode") !== null && args[0] === "xcode") quit(EXIT.usage, "usage: machine status [grants]");
   if (mac && !(args.length === 0 || (args.length === 1 && ["grants", "xcode"].includes(args[0])))) quit(EXIT.usage, "usage: machine status [grants | xcode]");
@@ -115,6 +134,7 @@ function status(...args) {
   if (flag("no-enrolment") === null) lines.push(`node=${flag("node") ?? "v24.21.0"}`, `lacks=${flag("lacks") ?? ""}`);
   lines.push(`dirty=${kind === "none" ? (flag("dirty") ?? "") : ""}`);
   if (mac) lines.push(...macLines(args[0]));
+  if (read("snapshots") !== null) lines.push(read("snapshots").trim());
   console.log(lines.join("\n"));
 }
 
@@ -276,6 +296,7 @@ else if (verb === "granted") granted(...args);
 else if (verb === "claim") claim(...args);
 else if (verb === "release") release(...args);
 else if (verb === "reset") reset(...args);
+else if (verb === "snapshot") snapshot(...args);
 else if (verb === "init") {
   if (generation() === null) writeFileSync(join(state, "generation"), "0\n");
   console.log(`generation=${generation()}`);
