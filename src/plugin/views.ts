@@ -10,7 +10,7 @@ import { offerSnapshotWords } from "./snapshot-words.ts";
 import type { Versions } from "../backends/versions.ts";
 import type { TryResult } from "./bakes.ts";
 import type { Draft } from "../core/draft.ts";
-import type { ImageView } from "./images.ts";
+import type { ImageView, OwnImagesOf } from "./images.ts";
 import { OPERATOR, RELEASE_OR_DELETE_KEPT, extraFeatures, forkedFromWords, isAcquiring, resizingWords, stopWords, type BoxImage, type BoxRecord, type BoxState, type EnrolState, type KindChange, type ResizeAnswer, type UserspaceInstalled } from "../core/boxes.ts";
 import type { ControlView } from "../core/control.ts";
 import type { Problem } from "../core/document.ts";
@@ -370,7 +370,7 @@ export function kindViews(
     const hosts = backend.hosts ?? [];
     const offer: OfferView = {
       backend: backend.id,
-      name: providerName({ label, hosts, type }),
+      name: providerName({ label, hosts, id: backend.id }),
       type,
       label,
       hosts,
@@ -847,6 +847,17 @@ export function imageLine(view: ImageView): string {
   const reason = (view.last?.reason ?? "").replace(/\.+$/, "");
   const last = view.last ? `; last rebuild ${new Date(view.last.at).toISOString().slice(0, 10)} ${view.last.ok ? "passed" : view.last.waiting ? `waited: ${reason}` : `failed: ${reason}`}` : "";
   return `${view.name} (${view.build.kind}): ${built}; ${view.due ? `due, as ${view.due}` : "not due"}${last}.`;
+}
+
+export function ownImageLines(of: OwnImagesOf, now = Date.now()): string[] {
+  return of.images.map((image) => {
+    const name = `${of.backend}/${image.kind} (${image.kind})`;
+    const building = image.building ? "; being built now" : "";
+    if (!image.ref || image.builtAt === null) return `${name}: not built yet; ${of.label} builds it when a box first needs it${building}.`;
+    const days = Math.floor((now - image.builtAt) / 86_400_000);
+    const due = image.due ? `due, as ${image.due}` : "not due";
+    return `${name}: ${image.ref}, ${days === 0 ? "built today" : `${days} days old`}; ${due}${building}; ${of.label} builds and refreshes it by itself.`;
+  });
 }
 
 /**

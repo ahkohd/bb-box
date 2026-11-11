@@ -1028,6 +1028,31 @@ test("the configuration takes several Docker backends, one per host, and still o
   assert.match(problems([lxc, { ...lxc, id: "proxmox-lxc:two" }])[0]?.message ?? "", /BB Box runs one Proxmox LXC backend for now/);
 });
 
+test("the configuration takes several Namespace backends, even on one workspace with one token, each with its own fields (#1455)", () => {
+  const namespace = (id: string, machines: number) => ({ id, type: "namespace", enabled: true, fields: { token: "nsct_one", machines, "longest-life-hours": 5 } });
+  const { document, secrets, problems } = readDraft({ schema: 1, backends: [namespace("namespace", 2), namespace("namespace:team-b", 4)], kinds: {}, general: {} }, DRIVERS);
+
+  assert.deepEqual(problems, []);
+  assert.deepEqual(checkDocument(document, secrets as Secrets, DRIVERS), []);
+  assert.deepEqual(document.backends.map((backend) => [backend.id, backend.fields.machines]), [["namespace", 2], ["namespace:team-b", 4]]);
+});
+
+test("a Namespace backend's name is at most 15 characters, so each of its machines keeps a tailnet name of its own, whatever the install's ID (#1455)", () => {
+  const namespace = (id: string) => ({ id, type: "namespace", enabled: true, fields: { token: "nsct_one" } });
+  const read = (id: string) => readDraft({ schema: 1, backends: [namespace("namespace"), namespace(id)], kinds: {}, general: {} }, DRIVERS);
+  const docker = (id: string) => readDraft({ schema: 1, backends: [{ id, type: "docker", enabled: true, fields: {} }], kinds: {}, general: {} }, DRIVERS);
+
+  const longest = read(`namespace:${"a".repeat(15)}`);
+  const tooLong = read(`namespace:${"a".repeat(16)}`);
+
+  assert.deepEqual(longest.problems, []);
+  assert.deepEqual(longest.document.backends.map((backend) => backend.id), ["namespace", `namespace:${"a".repeat(15)}`]);
+  assert.deepEqual(tooLong.problems.map((problem) => `${problem.path}: ${problem.message}`), [
+    `backends.1.id: A Namespace backend's name is at most 15 characters, so each of its machines keeps a tailnet name of its own. Give namespace:${"a".repeat(16)} a shorter name.`,
+  ]);
+  assert.deepEqual(docker(`docker:${"a".repeat(40)}`).problems, [], "a type with no limit takes any name the ID allows");
+});
+
 test("files for every box: paths checked, contents kept as secrets only, and never in a problem, an export or the stored document (#455)", () => {
   const SECRET = '{"providers":{"example":{"apiKey":"sk-secret-value"}}}';
   const draft = readDraft(

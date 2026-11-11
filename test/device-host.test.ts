@@ -110,6 +110,8 @@ test("the legal shapes of hosts and slots read back whole; the illegal ones that
   refused(parseDeviceHost(illegal.tartLentWhole), /^host\.state\.is must be "starting"/);
   refused(parseDeviceHost(illegal.tartWithAnEnd), /^host has "endsAt", which it does not take\./);
   refused(parseDeviceHost(illegal.namespaceWithNoEnd), /^host\.endsAt must be a whole number/);
+  refused(parseDeviceHost({ ...legal.namespace, backend: "" }), /^host\.backend must be text, not ""\.$/);
+  refused(parseDeviceHost({ ...legal.namespace, backend: 3 }), /^host\.backend must be text, not 3\.$/);
   refused(parseDeviceHost({ ...legal.tartStarting, state: { is: "starting", promised: Array.from({ length: 9 }, (_, index) => `bx${index}`), since: 0 } }), /has 9 boxes, more than the host's 8 slots\.$/);
   refused(parseDeviceHost({ ...legal.tartStarting, state: { is: "starting", promised: ["bx1", "bx1"], since: 0 } }), /names a box twice\.$/);
   refused(parseDeviceHost({ ...legal.tartStarting, settings: { most: 8, ahead: 9, resettingMost: 4 } }), /^host\.settings\.ahead must be a whole number from 0 to 8, not 9\.$/);
@@ -120,6 +122,15 @@ test("the legal shapes of hosts and slots read back whole; the illegal ones that
   refused(parseSlot({ host: "h", carried: false, generation: 1, state: illegal.heldMacosWithADevice }), /^slot\.state has "device", which it does not take\./);
   refused(parseSlot({ host: "h", carried: false, generation: 1, state: illegal.heldForLinux }), /^slot\.state\.for must be "ios" or "macos", not "linux"\.$/);
   refused(parseSlot({ host: "h", carried: false, generation: 1, state: illegal.androidInASlot }), /^slot\.state\.device\.model must be "iPhone 18 Pro"/);
+});
+
+test("a Namespace host written before several workspaces, with no backend, reads as the first Namespace backend's (#1455)", () => {
+  const writtenBeforeSeveralWorkspaces =
+    '{"id":"bb-box-host-1","runtime":{"platform":"ios","os":"27.0","build":"24A434","xcode":"27A266a","companion":"1.7.7"},"cores":8,"memoryGiB":32,"settings":{"most":8,"ahead":1,"resettingMost":4},"on":"namespace","instance":"ns-1","endsAt":0,"state":{"is":"draining","why":"ending","lends":false,"since":0}}';
+
+  const parsed = parseDeviceHost(JSON.parse(writtenBeforeSeveralWorkspaces));
+
+  assert.deepEqual(parsed, { ok: true, value: { ...legal.namespace, backend: "namespace" } });
 });
 
 test("a host's ready slots go to its boxes in the order they asked: the k-th box still looking takes the k-th free slot, carried first; one making its own slot or claiming one holds no other back (F-11)", () => {

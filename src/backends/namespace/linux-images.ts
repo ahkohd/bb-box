@@ -5,7 +5,8 @@ import { abortable } from "../../core/abortable.ts";
 import { hashDockerSetup } from "../docker/setup-hash.ts";
 import { setupDir } from "../setup-dir.ts";
 import type { BackendStorage } from "../types.ts";
-import type { InstanceShape, NamespaceApi } from "./api.ts";
+import type { Instance, InstanceShape, NamespaceApi } from "./api.ts";
+import { INSTALL_LABEL, type NamespaceOwner } from "./owner.ts";
 import { PRODUCT } from "../../brand.ts";
 
 export const LINUX_IMAGE_TARGETS = {
@@ -79,8 +80,8 @@ export interface CommandResult {
 export interface LinuxImageDeps {
   readonly api: NamespaceApi;
   readonly storage: BackendStorage;
-  readonly labels: Readonly<Record<string, string>>;
-  readonly uniqueTag: (target: LinuxImageTarget) => string;
+  readonly owner: NamespaceOwner;
+  readonly label: string;
   readonly now: () => number;
   readonly publicKey: () => Promise<string>;
   readonly answers: (instance: string, signal: AbortSignal) => Promise<void>;
@@ -91,7 +92,7 @@ export interface LinuxImageDeps {
   readonly log: (line: string) => void;
   readonly fingerprint?: () => string;
   readonly setupArchive?: () => Promise<Buffer>;
-  readonly buildScript?: (target: LinuxImageTarget, key: string, bbUrl: string | null) => string;
+  readonly buildScript?: (target: LinuxImageTarget, tag: string, bbUrl: string | null) => string;
   readonly leaveTailnet?: (instance: string, name: string) => Promise<void>;
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
@@ -121,7 +122,7 @@ export const WORKSPACE_FROM_METADATA = [
   `workspace=$(grep -o '"tenant_id" *: *"[^"]*"' "$meta" 2>/dev/null | head -n 1 | sed 's/.*: *"//; s/"$//; s/^tenant_//')`,
 ].join("\n");
 
-export function linuxImageBuildScript(target: LinuxImageTarget, key: string, bbUrl: string | null): string {
+export function linuxImageBuildScript(target: LinuxImageTarget, tag: string, bbUrl: string | null): string {
   const quote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
   return [
     "set -eu",
@@ -129,7 +130,7 @@ export function linuxImageBuildScript(target: LinuxImageTarget, key: string, bbU
     'tar -xzf - -C "$work"',
     WORKSPACE_FROM_METADATA,
     '[ -n "$workspace" ] || { echo "Namespace\'s metadata names no workspace, so the image has nowhere to go." >&2; exit 3; }',
-    `ref="nscr.io/$workspace/bbbox/${target}:${key}"`,
+    `ref="nscr.io/$workspace/bbbox/${target}:${tag}"`,
     `bash "$work/setup/docker/build.sh" ${bbUrl ? `--bb-url ${quote(bbUrl)} ` : ""}--tag "$ref" ${target} >&2`,
     'docker push -q "$ref" >&2',
     'echo "$ref"',
@@ -222,12 +223,18 @@ export class LinuxImages {
       const saved = await this.#saved(target);
       if (saved) followed.add(saved.instance);
     }
-    for (const instance of await deps.api.list({ ...deps.labels, "bbbox-role": IMAGE_BUILD_ROLE }, signal)) {
+    for (const instance of await this.buildInstances(signal)) {
       if (instance.status !== "running" || followed.has(instance.id)) continue;
       if (instance.createdAt !== null && deps.now() - instance.createdAt < LEFT_BUILD_GRACE_MS) continue;
       await deps.api.destroy(instance.id, "bb-box: no image build follows it", signal).catch(() => undefined);
-      deps.log(`Namespace: destroyed build instance ${instance.id}, which no image build of bb-box's follows.`);
+      deps.log(`${deps.label}: destroyed build instance ${instance.id}, which no image build of bb-box's follows.`);
     }
+  }
+
+  async buildInstances(signal?: AbortSignal): Promise<Instance[]> {
+    const deps = this.#deps;
+    const builds = await deps.api.list({ [INSTALL_LABEL]: deps.owner.installId, "bbbox-role": IMAGE_BUILD_ROLE }, signal);
+    return builds.filter((instance) => deps.owner.owns(instance.labels));
   }
 
   async key(signal?: AbortSignal): Promise<string> {
@@ -311,21 +318,21 @@ export class LinuxImages {
     if (saved) {
       const left = await deps.api.describe(saved.instance, signal).catch(() => null);
       if (left?.status === "running") {
-        deps.log(`Namespace: bb-box carries on with the ${target} image build in instance ${saved.instance}, from its ${saved.phase} step, which an earlier run of bb-box left.`);
+        deps.log(`${deps.label}: bb-box carries on with the ${target} image build in instance ${saved.instance}, from its ${saved.phase} step, which an earlier run of bb-box left.`);
       } else {
         await this.#end(target, saved, null);
         saved = undefined;
       }
     }
     if (!saved) {
-      deps.log(`Namespace: building the ${target} image in a Linux instance, as ${why}.`);
+      deps.log(`${deps.label}: building the ${target} image in a Linux instance, as ${why}.`);
       const made = await deps.api.create(
         {
           shape: BUILD_SHAPE,
-          labels: { ...deps.labels, "bbbox-role": IMAGE_BUILD_ROLE, "bbbox-target": target },
+          labels: { ...deps.owner.labels(), "bbbox-role": IMAGE_BUILD_ROLE, "bbbox-target": target },
           deadline: deps.now() + BUILD_LIFE_MS,
           purpose: `bb-box ${target} image build`,
-          uniqueTag: deps.uniqueTag(target),
+          uniqueTag: deps.owner.uniqueTag(`image-${target}`),
           sshPublicKeys: [await deps.publicKey()],
         },
         signal,
@@ -344,7 +351,7 @@ export class LinuxImages {
         leave = (await deps.joinTailnet?.(build.instance, `build-${target}`, signal)) ?? null;
         if (leave) await this.#save(target, (build = { ...build, tailnet: true }));
         const archive = await (deps.setupArchive ?? setupArchive)();
-        const inner = (deps.buildScript ?? linuxImageBuildScript)(target, key, deps.bbUrl());
+        const inner = (deps.buildScript ?? linuxImageBuildScript)(target, deps.owner.imageTag(key), deps.bbUrl());
         const started = await deps.run(build.instance, startDetachedBuildScript(target, inner), archive, 120_000, signal);
         if (started.exitCode !== 0) throw new Error(`The ${target} image build did not start in Namespace's instance ${build.instance}: ${started.stderr.trim().split("\n").slice(-3).join(" / ") || `exit ${started.exitCode}`}`);
         await this.#save(target, (build = { ...build, phase: "building" }));
@@ -353,13 +360,13 @@ export class LinuxImages {
       const record: LinuxImageRecord = { target, ref, key, builtAt: deps.now(), usedAt: (await this.record(target))?.usedAt ?? null, buildMs: deps.now() - build.startedAt };
       await deps.storage.set(`${RECORD_PREFIX}${target}`, record);
       ending = "done";
-      deps.log(`Namespace: built and pushed the ${target} image, ${ref}, in ${Math.round((deps.now() - build.startedAt) / 1000)} s.`);
+      deps.log(`${deps.label}: built and pushed the ${target} image, ${ref}, in ${Math.round((deps.now() - build.startedAt) / 1000)} s.`);
       return record;
     } catch (error) {
       if (this.#disposing.signal.aborted || STOPPING.test(error instanceof Error ? error.message : String(error))) ending = "left";
       throw error;
     } finally {
-      if (ending === "left") deps.log(`Namespace: bb-box stopped while it built the ${target} image in instance ${build.instance}, at its ${build.phase} step: it leaves the instance building, and the next run of bb-box carries on with it.`);
+      if (ending === "left") deps.log(`${deps.label}: bb-box stopped while it built the ${target} image in instance ${build.instance}, at its ${build.phase} step: it leaves the instance building, and the next run of bb-box carries on with it.`);
       else await this.#end(target, build, leave);
     }
   }
@@ -394,8 +401,8 @@ export class LinuxImages {
   async #end(target: LinuxImageTarget, build: SavedBuild, leave: (() => Promise<void>) | null): Promise<void> {
     const deps = this.#deps;
     const leaving = leave ?? (build.tailnet && deps.leaveTailnet ? () => deps.leaveTailnet!(build.instance, `build-${target}`) : null);
-    await leaving?.().catch((error) => deps.log(`Namespace: build instance ${build.instance} did not leave the tailnet: ${error instanceof Error ? error.message : String(error)}`));
-    await deps.api.destroy(build.instance, "bb-box: the image build ended").catch((error) => deps.log(`Namespace: could not destroy build instance ${build.instance}: ${error instanceof Error ? error.message : String(error)}`));
+    await leaving?.().catch((error) => deps.log(`${deps.label}: build instance ${build.instance} did not leave the tailnet: ${error instanceof Error ? error.message : String(error)}`));
+    await deps.api.destroy(build.instance, "bb-box: the image build ended").catch((error) => deps.log(`${deps.label}: could not destroy build instance ${build.instance}: ${error instanceof Error ? error.message : String(error)}`));
     await deps.storage.delete(`${BUILD_PREFIX}${target}`).catch(() => undefined);
   }
 }

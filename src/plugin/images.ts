@@ -10,7 +10,7 @@
  */
 import { createHash } from "node:crypto";
 import { judgeImage, prepareDigest, type ImageFacts, type PinSet } from "../backends/images.ts";
-import type { Backend, BackendStorage, DoctorCheck, ImageBuild } from "../backends/types.ts";
+import type { Backend, BackendStorage, DoctorCheck, ImageBuild, OwnImage } from "../backends/types.ts";
 import { resolveVersions, type Versions } from "../backends/versions.ts";
 import { refreshImage, type RefreshResult } from "../core/refresh.ts";
 import { defaultSize, kindSizes } from "../core/sizes.ts";
@@ -73,6 +73,12 @@ export interface ImageJobsDeps {
   /** Replace refreshImage and resolveVersions, for tests. */
   readonly refresh?: typeof refreshImage;
   readonly versions?: typeof resolveVersions;
+}
+
+export interface OwnImagesOf {
+  readonly backend: string;
+  readonly label: string;
+  readonly images: readonly OwnImage[];
 }
 
 /** What an image's last rebuild did. */
@@ -253,6 +259,19 @@ export class ImageJobs {
       views.push({ name, backend: backend.id, build, due: why?.[1] ?? null, last: await this.#state(name), rank: why?.[0] ?? 9 });
     }
     return views.sort((a, b) => a.rank - b.rank || a.name.localeCompare(b.name)).map(({ rank: _, ...view }) => view);
+  }
+
+  async ownImages(signal?: AbortSignal): Promise<OwnImagesOf[]> {
+    const found: OwnImagesOf[] = [];
+    for (const backend of this.#deps.backends()) {
+      if (!backend.ownImages) continue;
+      const images = await backend.ownImages(signal).catch((error: unknown) => {
+        this.#deps.log?.(`images: ${backend.id} did not list its own images: ${error instanceof Error ? error.message : String(error)}`);
+        return [];
+      });
+      found.push({ backend: backend.id, label: backend.label, images });
+    }
+    return found;
   }
 
   /** What an image is built from now: its pins, BB's app, the versions a rebuild takes, and its current build. */
