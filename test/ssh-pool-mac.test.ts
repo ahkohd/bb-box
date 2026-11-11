@@ -857,6 +857,8 @@ test("the doctor's status names the people whose homes box users can enter, as m
 
 /** macOS 27's TCC access table, as a Mac with SIP off showed it (058). */
 const TCC_SCHEMA = `CREATE TABLE access (service TEXT NOT NULL, client TEXT NOT NULL, client_type INTEGER NOT NULL, auth_value INTEGER NOT NULL, auth_reason INTEGER NOT NULL, auth_version INTEGER NOT NULL, csreq BLOB, policy_id INTEGER, indirect_object_identifier_type INTEGER, indirect_object_identifier TEXT NOT NULL DEFAULT 'UNUSED', indirect_object_code_identity BLOB, flags INTEGER, last_modified INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)), pid INTEGER, pid_version INTEGER, boot_uuid TEXT NOT NULL DEFAULT 'UNUSED', last_reminded INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)), one_time_reprompt_eligible INTEGER, reminder_count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (service, client, client_type, indirect_object_identifier));`;
+const MACOS_26_TCC_SCHEMA = `CREATE TABLE access (service TEXT NOT NULL, client TEXT NOT NULL, client_type INTEGER NOT NULL, auth_value INTEGER NOT NULL, auth_reason INTEGER NOT NULL, auth_version INTEGER NOT NULL, csreq BLOB, policy_id INTEGER, indirect_object_identifier_type INTEGER, indirect_object_identifier TEXT NOT NULL DEFAULT 'UNUSED', indirect_object_code_identity BLOB, flags INTEGER, last_modified INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)), pid INTEGER, pid_version INTEGER, boot_uuid TEXT NOT NULL DEFAULT 'UNUSED', last_reminded INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)), PRIMARY KEY (service, client, client_type, indirect_object_identifier));`;
+const NEWER_TCC_SCHEMA = TCC_SCHEMA.replace("reminder_count INTEGER NOT NULL DEFAULT 0,", "reminder_count INTEGER NOT NULL DEFAULT 0, granted_by TEXT,");
 const sqlite = (db: string, sql: string) => {
   const run = spawnSync("sqlite3", [db, sql], { encoding: "utf8" });
   assert.equal(run.status, 0, run.stderr);
@@ -919,6 +921,8 @@ test("with SIP off, the helper grants the box user's programs their permissions,
   // What box_status lists, only to the box that holds the Mac.
   assert.deepEqual(mac.helper(["granted", "0"], RELEASE()).stdout.split("\n").filter(Boolean), [
     "sip=0",
+    "tcc=1",
+    "macos=26.0",
     "signing=1",
     "grant=accessibility\tdev.example.probe\tUNUSED",
     "grant=screen-recording\tdev.example.probe\tUNUSED",
@@ -1004,7 +1008,7 @@ test("in a Mac VM that is itself the box, as Tart's are, the helper makes the us
 
   const ready = mac.helper(["vm-ready", "bbx-0"]);
   assert.equal(ready.status, 0, ready.stderr);
-  assert.equal(ready.stdout, "signing=1\n");
+  assert.equal(ready.stdout, "sip=0\ntcc=1\nmacos=26.0\nsigning=1\n");
   assert.ok(existsSync(join(mac.root, "/Users/bbx-0/Library/Keychains/bb-box-signing.keychain-db")));
   assert.equal(sqlite(user, "select service from access where client = '/usr/libexec/sshd-keygen-wrapper' order by service;"), "kTCCServiceCamera\nkTCCServiceMicrophone");
   // A desktop command's screencapture raises no notice: the approvals cover SSH and Tart's launcher too.
@@ -1019,7 +1023,7 @@ test("in a Mac VM that is itself the box, as Tart's are, the helper makes the us
   assert.equal(granted.status, 0, granted.stderr);
   assert.equal(granted.stdout, "granted=accessibility\nclient=/Users/bbx-0/bin/tool\n");
   assert.equal(sqlite(system, "select client from access where service = 'kTCCServiceAccessibility';"), "/Users/bbx-0/bin/tool");
-  assert.deepEqual(mac.helper(["vm-granted", "bbx-0"]).stdout.split("\n").filter(Boolean), ["sip=0", "signing=1", "grant=accessibility\t/Users/bbx-0/bin/tool\tUNUSED"]);
+  assert.deepEqual(mac.helper(["vm-granted", "bbx-0"]).stdout.split("\n").filter(Boolean), ["sip=0", "tcc=1", "macos=26.0", "signing=1", "grant=accessibility\t/Users/bbx-0/bin/tool\tUNUSED"]);
   // Refusals as on a pool Mac: outside the user's folders, or SIP on.
   assert.equal(mac.helper(["vm-grant", "bbx-0"], "program=/usr/local/bin/tool\npermission=accessibility\n").status, 8);
   mac.flag("sip-off", false);
@@ -1131,4 +1135,45 @@ test("snapshot probe runs an operator's hook's describe, and says when it fails"
 
   writeFileSync(hook, "#!/bin/sh\necho 'lvs: volume group vg0 not found' >&2\nexit 3\n", { mode: 0o755 });
   assert.deepEqual(probedSnapshots(mac).hook, { is: "no", why: "its snapshot hook's describe failed: it exited with 3: lvs: volume group vg0 not found" });
+});
+
+test("on a Mac VM with macOS 26's TCC schema, as Namespace's Macs have, the helper grants, and on a schema it does not know it refuses with the reason (058)", { skip: spawnSync("sqlite3", ["-version"]).status !== 0 && "needs sqlite3" }, () => {
+  const mac = readyMac();
+  mac.flag("sip-off");
+  const system = join(mac.root, TCC);
+  rmSync(system, { force: true });
+  sqlite(system, MACOS_26_TCC_SCHEMA);
+  const user = join(mac.data, "Users/bbx-0/Library/Application Support/com.apple.TCC/TCC.db");
+  mkdirSync(dirname(user), { recursive: true });
+  sqlite(user, MACOS_26_TCC_SCHEMA);
+  mac.add("processes", "500 70000 tccd 1");
+  mkdirSync(join(mac.state, "openfiles"), { recursive: true });
+  writeFileSync(join(mac.state, "openfiles", "500"), `${user}\n`);
+  const app = join(mac.data, "Users/bbx-0/Applications/Probe.app");
+  mkdirSync(join(app, "Contents"), { recursive: true });
+  writeFileSync(join(app, "Contents/Info.plist"), "<plist><dict><key>CFBundleIdentifier</key><string>dev.example.probe</string></dict></plist>\n");
+  writeFileSync(`${app}.sig`, 'identifier=dev.example.probe\nrequirement=identifier "dev.example.probe" and certificate leaf = H"ab"\n');
+  const tool = join(mac.data, "Users/bbx-0/bin/micprobe");
+  mkdirSync(dirname(tool), { recursive: true });
+  writeFileSync(tool, "#!/bin/sh\n", { mode: 0o755 });
+  writeFileSync(`${tool}.sig`, 'identifier=dev.example.micprobe\nrequirement=identifier "dev.example.micprobe" and certificate leaf = H"ab"\n');
+  mac.flag("macos", true, "26.3.1");
+
+  assert.deepEqual(mac.helper(["vm-ready", "bbx-0"]).stdout.split("\n").filter(Boolean).slice(0, 3), ["sip=0", "tcc=1", "macos=26.3.1"]);
+  const appGrant = mac.helper(["vm-grant", "bbx-0"], "program=/Users/bbx-0/Applications/Probe.app\npermission=accessibility\npermission=screen-recording\n");
+  const cliGrant = mac.helper(["vm-grant", "bbx-0"], "program=/Users/bbx-0/bin/micprobe\npermission=microphone\n");
+
+  assert.equal(appGrant.stdout, "granted=accessibility\ngranted=screen-recording\nclient=dev.example.probe\n", appGrant.stderr);
+  assert.equal(cliGrant.stdout, "granted=microphone\nclient=/Users/bbx-0/bin/micprobe\n", cliGrant.stderr);
+  assert.equal(sqlite(system, "select service || '|' || client || '|' || client_type || '|' || auth_value from access order by service;"), "kTCCServiceAccessibility|dev.example.probe|0|2\nkTCCServiceScreenCapture|dev.example.probe|0|2");
+  assert.equal(sqlite(user, "select service || '|' || client || '|' || client_type || '|' || auth_value from access where client = '/Users/bbx-0/bin/micprobe';"), "kTCCServiceMicrophone|/Users/bbx-0/bin/micprobe|1|2");
+
+  rmSync(system);
+  sqlite(system, NEWER_TCC_SCHEMA);
+  const newer = mac.helper(["vm-grant", "bbx-0"], "program=/Users/bbx-0/Applications/Probe.app\npermission=accessibility\n");
+
+  assert.equal(newer.status, EXIT.protected);
+  assert.equal(newer.stderr, "TCC's database on this Mac has columns bb-box does not know, as a newer macOS may have, so it writes nothing there. A person grants permissions in System Settings, or a newer bb-box may know them.\n");
+  assert.equal(sqlite(system, "select count(*) from access;"), "0");
+  assert.deepEqual(mac.helper(["vm-granted", "bbx-0"]).stdout.split("\n").filter(Boolean).slice(0, 2), ["sip=0", "tcc=0"]);
 });

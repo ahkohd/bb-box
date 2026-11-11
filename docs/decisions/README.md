@@ -63,7 +63,7 @@ which records still stand as written. The current design as a whole is in
 | [055](055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md) | Cloud boxes run on cloud hosts first, and a cloud VM per box later | Not built yet |
 | [056](056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md) | Linux X11 desktops add a Selkies stream, and RFB stays for the rest, tuned | Current, amended: video for every viewer, on by default |
 | [057](057-linux-boxes-can-be-proxmox-vms-for-their-own-kernel.md) | Linux boxes can be Proxmox VMs, for their own kernel | Proposed |
-| [058](058-a-mac-with-sip-off-grants-its-box-users-macos-permissions.md) | A Mac with SIP off grants its box users macOS permissions | Current |
+| [058](058-a-mac-with-sip-off-grants-its-box-users-macos-permissions.md) | A Mac with SIP off grants its box users macOS permissions | Current; extended to Namespace's Macs and macOS 26 by 093 |
 | [059](059-agents-record-their-desktop-box-with-box-record.md) | Agents record their desktop box with box_record | Accepted |
 | [060](060-every-desktop-streams-as-video-through-one-viewer.md) | Every desktop streams as video through one viewer | Accepted |
 | [061](061-a-box-can-be-resized-live-where-its-backend-can-and-restarted-only-when-asked.md) | A box can be resized after it is made, live where its backend can, and restarted only when asked | Accepted |
@@ -98,3 +98,4 @@ which records still stand as written. The current design as a whole is in
 | [090](090-pool-machines-say-whether-they-snapshot.md) | Pool machines say whether they snapshot: home folders where they clone, or an operator's hook | Accepted, unit 1 of 5 built: machines report, and no pool snapshot is taken yet; extends 070 for the SSH host pool |
 | [091](091-a-namespace-machine-with-snapshots-lives-while-its-box-has-a-container.md) | A Namespace machine with snapshots lives while its box has a container | Accepted; extends 082 with a release's scope, and Namespace's keep-alive, empty-machine and Docker outage rules |
 | [092](092-a-backend-can-be-kept-for-bb-projects.md) | A backend can be kept for BB projects | Accepted |
+| [093](093-namespaces-macs-grant-macos-permissions-through-the-mac-helper.md) | Namespace's Macs grant macOS permissions through the Mac helper, measured per Mac | Accepted; extends 058; [results](093-results.md) |

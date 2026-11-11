@@ -106,7 +106,7 @@ Make a new box of this thread from a snapshot of one of its boxes, or from the b
 
 ## box_grant
 
-Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. On Tart's macOS boxes, and on Macs of the SSH host pool with SIP off; Linux and Windows boxes refuse. The program must be the box user's, or an app in /Applications, and signed: sign it with the box's identity, codesign -s "bb-box local code signing", so a rebuild keeps the grant. Commands box_run runs have the microphone and camera already.
+Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. On Tart's and Namespace's macOS boxes, and on Macs of the SSH host pool with SIP off; Linux, Windows and shared boxes refuse. The program must be the box user's, or an app in /Applications, and signed: sign it with the box's identity, codesign -s "bb-box local code signing", so a rebuild keeps the grant; on Namespace, run codesign in the box user's session, through sudo launchctl asuser "$(id -u)" sudo -u "$(id -un)". Commands box_run runs have the microphone and camera already, except on Namespace.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

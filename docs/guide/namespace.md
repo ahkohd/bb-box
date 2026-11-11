@@ -143,6 +143,25 @@ When the box is released, BB Box takes it off the tailnet and destroys the Mac. 
 
 A Mac cannot outlive your plan's limit. BB Box keeps each Mac's end an hour ahead while its box is held, up to that limit, so a Mac that BB Box loses track of ends within the hour.
 
+### macOS permissions
+
+Namespace's Macs run with System Integrity Protection off. So, as on Tart's macOS boxes, `box_grant` grants a program in a `macos` or `macos-desktop` box the permissions macOS would ask a person for, with no prompt: Accessibility, Screen Recording, Input Monitoring, the microphone, the camera, the system's audio and Automation of one app ([058](../decisions/058-a-mac-with-sip-off-grants-its-box-users-macos-permissions.md), [093](../decisions/093-namespaces-macs-grant-macos-permissions-through-the-mac-helper.md)). An app is granted by its bundle ID, and a command-line program by its path.
+
+- **At each Mac box's start,** in about half a second, BB Box runs its Mac helper on the Mac. It gives `runner` a code-signing identity of its own, "bb-box local code signing", so a program signed with it keeps its grants when it is rebuilt. It also measures whether the Mac can grant: whether SIP is off, and whether macOS's permissions database is one BB Box knows.
+- **The doctor says what it measured.** `bb box doctor` has a check, **macOS permissions on Namespace's Macs**, that says whether `box_grant` worked on the Macs boxes started on most recently, and their macOS. `box_status` lists a box's grants, or says why it cannot grant.
+- **It refuses rather than guess.** If a later Namespace image turns SIP on, or a newer macOS changes the permissions database, `box_grant` refuses, says why and writes nothing.
+- **The grants end with the box,** as the Mac is destroyed at its release.
+
+Commands that `box_run` runs on a Namespace Mac run under Namespace's own agent, outside `runner`'s desktop session. That changes 3 things:
+
+- Sign with the box's identity in `runner`'s session: `sudo launchctl asuser "$(id -u)" sudo -u "$(id -un)" codesign -s "bb-box local code signing" --identifier <id> <program>`. Run straight from `box_run`, `codesign` does not find the identity. A program the linker signed only ad hoc can still be granted, by its path.
+- A grant applies only when the program is its own responsible process. Open an app with `open`. Start a command-line program through launchd in `runner`'s session: `sudo launchctl asuser "$(id -u)" sudo -u "$(id -un)" launchctl submit -l <label> -o <log> -- <program>`, then remove it the same way with `launchctl remove <label>`.
+- A program `box_run` runs directly is charged to Namespace's agent. On a macOS desktop box the agent has Screen Recording and Accessibility, for the desktop's video; it has no other permission, so such a program cannot use the microphone or the camera.
+
+A Namespace Mac has no microphone. To feed an app sound, install BlackHole with `brew install --cask blackhole-2ch`, then restart macOS's audio with `sudo killall coreaudiod`: BlackHole 2ch becomes the default input.
+
+Where `box_grant` refuses, a person can still turn a permission on in System Settings on a macOS desktop box, in the desktop's viewer, as on any Mac.
+
 ## iOS boxes on a shared Namespace host
 
 Namespace can also lend `ios` boxes, as a pool Mac or a Tart host does ([064](../decisions/064-ios-shared-hosts.md), [065](../decisions/065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md)): each box a macOS user of its own, with its own iOS Simulator device, on a Namespace Mac it shares with other `ios` boxes. Namespace is the last choice for them, after a pool Mac and a Tart host, as its Macs cost by the minute and live at most your plan's limit. Using them is in [device boxes](devices.md).
@@ -154,6 +173,7 @@ Namespace can also lend `ios` boxes, as a pool Mac or a Tart host does ([064](..
 - **Its device is the first of BB Box's models the Mac's Xcode has,** on its newest iOS runtime: on Xcode 26.1.1, the iPhone 17 on iOS 26.2.
 - **Video** comes from the Mac's hardware H.264 encoder where it has one, and from `bb-box-h264`, in software, where it does not. Namespace's Macs of one kind can differ: of the M4 Pro VMs measured in October 2026, one had no hardware encoder. Each host measures its own Mac, and where Macs have differed, `box_list` and `bb box doctor` say Namespace's Macs vary by machine.
 - **A slot's commands run as its user,** in its own launchd session, through Namespace's gateway and `sudo`, as Namespace's Macs run no SSH server of their own for other users. So such a box has no `ssh <box name>`, and no terminal in the panel.
+- **A slot has no macOS permissions to grant.** Its user has no desktop session, and a grant in the Mac's own database would reach every box on the host, so `box_grant` refuses and says so. Acquire a `macos` box without `shared` for a Mac of its own.
 
 `bb box doctor` has a check, **Shared iOS hosts on Namespace**, that says whether a host runs, its slots, when it ends and how its video is encoded.
 

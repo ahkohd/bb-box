@@ -33,6 +33,7 @@
 //   sip-off          status says System Integrity Protection is off (058), and grant grants
 //   display-user     the user display gives instead of the box user
 //   no-signing       granted says the box user has no signing identity
+//   tcc-unknown      TCC's database has columns the helper does not know: granted says tcc=0, and grant refuses
 //   stream           status says the Mac has bb-box-stream, its desktop as video (060)
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -181,16 +182,21 @@ function grant() {
  * machine-mac.sh's commands for a Mac VM that is the box, as a Tart backend
  * runs them: no owner marker. Grants need sip-off, as on a pool Mac.
  */
+function grantState() {
+  return `sip=${flag("sip-off") !== null ? 0 : 1}\ntcc=${flag("tcc-unknown") !== null ? 0 : 1}\nmacos=26.3.1\nsigning=${flag("no-signing") !== null ? 0 : 1}`;
+}
+
 function vm(verb) {
-  if (verb === "vm-ready") return console.log(`signing=${flag("no-signing") !== null ? 0 : 1}`);
+  if (verb === "vm-ready") return console.log(grantState());
   if (verb === "vm-granted") {
-    console.log(`sip=${flag("sip-off") !== null ? 0 : 1}\nsigning=${flag("no-signing") !== null ? 0 : 1}`);
+    console.log(grantState());
     for (const line of (read("grants") ?? "").split("\n").filter(Boolean)) console.log(`grant=${line}`);
     return;
   }
   const lines = readFileSync(0, "utf8").split("\n");
   const program = lines.find((line) => line.startsWith("program="))?.slice("program=".length) ?? "";
   if (flag("sip-off") === null) quit(EXIT.protected, "System Integrity Protection is on, so macOS lets no program grant permissions.");
+  if (flag("tcc-unknown") !== null) quit(EXIT.protected, "TCC's database on this Mac has columns bb-box does not know, as a newer macOS may have, so it writes nothing there.");
   if (!/^\/(Users|Applications)\//.test(program)) quit(EXIT.refused, `${program} is not in the box user's home or /Applications.`);
   const client = program.endsWith(".app") ? `dev.example.${program.split("/").pop().slice(0, -4).toLowerCase()}` : program;
   for (const permission of lines.filter((line) => line.startsWith("permission=")).map((line) => line.slice("permission=".length))) {

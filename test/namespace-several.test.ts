@@ -10,7 +10,7 @@ import type { AcquireHooks, BackendStorage, BoxIdentity, Guest } from "../src/ba
 import { ImageJobs } from "../src/plugin/images.ts";
 import { ownImageLines } from "../src/plugin/views.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace, type FakeInstance } from "./fake-namespace.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
 const disposed = disposedOnceTheFileEnds();
 const CONFIG: NamespaceConfig = { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
@@ -59,7 +59,7 @@ function backendOn(fake: FakeNamespace, id: string, options: BackendOptions = {}
   return disposed(
     new NamespaceBackend({ ...CONFIG, token: fake.token, ...options.config }, context, {
       fetch: fake.fetch,
-      sshBinary: FAKE_SSH_BINARY,
+      sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER,
       sleep: async () => {},
       readyTimeoutMs: 20_000,
       cuaScript: ":",

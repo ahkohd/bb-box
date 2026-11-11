@@ -14,8 +14,11 @@ import {
   type AcquireHooks,
   type Backend,
   type BackendContext,
+  type BoxGrants,
   type BoxIdentity,
   type BoxKind,
+  type GrantAnswer,
+  type GrantRequest,
   type MachineSize,
   type BoxTransports,
   type Capacity,
@@ -57,6 +60,8 @@ import type { DockerCli } from "../docker/cli.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import { PRODUCT } from "../../brand.ts";
 import { BACKEND_LABEL, INSTALL_LABEL, NamespaceOwner } from "./owner.ts";
+import { MacVmHelper, macVmHelperCommand, type MacGrantState } from "../mac-vm-helper.ts";
+import { NamespaceGrantReports, grantCheck } from "./grant-reports.ts";
 
 export const LABELS = {
   install: INSTALL_LABEL,
@@ -261,6 +266,7 @@ export interface NamespaceBackendOptions {
   readonly dockerCli?: (instance: string) => DockerCli;
   readonly linuxPullScript?: (ref: string, local: string) => string;
   readonly linuxTailscaleScript?: string;
+  readonly macHelper?: string;
 }
 
 function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
@@ -299,6 +305,8 @@ export class NamespaceBackend implements Backend {
   readonly #placing = new Set<string>();
   readonly #probes: MacProbeCache;
   readonly #reports: NamespaceMacReports;
+  readonly #grantReports: NamespaceGrantReports;
+  #macHelper: MacVmHelper | null = null;
   #measuringAfresh: { readonly until: number; readonly done: Promise<void> } | null = null;
   readonly slots: NamespaceHosts;
   #ssh: Promise<{ ssh: Ssh; publicKey: string }> | null = null;
@@ -340,6 +348,7 @@ export class NamespaceBackend implements Backend {
       ...(options.setupArchive ? { setupArchive: options.setupArchive } : {}),
     });
     this.#reports = new NamespaceMacReports(context.storage, (operation, error) => context.logError(operation, error));
+    this.#grantReports = new NamespaceGrantReports(context.storage, (operation, error) => context.logError(operation, error));
     this.#probes = new MacProbeCache({
       run: async (instance, script, signal) => {
         const result = await new SshTransport((await this.#keys()).ssh, this.#access(instance), "macos").run(script, { timeoutMs: PROBE_TIMEOUT_MS, signal, maxOutputBytes: 64 * 1024 });
@@ -630,6 +639,7 @@ export class NamespaceBackend implements Backend {
       const ready = await step("ready", () => this.#api.wait(made!.id, signal));
       if (ready.status !== "running") throw new Error(`Namespace's machine ${ready.id} is ${ready.status}, not running.`);
       await step("ssh", () => this.#answers(ready.id, this.#now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS), signal));
+      if (!linux) await step("grants", () => this.#readyGrants(ready.id, signal));
       if (kind === "macos-desktop") {
         await step("desktop", () => this.#prepareDesktop(ready.id, signal));
         await step("computer use", () => this.#prepareComputerUse(ready.id, signal));
@@ -1037,6 +1047,8 @@ export class NamespaceBackend implements Backend {
     checks.push(...(await this.#snapshotChecks(held, signal)));
     const macs = held.filter((instance) => instance.labels[LABELS.kind] !== undefined && !isLinuxKind(instance.labels[LABELS.kind] as NamespaceKind));
     for (const instance of macs) await this.#probes.measure(instance.id, signal).catch((error) => this.#context.logError(`measure what Namespace's Mac ${instance.id} offers`, error));
+    for (const instance of macs.filter((mac) => mac.status === "running")) await this.#measureGrants(instance.id, signal);
+    checks.push(grantCheck(await this.#grantReports.all(), now));
     checks.push(await this.slots.doctor(signal));
     const reports = this.macCapabilities();
     if (!reports.length) checks.push({ id: "devices.namespace", name: "iOS devices on Namespace's Macs", status: "skipped", detail: `Not measured yet: ${PRODUCT} measures each Namespace Mac it starts.`, fix: null });
@@ -1184,6 +1196,49 @@ export class NamespaceBackend implements Backend {
   #kind(kind: string): NamespaceKind {
     if (kind !== "macos" && kind !== "macos-desktop" && !isLinuxKind(kind)) throw new BackendError("unsupported", `Namespace offers macos, macos-desktop and Linux boxes, not ${kind}.`);
     return kind;
+  }
+
+  #helper(): MacVmHelper {
+    this.#macHelper ??= new MacVmHelper(this.#options.macHelper ?? macVmHelperCommand());
+    return this.#macHelper;
+  }
+
+  async #macCommand(instance: string): Promise<SshTransport> {
+    return new SshTransport((await this.#keys()).ssh, this.#access(instance), "macos");
+  }
+
+  async #readyGrants(instance: string, signal?: AbortSignal): Promise<void> {
+    const { state, failure } = await this.#helper().ready(await this.#macCommand(instance), signal);
+    if (state) await this.#rememberGrants(instance, state);
+    if (!state?.signingIdentity) this.#context.logError("ready the box's grants", new Error(`Namespace's Mac ${instance}: the box's signing identity was not made: ${failure ?? "the helper said signing=0"}`));
+  }
+
+  async #measureGrants(instance: string, signal?: AbortSignal): Promise<void> {
+    const measured = await this.#helper().grants(await this.#macCommand(instance), signal);
+    if (measured) await this.#rememberGrants(instance, measured.state);
+  }
+
+  #rememberGrants(instance: string, state: MacGrantState): Promise<void> {
+    return this.#grantReports.remember(instance, state, this.#now());
+  }
+
+  #macBoxOf(guest: Guest): { readonly instance: string; readonly box: string } | null {
+    const box = typeof guest.data?.box === "string" ? guest.data.box : null;
+    const instance = typeof guest.data?.instance === "string" ? guest.data.instance : null;
+    return box && instance && !namespaceSlotOf(guest) && guest.ref === this.#tag(box) ? { instance, box } : null;
+  }
+
+  async grant(guest: Guest, request: GrantRequest, signal?: AbortSignal): Promise<GrantAnswer> {
+    if (namespaceSlotOf(guest)) throw new BackendError("unsupported", "A box on a shared iOS host is a macOS user with no console session, so there is nothing to grant macOS permissions to, and a grant in the Mac's own database would reach every box on the host.");
+    const mac = this.#macBoxOf(guest);
+    if (!mac) throw new BackendError("unsupported", `Only a macOS box has macOS permissions to grant: ${guest.ref} runs Linux.`);
+    return this.#helper().grant(await this.#macCommand(mac.instance), `Namespace's Mac ${mac.instance}`, this.#context.installId, mac.box, request, signal);
+  }
+
+  async grants(guest: Guest, signal?: AbortSignal): Promise<BoxGrants | null> {
+    const mac = this.#macBoxOf(guest);
+    if (!mac) return null;
+    return (await this.#helper().grants(await this.#macCommand(mac.instance), signal))?.grants ?? null;
   }
 
   async #prepareDesktop(instance: string, signal?: AbortSignal): Promise<void> {

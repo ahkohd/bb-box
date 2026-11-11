@@ -94,6 +94,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `namespace.machines` | Machines | The Namespace machines BB Box has, each with its age and when it ends, and any no box claims. |
 | `namespace.limits` | Workspace limits | The Mac cores and memory the workspace allows at once and has in use, read from Namespace, from which BB Box refuses a Mac up front; a warning when the token may not read them. |
 | `namespace.snapshots.<machine>` | Snapshots on &lt;machine> | On a Linux machine where its box took snapshots: Docker's snapshot lines for that machine, and when the machine ends with them. |
+| `namespace.grants` | macOS permissions on Namespace's Macs | Whether box_grant works on Namespace's Macs: whether System Integrity Protection is off and TCC's database is one BB Box knows, as measured on the Macs that macos and macos-desktop boxes started on most recently, and their macOS (058). |
 | `namespace.images` | Linux images | BB Box's Linux images in the workspace's registry: when each was built, whether a new one is due, and whether one is being built. |
 | `ios-hosts.<mac>` | Shared iOS hosts on &lt;mac> | The shared iOS hosts on the Mac (064), or on Namespace (065): each host's state, its slots held, ready, making and sweeping, its free disk and memory, and each held slot's cores, memory and home; Namespace's host's end and how its video is encoded; or, with none, whether one can start. |
 

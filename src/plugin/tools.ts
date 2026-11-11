@@ -21,7 +21,7 @@ import { listWords } from "../core/device.ts";
 import { wholeCardsOffInList } from "../core/gpu.ts";
 import { fontFiles } from "../core/record-font.ts";
 import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, boxClockScript, chaptersOf, clockOffset, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, driverDrawsAgentCursor, withAgentCursorHidden, withInputs, type Chapter, type ClipPlan, type ClockReading } from "../core/record.ts";
-import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants } from "../backends/types.ts";
+import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants, type GrantBlock } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
 import { ANDROID_ID_FIRST_BOOT_WORDS } from "../core/device-settings.ts";
@@ -290,8 +290,12 @@ export function spareRestoreWords(box: BoxRecord): string {
   return `\nThe spare's saved state did not restore, so its VM booted afresh from its disk, in ${(boot / 1000).toFixed(1)} s, and its device booted again.`;
 }
 
+const IN_BOX_USERS_SESSION = 'sudo launchctl asuser "$(id -u)" sudo -u "$(id -un)"';
+
 export function ownProcessHint(backend: string, program: string): string {
-  if (backend.split(":")[0] === "ssh-pool") return `Run it through bb-box-own, as bb-box-own ${program} <arguments>, so that it is its own responsible process and its grants apply.`;
+  const provider = backend.split(":")[0];
+  if (provider === "namespace") return `Start it through launchd in the box user's session, as ${IN_BOX_USERS_SESSION} launchctl submit -l <label> -o <log> -- ${program} <arguments>, so that it is its own responsible process and its grants apply; remove it the same way with launchctl remove <label>. box_run's commands on Namespace run outside that session, so launchctl submit alone fails.`;
+  if (provider === "ssh-pool") return `Run it through bb-box-own, as bb-box-own ${program} <arguments>, so that it is its own responsible process and its grants apply.`;
   return `Start it through launchd from a box_run command with desktop true, as launchctl submit -l <label> -o <log> -- ${program} <arguments>, so that it is its own responsible process and its grants apply; launchctl remove <label> when it is done.`;
 }
 
@@ -416,13 +420,18 @@ function ownerWords(box: BoxRecord): string {
 export const boxParam = z.string().min(1).describe("The box's name or ID, from box_acquire or box_list.");
 
 /** A Mac box's grants, for box_status (058). */
+const GRANT_BLOCK_WORDS: Readonly<Record<GrantBlock, string>> = {
+  "sip-on": "System Integrity Protection is on",
+  "unknown-database": "its TCC database has columns BB Box does not know, as a newer macOS may have",
+};
+
 export function grantsText(grants: BoxGrants): string {
   const listed = grants.grants.map((grant) => `${grant.permission} to ${grant.client}${grant.target ? ` (for ${grant.target})` : ""}`);
   const signing =
     grants.signingIdentity === false
       ? '\nSigning identity: missing, so codesign -s "bb-box local code signing" fails in this box. Tell the Mac\'s operator: its helper could not make it.'
       : "";
-  if (!grants.canGrant) return `\nmacOS permissions: box_grant cannot grant them on this Mac, as System Integrity Protection is on.${signing}`;
+  if (grants.blockedBy) return `\nmacOS permissions: box_grant cannot grant them on this Mac, as ${GRANT_BLOCK_WORDS[grants.blockedBy]}.${signing}`;
   return `\nmacOS permissions granted with box_grant: ${listed.length ? listed.join(", ") : "none"}.${signing}`;
 }
 
@@ -735,7 +744,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_grant",
     description:
-      "Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. On Tart's macOS boxes, and on Macs of the SSH host pool with SIP off; Linux and Windows boxes refuse. The program must be the box user's, or an app in /Applications, and signed: sign it with the box's identity, codesign -s \"bb-box local code signing\", so a rebuild keeps the grant. Commands box_run runs have the microphone and camera already.",
+      "Grant a program in a macOS box macOS permissions, such as Accessibility or Screen Recording, with no prompt. On Tart's and Namespace's macOS boxes, and on Macs of the SSH host pool with SIP off; Linux, Windows and shared boxes refuse. The program must be the box user's, or an app in /Applications, and signed: sign it with the box's identity, codesign -s \"bb-box local code signing\", so a rebuild keeps the grant; on Namespace, run codesign in the box user's session, through sudo launchctl asuser \"$(id -u)\" sudo -u \"$(id -un)\". Commands box_run runs have the microphone and camera already, except on Namespace.",
     presentation: { label: { pending: "Granting permissions", completed: "Granted permissions" } },
     parameters: z.object({
       box: boxParam,

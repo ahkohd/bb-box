@@ -12,7 +12,7 @@ import type { BoxRecord } from "../src/core/boxes.ts";
 import { keepWhyOf } from "../src/plugin/snapshot-card.ts";
 import { fakeDockerHost, type FakeDockerHost } from "./fake-docker.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace } from "./fake-namespace.ts";
-import { FAKE_SSH_BINARY, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 import { COMMAND, HOUR, THREAD, rejection, standing, untilHeld, world, type World } from "./snapshot-world.ts";
 
 fakeSsh();
@@ -48,7 +48,7 @@ function namespaceSnapshotWorld(): NamespaceSnapshotWorld {
   const backend = (storage: BackendStorage) =>
     disposed(new NamespaceBackend({ token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 4, longestLifeHours: LONGEST_LIFE_HOURS, largestMachine: null }, testContext(storage, "test", { id: "fake" }), {
       fetch: api.fetch,
-      sshBinary: FAKE_SSH_BINARY,
+      sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER,
       sleep: async () => {},
       now,
       readyTimeoutMs: 20_000,

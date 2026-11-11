@@ -2,7 +2,7 @@
 // or machine-mac.sh on a Mac (047). The admin user runs it through sudo.
 // Input and output are name=value lines, and the exit code says what happened.
 
-import type { BoxGrants, BoxIdentity, GrantAnswer, GrantPermission, GrantRequest } from "../types.ts";
+import type { BoxGrants, BoxIdentity, GrantAnswer, GrantBlock, GrantPermission, GrantRequest } from "../types.ts";
 
 /** Where setup.sh installs the helper, run as root through sudo. */
 export const HELPER_COMMAND = "sudo -n /usr/local/libexec/bb-box/machine";
@@ -22,7 +22,7 @@ export const EXIT = {
   dirty: 5,
   /** The machine's reset generation moved on. */
   moved: 6,
-  /** A Mac's grant: System Integrity Protection is on, so no program may grant permissions (058). */
+  /** A Mac's grant: System Integrity Protection is on, or TCC's database is one bb-box does not know, so it grants nothing (058, 093). */
   protected: 7,
   /** A Mac's grant: the program is not one bb-box grants permissions to (058). */
   refused: 8,
@@ -353,7 +353,13 @@ export function parseGrant(stdout: string): GrantAnswer {
   return { client, granted, refused };
 }
 
-/** A Mac's `granted` answer: sip=, signing=, then grant=<permission> TAB <client> TAB <target>. */
+export function grantBlockOf(values: ReadonlyMap<string, string>): GrantBlock | null {
+  if (values.get("sip") !== "0") return "sip-on";
+  if (values.get("tcc") === "0") return "unknown-database";
+  return null;
+}
+
+/** A Mac's `granted` answer: sip=, tcc=, macos=, signing=, then grant=<permission> TAB <client> TAB <target>. */
 export function parseGranted(stdout: string): BoxGrants {
   const grants: { permission: string; client: string; target: string | null }[] = [];
   for (const line of stdout.split("\n")) {
@@ -363,5 +369,5 @@ export function parseGranted(stdout: string): BoxGrants {
   }
   const values = fields(stdout);
   const signing = values.get("signing");
-  return { canGrant: values.get("sip") === "0", signingIdentity: signing === undefined ? null : signing === "1", grants };
+  return { blockedBy: grantBlockOf(values), signingIdentity: signing === undefined ? null : signing === "1", grants };
 }

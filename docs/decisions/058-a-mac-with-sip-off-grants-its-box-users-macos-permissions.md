@@ -1,6 +1,9 @@
 # 058: A Mac with SIP off grants its box users macOS permissions
 
-Status: accepted, 16 October 2026, after the live check below. Extends
+Status: accepted, 16 October 2026, after the live check below; extended to
+Namespace's Macs, and to macOS 26's TCC schema, by
+[093](093-namespaces-macs-grant-macos-permissions-through-the-mac-helper.md).
+Extends
 [047](047-a-physical-mac-is-an-ssh-pool-machine-lent-with-a-new-user-at-its-console.md):
 on a pool Mac whose owner has turned System Integrity Protection off, the
 helper grants the box user's apps and command-line programs the

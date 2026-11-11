@@ -6,13 +6,15 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { KEEP_AHEAD_MS, LABELS, MAC_CUA, MEASURE_AGAIN_AFTER_MS, MEASURE_LIFE_MS, MEASURE_ROLE, NamespaceBackend, macShapeFor } from "../src/backends/namespace/backend.ts";
 import { MACHINES_KEPT_PER_CHIP, NamespaceMacReports } from "../src/backends/namespace/mac-reports.ts";
+import { GRANT_REPORTS_KEPT, NamespaceGrantReports, grantCheck } from "../src/backends/namespace/grant-reports.ts";
+import { NS_HOST_KEY } from "../src/backends/namespace/ios-hosts.ts";
 import { CUA_SHA256, CUA_VERSION } from "../src/backends/tart/backend.ts";
 import { parseNamespacePart, type NamespaceConfig } from "../src/backends/namespace/config.ts";
 import { Tailnet } from "../src/core/tailnet.ts";
 import { PROBE_VERSION, reportKey, type MacReport } from "../src/core/mac-capabilities.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace, type FakeInstance } from "./fake-namespace.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
 const disposed = disposedOnceTheFileEnds();
 const CONFIG: NamespaceConfig = { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
@@ -21,7 +23,7 @@ function setup(options: { config?: Partial<NamespaceConfig>; now?: () => number;
   fakeSsh();
   const fake = new FakeNamespace({ ...(options.now ? { now: options.now } : {}), lifeCapMs: 4 * 3600_000, maxCores: 64 });
   const context = testContext(new MemoryStorage(), "inst1", { id: "namespace" });
-  const backend = new NamespaceBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: options.cuaScript ?? ":", ...(options.now ? { now: options.now } : {}) });
+  const backend = new NamespaceBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: options.cuaScript ?? ":", ...(options.now ? { now: options.now } : {}) });
   return { fake, backend: disposed(backend), context };
 }
 
@@ -64,7 +66,7 @@ test("an acquire claims the box before it makes the machine, labels it with its 
     { label: "Ends", value: "04:00 UTC, the plan's longest life" },
     { label: "Runs in", value: "us" },
   ]);
-  assert.deepEqual(recorded.steps, ["create", "ready", "ssh"]);
+  assert.deepEqual(recorded.steps, ["create", "ready", "ssh", "grants"]);
   const transports = await backend.transports(guest, "macos");
   assert.deepEqual(transports.access?.ssh, { host: "ssh.us.namespace.so", port: 22, user: made.id, hostKeys: [] });
 });
@@ -106,7 +108,7 @@ test("with the usage grant, capacity reads the workspace's Mac limits from Names
   const { fake, backend } = setup();
   const small = { cores: 4, memoryMiB: 8192, diskGiB: null };
   const workspace = new FakeNamespace({ maxCores: 6, maxMacMemoryMb: 14336 });
-  const limited = disposed(new NamespaceBackend(CONFIG, testContext(new MemoryStorage(), "inst1", { id: "namespace" }), { fetch: workspace.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }));
+  const limited = disposed(new NamespaceBackend(CONFIG, testContext(new MemoryStorage(), "inst1", { id: "namespace" }), { fetch: workspace.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000 }));
   const medium = await limited.capacity("macos", { cores: 6, memoryMiB: 16384, diskGiB: null }, []);
   assert.equal(medium.ok, false);
   assert.match(medium.message!, /at most 6 cores and 14 GB of memory, and 6 cores and 16 GiB needs its 6x28 Mac/);
@@ -258,10 +260,10 @@ test("with a tailnet, each Mac joins it with a single-use key of its own, given 
   fakeSsh();
   const fake = new FakeNamespace({ maxCores: 64 });
   const context = { ...testContext(new MemoryStorage(), "inst1", { id: "namespace" }), tailnet: () => tailnet };
-  const backend = disposed(new NamespaceBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000 }));
+  const backend = disposed(new NamespaceBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000 }));
   const recorded = hooks();
   const guest = await backend.acquire(box("b1"), null, recorded.hooks, new AbortController().signal);
-  assert.deepEqual(recorded.steps, ["create", "ready", "ssh", "tailnet"]);
+  assert.deepEqual(recorded.steps, ["create", "ready", "ssh", "grants", "tailnet"]);
   assert.deepEqual(minted, ["BB Box Namespace box-b1"]);
   const calls = tools.calls();
   assert.ok(!calls.some((call) => call.startsWith("brew")), "a Mac with Tailscale installs nothing");
@@ -394,7 +396,7 @@ test("Namespace offers ios as slots on a shared host once it has measured a Mac 
     const storage = new MemoryStorage();
     await storage.set(reportKey(report.chip), report);
     const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
-    const backend = disposed(new NamespaceBackend({ ...CONFIG, ...(iosHosts ? { iosHosts } : {}) }, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+    const backend = disposed(new NamespaceBackend({ ...CONFIG, ...(iosHosts ? { iosHosts } : {}) }, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
     await new Promise((resolve) => setTimeout(resolve, 20));
     return backend;
   };
@@ -452,7 +454,7 @@ test("box_list's ios offer on Namespace says its slots are on a Mac made for the
   await storage.set(reportKey(IOS_REPORT.chip!), IOS_REPORT);
   await storage.set("mac-machines/Apple M4 Pro (Virtual)", { "instance-a": true, "instance-b": false });
   const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
-  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.match(backend.offerNote("ios") ?? "", /^iOS slots on a Namespace Mac made for the first ios box, in about 5 minutes, and deleted after its last; as many slots as its cores, memory and video encoder allow; each slot a macOS user/);
   assert.equal(backend.offerNote("macos"), null);
@@ -474,7 +476,7 @@ test("a Namespace report from an older probe that cannot make an offer is measur
   await storage.set(reportKey(IOS_REPORT.chip!), older);
   const fake = new FakeNamespace({ now: () => now, lifeCapMs: 4 * 3600_000, maxCores: 64 });
   const context = testContext(storage, "inst1", { id: "namespace" });
-  const made = (iosHosts?: NamespaceConfig["iosHosts"]) => disposed(new NamespaceBackend({ ...CONFIG, ...(iosHosts ? { iosHosts } : {}) }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":", now: () => now }));
+  const made = (iosHosts?: NamespaceConfig["iosHosts"]) => disposed(new NamespaceBackend({ ...CONFIG, ...(iosHosts ? { iosHosts } : {}) }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":", now: () => now }));
   const off = made({ on: false, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 });
   await new Promise((resolve) => setTimeout(resolve, 20));
   await off.maintain();
@@ -512,9 +514,106 @@ test("a Namespace report from an older probe that can still make an offer is not
   const { probe: _, ...withoutProbe } = IOS_REPORT;
   await storage.set(reportKey(IOS_REPORT.chip!), withoutProbe);
   const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
-  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(backend.slots.lends("ios"), true);
   await backend.maintain();
   assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 0);
+});
+
+function helperFlag(name: string, on: boolean): void {
+  const flags = join(process.env.FAKE_SSH_DIR!, "home", "ssh.us.namespace.so", ".bb-box-state", "flags");
+  mkdirSync(flags, { recursive: true });
+  if (on) writeFileSync(join(flags, name), "");
+  else rmSync(join(flags, name), { force: true });
+}
+
+const refusedAs = (pattern: RegExp) => (error: unknown) => error instanceof BackendError && error.code === "unsupported" && pattern.test(error.message);
+
+test("a Mac box on Namespace grants its programs macOS permissions through the Mac helper, as Tart's do, and refuses while SIP is on or TCC's database is one the helper does not know (058)", async () => {
+  const { backend } = setup();
+  helperFlag("sip-off", true);
+  const recorded = hooks();
+  const guest = await backend.acquire(box("b1"), null, recorded.hooks, new AbortController().signal);
+  const app = { program: "/Users/runner/Applications/Probe.app", permissions: ["accessibility", "screen-recording"] as const };
+  const cli = { program: "/Users/runner/bin/micprobe", permissions: ["microphone"] as const };
+
+  assert.deepEqual(recorded.steps, ["create", "ready", "ssh", "grants"], "the box's signing identity and default grants come at its start");
+  assert.deepEqual(await backend.grant!(guest, app), { client: "dev.example.probe", granted: ["accessibility", "screen-recording"], refused: [] });
+  assert.deepEqual(await backend.grant!(guest, cli), { client: "/Users/runner/bin/micprobe", granted: ["microphone"], refused: [] });
+  assert.deepEqual(await backend.grants!(guest), {
+    blockedBy: null,
+    signingIdentity: true,
+    grants: [
+      { permission: "accessibility", client: "dev.example.probe", target: null },
+      { permission: "screen-recording", client: "dev.example.probe", target: null },
+      { permission: "microphone", client: "/Users/runner/bin/micprobe", target: null },
+    ],
+  });
+  await assert.rejects(backend.grant!(guest, { program: "/usr/bin/true", permissions: ["camera"] }), refusedAs(/is not in the box user's home/));
+
+  helperFlag("tcc-unknown", true);
+  await assert.rejects(backend.grant!(guest, app), refusedAs(/^TCC's database on this Mac has columns bb-box does not know/));
+  assert.equal((await backend.grants!(guest))?.blockedBy, "unknown-database");
+
+  helperFlag("tcc-unknown", false);
+  helperFlag("sip-off", false);
+  await assert.rejects(backend.grant!(guest, app), refusedAs(/^System Integrity Protection is on/));
+  assert.equal((await backend.grants!(guest))?.blockedBy, "sip-on");
+  await backend.release(guest, { resetting: async () => {}, timing: () => {} });
+});
+
+test("a Linux box or a box on a shared iOS host on Namespace has no macOS permissions to grant, and says why (058)", async () => {
+  const { backend } = setup();
+  helperFlag("sip-off", true);
+  const guest = await backend.acquire(box("b1"), null, hooks().hooks, new AbortController().signal);
+  const linux = { ...guest, ref: "bb-box-b1" };
+  const slot = { ...guest, data: { ...guest.data, [NS_HOST_KEY]: "bbbox-inst1-host", slot: "s1" } };
+  const request = { program: "/Users/runner/bin/tool", permissions: ["accessibility"] as const };
+
+  await assert.rejects(backend.grant!(linux, request), refusedAs(/^Only a macOS box has macOS permissions to grant: bb-box-b1 runs Linux\.$/));
+  await assert.rejects(backend.grant!(slot, request), refusedAs(/^A box on a shared iOS host is a macOS user with no console session, so there is nothing to grant macOS permissions to, and a grant in the Mac's own database would reach every box on the host\.$/));
+  assert.equal(await backend.grants!(linux), null);
+  assert.equal(await backend.grants!(slot), null);
+  await backend.release(guest, { resetting: async () => {}, timing: () => {} });
+});
+
+test("the doctor says whether box_grant works on Namespace's Macs, as measured on each Mac a box starts on and again on each it holds (058)", async () => {
+  const { backend } = setup();
+  const grantsCheck = async () => (await backend.doctor()).checks.find((check) => check.id === "namespace.grants");
+
+  assert.equal((await grantsCheck())?.status, "skipped");
+
+  helperFlag("sip-off", true);
+  const guest = await backend.acquire(box("b1"), null, hooks().hooks, new AbortController().signal);
+  const works = await grantsCheck();
+
+  assert.equal(works?.status, "ok");
+  assert.equal(works?.detail, "box_grant works: System Integrity Protection is off and TCC's database is one BB Box knows (macOS 26.3.1). Measured on the last Mac BB Box started, most recently just now.");
+
+  helperFlag("tcc-unknown", true);
+  const refuses = await grantsCheck();
+
+  assert.equal(refuses?.status, "warn");
+  assert.equal(refuses?.detail, "Measured on the last Mac BB Box started, most recently just now. box_grant refuses, as TCC's database has columns BB Box does not know (macOS 26.3.1).");
+  helperFlag("tcc-unknown", false);
+  await backend.release(guest, { resetting: async () => {}, timing: () => {} });
+});
+
+test("what Namespace's Macs allowed box_grant is kept for the last Macs measured, across a restart, and the doctor counts those that refused (058)", async () => {
+  const storage = new MemoryStorage();
+  const logError = () => {};
+  const reports = new NamespaceGrantReports(storage, logError);
+  const now = Date.parse("2030-01-01T12:00:00Z");
+  for (let machine = 0; machine < GRANT_REPORTS_KEPT + 2; machine++) await reports.remember(`m${machine}`, { blockedBy: null, macos: "26.3.1", signingIdentity: true }, now - 60_000);
+  await reports.remember("m0", { blockedBy: "sip-on", macos: "26.4", signingIdentity: true }, now - 120 * 60_000);
+
+  const restarted = await new NamespaceGrantReports(storage, logError).all();
+
+  assert.equal(restarted.length, GRANT_REPORTS_KEPT);
+  assert.deepEqual(restarted.at(-1), { machine: "m0", macos: "26.4", blockedBy: "sip-on", at: now - 120 * 60_000 });
+  assert.ok(!restarted.some((report) => report.machine === "m1"), "the oldest go");
+  const check = grantCheck(restarted, now);
+  assert.equal(check.status, "warn");
+  assert.equal(check.detail, "Measured on the last 20 Macs BB Box started, most recently 1 minute ago. box_grant works on 19 of them and refuses on the others, as System Integrity Protection is on (macOS 26.4).");
 });
