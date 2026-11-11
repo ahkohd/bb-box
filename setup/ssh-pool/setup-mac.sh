@@ -365,6 +365,7 @@ snapshots=$("$ROOT$LIBEXEC/machine" snapshot probe 2>&1) || {
   snapshots=''
 }
 probed() { printf '%s\n' "$snapshots" | sed -n "s/^snapshot\.$1=//p" | head -n 1; }
+[ -z "$(probed left)" ] || warn "The snapshot probe could not remove its trial, which leaves $(probed left | sed 's/ /, /g'). As root, delete each file there with rm, then its folder with rmdir."
 generation=$(value generation)
 
 # What BB's installer and a box's GitHub access need.

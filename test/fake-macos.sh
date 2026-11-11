@@ -534,6 +534,11 @@ case $tool in
     if [ "${1:-}" = -c ]; then
       shift
       ! flag no-clonefile || { echo "cp: $2: clonefile failed: Operation not supported" >&2; exit 1; }
+      if flag slow-clonefile; then
+        /bin/cp "$@"
+        : >"$F/cloning"
+        exec sleep 30
+      fi
     fi
     exec /bin/cp "$@"
     ;;

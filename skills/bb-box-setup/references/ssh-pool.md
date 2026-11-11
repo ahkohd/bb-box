@@ -105,5 +105,6 @@ Each machine's `snapshots` check says what snapshots it could offer: home
 snapshots where its box homes are on APFS, btrfs or ZFS, and machine
 snapshots where an operator installed a snapshot hook. BB Box takes no
 snapshots on pool machines yet, so tell the person what the machines could
-offer, not that they snapshot. A check that warns means the machine's
-helper is older: run its setup script again.
+offer, not that they snapshot. A check that warns says what to do: run
+the machine's setup script again when its helper is older, or, when the
+probe could not remove its trial, remove as root what it names.

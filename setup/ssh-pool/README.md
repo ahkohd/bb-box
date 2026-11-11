@@ -522,7 +522,16 @@ The helper's `machine snapshot probe` finds out, as root:
   the free space there.
 - **Machine snapshots**, of the whole machine. It runs
   `/usr/local/libexec/bb-box/snapshot-machine describe`, if an operator
-  installed such a hook, for at most 30 seconds.
+  installed such a hook, for at most 30 seconds. At 30 seconds it stops
+  the hook and everything the hook started, and reports the hook as
+  failed.
+
+The probe's trials go in a folder only root can use:
+`/home/.bb-box-snapshot-trials` on Linux, `/var/db/bb-box/snapshot-trials`
+on a Mac. The probe removes its trial even when it fails or is stopped,
+and the next probe removes the trial of one that was killed. If a trial
+cannot be removed, the probe says what is left and where, `setup.sh` and
+`setup-mac.sh` warn, and the doctor warns with what to remove as root.
 
 `setup.sh` and `setup-mac.sh` run the probe and print what it found. The
 doctor runs it again, and each status passes on the last report, which BB

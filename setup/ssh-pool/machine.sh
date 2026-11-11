@@ -52,8 +52,12 @@ HOMES=/home
 SNAPSHOT_PROBE=1
 SNAPSHOT_HOOK=/usr/local/libexec/bb-box/snapshot-machine
 SNAPSHOT_HOOK_SECONDS=30
+SNAPSHOT_HOOK_GRACE_SECONDS=2
+SNAPSHOT_HOOK_OUT=$STATE/snapshot-hook.out.$$
+SNAPSHOT_HOOK_ERR=$STATE/snapshot-hook.err
 SNAPSHOT_REPORT=$STATE/snapshots
-SNAPSHOT_TRIAL=$HOMES/.bb-box-snapshot-trial.$$
+SNAPSHOT_TRIALS=$HOMES/.bb-box-snapshot-trials
+SNAPSHOT_TRIAL=$SNAPSHOT_TRIALS/$$
 # Container storage is never swept: its files belong to the containers' users.
 SKIP="/proc /sys /var/lib/docker /var/lib/containerd /var/lib/containers /var/lib/lxc /var/lib/lxd /var/snap/lxd /var/lib/incus /var/lib/machines /var/lib/kubelet"
 
@@ -221,28 +225,76 @@ free_kib() { df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print $4 }'; }
 zfs_dataset_mounted_at() { zfs list -H -o name,mountpoint 2>/dev/null | awk -v at="$1" '$2 == at { print $1; exit }'; }
 last_line() { printf '%s\n' "$1" | tail -n 1; }
 
-remove_btrfs_trial() {
-  btrfs subvolume delete "$SNAPSHOT_TRIAL.snapshot" >/dev/null 2>&1
-  btrfs subvolume delete "$SNAPSHOT_TRIAL" >/dev/null 2>&1
+left_of_trial() {
+  left=''
+  for object in "$1/snapshot" "$1/subvolume" "$1"; do
+    [ ! -e "$object" ] || left="$left $object"
+  done
+  printf '%s\n' "${left# }"
+}
+
+remove_trial() {
+  for subvolume in "$1/snapshot" "$1/subvolume"; do
+    [ ! -e "$subvolume" ] || btrfs subvolume delete "$subvolume" >/dev/null 2>&1
+  done
+  rmdir "$1" 2>/dev/null
+  left_of_trial "$1"
+}
+
+trials_folder_is_the_helpers() {
+  [ -d "$SNAPSHOT_TRIALS" ] || mkdir -m 700 "$SNAPSHOT_TRIALS" 2>/dev/null
+  [ -d "$SNAPSHOT_TRIALS" ] && [ ! -L "$SNAPSHOT_TRIALS" ] && [ "$(stat -c %u "$SNAPSHOT_TRIALS" 2>/dev/null)" = 0 ]
+}
+
+abandoned_trials() {
+  for trial in "$SNAPSHOT_TRIALS"/*; do
+    probe=${trial##*/}
+    [ -d "$trial" ] && number "$probe" && ! kill -0 "$probe" 2>/dev/null && printf '%s\n' "$trial"
+  done
+}
+
+remove_abandoned_trials() {
+  for trial in $(abandoned_trials); do
+    left=$(remove_trial "$trial")
+    [ -z "$left" ] || trial_left="$trial_left $left"
+  done
+}
+
+try_btrfs_trial() {
+  if ! mkdir "$SNAPSHOT_TRIAL" 2>/dev/null; then
+    trial_failed="the helper could not make $SNAPSHOT_TRIAL"
+  elif ! said=$(btrfs subvolume create "$SNAPSHOT_TRIAL/subvolume" 2>&1); then
+    trial_failed=$(last_line "$said")
+  elif ! said=$(btrfs subvolume snapshot -r "$SNAPSHOT_TRIAL/subvolume" "$SNAPSHOT_TRIAL/snapshot" 2>&1); then
+    trial_failed=$(last_line "$said")
+  fi
 }
 
 btrfs_trial() {
-  remove_btrfs_trial
-  said=$(btrfs subvolume create "$SNAPSHOT_TRIAL" 2>&1) || { last_line "$said"; return 1; }
-  said=$(btrfs subvolume snapshot -r "$SNAPSHOT_TRIAL" "$SNAPSHOT_TRIAL.snapshot" 2>&1)
-  taken=$?
-  remove_btrfs_trial
-  [ "$taken" = 0 ] || { last_line "$said"; return 1; }
-  [ ! -e "$SNAPSHOT_TRIAL" ] || { echo "the trial subvolume $SNAPSHOT_TRIAL could not be deleted"; return 1; }
+  trial_failed='' trial_left=''
+  if ! trials_folder_is_the_helpers; then
+    trial_failed="$SNAPSHOT_TRIALS is not a folder of root's own: remove it"
+    return 1
+  fi
+  remove_abandoned_trials
+  try_btrfs_trial
+  trial_left=$(printf '%s %s\n' "$trial_left" "$(remove_trial "$SNAPSHOT_TRIAL")" | sed 's/^ *//; s/ *$//')
+  [ -z "$trial_failed" ] && [ -z "$trial_left" ]
+}
+
+trial_left_words() {
+  printf 'the helper could not remove its trial, which leaves %s: as root, delete each subvolume there with btrfs subvolume delete, then its folder with rmdir' "$(printf '%s\n' "$trial_left" | sed 's/ /, /g')"
 }
 
 home_snapshots_on_btrfs() {
   if ! command -v btrfs >/dev/null 2>&1; then
     printf 'snapshot.home=no\nsnapshot.home.why=box homes are on btrfs under %s, but the btrfs tool is missing: install btrfs-progs\n' "$HOMES"
-  elif failed=$(btrfs_trial); then
+  elif btrfs_trial; then
     printf 'snapshot.home=yes\nsnapshot.home.how=btrfs\n'
+  elif [ -n "$trial_left" ]; then
+    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on btrfs under %s, but %s\nsnapshot.left=%s\n' "$HOMES" "$(trial_left_words)" "$trial_left"
   else
-    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on btrfs under %s, but a trial subvolume failed: %s\n' "$HOMES" "$failed"
+    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on btrfs under %s, but a trial subvolume failed: %s\n' "$HOMES" "$trial_failed"
   fi
 }
 
@@ -267,18 +319,52 @@ home_snapshots() {
   esac
 }
 
+hook_running() { kill -0 "$1" 2>/dev/null || kill -s 0 -- "-$1" 2>/dev/null; }
+
+end_hook() {
+  kill -s TERM -- "-$1" 2>/dev/null
+  grace=$((SNAPSHOT_HOOK_GRACE_SECONDS * 10))
+  while [ "$grace" -gt 0 ] && hook_running "$1"; do
+    sleep 0.1
+    grace=$((grace - 1))
+  done
+  kill -s KILL -- "-$1" 2>/dev/null
+}
+
+describe_within_deadline() {
+  setsid "$SNAPSHOT_HOOK" describe </dev/null >"$SNAPSHOT_HOOK_OUT" 2>"$SNAPSHOT_HOOK_ERR" 9>&- &
+  hook=$!
+  sleep "$SNAPSHOT_HOOK_SECONDS" </dev/null >/dev/null 2>&1 9>&- &
+  deadline=$!
+  while hook_running "$hook" && kill -0 "$deadline" 2>/dev/null; do sleep 0.1; done
+  hook_timed_out=no
+  if hook_running "$hook"; then
+    hook_timed_out=yes
+    end_hook "$hook"
+  fi
+  kill "$deadline" 2>/dev/null
+  wait "$deadline" 2>/dev/null
+  wait "$hook"
+  hook_code=$?
+  hook=''
+}
+
+hook_said() { tail -n 2 "$SNAPSHOT_HOOK_ERR" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//'; }
+
 snapshot_hook() {
   if [ ! -x "$SNAPSHOT_HOOK" ]; then
     echo snapshot.hook=none
     return
   fi
-  described=$(timeout "$SNAPSHOT_HOOK_SECONDS" "$SNAPSHOT_HOOK" describe 2>"$STATE/snapshot-hook.err" </dev/null 9>&-)
-  code=$?
-  if [ "$code" = 0 ]; then
-    printf 'snapshot.hook=found\nsnapshot.hook.describe=%s\n' "$(printf '%s' "$described" | tr -d '\n')"
+  describe_within_deadline 2>/dev/null
+  if [ "$hook_timed_out" = yes ]; then
+    printf 'snapshot.hook=failed\nsnapshot.hook.why=it did not finish within %s seconds, so the helper stopped it and everything it started\n' "$SNAPSHOT_HOOK_SECONDS"
+  elif [ "$hook_code" = 0 ]; then
+    printf 'snapshot.hook=found\nsnapshot.hook.describe=%s\n' "$(tr -d '\n' <"$SNAPSHOT_HOOK_OUT")"
   else
-    printf 'snapshot.hook=failed\nsnapshot.hook.why=it exited with %s: %s\n' "$code" "$(tail -n 2 "$STATE/snapshot-hook.err" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
+    printf 'snapshot.hook=failed\nsnapshot.hook.why=it exited with %s: %s\n' "$hook_code" "$(hook_said)"
   fi
+  rm -f "$SNAPSHOT_HOOK_OUT"
 }
 
 snapshot_report() {
@@ -291,10 +377,29 @@ snapshot_report() {
   snapshot_hook
 }
 
+remove_abandoned_probe_files() {
+  for file in "$SNAPSHOT_REPORT.new."* "$STATE/snapshot-hook.out."*; do
+    probe=${file##*.}
+    [ -f "$file" ] && number "$probe" && ! kill -0 "$probe" 2>/dev/null && rm -f "$file"
+  done
+}
+
+end_snapshot_probe() {
+  [ -z "${hook:-}" ] || end_hook "$hook"
+  [ ! -d "$SNAPSHOT_TRIAL" ] || remove_trial "$SNAPSHOT_TRIAL" >/dev/null
+  rm -f "$SNAPSHOT_HOOK_OUT" "$SNAPSHOT_REPORT.new.$$"
+}
+
 snapshot() {
   [ $# -eq 1 ] && [ "$1" = probe ] || quit 2 "usage: machine snapshot probe"
   mkdir -p "$STATE"
-  snapshot_report | put "$SNAPSHOT_REPORT"
+  trap end_snapshot_probe EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  remove_abandoned_probe_files
+  snapshot_report >"$SNAPSHOT_REPORT.new.$$"
+  mv -f "$SNAPSHOT_REPORT.new.$$" "$SNAPSHOT_REPORT"
   cat "$SNAPSHOT_REPORT"
 }
 

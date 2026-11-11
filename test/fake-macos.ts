@@ -3,7 +3,7 @@
 // files (test/fake-macos.sh), so the helper runs on Linux.
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,6 +37,8 @@ export interface FakeMacos {
   readonly state: string;
   /** Runs the helper, as root, with `input` on stdin. */
   helper(args: readonly string[], input?: string): Run;
+  /** Starts the helper, as root, as the leader of its own process group, without waiting for it. */
+  start(args: readonly string[]): ChildProcess;
   /** Runs setup-mac.sh, as root through sudo by `sudoUser`. */
   setup(args: readonly string[], sudoUser?: string): Run;
   /** A file under the Mac's disk, such as /var/db/bb-box/generation, or null when it is missing. */
@@ -60,9 +62,14 @@ export interface FakeMacos {
 }
 
 /** Copies a script with its ROOT= and PATH= lines pointing at the fake Mac. */
-function rewrite(from: string, to: string, root: string, bin: string): void {
+function rewrite(from: string, to: string, root: string, bin: string, settings: Readonly<Record<string, string>> = {}): void {
   let text = readFileSync(from, "utf8");
-  for (const [pattern, line] of [[/^ROOT=$/m, `ROOT='${root}'`], [/^PATH=.*$/m, `PATH=${bin}:/usr/bin:/bin`]] as const) {
+  const lines: (readonly [RegExp, string])[] = [
+    [/^ROOT=$/m, `ROOT='${root}'`],
+    [/^PATH=.*$/m, `PATH=${bin}:/usr/bin:/bin`],
+    ...Object.entries(settings).map(([name, value]) => [new RegExp(`^${name}=.*$`, "m"), `${name}=${value}`] as const),
+  ];
+  for (const [pattern, line] of lines) {
     assert.equal(text.match(new RegExp(pattern.source, "gm"))?.length, 1, `${from} has one ${pattern.source} line`);
     text = text.replace(pattern, line);
   }
@@ -74,7 +81,7 @@ function rewrite(from: string, to: string, root: string, bin: string): void {
  * Disk Access, nobody at the console, a person's account `person` (UID 501), and the groups every
  * Mac has. `template` installs BB Box's home template, as setup would.
  */
-export function fakeMacos(options: { template?: boolean } = {}): FakeMacos {
+export function fakeMacos(options: { template?: boolean; settings?: Readonly<Record<string, string>> } = {}): FakeMacos {
   const dir = realpathSync(tempDir("macos"));
   const root = join(dir, "root");
   const data = join(root, "System", "Volumes", "Data");
@@ -107,7 +114,7 @@ export function fakeMacos(options: { template?: boolean } = {}): FakeMacos {
   for (const tool of TOOL_NAMES) symlinkSync(TOOLS, join(bin, tool));
 
   mkdirSync(pool);
-  rewrite(join(POOL, "machine-mac.sh"), join(pool, "machine-mac.sh"), root, bin);
+  rewrite(join(POOL, "machine-mac.sh"), join(pool, "machine-mac.sh"), root, bin, options.settings);
   rewrite(join(POOL, "setup-mac.sh"), join(pool, "setup-mac.sh"), root, bin);
   rewrite(join(POOL, "mac-ios.sh"), join(pool, "mac-ios.sh"), root, bin);
   cpSync(join(POOL, "mac-home"), join(pool, "mac-home"), { recursive: true });
@@ -128,6 +135,7 @@ export function fakeMacos(options: { template?: boolean } = {}): FakeMacos {
     data,
     state,
     helper: (args, input = "") => run(join(pool, "machine-mac.sh"), args, input),
+    start: (args) => spawn("/bin/sh", [join(pool, "machine-mac.sh"), ...args], { env, stdio: "ignore", detached: true }),
     setup: (args, sudoUser = "person") => run(join(pool, "setup-mac.sh"), args, "", { SUDO_USER: sudoUser }),
     file: (path) => read(join(root, path)),
     user(name) {

@@ -152,7 +152,7 @@ machine snapshot take <generation> <snapshot>      stdin: install, box
 machine snapshot list <generation>                 stdin: install, box
 machine snapshot restore <generation> <snapshot> <undo> <operation>
 machine snapshot delete <generation> <snapshot>
-machine snapshot fork <snapshot> <slot>            iOS slots and shared macOS users only
+machine snapshot fork <snapshot> <user>            Macs lent whole only
 machine snapshot hook <operation> <command> ...    runs the operator's hook, section 3
 ```
 
@@ -186,12 +186,12 @@ machine snapshot hook <operation> <command> ...    runs the operator's hook, sec
   Each step is safe to run again. A restore cut short is finished by
   asking again with the same operation: a home missing with a moved-aside
   home present means step 4 had begun.
-- **Fork.** Only where no other user shares the Mac, and off on Macs that
-  lend iOS slots until a new user can be signed in without a userspace
-  restart (see Build order). The helper makes a new slot user, clones the
-  snapshot as its home, changes the owner of what the source owned, and
-  removes the source's identity (above). A pool machine lent whole cannot
-  fork: its snapshots live on it, and it is held by its source.
+- **Fork.** Only on a Mac lent whole, where no other user shares the Mac.
+  The helper makes a new box user, clones the snapshot as its home, changes
+  the owner of what the source owned, and removes the source's identity
+  (above). Macs that lend iOS slots take and restore, but do not fork until
+  a new user can be signed in there without a userspace restart, which ends
+  every SSH session on the Mac (see Build order).
 - **Delete** removes the clone, the subvolume or the ZFS snapshot.
 - **Release.** The reset deletes every snapshot of the user before it
   removes the user, and its "nothing left" check gains the snapshots
@@ -281,11 +281,23 @@ project only. No cloud was called in the spike.
   Access, which a clone of a home's protected folders needs; on btrfs, a
   trial subvolume and a read-only snapshot of it, both deleted; on ZFS,
   the dataset mounted at the homes. For machine scope it runs the hook's
-  `describe` with a 30 s limit. A trial and a hook cost more than a
+  `describe` with a 30 s limit (below). A trial and a hook cost more than a
   survey should, so the probe runs at enrolment (`setup.sh` and
   `setup-mac.sh` run it and print what it found) and in the doctor, and
   each `machine status` passes on the last report. BB Box keeps the
   newest report it has seen, so it can answer while the machine is away.
+- **The probe finishes on time and leaves nothing behind**, as it runs on
+  machines whose boxes and iOS slots are in use. The hook runs in a
+  session of its own. At 30 s the helper sends that whole session TERM,
+  then KILL 2 s later, and reports the hook as failed, whatever it exits
+  with after. Trials go in a folder only root can use, one subfolder per
+  probe named by its process ID: `<homes>/.bb-box-snapshot-trials` on
+  btrfs and `/var/db/bb-box/snapshot-trials` on a Mac. The probe removes
+  its trial after a failure and when it is stopped, then checks that
+  nothing of it is left. A probe killed outright leaves its subfolder,
+  and the next probe removes it once no process has that ID. A trial the
+  probe cannot remove is reported as a failure that names each path left,
+  and the doctor warns with what to remove.
 - **BB Box's rules on top.** A machine whose boxes have root
   (`reset=machine`) offers no home snapshots, whatever its filesystem; a
   Mac that lends iOS slots offers no machine snapshots. The report keeps
@@ -341,8 +353,8 @@ It needs:
    `forkSafe` is the version of the helper's home reset.
 4. The pool backend implements `snapshotting`, `planSnapshots`,
    `snapshot`, `rollbackSnapshot`, `deleteSnapshot`, `heldSnapshots` and,
-   for slots, `forkSnapshot`, through the helper. A machine that does not
-   answer makes its snapshots `unavailable`, as 070 says.
+   for Macs lent whole, `forkSnapshot`, through the helper. A machine that
+   does not answer makes its snapshots `unavailable`, as 070 says.
 5. The pool's test fakes gain the helper's snapshot commands, and the
    conformance suite runs take, restore, undo and delete on a pool machine
    that offers them.
@@ -357,7 +369,9 @@ It needs:
 - Keep past release, for both scopes, in the first units: the snapshot
   would hold the box's secrets on a machine lent to the next box, and a
   `linux-docker` box there has root.
-- Fork of a box on a machine lent whole.
+- Fork where another user shares the machine.
+- Fork on a Mac that lends iOS slots, until a new user can be signed in
+  there without a userspace restart.
 - A restore of a box threads run on, until 070's G17 passes, as for every
   backend.
 - A home made before homes were subvolumes or datasets.
@@ -411,10 +425,15 @@ The owner chose this order on 11 November 2026. Each is a unit:
 Later: ZFS homes, a sample cloud hook, and Keep past release where no box
 on the machine has root.
 
-The spike recommended iOS forks into a new slot in unit 3, and a fork only
-where a machine holds many box users. The owner's order supersedes both:
-forks only where no other user shares the Mac, and none on shared iOS
-slots until signing a new user in no longer restarts userspace.
+### History: the spike's fork rule
+
+The spike recommended the opposite fork rule: forks into a new slot on
+iOS slot Macs in unit 3, and no fork on a machine lent whole, as its
+snapshots live on it and its source holds it. The owner rejected that on
+11 November 2026. This record states the owner's rule throughout: forks
+only on a Mac lent whole, where no other user shares it, and none on Macs
+that lend iOS slots until signing a new user in no longer restarts
+userspace.
 
 ## Consequences
 

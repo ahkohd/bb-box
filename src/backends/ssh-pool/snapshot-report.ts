@@ -38,6 +38,7 @@ export interface PoolSnapshotReport {
   readonly freeKiB: number | null;
   readonly home: Measured<HomeSnapshots>;
   readonly hook: Measured<MachineSnapshots>;
+  readonly left: readonly string[];
 }
 
 export interface SnapshotOffers {
@@ -72,6 +73,10 @@ function snapshotLines(text: string): Map<string, string> {
     if (!values.has(key)) values.set(key, line.slice(at + 1).trim());
   }
   return values;
+}
+
+function pathsOf(value: string | undefined): string[] {
+  return (value ?? "").split(" ").filter(Boolean);
 }
 
 function wholeOrNull(value: string | undefined): number | null {
@@ -137,6 +142,7 @@ export function parseSnapshotReport(text: string, machine: string): PoolSnapshot
     freeKiB: wholeOrNull(values.get("free_kib")),
     home: homeOf(values),
     hook: hookOf(values),
+    left: pathsOf(values.get("left")),
   };
 }
 
@@ -215,6 +221,10 @@ function measuredAgo(at: number, now: number): string {
   return hours < 48 ? `${hours} hours ago` : `${Math.round(hours / 24)} days ago`;
 }
 
+function leftFix(machine: SshPoolMachine, left: readonly string[]): string {
+  return `On ${machine.name}, as root, remove what its snapshot probe left: ${left.join(", ")}. Then run the doctor again.`;
+}
+
 export interface MachineSnapshotsCheck {
   readonly id: CheckId;
   readonly name: string;
@@ -239,6 +249,7 @@ export function machineSnapshotsCheck(check: MachineSnapshotsCheck): DoctorCheck
   }
   const offers = offersOf(report, machine, check.listsSlots);
   const detail = `${capitalised(homeWords(report, offers.home))}. ${capitalised(machineWords(offers.machine))}. Probed ${measuredAgo(report.at, check.now)}. ${POOL_TAKES_NO_SNAPSHOTS_YET}.`;
+  if (report.left.length) return { id, name, status: "warn", detail, fix: leftFix(machine, report.left) };
   return { id, name, status: "ok", detail, fix: null };
 }
 
@@ -290,6 +301,10 @@ export function snapshotReportKey(machine: string): string {
   return `${SNAPSHOT_REPORT_KEY_PREFIX}${machine}`;
 }
 
+function stringsFromJson(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((each): each is string => typeof each === "string") : [];
+}
+
 function measuredFromJson<T>(value: unknown): Measured<T> | null {
   if (!value || typeof value !== "object") return null;
   const { is } = value as { is?: unknown };
@@ -312,5 +327,6 @@ export function snapshotReportFromJson(value: unknown): PoolSnapshotReport | nul
     freeKiB: typeof report.freeKiB === "number" ? report.freeKiB : null,
     home,
     hook,
+    left: stringsFromJson(report.left),
   };
 }

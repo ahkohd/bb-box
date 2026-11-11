@@ -1104,10 +1104,11 @@ test("snapshot probe finds APFS clones under /Users, keeps its report for status
 
   assert.deepEqual([apfs.homes, apfs.filesystem, apfs.home, apfs.hook], ["/Users", "apfs", { is: "yes", what: { way: "apfs", dataset: null } }, { is: "no", why: "no snapshot hook is installed" }]);
   assert.match(mac.helper(["status"]).stdout, /^snapshot\.home=yes$/m);
-  assert.deepEqual(readdirSync(join(mac.root, "var/db/bb-box")).filter((name) => name.startsWith(".clone-trial")), []);
+  assert.deepEqual(readdirSync(join(mac.root, "var/db/bb-box/snapshot-trials")), []);
 
   mac.flag("no-clonefile");
   assert.match(JSON.stringify(probedSnapshots(mac).home), /^\{"is":"no","why":"box homes are on APFS under \/Users, but a trial clone failed: cp: .*clonefile failed: Operation not supported"\}$/);
+  assert.deepEqual(readdirSync(join(mac.root, "var/db/bb-box/snapshot-trials")), []);
   mac.flag("no-clonefile", false);
 
   rmSync(join(mac.root, TCC));

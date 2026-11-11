@@ -81,6 +81,33 @@ describe("Pool machines report whether they can snapshot (090)", () => {
     assert.match(check(checks, "machine.build-6.snapshots").detail, /Machine snapshots: none: its snapshot hook's describe failed: it exited with 1: lvs: volume group bbvg not found\./);
   });
 
+  it("never offers machine snapshots on a Mac that lends iOS slots, even with none in use, but does on a Mac lent whole", async () => {
+    machine("192.0.2.80", { macos: "", "snapshot-hook": LVM_THIN_HOOK });
+    machine("192.0.2.81", { macos: "", "snapshot-hook": LVM_THIN_HOOK });
+    const backend = pool("mac-2 192.0.2.80 macos,ios\nmac-3 192.0.2.81 macos");
+
+    const { checks } = await backend.doctor();
+
+    assert.match(check(checks, "machine.mac-2.snapshots").detail, /Machine snapshots: none: it lends iOS slots, whose users share it, so no snapshot of the whole machine stands in for one box's\./);
+    assert.match(check(checks, "machine.mac-3.snapshots").detail, /Machine snapshots: hook found: machine scope, LVM thin \(bbvg\/thinpool, 12% full\)\./);
+    assert.match(check(checks, "snapshot-offers").detail, /1 of 2 machines could offer machine snapshots by a hook \(mac-3\)/);
+    assert.match(backend.noSnapshotsWhy(guestOn("mac-2")) ?? "", /; for a machine snapshot, it lends iOS slots, whose users share it, so no snapshot of the whole machine stands in for one box's$/);
+    assert.match(backend.noSnapshotsWhy(guestOn("mac-3")) ?? "", /reports machine snapshots: hook found: machine scope/);
+  });
+
+  it("warns, with what to remove, when a machine's probe could not remove its trial", async () => {
+    const trial = "/home/.bb-box-snapshot-trials/4242";
+    machine("192.0.2.82", { "homes-fs": "btrfs", "homes-why": `box homes are on btrfs under /home, but the helper could not remove its trial, which leaves ${trial}/snapshot, ${trial}`, "snapshot-left": `${trial}/snapshot ${trial}` });
+    const backend = pool("build-10 192.0.2.82 linux");
+
+    const { checks } = await backend.doctor();
+
+    const left = check(checks, "machine.build-10.snapshots");
+    assert.equal(left.status, "warn");
+    assert.match(left.detail, /^Home snapshots: none: box homes are on btrfs under \/home, but the helper could not remove its trial, which leaves /);
+    assert.equal(left.fix, `On build-10, as root, remove what its snapshot probe left: ${trial}/snapshot, ${trial}. Then run the doctor again.`);
+  });
+
   it("warns, with the setup to run, for a machine whose helper does not probe", async () => {
     machine("192.0.2.77", { "no-snapshot": "" });
     const backend = pool("build-7 192.0.2.77 linux");

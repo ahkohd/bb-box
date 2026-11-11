@@ -107,6 +107,7 @@ function snapshotReport() {
   const lines = ["snapshot.probe=1", `snapshot.at=${Math.floor(Date.now() / 1000)}`, `snapshot.homes=${homes}`, `snapshot.filesystem=${flag("homes-fs") ?? (mac ? "apfs" : "ext4")}`, "snapshot.free_kib=41943040"];
   if (way) lines.push("snapshot.home=yes", `snapshot.home.how=${way}`, ...(way === "zfs" ? ["snapshot.zfs.dataset=rpool/home"] : []));
   else lines.push("snapshot.home=no", ...(flag("homes-why") ? [`snapshot.home.why=${flag("homes-why")}`] : []));
+  if (flag("snapshot-left") !== null) lines.push(`snapshot.left=${flag("snapshot-left")}`);
   if (flag("hook-fails") !== null) lines.push("snapshot.hook=failed", `snapshot.hook.why=it exited with 1: ${flag("hook-fails")}`);
   else if (flag("snapshot-hook") !== null) lines.push("snapshot.hook=found", `snapshot.hook.describe=${flag("snapshot-hook")}`);
   else lines.push("snapshot.hook=none");
