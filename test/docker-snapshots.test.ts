@@ -275,6 +275,7 @@ test("Docker reports and prunes this install's unused snapshot images without ta
   const check = (await engine.doctor()).find((check) => check.id === "docker.snapshot-leftovers");
   assert.equal(check?.status, "warn");
   assert.match(check?.detail ?? "", /images without tags: 1/);
+  assert.match(check?.fix ?? "", /^Wait for BB Box's maintenance/, "the warning says what to do");
 
   await engine.maintain();
   const cleaned = (await engine.doctor()).find((check) => check.id === "docker.snapshot-leftovers");

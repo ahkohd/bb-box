@@ -11,6 +11,16 @@ export interface ElsewhereBackend {
   readonly args: readonly string[];
 }
 
+function killProcessGroup(leader: number | undefined): void {
+  if (leader === undefined) return;
+  try {
+    process.kill(-leader, "SIGKILL");
+  } catch (error) {
+    const alreadyGone = error instanceof Error && "code" in error && error.code === "ESRCH";
+    if (!alreadyGone) throw error;
+  }
+}
+
 export interface StepSeen {
   readonly task: TaskRef | null;
   readonly claimed: Guest | null;
@@ -26,7 +36,8 @@ export async function interruptStep(
   timeoutMs: number,
 ): Promise<StepSeen> {
   const input: InterruptedStepInput = { module: elsewhere.module, args: elsewhere.args, storage, installId, run };
-  const child = spawn(process.execPath, [STEP_SCRIPT, JSON.stringify(input)], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [STEP_SCRIPT, JSON.stringify(input)], { stdio: ["ignore", "pipe", "pipe"], detached: true });
+  const killWithWhatItStarted = () => killProcessGroup(child.pid);
   const errors: string[] = [];
   child.stderr.setEncoding("utf8").on("data", (chunk: string) => errors.push(chunk));
   const exited = new Promise<number | null>((resolve) => child.once("exit", (code) => resolve(code)));
@@ -44,17 +55,17 @@ export async function interruptStep(
   while ((code = await Promise.race([exited, new Promise<undefined>((resolve) => setTimeout(resolve, 100))])) === undefined) {
     if (seen.finished) break;
     if (Date.now() > deadline) {
-      child.kill("SIGKILL");
+      killWithWhatItStarted();
       throw new Error(`The step did not reach the point to stop it within ${timeoutMs} ms.`);
     }
     if (await killNow(seen)) {
-      child.kill("SIGKILL");
+      killWithWhatItStarted();
       await exited;
       return seen;
     }
   }
   if (!seen.finished) throw new Error(`The step's process exited with ${code ?? "a signal"} before it could be stopped: ${errors.join("").trim()}`);
-  child.kill("SIGKILL");
+  killWithWhatItStarted();
   await exited;
   return seen;
 }

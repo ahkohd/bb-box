@@ -1176,6 +1176,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             others.push(restarted);
             const outcome = await settled(restarted, seen.task, timeout, signal);
             assert.ok(outcome.state === "ok" || outcome.state === "failed", `the take ends, not ${JSON.stringify(outcome)}`);
+            console.log(`# ${options.name} ${kind.id}: the killed take settled as ${outcome.state === "ok" ? "a complete snapshot" : "failed, its partial copy removed"}`);
 
             assert.equal(await backend.power(guest, signal()), "running", "the box runs again");
             const now = await command.run(`cat "$HOME/${SNAPSHOT_FILE}"; rm -f "$HOME/${SLOW_TAKE_FILE}"`, { timeoutMs: 30_000, signal: signal() });

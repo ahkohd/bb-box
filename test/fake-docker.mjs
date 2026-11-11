@@ -152,6 +152,23 @@ function probeCards(devices) {
   for (const card of cardsGiven(devices, false)) console.log(`${card.index}, GPU-${card.uuid}, ${card.name}, ${card.totalMiB}, ${card.freeMiB}`);
 }
 
+function copyContainerWhileItRuns(rest, source, target) {
+  const name = rest.includes("--name") ? rest[rest.indexOf("--name") + 1] : `copy-${randomBytes(4).toString("hex")}`;
+  if (find(name)) fail(`docker: Error response from daemon: Conflict. The container name "/${name}" is already in use.`, 125);
+  const labels = Object.fromEntries(rest.flatMap((arg, i) => (rest[i - 1] === "--label" ? [arg.split(/=(.*)/s).slice(0, 2)] : [])));
+  mkdirSync(dir(name), { recursive: true });
+  save({
+    Id: randomBytes(32).toString("hex"),
+    Name: `/${name}`,
+    Image: "copy",
+    Config: { Labels: labels, Env: [] },
+    State: { Status: "running", Running: true, Paused: false },
+    HostConfig: { Mounts: [{ Type: "volume", Name: source, Source: "", Target: "/from", ReadOnly: true }, { Type: "volume", Name: target, Source: "", Target: "/to", ReadOnly: false }] },
+    NetworkSettings: { Networks: {} },
+  });
+  return name;
+}
+
 function run(rest) {
   if (rest.at(-1) === "du -sk /from") return console.log(`${host.snapshotVolumeKiB ?? 1024} /from`);
   if (rest.at(-1) === "df -Pk /space") return console.log(`Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/fake 1000000 ${host.snapshotUsedKiB ?? 100000} 900000 10% /space`);
@@ -160,8 +177,11 @@ function run(rest) {
     const source = rest.find((arg) => arg.endsWith(":/from:ro"))?.split(":")[0];
     const target = rest.find((arg) => arg.endsWith(":/to"))?.split(":")[0];
     const volumes = read("volumes.json", {});
+    const copier = copyContainerWhileItRuns(rest, source, target);
     if (host.holdRestoreCopy && source.startsWith("bbbox-snapshot-")) waitFor(host.holdRestoreCopy);
     if (host.holdTakeCopy && !source.startsWith("bbbox-snapshot-")) waitFor(host.holdTakeCopy);
+    if (!existsSync(join(dir(copier), "config.json"))) fail("The copy's container was removed while it ran", 137);
+    rmSync(dir(copier), { recursive: true, force: true });
     if (host.failRestoreCopy && source.startsWith("bbbox-snapshot-")) fail("Restore copy failed");
     if (!volumes[source] || !read("volumes.json", {})[target]) fail("Snapshot copy has a missing volume");
     const now = read("volumes.json", {});

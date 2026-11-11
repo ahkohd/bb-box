@@ -267,3 +267,121 @@ passes with it. Keep tag changes cut short between the new tag and the old
 one's removal, a renewal and a shortening, each with BB Box's recovery and
 Docker's maintenance in both orders, leave one tag, the date asked for; with
 `snapshots.db` and the backend's own storage both lost, the later date.
+
+## The conformance suite, live on Docker
+
+Measured on 11 November 2026. The shared conformance suite ran against real
+Docker engines with `npm run conformance -- --backend docker --kind linux`,
+from this repository, without BB. It needs no BB server: it calls the
+backend directly, as an install of its own called `conformance`.
+
+Two Proxmox QEMU VMs, each with 8 vCPU, 16 GiB of memory and a 100 GiB
+disk, ran Ubuntu 24.04.5 and Docker 29.1.3. Each had `bbbox/linux:1` built
+by `setup/docker/build.sh linux`. One VM ran the suite against its own
+engine, through the local socket. It also ran the suite against the other
+VM's engine, through `ssh://`. Each engine ran on the containerd image
+store, Docker 29's default, and on overlay2, with
+`"features": { "containerd-snapshotter": false }`.
+
+The suite gained three checks for this run, each driven by the kind's
+snapshot offer, not by Docker's name:
+
+- a fork of a snapshot into a new box, which must pass the core's own fork
+  check (`forkVerdict`): its identity reset ran, its identity value is its
+  own box ID, its machine ID and host keys are new, and the source box
+  still answers as itself;
+- a take run in a second process, which the suite kills with SIGKILL 2 s
+  after the take names its task, with 1 GiB just written in the box so the
+  take is still running; a new instance on that process's storage then
+  settles the take;
+- a restore run in a second process, with 1 GiB just written into the
+  box's Docker data, which the suite kills 1 s after the restore names its
+  new guest; a new instance on that process's storage then releases the
+  part-made guest and starts the box, which must hold what it held before.
+
+### Results
+
+Every snapshot check passed on each engine and image store, except the
+killed restore on the local engine on the containerd store, which is still
+open (below). Each case and its time, from the last run of each:
+
+| Check | Local, containerd | SSH, containerd | Local, overlay2 | SSH, overlay2 |
+| --- | --- | --- | --- | --- |
+| Take, list, restore as a new guest, put back, delete | 5.1 s | 22.1 s | 2.5 s | 19.7 s |
+| Keep dates, read by a new instance on empty storage | 3.2 s | 13.2 s | 1.1 s | 13.2 s |
+| Fork with the identity reset check | 4.6 s | 23.0 s | 2.4 s | 22.5 s |
+| Take killed part way, settled by a new instance | 167.1 s, failed and cleaned | 172.3 s, failed and cleaned | 6.4 s, complete | 17.1 s, complete |
+| Restore killed part way, recovered by a new instance | failed: volume in use, see below | 28.5 s | 7.3 s | 23.0 s |
+| A kept snapshot outlives the box's release | 0.4 s | 3.6 s | 0.2 s | 3.5 s |
+| Whole run of Linux boxes | 213 s | 350 s | 34 s | 176 s |
+
+On the containerd store the killed take was still copying when it was
+killed, so it settled as failed: the box was unpaused and its partial copy
+removed, once the take's time bound had passed, about 2.7 minutes for a
+1 GiB change. On overlay2 the commit of 1 GiB took under 2 s on the engine,
+which finished it after its client was killed, so the take settled as a
+complete snapshot and the suite deleted it. In every run the killed restore
+was still copying the box's Docker data, and its new container did not
+exist yet.
+
+After each passing run, Docker listed no BB Box containers, volumes or
+snapshot images on either engine. The killed restore also passed on the
+local containerd engine in two earlier runs, in 199 s and 227 s in all,
+when the copy had ended before the new instance released the guest. The rest of the suite passed too: acquire,
+commands, copies, Docker in the box, stop and start, sizes and live
+resize, interrupted acquires, image builds and two installs. Enrolment and
+reconnection to BB were skipped, as the suite ran without a BB server.
+
+### What the run found
+
+On overlay2, the first local run failed the killed restore. The killed
+process's copy of the snapshot's Docker data, a `docker run --rm` on the
+engine, kept running after its client was killed. The new instance's
+release then failed with "volume is in use", as the copy still held the
+new guest's Docker volume. The guest could not be released until the copy
+ended. The SSH engine and the containerd runs passed, because their copies
+had ended by then.
+
+The copy now runs as a container named after the volume it fills, with
+`-copy` on the end, and labelled with the install and that volume. Before
+it removes a box's Docker volume, at a release or at maintenance, Docker
+stops that install's copy into it. `test/docker-restore.test.ts` releases
+a restored container while the fake Docker host holds its copy. It failed
+with the same "volume is in use" before the change, and passes with it.
+The fake Docker host now shows a running copy as a container that holds
+its volumes, as Docker does.
+
+The doctor's snapshot leftovers check warned without saying what to do,
+which the suite requires of every warning. It now says to wait for
+maintenance and what maintenance does. `test/docker-snapshots.test.ts`
+failed on the missing fix before the change.
+
+### Still open
+
+On the local containerd engine the killed restore failed twice with "volume
+is in use" for the new guest's Docker volume, after the copy was named.
+The process the suite kills does not take the `docker` commands it started
+with it: BB Box starts them through its spawn helper, so the copy's
+`docker run` carries on as an orphan. When the new instance released the
+guest within milliseconds of the kill, that `docker run` had not yet made
+its copy container, so there was none to stop; the container appeared
+before the volume removal, which then failed. In one run, where the
+removal came first, `docker run` made the volume again, without labels,
+and its container stayed in Docker's Created state. Each time, the run's
+own leftovers were removed by hand.
+
+BB takes seconds to start again after it stops, by which time an orphaned
+`docker run` has made its container, which a release now stops. The
+suite's recovery is quicker than BB's. A fix is to look for the copy
+again when a removal finds its volume in use, and to make the copy's
+container with `docker container create` and a volume that must exist.
+It needs a fake Docker host that can make a container part way through a
+release, so it is left for a later change.
+
+### Running it again
+
+The settings and commands are in
+[the development guide](../development.md#the-conformance-suite). The kill
+checks run only with `npm run conformance`, which makes the second
+process; `npm test` skips them and says why. The fork check is skipped on
+the fakes, which run commands on the test machine.

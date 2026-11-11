@@ -18,7 +18,7 @@
 //   one whose labels name this install and the box (018).
 
 import { DockerSnapshotEngine, type RestorableSnapshot } from "./snapshot-engine.ts";
-import { dockerOffer, FORK_HOLD_MISSING, isBoxContainerName, restoredName } from "./snapshots.ts";
+import { COPY_INTO, copyIntoName, dockerOffer, FORK_HOLD_MISSING, isBoxContainerName, restoredName, SNAPSHOT_INSTALL } from "./snapshots.ts";
 import type { CopyHooks, ForkArming, GuestIdentity, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { spawn } from "node:child_process";
@@ -2549,8 +2549,16 @@ export class DockerBackend implements Backend {
     const labels = knownLabels ?? await this.#dockerVolumeLabels(volume, signal);
     if (!labels) return;
     this.#requireOwnVolume(volume, containerName, labels);
+    await this.#stopCopyInto(volume, signal);
     const result = await this.#cli.run(["volume", "rm", volume], { timeoutMs: 60_000, signal });
     if (result.exitCode !== 0 && !/no such volume/i.test(result.stderr)) throw this.#cli.error("docker volume rm", result);
+  }
+
+  async #stopCopyInto(volume: string, signal?: AbortSignal): Promise<void> {
+    const [copy] = await this.#cli.inspect([copyIntoName(volume)], signal);
+    if (!copy || copy.labels[SNAPSHOT_INSTALL] !== this.#context.installId || copy.labels[COPY_INTO] !== volume) return;
+    const result = await this.#cli.run(["container", "rm", "--force", copy.id], { timeoutMs: 60_000, signal });
+    if (result.exitCode !== 0 && !NO_SUCH.test(result.stderr) && !/already in progress/i.test(result.stderr)) throw this.#cli.error("docker container rm", result);
   }
 
   async #removeOrphanVolumes(state: HostState, signal?: AbortSignal): Promise<void> {

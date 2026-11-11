@@ -210,11 +210,12 @@ Against real hosts:
   npm run conformance -- --backend docker --settings /tmp/docker-ssh.json --kind linux
   ```
 
-  A run of Linux boxes takes about RUN_MINUTES minutes on a VM with 8 cores. Most
-  of it is the interrupted take: Docker settles a take whose process
-  stopped only once the pause it planned has run three times over, plus a
-  minute, and the suite writes 1 GiB into the box first so that the take
-  is still running when it is killed. Run it on the containerd image
+  A run of Linux boxes takes about 3.5 minutes on a VM with 8 cores, about
+  6 minutes over SSH, and under a minute on overlay2. Most of it is the
+  interrupted take on the containerd store: Docker settles a take whose
+  process stopped only once the pause it planned has run three times
+  over, plus a minute, and the suite writes 1 GiB into the box first so
+  that the take is still running when it is killed. Run it on the containerd image
   store, Docker's default, and on overlay2
   (`"features": { "containerd-snapshotter": false }` in
   `/etc/docker/daemon.json`, then restart Docker and build the images

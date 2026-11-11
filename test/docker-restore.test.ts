@@ -9,7 +9,7 @@ import { commitChanges, snapshotImage } from "../src/backends/docker/snapshots.t
 import type { BoxRecord } from "../src/core/boxes.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
 import { fakeDockerHost, dockerConfig, type FakeDockerHost } from "./fake-docker.ts";
-import { tempDir, testContext } from "./helpers.ts";
+import { MemoryStorage, tempDir, testContext } from "./helpers.ts";
 import { COMMAND, THREAD, readyBox, standing, untilHeld, world, type World } from "./snapshot-world.ts";
 
 const RESTORED = /^bbbox-bx[0-9a-z]+-[0-9a-f]{8}$/;
@@ -43,6 +43,19 @@ async function boxWithSnapshotOfA(fake: FakeDockerHost) {
   const target = (await state.snapshots.take(COMMAND, box, standing(box), { name: "A" })).snapshot!;
   writeBoth(fake, box, "B");
   return { state, box, target, old: box.guest!.ref };
+}
+
+function copiesInto(fake: FakeDockerHost, volume: string): string[] {
+  return fake.containers().filter((name) => fake.inspect(name).HostConfig.Mounts?.some((mount) => mount.Name === volume && mount.Target === "/to"));
+}
+
+async function restoredVolumeOnce(fake: FakeDockerHost): Promise<string> {
+  for (let i = 0; i < 1000; i++) {
+    const volume = Object.keys(JSON.parse(readFileSync(join(fake.root, "volumes.json"), "utf8"))).find((name) => RESTORED.test(name.replace(/-docker$/, "")));
+    if (volume && copiesInto(fake, volume).length) return volume;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return assert.fail("the restore did not start copying into its new container's Docker volume");
 }
 
 function boxLabels(fake: FakeDockerHost, container: string): Record<string, string> {
@@ -116,12 +129,7 @@ test("Docker keeps a restored container's Docker volume through a sweep that run
   fake.set({ holdRestoreCopy: release });
 
   const restoring = state.snapshots.restore(COMMAND, box, standing(box), target.id);
-  let volume: string | undefined;
-  for (let i = 0; i < 1000 && !volume; i++) {
-    volume = Object.keys(JSON.parse(readFileSync(join(fake.root, "volumes.json"), "utf8"))).find((name) => RESTORED.test(name.replace(/-docker$/, "")));
-    if (!volume) await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  assert.ok(volume, "the restore made its new container's Docker volume");
+  const volume = await restoredVolumeOnce(fake);
   await state.backend.maintain!();
   assert.ok(volume in JSON.parse(readFileSync(join(fake.root, "volumes.json"), "utf8")), "the sweep left the volume of the container being made");
   writeFileSync(release, "");
@@ -130,6 +138,23 @@ test("Docker keeps a restored container's Docker volume through a sweep that run
   const restored = (await state.boxes.find(box.id))!;
   assert.equal(restored.state, "ready");
   assert.deepEqual(readBoth(fake, restored), ["A", "A"]);
+});
+
+test("Docker releases a restored container whose Docker data is still being copied, as after BB stopped part way, and leaves nothing of it", async () => {
+  const fake = fakeDockerHost();
+  const { state, box, target } = await boxWithSnapshotOfA(fake);
+  const copyMayFinish = join(tempDir("docker-restore"), "copy-may-finish");
+  fake.set({ holdRestoreCopy: copyMayFinish });
+  const restoring = state.snapshots.restore(COMMAND, box, standing(box), target.id).catch(() => null);
+  const volume = await restoredVolumeOnce(fake);
+
+  const restarted = new DockerBackend(dockerConfig(), testContext(new MemoryStorage(), "test", { id: "fake" }), { binary: fake.binary, readyTimeoutMs: 2_000 });
+  await restarted.release({ ref: volume.replace(/-docker$/, ""), host: null, address: null, size: null, data: { box: box.id } }, { resetting: async () => {}, timing: () => {} });
+
+  assert.equal(volume in JSON.parse(readFileSync(join(fake.root, "volumes.json"), "utf8")), false, "the part-made container's Docker volume is gone");
+  assert.deepEqual(copiesInto(fake, volume), [], "and so is the copy into it");
+  writeFileSync(copyMayFinish, "");
+  await restoring;
 });
 
 test("Docker puts the old container back when the new one does not start, and removes the new one with its volume", async () => {
