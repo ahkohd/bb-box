@@ -211,12 +211,12 @@ export function snapshotStatusLine(box: BoxRecord, offer: Snapshotting | null, s
   if (!offer && !seen.records.length) return null;
   const counted = seen.records.filter(countsAgainstLimit).length;
   const hidden = seen.hidden ? `, and ${seen.hidden === 1 ? "one" : seen.hidden} you cannot see` : "";
-  if (!seen.records.length) return `Snapshots: none${hidden}. ${box.backendLabel} takes them of ${snapshottingWords(offer!.holds, offer!.whileRunning)}.`;
+  if (!seen.records.length) return `Snapshots: none${hidden}. ${box.backendLabel} takes them of ${snapshottingWords(offer!.holds, offer!.whileRunning, offer!.scope)}.`;
   return `Snapshots: ${counted} of ${perBox}: ${seen.records.map(briefLine).join("; ")}${hidden}.`;
 }
 
 export function offerSnapshotWords(offer: Snapshotting): string {
-  return snapshottingWords(offer.holds, offer.whileRunning);
+  return snapshottingWords(offer.holds, offer.whileRunning, offer.scope);
 }
 
 function eachWords(price: NonNullable<Snapshotting["price"]>): string {

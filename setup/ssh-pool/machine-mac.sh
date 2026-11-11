@@ -105,6 +105,17 @@ SLOTS_STATE=$STATE/host
 EXIT_LENT_WHOLE=7
 EXIT_SLOTS_HELD=3
 CONTAINERS_PROCESS=containermanagerd
+HOMES=/Users
+SNAPSHOT_PROBE=1
+SNAPSHOT_HOOK=$ROOT/usr/local/libexec/bb-box/snapshot-machine
+SNAPSHOT_HOOK_SECONDS=30
+SNAPSHOT_HOOK_GRACE_SECONDS=2
+SNAPSHOT_HOOK_OUT=$STATE/snapshot-hook.out.$$
+SNAPSHOT_HOOK_ERR=$STATE/snapshot-hook.err
+SNAPSHOT_REPORT=$STATE/snapshots
+CLONE_TRIALS=$STATE/snapshot-trials
+CLONE_TRIAL=$CLONE_TRIALS/$$
+IN_OWN_SESSION='use POSIX (); POSIX::setsid() >= 0 or exit 126; exec { $ARGV[0] } @ARGV or exit 127'
 
 quit() {
   code=$1
@@ -346,6 +357,169 @@ known_xcode() {
   echo "runtimes=$xcode_runtimes"
 }
 
+volume_of() { df "$1" 2>/dev/null | awk 'NR == 2 { print $1 }'; }
+homes_filesystem() { diskutil info "$(volume_of "$ROOT$HOMES")" 2>/dev/null | sed -n 's/^ *Type (Bundle): *//p' | head -n 1; }
+homes_free_kib() { df -Pk "$ROOT$HOMES" 2>/dev/null | awk 'NR == 2 { print $4 }'; }
+
+left_of_trial() {
+  left=''
+  for object in "$1/clone" "$1/trial" "$1"; do
+    [ ! -e "$object" ] || left="$left $object"
+  done
+  printf '%s\n' "${left# }"
+}
+
+remove_trial() {
+  rm -f "$1/clone" "$1/trial" 2>/dev/null
+  rmdir "$1" 2>/dev/null
+  left_of_trial "$1"
+}
+
+trials_folder_is_the_helpers() {
+  [ -d "$CLONE_TRIALS" ] || mkdir -m 700 "$CLONE_TRIALS" 2>/dev/null
+  [ -d "$CLONE_TRIALS" ] && [ ! -L "$CLONE_TRIALS" ] && [ "$(stat -f %u "$CLONE_TRIALS" 2>/dev/null)" = 0 ]
+}
+
+abandoned_trials() {
+  for trial in "$CLONE_TRIALS"/*; do
+    probe=${trial##*/}
+    [ -d "$trial" ] && number "$probe" && ! kill -0 "$probe" 2>/dev/null && printf '%s\n' "$trial"
+  done
+}
+
+remove_abandoned_trials() {
+  for trial in $(abandoned_trials); do
+    left=$(remove_trial "$trial")
+    [ -z "$left" ] || trial_left="$trial_left $left"
+  done
+}
+
+try_clone_trial() {
+  if ! mkdir "$CLONE_TRIAL" 2>/dev/null; then
+    trial_failed="the helper could not make $CLONE_TRIAL"
+  elif ! printf 'trial\n' 2>/dev/null >"$CLONE_TRIAL/trial"; then
+    trial_failed="the helper could not write $CLONE_TRIAL/trial"
+  elif ! said=$(cp -c "$CLONE_TRIAL/trial" "$CLONE_TRIAL/clone" 2>&1); then
+    trial_failed=$(printf '%s\n' "$said" | tail -n 1)
+  fi
+}
+
+clone_trial() {
+  trial_failed='' trial_left=''
+  if ! trials_folder_is_the_helpers; then
+    trial_failed="$CLONE_TRIALS is not a folder of root's own: remove it"
+    return 1
+  fi
+  remove_abandoned_trials
+  try_clone_trial
+  trial_left=$(printf '%s %s\n' "$trial_left" "$(remove_trial "$CLONE_TRIAL")" | sed 's/^ *//; s/ *$//')
+  [ -z "$trial_failed" ] && [ -z "$trial_left" ]
+}
+
+trial_left_words() {
+  printf 'the helper could not remove its trial, which leaves %s: as root, delete each file there with rm, then its folder with rmdir' "$(printf '%s\n' "$trial_left" | sed 's/ /, /g')"
+}
+
+home_snapshots() {
+  filesystem=$1
+  if [ "$filesystem" != apfs ]; then
+    echo snapshot.home=no
+  elif ! full_disk; then
+    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on APFS under %s, but the helper lacks Full Disk Access, which it needs to clone the folders macOS protects in a home\n' "$HOMES"
+  elif clone_trial; then
+    printf 'snapshot.home=yes\nsnapshot.home.how=apfs\n'
+  elif [ -n "$trial_left" ]; then
+    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on APFS under %s, but %s\nsnapshot.left=%s\n' "$HOMES" "$(trial_left_words)" "$trial_left"
+  else
+    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on APFS under %s, but a trial clone failed: %s\n' "$HOMES" "$trial_failed"
+  fi
+}
+
+hook_running() { kill -0 "$1" 2>/dev/null || kill -s 0 -- "-$1" 2>/dev/null; }
+
+end_hook() {
+  kill -s TERM -- "-$1" 2>/dev/null
+  grace=$((SNAPSHOT_HOOK_GRACE_SECONDS * 10))
+  while [ "$grace" -gt 0 ] && hook_running "$1"; do
+    sleep 0.1
+    grace=$((grace - 1))
+  done
+  kill -s KILL -- "-$1" 2>/dev/null
+}
+
+describe_within_deadline() {
+  perl -e "$IN_OWN_SESSION" "$SNAPSHOT_HOOK" describe </dev/null >"$SNAPSHOT_HOOK_OUT" 2>"$SNAPSHOT_HOOK_ERR" 9>&- &
+  hook=$!
+  sleep "$SNAPSHOT_HOOK_SECONDS" </dev/null >/dev/null 2>&1 9>&- &
+  deadline=$!
+  while hook_running "$hook" && kill -0 "$deadline" 2>/dev/null; do sleep 0.1; done
+  hook_timed_out=no
+  if hook_running "$hook"; then
+    hook_timed_out=yes
+    end_hook "$hook"
+  fi
+  kill "$deadline" 2>/dev/null
+  wait "$deadline" 2>/dev/null
+  wait "$hook"
+  hook_code=$?
+  hook=''
+}
+
+hook_said() { tail -n 2 "$SNAPSHOT_HOOK_ERR" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//'; }
+
+snapshot_hook() {
+  if [ ! -x "$SNAPSHOT_HOOK" ]; then
+    echo snapshot.hook=none
+    return
+  fi
+  describe_within_deadline 2>/dev/null
+  if [ "$hook_timed_out" = yes ]; then
+    printf 'snapshot.hook=failed\nsnapshot.hook.why=it did not finish within %s seconds, so the helper stopped it and everything it started\n' "$SNAPSHOT_HOOK_SECONDS"
+  elif [ "$hook_code" = 0 ]; then
+    printf 'snapshot.hook=found\nsnapshot.hook.describe=%s\n' "$(tr -d '\n' <"$SNAPSHOT_HOOK_OUT")"
+  else
+    printf 'snapshot.hook=failed\nsnapshot.hook.why=it exited with %s: %s\n' "$hook_code" "$(hook_said)"
+  fi
+  rm -f "$SNAPSHOT_HOOK_OUT"
+}
+
+snapshot_report() {
+  filesystem=$(homes_filesystem)
+  echo "snapshot.probe=$SNAPSHOT_PROBE"
+  echo "snapshot.at=$(date +%s)"
+  echo "snapshot.homes=$HOMES"
+  echo "snapshot.filesystem=$filesystem"
+  echo "snapshot.free_kib=$(homes_free_kib)"
+  home_snapshots "$filesystem"
+  snapshot_hook
+}
+
+remove_abandoned_probe_files() {
+  for file in "$SNAPSHOT_REPORT.new."* "$STATE/snapshot-hook.out."*; do
+    probe=${file##*.}
+    [ -f "$file" ] && number "$probe" && ! kill -0 "$probe" 2>/dev/null && rm -f "$file"
+  done
+}
+
+end_snapshot_probe() {
+  [ -z "${hook:-}" ] || end_hook "$hook"
+  [ ! -d "$CLONE_TRIAL" ] || remove_trial "$CLONE_TRIAL" >/dev/null
+  rm -f "$SNAPSHOT_HOOK_OUT" "$SNAPSHOT_REPORT.new.$$"
+}
+
+snapshot() {
+  [ $# -eq 1 ] && [ "$1" = probe ] || quit 2 "usage: machine snapshot probe"
+  mkdir -p "$STATE"
+  trap end_snapshot_probe EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  remove_abandoned_probe_files
+  snapshot_report >"$SNAPSHOT_REPORT.new.$$"
+  mv -f "$SNAPSHOT_REPORT.new.$$" "$SNAPSHOT_REPORT"
+  cat "$SNAPSHOT_REPORT"
+}
+
 status() {
   [ $# -eq 0 ] || { [ $# -eq 1 ] && { [ "$1" = grants ] || [ "$1" = xcode ]; }; } || quit 2 "usage: machine status [grants | xcode]"
   current=$(generation)
@@ -410,6 +584,7 @@ status() {
   esac
   [ "${1:-}" != grants ] || grants
   slots_set_up && device_host summary </dev/null 2>/dev/null | sed 's/^/slots./'
+  [ ! -r "$SNAPSHOT_REPORT" ] || cat "$SNAPSHOT_REPORT"
   # For the doctor alone, as du may take a moment.
   if [ -n "${1:-}" ]; then
     left=$(leftovers)
@@ -1335,11 +1510,12 @@ case $verb in
   display) display "$@" ;;
   granted) granted "$@" ;;
   slot) slot "$@" ;;
+  snapshot) snapshot "$@" ;;
   vm-ready | vm-grant | vm-granted)
     [ $# -eq 1 ] && [ -n "$1" ] || quit 2 "usage: machine $verb <user>"
     case $verb in vm-ready) vm_ready "$1" ;; vm-grant) grant "$1" ;; vm-granted) vm_granted "$1" ;; esac
     ;;
   init) init ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: machine status [grants] | claim | grant | granted | release | reset | display | slot | vm-ready | vm-grant | vm-granted | init | version" ;;
+  *) quit 2 "usage: machine status [grants] | claim | grant | granted | release | reset | display | slot | snapshot probe | vm-ready | vm-grant | vm-granted | init | version" ;;
 esac

@@ -6,7 +6,7 @@ after this record. A box made before keeps that volume. Refines the Docker
 pause in [070](070-snapshots.md). The core stays free of provider names
 ([001](001-provider-agnostic-core.md)). Items 7 and 8 are built: Hetzner
 Cloud and Namespace Linux boxes take snapshots, and
-[089](089-a-namespace-machine-with-snapshots-lives-while-its-box-has-a-container.md)
+[091](091-a-namespace-machine-with-snapshots-lives-while-its-box-has-a-container.md)
 extends this record with what a release ends and how a Namespace machine
 with snapshots lives.
 

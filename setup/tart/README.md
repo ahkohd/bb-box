@@ -323,7 +323,7 @@ VNC viewer on the Mac, at the address the script prints.
 | `--edition`, `--product-key` | `Windows 11 Pro`, Microsoft's generic key for it | The edition to install, and its key. The generic key installs without activating |
 | `--reserve-gib` | 50 | The disk space the build leaves free. It stops rather than leave less |
 | `--delete-iso` | off | Delete the ISO once Setup has copied Windows from it |
-| `--replace` | off | Build an image of that name again. Boxes made from the old build keep it |
+| `--replace` | off | Build an image of that name again. Boxes made from the old build keep it, and it stays as the rollback. The new build waits up to 10 minutes for a restore or image refresh on the Mac to end before it becomes current |
 | `--keep` | off | Keep a failed build's directory, to boot and look at |
 
 ### 4. Configure bb-box
@@ -504,6 +504,28 @@ snapshot. Nothing is installed for them on the Mac; they use the Mac's
   own stop, and keeps the reading with each VM file's modification time
   and size, which it reads again at a take. A run of the VM, even outside
   bb-box, changes them.
+- **A Windows box's snapshot is a clone of three files** of its QEMU VM in
+  `~/.bb-box/qemu/vms/<vm>`: `disk.qcow2`, its overlay on a build of the
+  Windows image, `vars.fd` and `config`. Never QEMU's saved memory in
+  `state`, its pid file, its output or its QMP socket. bb-box clones them
+  only once Windows has shut down: it asks Windows over SSH, and presses
+  QEMU's ACPI power button when that cannot be sent. A box whose memory an
+  ordinary Stop saved starts from it, then shuts down. A restore keeps the
+  VM's two ports, leaves no `state`, and boots Windows afresh. Its label
+  names the image and build its overlay stands on. An image refresh keeps a
+  build while a VM, a snapshot or a restore cut short stands on it, and
+  every build when it cannot read a VM's or snapshot's `config`. A restore
+  whose build is gone anyway is refused and says so. Restores, image
+  refreshes, the removal of builds and `prepare-windows-image.sh`'s
+  publication of a build take turns through a lock on
+  `~/.bb-box/turn.lock`, held with Perl's `flock`, which macOS includes.
+  A refresh keeps any install's build until that install makes it current
+  or removes it, and never removes a build still being made.
+  Do not delete older builds by hand: a snapshot may stand on one no VM
+  uses. `~/.tart/vms` must be
+  on the same volume as `~/.bb-box`, as the clones need, and bb-box makes
+  it when Tart has not. Windows snapshots do not fork, and Keep is refused:
+  Windows has no identity reset.
 - **Kept snapshots stay on the Mac** when bb-box, or this backend, is
   removed: delete them in bb-box first, or remove the folder as Remove
   says.
@@ -519,7 +541,8 @@ snapshot. Nothing is installed for them on the Mac; they use the Mac's
   ([054](../../docs/decisions/054-windows-images-are-refreshed-in-a-box-of-the-current-build.md)).
   [`../windows/refresh.ps1`](../windows/refresh.ps1) installs Windows'
   updates and the pinned tools, a trial box runs `check.ps1`, and the new
-  build becomes current only if every check passes. The build before stays
+  build becomes current only if every check passes. Older builds go once no
+  box, snapshot or restore cut short stands on them. The build before stays
   as a rollback until the next refresh succeeds, whatever boxes use it: the
   link `rollback` beside `current` in `~/.bb-box/qemu/images/<image>` names
   it. To go back to it, on the Mac:

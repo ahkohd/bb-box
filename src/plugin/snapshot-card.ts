@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import type { GpuPart, MachineSize, Holds, Price, SnapshotScope, SnapshotSize, WhileRunning } from "../backends/types.ts";
 import type { Actor } from "../core/box-log.ts";
 import { BoxError, OPERATOR, type BoxRecord } from "../core/boxes.ts";
-import { countsAgainstLimit, eligible, forksOn, isKept, type Caller, type PictureState, type SnapshotRecord, type SnapshotState, type Standing } from "../core/snapshot.ts";
+import { countsAgainstLimit, eligible, forksOn, isKept, notForkedForScope, notKeptForScope, type Caller, type PictureState, type SnapshotRecord, type SnapshotState, type Standing } from "../core/snapshot.ts";
 import { restoreStepWords, unflushedOf, type ForkCheck, type KeepInput, type RestoreCheck, type RestoreGuard, type Snapshots, type TakeCheck } from "../core/snapshots.ts";
 import { keepCostWords } from "./snapshot-words.ts";
 import { describeSize } from "../core/sizes.ts";
-import type { Snapshotting } from "../backends/types.ts";
+import type { Backend, Snapshotting } from "../backends/types.ts";
 import { withinWait } from "../core/snapshot-picture.ts";
 import { snapshotGpuWordsFor } from "../core/gpu.ts";
 import { PRODUCT } from "../brand.ts";
@@ -127,7 +127,8 @@ export function forkWhyOf(record: SnapshotRecord, offer: Snapshotting | null): s
   if (record.state === "taking") return "it is still being taken";
   if (record.state === "deleting") return "it is being deleted";
   if (record.state !== "ready") return `it is ${record.state}`;
-  if (record.scope === "device") return "it holds the device only";
+  const notForked = notForkedForScope(record.scope, record.box.name);
+  if (notForked) return notForked;
   if (!forksOn(record.box.system)) return `${PRODUCT} forks Linux and macOS boxes only`;
   if (record.forkSafe === null) return `${record.box.name} had no working identity reset when it was taken`;
   if (record.forkSafe < (offer.forkSafeFrom ?? 1)) return `${record.box.name} had an identity reset older than version ${offer.forkSafeFrom} when it was taken`;
@@ -140,7 +141,8 @@ export function keepWhyOf(record: SnapshotRecord, offer: Snapshotting | null, pi
   if (!offer || offer.keepsPastRelease === "no") return offer?.keepWhy ?? "its backend keeps nothing past a release";
   if (record.state !== "ready") return `it is ${record.state === "taking" ? "still being taken" : record.state === "deleting" ? "being deleted" : record.state}`;
   if (pinned) return pinned;
-  if (record.scope === "device") return "it holds the device only, which lives in the box";
+  const notKept = notKeptForScope(record.scope, record.box.name);
+  if (notKept) return notKept;
   if (record.boxGone && record.guest !== "held-copy" && !(offer.keepsPastRelease === "as-is" && record.keptUntil !== null)) return `its box is gone, and ${PRODUCT} keeps it until you delete it`;
   if (!forksOn(record.box.system)) return `${PRODUCT} keeps only what it can fork after a release, and forks Linux and macOS boxes only`;
   if (record.forkSafe === null) return `taken before ${record.box.name}'s image had the identity reset: it could not be forked after a release`;
@@ -215,6 +217,11 @@ function restoredOf(snapshots: Snapshots, box: BoxRecord, now: number): Pick<Box
   };
 }
 
+function noneOnBackendWhy(backend: Backend, box: BoxRecord): string {
+  const machineWhy = box.guest ? (backend.noSnapshotsWhy?.(box.guest, box.kind) ?? null) : null;
+  return machineWhy ? `${box.name} has no snapshots: ${machineWhy.replace(/\.$/, "")}.` : `Boxes on ${box.backendLabel} have no snapshots.`;
+}
+
 export function boxSnapshotsView(snapshots: Snapshots, box: BoxRecord, takeWhy: string | null, now: number = Date.now()): BoxSnapshotsView {
   const backend = snapshots.backendOf(box.backend);
   const offer = backend ? snapshots.offerFor(backend, box.kind) : null;
@@ -222,7 +229,7 @@ export function boxSnapshotsView(snapshots: Snapshots, box: BoxRecord, takeWhy: 
   return {
     offer: offer ? { holds: offer.holds, scope: offer.scope, whileRunning: offer.whileRunning, restore: offer.restore, fork: offer.fork, keeps: offer.keepsPastRelease !== "no", excludes: offer.excludes, price: offer.price } : null,
     keepDays: snapshots.settings.keepDays,
-    noneWhy: offer ? null : backend ? `Boxes on ${box.backendLabel} have no snapshots.` : `The ${box.backendLabel} backend is not in ${PRODUCT}'s settings, so it takes no snapshots of ${box.name}.`,
+    noneWhy: offer ? null : backend ? noneOnBackendWhy(backend, box) : `The ${box.backendLabel} backend is not in ${PRODUCT}'s settings, so it takes no snapshots of ${box.name}.`,
     perBox: snapshots.settings.perBox,
     counted: records.filter(countsAgainstLimit).length,
     undos: records.filter((record) => record.undoOf !== null && !isKept(record) && record.state !== "failed").length,

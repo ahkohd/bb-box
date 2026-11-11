@@ -1044,11 +1044,11 @@ describe("An SSH host pool of Macs (047)", () => {
     const check = (id: string) => doctor.checks.find((other) => other.id === id);
     const status = (name: string) => doctor.checks.filter((other) => other.id.startsWith(`machine.${name}.`)).map((other) => `${other.id.split(".")[2]} ${other.status}`);
     assert.equal(doctor.ok, false);
-    assert.deepEqual(status("good"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault ok", "signin ok", "fulldisk ok", "homes ok", "sip ok", "xcode ok", "screensharing ok", "grants ok", "input ok", "state ok", "sizes ok"]);
+    assert.deepEqual(status("good"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault ok", "signin ok", "fulldisk ok", "homes ok", "sip ok", "xcode ok", "screensharing ok", "grants ok", "input ok", "state ok", "sizes ok", "snapshots ok"]);
     assert.equal(check("machine.good.arch")?.detail, "macOS 26.0 on arm64.");
     assert.equal(check("machine.good.sizes")?.detail, "good holds macos and macos-desktop boxes at the default sizes.");
     assert.equal(check("machine.good.tools")?.detail, "Everything the helper, enrolment and the thread's GitHub access need, with Node.js 24.21.0.");
-    assert.deepEqual(status("bad"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault fail", "signin fail", "fulldisk fail", "homes warn", "sip ok", "xcode ok", "screensharing fail", "grants fail", "input fail", "state warn", "sizes ok"]);
+    assert.deepEqual(status("bad"), ["ssh ok", "helper ok", "arch ok", "tools ok", "filevault fail", "signin fail", "fulldisk fail", "homes warn", "sip ok", "xcode ok", "screensharing fail", "grants fail", "input fail", "state warn", "sizes ok", "snapshots ok"]);
     // People's homes box users can enter, with the fix (047).
     assert.match(check("machine.bad.homes")!.detail, /^Box users can enter the homes of person, other, which macOS makes readable to the staff group they are in/);
     assert.equal(check("machine.bad.homes")?.fix, "On bad, as an administrator: sudo chmod 700 /Users/person /Users/other");
@@ -1063,7 +1063,7 @@ describe("An SSH host pool of Macs (047)", () => {
     assert.match(check("machine.bad.state")!.detail, /^Out of service: FileVault is on/);
     assert.deepEqual(status("away").filter((line) => /signin|grants|input/.test(line)), ["signin fail", "grants warn", "input warn"]);
     assert.equal(check("machine.away.signin")?.detail, "Box user bbx-0 is not signed in at the console.");
-    assert.deepEqual(status("headless"), ["ssh ok", "helper ok", "arch ok", "tools fail", "filevault ok", "signin ok", "fulldisk ok", "homes ok", "sip ok", "xcode ok", "state ok", "sizes warn"]);
+    assert.deepEqual(status("headless"), ["ssh ok", "helper ok", "arch ok", "tools fail", "filevault ok", "signin ok", "fulldisk ok", "homes ok", "sip ok", "xcode ok", "state ok", "sizes warn", "snapshots ok"]);
     assert.equal(check("machine.headless.tools")?.fix, "On headless: Install Node.js 22.19 or newer with Homebrew: brew install node. BB's installer needs it to enrol a box. Install git and gh with Homebrew: brew install git gh.");
     assert.equal(check("machine.headless.sizes")?.detail, "headless has 8 cores, 6 GiB memory, 200 GiB free disk. It cannot hold a macos box at any of its presets, the smallest 4 cores, 8 GiB memory.");
     assert.equal(check("machine.headless.sizes")?.fix, "Give headless more memory, or make the presets of macos smaller in BB Box's settings, under Kinds.");

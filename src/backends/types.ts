@@ -917,6 +917,7 @@ export interface Backend {
    */
   maintain?(signal?: AbortSignal, recordedGuests?: ReadonlySet<string>): Promise<void>;
   snapshotting?(kind: string): Snapshotting | null;
+  noSnapshotsWhy?(guest: Guest, kind: string): string | null;
   planSnapshots?(guest: Guest, kind: string, snapshot: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan>;
   snapshot?(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken>;
   deleteSnapshot?(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void>;
@@ -996,7 +997,7 @@ export type EachLabelsWhatItMakes = null;
 export type Holds = "disk" | "disk-and-memory";
 export type WhileRunning = "live" | "pauses" | "suspends" | "stopped-only";
 export type KeepsPastRelease = "as-is" | "held-copy" | "no";
-export type SnapshotScope = "box" | "device";
+export type SnapshotScope = "box" | "device" | "home" | "machine";
 export type SnapshotGuest = "current" | "earlier" | "held-copy";
 
 export interface Price {
