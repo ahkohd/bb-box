@@ -22,7 +22,7 @@ function setup(options: { failBuild?: boolean; slowBuild?: boolean; app?: () => 
   const finishBuild = join(dir, "finish");
   const app = options.app ?? (() => "a".repeat(64));
   const lines: string[] = [];
-  const context = { ...testContext(new MemoryStorage(), "inst1"), bbUrl: () => "https://bb.example", images: { bbApp: async () => app() }, log: (line: string) => void lines.push(line) } as never;
+  const context = { ...testContext(new MemoryStorage(), "inst1", { id: "namespace" }), bbUrl: () => "https://bb.example", images: { bbApp: async () => app() }, log: (line: string) => void lines.push(line) } as never;
   const make = () => new NamespaceBackend(CONFIG, context, {
     fetch: fake.fetch,
     sshBinary: FAKE_SSH_BINARY,
@@ -56,7 +56,7 @@ test("a Linux image is built once in a Linux instance of its own, from BB Box's 
   const instance = [...fake.instances.values()][0]!;
   assert.equal(instance.shape.os, "linux");
   assert.deepEqual([instance.shape.virtualCpu, instance.shape.memoryMegabytes], [8, 16384]);
-  assert.deepEqual(instance.labels, { "bbbox-install": "inst1", "bbbox-role": "image-build", "bbbox-target": "linux" });
+  assert.deepEqual(instance.labels, { "bbbox-install": "inst1", "bbbox-backend": "namespace", "bbbox-role": "image-build", "bbbox-target": "linux" });
   assert.equal(instance.status, "DESTROYED");
   assert.equal(await backend.linuxImages.whyBuild("linux"), null);
   await backend.linuxImages.forBox("linux", signal);
@@ -183,7 +183,7 @@ test("with the tailnet on, a build machine joins it with a one-off key of its ow
   });
   try {
     const fake = new FakeNamespace({ maxCores: 64 });
-    const context = { ...testContext(new MemoryStorage(), "inst1"), bbUrl: () => "https://bb.example", images: { bbApp: async () => "a".repeat(64) }, tailnet: () => tailnet } as never;
+    const context = { ...testContext(new MemoryStorage(), "inst1", { id: "namespace" }), bbUrl: () => "https://bb.example", images: { bbApp: async () => "a".repeat(64) }, tailnet: () => tailnet } as never;
     const order: string[] = [];
     const backend = new NamespaceBackend(CONFIG, context, {
       fetch: fake.fetch,

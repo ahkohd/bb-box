@@ -17,7 +17,7 @@
 // holds the thread ID, so a box can be found by its ID alone.
 
 import { PRODUCT } from "../brand.ts";
-import { foldName, providerKeys, providerName } from "./provider-name.ts";
+import { foldName, providerKeys, providerName, type ProviderWords } from "./provider-name.ts";
 import { waitingToJoin, type JoinTries } from "./join-tries.ts";
 import { createHash, randomBytes } from "node:crypto";
 import type { OfferedKind, WithheldOffer } from "../backends/index.ts";
@@ -984,6 +984,18 @@ export interface UnofferedKind {
 }
 
 export const WITHHELD_READ_WAIT_MS = 10_000;
+
+const TRAILING_BRACKETS = /\s*\([^()]*\)\s*$/s;
+
+function namesWithoutTrailingBrackets(name: string): string[] {
+  const names = [foldName(name)];
+  let rest = name;
+  while (TRAILING_BRACKETS.test(rest)) {
+    rest = rest.replace(TRAILING_BRACKETS, "");
+    names.push(foldName(rest));
+  }
+  return names;
+}
 
 function withheldRefusal(kind: string, withheld: readonly WithheldOffer[], providerName: (backend: Backend) => string): BoxError {
   const reasons = withheld.map((offer) => `${providerName(offer.backend)} offers them, but not now: ${offer.why}`);
@@ -2309,7 +2321,19 @@ export class Boxes {
   }
 
   #providerName(backend: Backend): string {
-    return providerName({ label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], type: backend.id.split(":")[0]! });
+    return providerName(this.#providerWords(backend));
+  }
+
+  #providerWords(backend: Backend): ProviderWords {
+    return { label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], id: backend.id };
+  }
+
+  #providersCalled(name: string, providers: readonly Backend[]): Backend[] {
+    for (const key of namesWithoutTrailingBrackets(name)) {
+      const matched = providers.filter((backend) => providerKeys(this.#providerWords(backend)).includes(key));
+      if (matched.length) return matched;
+    }
+    return [];
   }
 
   #takingGpu(offered: OfferedKind[], kind: string, gpu: GpuPart, asked: boolean, forAgent: boolean, fromSetting = false): OfferedKind[] {
@@ -2345,11 +2369,7 @@ export class Boxes {
     const providers = this.#deps.backends.active();
     const chosen = new Map<string, Backend>();
     for (const name of names) {
-      // box_list follows a provider's name with what its boxes are, in brackets, which an agent may copy whole.
-      const key = foldName(name.replace(/\s*\(.*\)\s*$/s, ""));
-      const matched = providers.filter((backend) =>
-        providerKeys(backend.id, { label: this.#deps.backends.driverLabel?.(backend.id) ?? backend.label, hosts: backend.hosts ?? [], type: backend.id.split(":")[0]! }).includes(key),
-      );
+      const matched = this.#providersCalled(name, providers);
       if (!matched.length) {
         throw new BoxError("unknown_provider", `No provider is called "${name}". ${kind} comes from: ${others.join(", ")}. Leave "on" out for the first with room.`);
       }

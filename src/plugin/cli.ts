@@ -14,7 +14,7 @@ import { PRESETS } from "../core/sizes.ts";
 import { SHARED_MACOS_WORDS } from "../core/device-host.ts";
 import { BUILD_FREE_GB } from "./docker-images.ts";
 import type { BbBox } from "./setup.ts";
-import { adminText, boxDetail, joinAgainWords, dockerText, kindResizeText, kindSnapshotText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, movedText, problemsText, startingWords, tryText, userspaceFixLine, versionsText } from "./views.ts";
+import { adminText, boxDetail, joinAgainWords, dockerText, kindResizeText, kindSnapshotText, resizeText, boxLine, configText, doctorText, idleWords, imageLine, ownImageLines, movedText, problemsText, startingWords, tryText, userspaceFixLine, versionsText } from "./views.ts";
 import { listensOnEveryAddress, reachableUrl, setupDocker, type ListenOffer } from "./setup-docker.ts";
 import { monitorCommands } from "./monitor-cli.ts";
 import { configCommands } from "./config-cli.ts";
@@ -560,7 +560,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
         "images list": cliCommand({
-          summary: `List the standard images ${PRODUCT} rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first.`,
+          summary: `List the standard images ${PRODUCT} rebuilds (049): each one's build and age, why it is due, and what its last rebuild did, most needed first. Then the images a backend builds and refreshes by itself, such as each Namespace backend's Linux images in its workspace's registry; --json gives only the first.`,
           options: { ...jsonOption, output: { type: "string", description: "Print this image's last rebuild's last lines, as <backend>/<ref>." } },
           run: ({ options }, ctx) =>
             guard("Listing the images", async () => {
@@ -572,7 +572,9 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
                 if (!view) throw new BoxError("not_found", `There is no image ${String(options.output)}.`);
                 return out(view.last?.output.length ? view.last.output.join("\n") : `${view.name} has no rebuild with output yet.`);
               }
-              if (!views.length) return out(problems.length ? problems.join("\n") : `No backend that is on has images ${PRODUCT} rebuilds.`);
+              const own = (await app.imageJobs.ownImages(ctx.signal)).flatMap((of) => ownImageLines(of));
+              if (!views.length && !own.length) return out(problems.length ? problems.join("\n") : `No backend that is on has images ${PRODUCT} rebuilds.`);
+              if (!views.length) return out([...problems, ...own].join("\n"));
               const running = app.imageJobs.running();
               const soon = await app.imageJobs.dueSoon(ctx.signal).catch(() => null);
               return out(
@@ -580,6 +582,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
                   ...(running ? [`A run has gone on since ${new Date(running).toISOString()}.`] : []),
                   ...(soon ? [`BB was updated: a refresh of ${soon.names.join(", ")} starts by ${new Date(soon.at).toISOString()}, as ${soon.names.length === 1 ? "it has" : "they have"} another build of BB's app than BB's server gives.`] : []),
                   ...views.map(imageLine),
+                  ...own,
                 ].join("\n"),
               );
             }),

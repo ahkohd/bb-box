@@ -1028,6 +1028,15 @@ test("the configuration takes several Docker backends, one per host, and still o
   assert.match(problems([lxc, { ...lxc, id: "proxmox-lxc:two" }])[0]?.message ?? "", /BB Box runs one Proxmox LXC backend for now/);
 });
 
+test("the configuration takes several Namespace backends, even on one workspace with one token, each with its own fields (#1455)", () => {
+  const namespace = (id: string, machines: number) => ({ id, type: "namespace", enabled: true, fields: { token: "nsct_one", machines, "longest-life-hours": 5 } });
+  const { document, secrets, problems } = readDraft({ schema: 1, backends: [namespace("namespace", 2), namespace("namespace:team-b", 4)], kinds: {}, general: {} }, DRIVERS);
+
+  assert.deepEqual(problems, []);
+  assert.deepEqual(checkDocument(document, secrets as Secrets, DRIVERS), []);
+  assert.deepEqual(document.backends.map((backend) => [backend.id, backend.fields.machines]), [["namespace", 2], ["namespace:team-b", 4]]);
+});
+
 test("files for every box: paths checked, contents kept as secrets only, and never in a problem, an export or the stored document (#455)", () => {
   const SECRET = '{"providers":{"example":{"apiKey":"sk-secret-value"}}}';
   const draft = readDraft(

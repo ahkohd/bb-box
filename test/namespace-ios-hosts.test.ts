@@ -122,6 +122,7 @@ function harness(options: { report?: MacReport | null; room?: string | null; mea
   let clock = options.now ?? (() => 1_000_000);
   const access: NamespaceHostsAccess = {
     installId: "inst1",
+    backendId: "namespace",
     storage,
     settings: () => ({ on: true, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 }),
     longestLifeMs: () => 4 * 3600_000,

@@ -217,7 +217,7 @@ export function keyDescription(text: string): string {
 
 export function isInstallDevice(hostname: string, installId: string): boolean {
   const install = tailnetHostname(installId);
-  return [`bb-box-${install}-`, `bb-box-hz-${install}-`, `bb-box-ns-${install}-`].some((prefix) => hostname.startsWith(prefix));
+  return [`bb-box-${install}-`, `bb-box-hz-${install}-`, `bb-box-ns-${install}-`, `bb-box-nsb-${install}-`].some((prefix) => hostname.startsWith(prefix));
 }
 
 export function tailnetHostname(name: string): string {

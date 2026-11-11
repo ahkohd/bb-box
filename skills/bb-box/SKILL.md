@@ -158,7 +158,9 @@ where it is built ahead, which its boxes claim at once (#440). The
   is a Mac of its own, ready in about 20 s, or about a minute with its
   desktop, that ends at the plan's longest
   life whatever you do: `box_status` says when ("Ends"), and the thread is
-  told an hour before. Copy out what you need before then.
+  told an hour before. Copy out what you need before then. Where the user
+  has several Namespace workspaces, `box_list` names each, such as
+  Namespace (team-b), and `on` takes that name.
 - Windows boxes have Visual Studio Build Tools (MSVC and the Windows SDK),
   LLVM (`clang`), Rust (`cargo`, `rustc`), Node.js, and the Claude Code,
   Codex and Pi CLIs. They have no GPU: DirectX apps render on WARP,

@@ -1117,12 +1117,13 @@ export function checkDocument(
       else if (!driver.kinds.includes(kind)) problem(`${path}.warm.${kind}`, `${driver.label} makes ${driver.kinds.join(", ")}, not ${kind}.`);
       else if (!isWhole(count, 0, MAX_WARM)) problem(`${path}.warm.${kind}`, `Keep 0 to ${MAX_WARM} warm ${kind} boxes.`);
     }
-    // Drivers name their guests by type, so two of one type would share them, unless each is on a host of its own (042).
+    // Drivers name their guests by type, so two of one type would share them, unless each is on a host of its own (042) or labels its guests with its ID (#1455).
     if (driver.several) {
-      const host = `${backend.type} ${driver.several(backend.fields ?? {})}`;
-      const other = hosts.get(host);
-      if (other !== undefined) problem(path, `${backend.id} and ${other} are both ${driver.label} on ${driver.several(backend.fields ?? {}) || "the default host"}. Give each its own host, or remove one.`);
-      else hosts.set(host, backend.id);
+      const own = driver.several(backend.fields ?? {});
+      const host = `${backend.type} ${own}`;
+      const other = own === null ? undefined : hosts.get(host);
+      if (other !== undefined) problem(path, `${backend.id} and ${other} are both ${driver.label} on ${own || "the default host"}. Give each its own host, or remove one.`);
+      else if (own !== null) hosts.set(host, backend.id);
     } else if (types.has(backend.type)) problem(path, `${PRODUCT} runs one ${driver.label} backend for now. Remove ${backend.id}.`);
     types.add(backend.type);
     const names = new Set<string>();

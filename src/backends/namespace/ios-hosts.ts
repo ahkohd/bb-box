@@ -44,6 +44,7 @@ export interface NamespaceIosHostsConfig {
 }
 
 export interface NamespaceHostRecord {
+  readonly backend?: string;
   readonly tag: string;
   readonly instance: string | null;
   readonly made: number;
@@ -70,6 +71,7 @@ interface PreparedMac {
 
 export interface NamespaceHostsAccess {
   readonly installId: string;
+  readonly backendId: string;
   readonly storage: BackendStorage;
   settings(): NamespaceIosHostsConfig;
   longestLifeMs(): number;
@@ -377,6 +379,7 @@ export class NamespaceHosts implements SlotLender {
     const sizing = this.#sizing(this.#access.report(), room.shape);
     const now = this.#access.now();
     const record: NamespaceHostRecord = {
+      backend: this.#access.backendId,
       tag: `bbbox-${this.#access.installId}-ios-host-${randomBytes(3).toString("hex")}`,
       instance: null,
       made: now,

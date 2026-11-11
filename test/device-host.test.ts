@@ -110,6 +110,7 @@ test("the legal shapes of hosts and slots read back whole; the illegal ones that
   refused(parseDeviceHost(illegal.tartLentWhole), /^host\.state\.is must be "starting"/);
   refused(parseDeviceHost(illegal.tartWithAnEnd), /^host has "endsAt", which it does not take\./);
   refused(parseDeviceHost(illegal.namespaceWithNoEnd), /^host\.endsAt must be a whole number/);
+  refused(parseDeviceHost(illegal.namespaceWithNoBackend), /^host\.backend /);
   refused(parseDeviceHost({ ...legal.tartStarting, state: { is: "starting", promised: Array.from({ length: 9 }, (_, index) => `bx${index}`), since: 0 } }), /has 9 boxes, more than the host's 8 slots\.$/);
   refused(parseDeviceHost({ ...legal.tartStarting, state: { is: "starting", promised: ["bx1", "bx1"], since: 0 } }), /names a box twice\.$/);
   refused(parseDeviceHost({ ...legal.tartStarting, settings: { most: 8, ahead: 9, resettingMost: 4 } }), /^host\.settings\.ahead must be a whole number from 0 to 8, not 9\.$/);
