@@ -126,7 +126,7 @@ export function sizeFromLabels(labels: Readonly<Record<string, string>>): Snapsh
   const volumeBytes = Number(labels["bbbox.snapshot.volume-bytes"] ?? 0);
   const store = labels["bbbox.snapshot.store"];
   if (!(layerBytes >= 0 && volumeBytes >= 0) || (store !== "overlay2" && store !== "containerd")) return null;
-  return { bytes: pauseEstimate({ layerBytes, volumeBytes, store }).addsBytes, means: "own" };
+  return { bytes: pauseEstimate({ layerBytes, volumeBytes, store }).addsBytes, means: "own", estimated: true };
 }
 
 export interface RetainedOnEngine {

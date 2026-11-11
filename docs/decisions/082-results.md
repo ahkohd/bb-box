@@ -64,8 +64,9 @@ Cancelling a Docker commit client after the commit reaches the engine was not
 measured here. The failed-task record rejects a late image after interruption.
 
 Delete reports the stored snapshot estimate through the existing core interface.
-When a manually made container still uses the image, Docker retains its layers;
-the displayed freed size does not distinguish that deferred space yet.
+When a manually made container still uses the image, Docker retains its layers.
+Docker's size is marked as an estimate, so a delete says it freed up to about
+that much, less what a fork or another image still uses.
 
 ## Restore, verified live
 

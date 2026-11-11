@@ -83,7 +83,7 @@ function keptAsIsSpaceWords(check: KeepCheck, on: string): string {
   const unshared = check.unsharedBytes ?? null;
   if (unshared !== null) {
     const upTo = check.bytes !== null && check.bytes > unshared ? `, and up to ${gbWords(check.bytes)} if what it shares is deleted` : "";
-    return `; nothing is copied then. It takes about ${gbWords(unshared)} of ${on} that nothing else there shares${upTo}`;
+    return `; nothing is copied then. It takes about ${gbWords(unshared)} of ${on} that no other image or container there uses${upTo}`;
   }
   return check.bytes !== null ? `; nothing is copied then, and from then on it takes its whole size, up to ${gbWords(check.bytes)} on ${on}, as its box no longer shares its blocks` : "";
 }

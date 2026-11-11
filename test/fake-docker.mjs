@@ -397,6 +397,7 @@ function container(command, rest) {
         const labels = found.Config.Labels;
         if (filters.every((filter) => {
           const [key, ...parts] = filter.split("=");
+          if (key === "ancestor") return found.Image === parts.join("=");
           return labels[key] === parts.join("=");
         })) console.log(found.Id);
       }
@@ -470,6 +471,14 @@ function container(command, rest) {
       disconnect(found);
       save(found);
       return console.log(rest.at(-1));
+    }
+    case "rename": {
+      const [from, to] = rest;
+      const found = find(from) ?? fail(`Error response from daemon: No such container: ${from}`);
+      renameSync(dir(found.Name.slice(1)), dir(to));
+      found.Name = `/${to}`;
+      save(found);
+      return;
     }
     case "rm": {
       const ref = rest.filter((arg) => !arg.startsWith("-")).at(-1);

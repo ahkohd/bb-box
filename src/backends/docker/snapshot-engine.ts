@@ -56,7 +56,7 @@ function keptSpaceWords(retained: readonly (RetainedOnEngine | null)[], one: boo
   if (measured.some((each) => each.unsharedBytes === null)) return `${they} up to ${gbWords(whole)} of Docker's disk.`;
   const unshared = measured.reduce((sum, each) => sum + each.unsharedBytes!, 0);
   const upTo = whole > unshared ? `, and up to ${gbWords(whole)} if what ${one ? "it shares" : "they share"} is deleted` : "";
-  return `${they} about ${gbWords(unshared)} of Docker's disk that nothing else there shares${upTo}.`;
+  return `${they} about ${gbWords(unshared)} of Docker's disk that no other image or container there uses${upTo}.`;
 }
 
 function keptCheck(listed: readonly HeldSnapshot[], retained: readonly (RetainedOnEngine | null)[]): DoctorCheck {
@@ -220,13 +220,19 @@ export class DockerSnapshotEngine {
     return ids.length ? snapshotImagesSchema.parse(JSON.parse(await this.#cli.ok(["image", "inspect", ...ids], { signal }))).filter((image) => image.Id !== except).map((image) => image.RootFS.Layers) : [];
   }
 
+  async #aContainerUses(imageId: string, signal?: AbortSignal): Promise<boolean> {
+    return (await this.#cli.ok(["container", "ls", "--all", "--quiet", "--filter", `ancestor=${imageId}`], { signal })).trim() !== "";
+  }
+
   async #retained(ref: string, signal?: AbortSignal): Promise<RetainedOnEngine | null> {
     try {
       const [image] = snapshotImagesSchema.parse(JSON.parse(await this.#cli.ok(["image", "inspect", ref], { signal })));
       if (!image) return null;
       const labels = image.Config.Labels;
       const layers = { layers: image.RootFS.Layers, layerBytes: await this.#layerBytes(ref, signal), imageBytes: image.Size, store: labels["bbbox.snapshot.store"] === "containerd" ? "containerd" as const : "overlay2" as const, volumeBytes: Number(labels["bbbox.snapshot.volume-bytes"]) || 0 };
-      return retainedOnEngine(layers, await this.#layersOfOtherImages(image.Id, signal));
+      const otherImages = await this.#layersOfOtherImages(image.Id, signal);
+      const sharers = (await this.#aContainerUses(image.Id, signal)) ? [...otherImages, image.RootFS.Layers] : otherImages;
+      return retainedOnEngine(layers, sharers);
     } catch (error) {
       signal?.throwIfAborted();
       this.#context.logError("reading how much of Docker's disk a snapshot takes", error);
@@ -321,7 +327,7 @@ export class DockerSnapshotEngine {
       await this.#context.storage.set(this.#key(take.id), { ...state, phase: committed ? "complete" : "failed-resumed" });
       if (!committed) await this.#discard(state).catch((error) => this.#context.logError("cleaning a failed Docker snapshot", error));
     }
-    return { ref: image, holds: "disk", capturedAt: state.startedAt, size: { bytes: facts.estimate.addsBytes, means: "own" }, pausedMs };
+    return { ref: image, holds: "disk", capturedAt: state.startedAt, size: { bytes: facts.estimate.addsBytes, means: "own", estimated: true }, pausedMs };
   }
 
   async #discard(state: TakeState): Promise<void> {

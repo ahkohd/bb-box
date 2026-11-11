@@ -2622,13 +2622,25 @@ export class Boxes {
     }
   }
 
+  async #lostSourceHasNoGuest(box: BoxRecord, backend: Backend, signal: AbortSignal): Promise<boolean> {
+    const fork = box.fork!;
+    const lastKnown = fork.snapshot.from === "held-copy" ? null : fork.snapshot.livesOn;
+    if (!lastKnown || !backend.boxHasNoGuest || !backend.addressesGivenByProvider) return false;
+    try {
+      return await backend.boxHasNoGuest(fork.source.id, lastKnown, signal);
+    } catch (error) {
+      signal.throwIfAborted();
+      throw new BoxError("failed", `${PRODUCT} did not hand fork ${box.name} over: ${fork.source.name} has no box record with a machine, and it could not ask ${backend.label} whether ${fork.source.name}'s machine is still there, so it cannot tell that the fork may have its address: ${sentenceOf(describeError(error, "Asking"))}`);
+    }
+  }
+
   async #sourceAddresses(box: BoxRecord, backend: Backend, signal: AbortSignal): Promise<SourceAddresses> {
     const fork = box.fork!;
     const asked = fork.source.address ?? null;
     if (!backend.leasedAddressNow) return { sourceAddresses: asked ? [asked] : [], freedSourceAddresses: [], sourceGone: false };
     const source = await this.#read(fork.source.threadId, fork.source.id);
     const recorded = distinctAddresses([asked, source?.guest?.address ?? null]);
-    if (!source?.guest) return { sourceAddresses: [], freedSourceAddresses: recorded, sourceGone: true };
+    if (!source?.guest) return { sourceAddresses: [], freedSourceAddresses: recorded, sourceGone: recorded.length > 0 && (await this.#lostSourceHasNoGuest(box, backend, signal)) };
     let now: LeasedAddressNow;
     try {
       now = await backend.leasedAddressNow(source.guest, signal);

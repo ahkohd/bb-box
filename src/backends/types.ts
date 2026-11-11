@@ -957,6 +957,7 @@ export interface Backend {
   readonly addressIsAnEndpoint?: boolean;
   leasedAddressNow?(guest: Guest, signal?: AbortSignal): Promise<LeasedAddressNow>;
   addressesGivenByProvider?(guest: Guest, signal?: AbortSignal): Promise<readonly string[]>;
+  boxHasNoGuest?(boxId: string, lastKnown: Guest, signal?: AbortSignal): Promise<boolean>;
   startForForkCheck?(guest: Guest, signal: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void>;
   forkCheckCommand?(guest: Guest, signal?: AbortSignal): Promise<CommandTransport>;
   disarmFork?(guest: Guest, signal?: AbortSignal): Promise<void>;
@@ -1075,6 +1076,7 @@ export interface SnapshotTake {
 export interface SnapshotSize {
   readonly bytes: number;
   readonly means: "own" | "whole";
+  readonly estimated?: boolean;
 }
 
 export interface SnapshotTaken {

@@ -338,6 +338,7 @@ const SHARES_BLOCKS = new Set(["lvmthin", "zfspool", "rbd", "btrfs"]);
 export function freedWords(snapshot: Pick<SnapshotRecord, "size" | "state" | "storage">): string {
   if (snapshot.state === "failed" || snapshot.state === "lost") return "it held nothing to free";
   if (!snapshot.size) return snapshot.storage && SHARES_BLOCKS.has(snapshot.storage.type) ? "it freed what it no longer shared with its box" : "what it freed is not known";
+  if (snapshot.size.estimated) return `it freed up to about ${gbWords(snapshot.size.bytes)}, an estimate from when it was taken, less what a fork or another image still uses, which stays until they go`;
   return snapshot.size.means === "own" ? `it freed ${gbWords(snapshot.size.bytes)}` : "it freed what it no longer shared with its box";
 }
 

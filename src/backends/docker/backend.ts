@@ -1592,12 +1592,23 @@ export class DockerBackend implements Backend {
   }
 
   async leasedAddressNow(guest: Guest, signal?: AbortSignal): Promise<LeasedAddressNow> {
-    const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
+    const found = await this.#containerOfBoxNow(guest.ref, this.#boxOf(guest), signal);
     if (!found) return { power: "gone", leased: null };
     const address = found.addresses[this.#config.network] ?? null;
     if (found.status === "running" || found.status === "restarting") return { power: "running", leased: address };
     if (found.status === "paused") return { power: "suspended", leased: address };
     return { power: "stopped", leased: null };
+  }
+
+  async boxHasNoGuest(boxId: string, lastKnown: Guest, signal?: AbortSignal): Promise<boolean> {
+    return (await this.#containerOfBoxNow(lastKnown.ref, boxId, signal)) === null;
+  }
+
+  async #containerOfBoxNow(ref: string, boxId: string | null, signal?: AbortSignal): Promise<ContainerInfo | null> {
+    const byRef = await this.#owned(ref, boxId, signal);
+    if (byRef || boxId === null) return byRef;
+    const byLabel = await this.#currentContainers(boxId, "", signal);
+    return byLabel.find((container) => ACTIVE.has(container.status)) ?? byLabel[0] ?? null;
   }
 
   async addressesGivenByProvider(guest: Guest, signal?: AbortSignal): Promise<readonly string[]> {

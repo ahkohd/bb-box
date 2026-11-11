@@ -12,9 +12,9 @@ import { instancePartOptions, NAMESPACE_KEEP_OFF } from "../src/backends/namespa
 import { SnapshotFailed, type Guest } from "../src/backends/types.ts";
 import { BY_COMMAND } from "../src/core/box-log.ts";
 import type { BoxRecord } from "../src/core/boxes.ts";
-import { endOfUtcDay, keptUntilAfter, utcDay } from "../src/core/snapshot.ts";
+import { endOfUtcDay, gbWords, keptUntilAfter, utcDay } from "../src/core/snapshot.ts";
 import { keepWhyOf } from "../src/plugin/snapshot-card.ts";
-import { keepCostWords } from "../src/plugin/snapshot-words.ts";
+import { deletedText, keepCostWords } from "../src/plugin/snapshot-words.ts";
 import { dockerConfig, fakeDockerHost, type FakeDockerHost } from "./fake-docker.ts";
 import { MemoryStorage, testContext } from "./helpers.ts";
 import { COMMAND, THREAD, rejection, standing, world, type World } from "./snapshot-world.ts";
@@ -83,7 +83,7 @@ test("Docker writes a snapshot's keep date as a tag on its engine, moves it when
   await state.snapshots.keep(COMMAND, standing(box), taken.id, { days: 30 });
 
   assert.equal(check.way, "as-is");
-  assert.match(keepCostWords(check), /^If \S+ is released, it stays where it is until Sun 29 Nov; nothing is copied then\. It takes about \S+ (MB|GB) of \S+ Docker's disk that nothing else there shares, and up to \S+ (MB|GB) if what it shares is deleted\.$/);
+  assert.match(keepCostWords(check), /^If \S+ is released, it stays where it is until Sun 29 Nov; nothing is copied then\. It takes about \S+ (MB|GB) of \S+ Docker's disk that no other image or container there uses, and up to \S+ (MB|GB) if what it shares is deleted\.$/);
   assert.deepEqual(keepTags(fake), [keptTag(INSTALL, taken.id, "2026-11-29")]);
   assert.equal(state.store.record(taken.id)?.keptUntil, keptUntilAfter(START, 30));
 
@@ -266,6 +266,71 @@ test("Docker still refuses a fork that holds the address of its source, stopped 
   assert.ok(!fake.containers().includes(fork.guest?.ref ?? "none"), "the refused fork is removed");
 });
 
+test("Docker refuses a fork that holds the address of its stopped source whose box record is lost, as the source's container is still on the engine", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  const { box, kept } = await keptSourceOnThisMachine(state, fake);
+  dockerOn(fake, "container", "stop", box.guest!.ref);
+  await state.forgetBox(box);
+
+  const answer = await state.snapshots.fork(COMMAND, box, standing(box), kept.id, { name: "from-kept" });
+  const fork = (await state.boxes.settled(answer.box!))!;
+
+  assert.equal(fork.state, "failed");
+  assert.match(fork.error ?? "", new RegExp(`${box.name}'s (last )?address 172\\.30\\.0\\.2`));
+  assert.ok(fake.containers().includes(box.guest!.ref), "the source's container is still there");
+});
+
+test("Docker refuses a fork that holds the address of its stopped source whose box record is lost and whose container was renamed, as its labels still name the box", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  const { box, kept } = await keptSourceOnThisMachine(state, fake);
+  dockerOn(fake, "container", "stop", box.guest!.ref);
+  dockerOn(fake, "container", "rename", box.guest!.ref, `${box.guest!.ref}-renamed`);
+  await state.forgetBox(box);
+
+  const answer = await state.snapshots.fork(COMMAND, box, standing(box), kept.id, { name: "from-kept" });
+  const fork = (await state.boxes.settled(answer.box!))!;
+
+  assert.equal(fork.state, "failed");
+  assert.match(fork.error ?? "", new RegExp(`${box.name}'s (last )?address 172\\.30\\.0\\.2`));
+});
+
+test("Docker forks a kept snapshot whose source's box record is lost once the engine has no container of that box, though the fork gets its old address", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  const { box, kept } = await keptSourceOnThisMachine(state, fake);
+  dockerOn(fake, "container", "rm", "--force", box.guest!.ref);
+  await state.forgetBox(box);
+
+  const answer = await state.snapshots.fork(COMMAND, box, standing(box), kept.id, { name: "from-kept" });
+  const fork = (await state.boxes.settled(answer.box!))!;
+
+  assert.equal(fork.state, "ready", fork.error ?? "");
+  assert.equal(addressOf(fake, fork.guest!.ref), "172.30.0.2");
+});
+
+test("a fork on the old address of a source whose box record is lost is refused when its provider cannot say that the source's machine is gone", async () => {
+  const cannotSay = [
+    { name: "cannot ask", boxHasNoGuest: async () => { throw new Error("the engine did not answer"); }, why: /it could not ask .+ whether \S+'s machine is still there, .+: Asking failed: the engine did not answer/ },
+    { name: "has no way to ask", boxHasNoGuest: undefined, why: /\S+'s (last )?address 172\.30\.0\.2/ },
+  ];
+  for (const each of cannotSay) {
+    const fake = fakeDockerHost();
+    const state = dockerWorld(fake);
+    const { box, kept } = await keptSourceOnThisMachine(state, fake);
+    dockerOn(fake, "container", "rm", "--force", box.guest!.ref);
+    await state.forgetBox(box);
+    Object.assign(dockerOf(state), { boxHasNoGuest: each.boxHasNoGuest });
+
+    const answer = await state.snapshots.fork(COMMAND, box, standing(box), kept.id, { name: "from-kept" });
+    const fork = (await state.boxes.settled(answer.box!))!;
+
+    assert.equal(fork.state, "failed", each.name);
+    assert.match(fork.error ?? "", each.why, each.name);
+  }
+});
+
 test("Docker refuses a fork after its source's release that holds the source's old address the engine did not give it", async () => {
   const fake = fakeDockerHost();
   const state = dockerWorld(fake);
@@ -356,7 +421,7 @@ test("Docker's doctor says what kept snapshots hold on Docker's disk, and until 
   const report = await dockerOf(state).doctor();
 
   const kept = report.checks.find((check) => check.id === "docker.kept-snapshots");
-  assert.match(kept?.detail ?? "", /^1 snapshot is kept, whether its box is released or not, until its keep date, 2026-11-29\. It takes about \S+ (MB|GB) of Docker's disk that nothing else there shares, and up to \S+ (MB|GB) if what it shares is deleted\. BB Box refuses to remove this backend while it holds them\.$/);
+  assert.match(kept?.detail ?? "", /^1 snapshot is kept, whether its box is released or not, until its keep date, 2026-11-29\. It takes about \S+ (MB|GB) of Docker's disk that no other image or container there uses, and up to \S+ (MB|GB) if what it shares is deleted\. BB Box refuses to remove this backend while it holds them\.$/);
   assert.match(kept?.fix ?? "", /bb box snapshot delete <box> <snapshot>/);
 });
 
@@ -379,9 +444,43 @@ test("Keep and the doctor say what a kept snapshot of a large image with a tiny 
   dockerOn(fake, "image", "rm", "bbbox/linux:1");
   const refreshed = keptCheckOf(await dockerOf(state).doctor());
 
-  assert.match(keepCostWords(check), /nothing is copied then\. It takes about 1 MB of \S+ Docker's disk that nothing else there shares, and up to 796 MB if what it shares is deleted\.$/);
-  assert.match(released, /It takes about 1 MB of Docker's disk that nothing else there shares, and up to 796 MB if what it shares is deleted\./);
-  assert.match(refreshed, /It takes about 796 MB of Docker's disk that nothing else there shares\. BB Box/, "nothing shares its layers once the image it came from is gone");
+  assert.match(keepCostWords(check), /nothing is copied then\. It takes about 1 MB of \S+ Docker's disk that no other image or container there uses, and up to 796 MB if what it shares is deleted\.$/);
+  assert.match(released, /It takes about 1 MB of Docker's disk that no other image or container there uses, and up to 796 MB if what it shares is deleted\./);
+  assert.match(refreshed, /It takes about 796 MB of Docker's disk that no other image or container there uses\. BB Box/, "nothing shares its layers once the image it came from is gone");
+});
+
+async function keptLargeImageForkedAfterRelease(state: World, fake: FakeDockerHost) {
+  writeFileSync(join(fake.root, "image-sizes.json"), JSON.stringify({ "bbbox/linux:1": 795_407_487 }));
+  fake.set({ snapshotLayerBytes: 126_976, snapshotVolumeKiB: 4 });
+  const box = await readyDockerBox(state, fake);
+  const taken = (await state.snapshots.take(COMMAND, box, standing(box), { name: "kept one" })).snapshot!;
+  await state.snapshots.keep(COMMAND, standing(box), taken.id, { days: 30 });
+  await state.boxes.release(THREAD, box.id, "done", BY_COMMAND);
+  const fork = await forkOfKept(state, box);
+  assert.equal(fork.state, "ready", fork.error ?? "");
+  return { box, taken, fork };
+}
+
+test("the doctor counts a running fork that uses a kept snapshot's image as sharing it, so only the snapshot's Docker data is its own", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  await keptLargeImageForkedAfterRelease(state, fake);
+
+  const withFork = keptCheckOf(await dockerOf(state).doctor());
+
+  assert.match(withFork, new RegExp(`It takes about ${gbWords(4096)} of Docker's disk that no other image or container there uses, and up to 796 MB if what it shares is deleted\\.`));
+});
+
+test("deleting a kept snapshot whose fork still uses its image says its size was an estimate and that what the fork uses stays, not that it freed it", async () => {
+  const fake = fakeDockerHost();
+  const state = dockerWorld(fake);
+  const { box, fork } = await keptLargeImageForkedAfterRelease(state, fake);
+
+  const answer = await state.snapshots.deleteGone(state.snapshots.findGone(box.name, "kept one"), BY_COMMAND);
+  const said = deletedText(answer, box.name);
+
+  assert.match(said, /: it freed up to about \S+ (kB|MB|GB), an estimate from when it was taken, less what a fork or another image still uses, which stays until they go\.$/);
+  assert.ok(fake.containers().includes(fork.guest!.ref), "the fork still runs on its image");
 });
 
 const MEASURED_ON_CONTAINERD = { layers: ["ubuntu", "tools", "start", "own"], layerBytes: [87_633_920, 2_102_317_056, 57_344, 139_264], imageBytes: 795_410_974, store: "containerd", volumeBytes: 7_193_000 } as const;

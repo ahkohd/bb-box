@@ -35,7 +35,7 @@ import { CLIPBOARD_MAX_BYTES, FIRST_FRAME_MS, FIT_WAIT_MS, HOLD_NO_SIZE_MS, HOLD
 import { DEVICE_CLIPBOARD_MOST, PASTE_REQUEST_SINCE_VERSION } from "../src/core/device.ts";
 import { KeysAfterPaste, MAX_RETRY_MS, OptionComposer, PASTE_HOLD_MS, PASTE_LANDS_MS, boxKey, macBrowser, pasteShortcut, retryWait } from "../src/app/viewer.ts";
 import { checkWords, forgetResizesAsked } from "../src/app/resize.tsx";
-import { keepOpeningDate } from "../src/app/snapshot-words.ts";
+import { freesWords, keepOpeningDate, snapshotSizeWords } from "../src/app/snapshot-words.ts";
 import { IMAGE_REQUEST } from "../src/app/new-box.tsx";
 import { FieldShell, SideLabelField } from "../src/app/field-shell.tsx";
 import { SettingRow } from "../src/app/settings-parts.tsx";
@@ -11659,6 +11659,14 @@ test("Keep on a snapshot already kept opens on its renewal date", async () => {
   const renewal = keepOpeningDate(keptUntil, 30, Date.now());
   expect(date.value).toBe(renewal);
   expect(date.value).not.toBe(new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString().slice(0, 10));
+});
+
+test("a snapshot whose size is an estimate is shown as about that size, and Delete says it frees up to it, less what a fork or another image still uses", () => {
+  const estimated = { bytes: 42_000_000, means: "own" as const, estimated: true };
+
+  expect(snapshotSizeWords(estimated)).toBe("about 42 MB");
+  expect(freesWords(snapshotRow({ size: estimated, host: "docker-1" }), "calm-otter")).toBe("Frees up to about 42 MB on docker-1, less what a fork or another image still uses.");
+  expect(freesWords(snapshotRow({ size: { bytes: 42_000_000, means: "own" }, host: "docker-1" }), "calm-otter")).toBe("Frees 42 MB on docker-1.");
 });
 
 test("a failed restore check says the box cannot be restored, and only offers Close", async () => {

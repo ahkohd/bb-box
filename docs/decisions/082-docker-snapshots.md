@@ -405,7 +405,11 @@ it is there, listing gives the new date, and the next maintenance removes the
 other tags. A change whose new tag was never written changed nothing, and
 maintenance drops its record. Two keep tags with no record of a change, as
 after the backend's storage is lost, settle on the later date. So one keep
-tag remains after recovery, whatever step was cut short. Stopping keeping
+tag remains after recovery, whatever step was cut short. That later date is
+the safe side, not always the one asked for: a shortening cut short after
+its new tag, with its record lost too, keeps the snapshot to its old, later
+date. It keeps data longer than asked, never deletes it early, and you can
+shorten it again. Stopping keeping
 records the change and removes the tags. A delete removes the keep tag before the snapshot's own tag, so a
 delete cut short leaves an unkept snapshot, never an image held by a keep
 tag alone. Listing reads the keep date from the image's tags, so a lost

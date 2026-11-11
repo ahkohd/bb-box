@@ -35,8 +35,14 @@ Three other ways were weighed:
   provider now, not from inside the guest: `addressesGivenByProvider`.
 - The fork check accepts a fork holding its source's last address only when
   the source is gone and the provider says it gave that address to the
-  fork. The source is gone when BB Box's record of it has no guest, or the
-  provider says its guest is gone. A stopped or suspended source could come
+  fork. The source is gone only when the provider says so. When BB Box's
+  record of the source has a guest, the provider reads that guest. When the
+  record is lost, or has no guest, BB Box asks the provider whether the box
+  has any guest still, by the last one the snapshot recorded and by the box's
+  ID: `boxHasNoGuest`. A missing record alone is not evidence, as BB Box can
+  lose its records while the provider keeps the guest. A provider that
+  cannot answer, or a snapshot that recorded only a held copy, leaves the
+  address refused. A stopped or suspended source could come
   back, so its address stays refused unless the fork shows a DHCP client ID
   of its own, as before.
 - Every other part of the check stands: a source that runs keeps its
@@ -46,7 +52,8 @@ Three other ways were weighed:
   refused.
 - Docker says what its source holds now, from the source's container:
   running or paused with its address, stopped, or gone when this install
-  has no such container for the box. It says what it gave the fork from
+  has no container for the box, by the container's name or by the box label
+  on any of its containers, such as one a restore made. It says what it gave the fork from
   the fork's own container, which it checks is this install's and the
   fork's, and only while it runs.
 - The check runs while the fork's services are held, so nothing in the fork

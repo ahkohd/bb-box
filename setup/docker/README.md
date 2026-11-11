@@ -391,8 +391,9 @@ take pauses the box; see
 A snapshot you keep stays on the engine after its box is released, as its
 image, its copy of the Docker data and a keep tag,
 `bbbox-kept/<install>/<snapshot>:<yyyy-mm-dd>`, until BB Box deletes it
-after its date. It takes what nothing else on the engine shares, and up to its
-whole size once the box's image is refreshed. The Keep dialog and the Kept
+after its date. It takes what no other image or container on the engine uses,
+and up to its whole size once the box's image is refreshed. A running fork of
+it uses its layers, so then only its Docker data is its own. The Keep dialog and the Kept
 snapshots check in `bb box doctor` say both. BB Box refuses to remove the
 Docker backend from its settings while the engine holds any of its snapshots,
 kept or not: delete them first with `bb box snapshot delete <box> <snapshot>`,

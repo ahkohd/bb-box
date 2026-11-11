@@ -119,7 +119,7 @@ test("Docker finds complete snapshots without local records", async () => {
   assert.equal(held.length, 1);
   assert.equal(held[0]?.id, "sn123");
   assert.equal(held[0]?.state, "complete");
-  assert.deepEqual(held[0]?.size, { bytes: 4096 + 1024 * 1024, means: "own" }, "its own size, estimated from its image's labels");
+  assert.deepEqual(held[0]?.size, { bytes: 4096 + 1024 * 1024, means: "own", estimated: true }, "its own size, estimated from its image's labels");
 });
 
 function timedCli(cli: DockerCli, after: (args: readonly string[]) => void): DockerCli {
