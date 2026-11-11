@@ -221,11 +221,71 @@ settled as not done; the ZFS rollback cut short stayed open until
 `pct unlock`, then finished, and its undo restored B. `bb box doctor` then
 said 0 operations not settled.
 
-The second, third and fourth changes, to the lost task's evidence, the
-rollback's journal, the stop of a node-started guest and the end of
-rolling back again, were not run again on the node. Both live rollbacks cut short read back
-after the reboot as failed tasks, "received interrupt", whose worker began
-before the boot: the case the fourth change fails, with the box stopped.
+The second, third and fourth changes were not run on the node then. The
+fifth change was, with the fourth's, below.
+
+## Tests of the fifth change
+
+The fifth change answers a fourth review. Its tests were run against the
+fourth head (`d30eb68c`), then with each part of the change put back in
+turn. In `proxmox-lxc-snapshots`, `restore-recovery` and `restore`, 139
+tests: 11 fail on the fourth head, none on this change. Main's 47 restore
+tests pass unchanged.
+
+| Review's case | Test | Fails without |
+| --- | --- | --- |
+| A restore held after a stop that failed later reads its task as OK, running, failed or unreadable, and BB Box restarts | "a restore held because BB Box could not stop its box only stops it and fails at a later sweep, after BB Box restarts, though its rollback's task now reads ...", 4 tests | the journalled decision, 4 |
+| A restore held while the box's power could not be read later reads its task as OK, and BB Box starts the box | "a restore held because BB Box could not read its box's power is never started, though its rollback's task later reads OK" | the journalled decision, 1 |
+| The last power read says running, or throws, and the box is left ready or its hold cleared | "a part-restored box whose last power read says running ...", and "... says nothing ..." | the last read's check, 2 |
+| A first request whose answer was lost, with its task listed only after the second request finished, is reported as made outside BB Box | "both of a restore's rollback requests are BB Box's own, though the first's answer was lost and Proxmox lists its task only after the second ended", which sends two requests | the window of an unanswered request, 1 |
+| The window must not claim another user's rollback | "another user's rollback in the time of a restore's unanswered request is still reported as made outside BB Box" | passes on both: a control |
+| The Proxmox backends say which rollbacks are their own token's | the two G13 tests of the node's task list | Proxmox's own-user mark, 2 |
+| Found live, below: a new restore of a guest a cut rollback left locked on LVM-thin said only to unlock it | "G16: a new restore's plan for a guest a cut rollback left locked on LVM-thin says how to make its volume again before the unlock" | the plan's words, 1 |
+
+With one part put back at a time, each fails only its own tests.
+
+## Live on the fifth change
+
+Run on 11 November 2026 with bb-box from this change, on a new test bed
+built as above: Proxmox VE 9.2.26 on Debian 13, kernel 7.0.14-28-pve, as a
+KVM guest of 6 cores and 12 GiB in a Linux box on Proxmox QEMU, with an
+LVM-thin pool, `local-lvm` on volume group `bbthin`, on a 40 GiB disk file.
+A fresh `npx bb-app` with no account, started with `env -i` and
+`BB_BOX_LIVE_CHECKS=1`, ran in the same Linux box, with bb-box installed
+from this branch with `bb plugin install path:`. Its box was a machine of
+the person's, `lvm-a` (guest 9900), 2 cores, 2 GiB and 16 GiB, on
+LVM-thin. Each run wrote A to `~/g16.txt`, or B, as below, and the
+snapshot `a-state` held A. snapshot.ubuntu.com was out, so the template
+was built from Ubuntu's live archive on this test bed only.
+
+To cut a rollback short, a wrapper for `/sbin/lvcreate` on pve-1 held it
+for 90 s when a flag in `/run` was set, and the flag was set while the
+restore was held after its undo (`bb box snapshot hold-next --at undo
+--seconds 15`). To lose the rollback's answer, pve-1 delayed every packet
+from port 8006 by 3 s (`tc ... netem delay 3000ms`), and once the
+rollback's task appeared in pve-1's task list, `ss -K` closed BB's
+connections to the API for 4 s.
+
+| Run | What was done | What BB Box did | Proxmox's rollback tasks | Box |
+| --- | --- | --- | --- | --- |
+| (a) An ordinary restore and undo | Restore B to `a-state`, then restore its undo | Done both ways | 2, both OK | A, then B |
+| (b) A reboot during the rollback | `systemctl reboot` 3 s into the held `lvcreate`, after `lvremove` | The run lost the API: unknown at the rollback. After the boot (uptime 147 s, task worker start 0x1B9CD ticks, 1,131 s) and `bb plugin reload`, the sweep failed it: "Its rollback was cut short when its node restarted: lvm rollback ... error: received interrupt. BB Box does not roll it back again on its own. To use it, restore it to a snapshot again, or release it. ..." | 1 more, "received interrupt"; none after | Stopped, with no volume and `lock: rollback`; the boot's start failed: "CT is locked (rollback)" |
+| (b) Then a new restore | `bb box snapshot restore lvm-a a-state` | Refused: "... left box lvm-a locked (rollback), so BB Box restores nothing. A rollback cut short on LVM-thin can leave the guest with no volume ... If `lvs bbthin/vm-9900-disk-0` on pve-1 finds none, first make it again from the snapshot: `lvcreate -kn -n vm-9900-disk-0 -s bbthin/snap_vm-9900-disk-0_bbsn6mungqyj26p3`. Run `pct unlock 9900` on pve-1." Before the fix found here it gave only the unlock. Root ran the three commands as given, and the restore again was done | 1 more, OK | A. The failed restore's undo, restored next, brought back B |
+| (c) The rollback's request never arrived | The connection cut while it opened, after BB Box journalled the request | Unknown: "Proxmox gave no clear answer to the rollback, so BB Box cannot tell whether it began". The next sweep found no task, sent the request once more, as main does, and finished | 1, from the second request | A |
+| (c) The rollback's answer was lost | The connection cut once Proxmox had begun the task | Unknown, "read ECONNABORTED". The next sweep found the task by BB Box's own user, recorded it on the journalled request, sent no other, and finished. No restore made outside BB Box was logged | 1, OK | A |
+| (d) A box BB Box cannot stop | A rollback cut short by a reboot, as in (b), with bb-box turned off over the reboot. Root then made the volume again, unlocked the guest, started it, as a node's boot does, and locked it with `pct set 9900 --lock backup`. bb-box was turned on and swept twice | Kept the restore open at both sweeps, with the decision to stop and fail journalled: "... The box was running, and BB Box could not stop it: Proxmox TASK vzstop 9900 failed (500): CT is locked (backup). BB Box keeps the restore open, so nothing starts the box ...". `bb box start --machine lvm-a` was refused as the box was being restored. After root's `pct unlock 9900`, the next sweep stopped the box and failed the restore | none after the cut one | Running and held, then stopped |
+| Release | `bb box machines remove lvm-a` | Removed it | none | Guest 9900 and its volumes gone; `bb box doctor`: 0 operations not settled |
+
+The run also showed a lost answer to the undo's task read: BB Box left the
+restore unknown at its undo, and the next sweep confirmed the undo and
+finished the restore. One restore ended "restored, but did not start", as
+a cut connection fell on its start: the box was stopped at A, and
+`bb box start` started it.
+
+The lost first answer whose task Proxmox lists only after the second
+request ended, and a final power read that sees the box start again, were
+not made live: each needs Proxmox to act between two reads. The fakes cover
+them.
 
 ## Not proved
 
@@ -235,5 +295,8 @@ before the boot: the case the fourth change fails, with the box stopped.
 - **LVM-thin's rollback between its two steps.** Only root can put the
   volume back.
 - A take on ZFS cut short was not run; it is the same code as on LVM-thin.
-- The run did not repeat every cell after each fix: the LVM-thin rollback
-  cut short records the failure before the fix and root's repair.
+- ZFS was not run again on the fifth change; its restore code is shared
+  with LVM-thin's.
+- The first run did not repeat every cell after each fix. The fifth
+  change's run repeated the LVM-thin rollback cut short by a reboot, not
+  the hard resets, nor the steps before and after the rollback.

@@ -1140,6 +1140,7 @@ export interface OutsideRollback {
   readonly task: TaskRef;
   readonly guest: string;
   readonly user: string;
+  readonly ours?: boolean;
   readonly startedAt: number;
   readonly outcome: TaskOutcome;
 }

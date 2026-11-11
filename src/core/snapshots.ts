@@ -540,6 +540,10 @@ const ROLLBACKS_A_RESTORE_SENDS = 2;
 const NOT_ROLLED_BACK_AGAIN = `${PRODUCT} does not roll it back again on its own.`;
 const RESTORE_AGAIN_OR_RELEASE = "To use it, restore it to a snapshot again, or release it. A new restore first takes a fresh undo, of this part-restored disk.";
 
+function startedWhileItWasOpen(startedAt: number, sentAt: number, endedAt: number): boolean {
+  return startedAt >= sentAt - OUTSIDE_SLACK_MS && startedAt <= endedAt + OUTSIDE_SLACK_MS;
+}
+
 function endedWell(task: TaskSeen): boolean {
   return task?.state === "ok" || task?.state === "lost";
 }
@@ -560,6 +564,15 @@ function rollbackUnknownWords(task: TaskSeen, backendLabel: string): string {
   if (task?.state === "lost" || task?.state === "failed") return `Its rollback was cut short when its node restarted: ${sentence(task.words)}`;
   if (task?.state === "missing") return `${backendLabel} no longer has the rollback's task, so ${PRODUCT} cannot tell how it ended.`;
   return `${PRODUCT} had no answer to its rollback and found no task for it, so it cannot tell whether a rollback began.`;
+}
+
+interface StopAndFail {
+  readonly why: string;
+}
+
+function stopAndFailOf(operation: Pick<SnapshotOperation, "consent">): StopAndFail | null {
+  const decided = (operation.consent as { stopAndFail?: Partial<StopAndFail> } | null)?.stopAndFail;
+  return decided && typeof decided.why === "string" ? { why: decided.why } : null;
 }
 
 function puttingBackOf(operation: Pick<SnapshotOperation, "consent">): PuttingBack | null {
@@ -3468,11 +3481,23 @@ export class Snapshots {
   }
 
   async #partRestored(context: Restoring, box: BoxRecord, why: string): Promise<never> {
-    this.#deps.ledger.updateOperation(context.operation.id, { step: "rollback-task" });
+    this.#decideToStopAndFail(context, why);
     const words = `${why} ${NOT_ROLLED_BACK_AGAIN}`;
+    const keptOpen = (notStopped: string) => this.#restoreUnsure(context, box, "rollback-task", `${words} Its disk may be part-restored. ${notStopped} ${PRODUCT} keeps the restore open, so nothing starts the box, and tries to stop it again at each sweep. You can release the box.`);
     const notStopped = await this.#stoppedIfItRuns(context.backend, box);
-    if (notStopped) throw this.#restoreUnsure(context, box, "rollback-task", `${words} Its disk may be part-restored. ${notStopped} ${PRODUCT} keeps the restore open, so nothing starts the box, and tries to stop it again at each sweep. You can release the box.`);
-    return this.#leftStopped(context, box, "rollback-task", words, false, RESTORE_AGAIN_OR_RELEASE);
+    if (notStopped) throw keptOpen(notStopped);
+    const settling = await context.backend.power(box.guest!, this.#stopping.signal).catch(() => "unknown" as const);
+    if (settling === "running") throw keptOpen(`${PRODUCT} found the box running when it went to end the restore.`);
+    if (settling !== "stopped" && settling !== null) throw keptOpen(`${PRODUCT} could not read whether the box runs.`);
+    return this.#leftStopped(context, box, "rollback-task", words, false, { next: RESTORE_AGAIN_OR_RELEASE, power: settling });
+  }
+
+  #decideToStopAndFail(context: Restoring, why: string): void {
+    const ledger = this.#deps.ledger;
+    const current = ledger.operation(context.operation.id) ?? context.operation;
+    if (stopAndFailOf(current)) return;
+    const decided: StopAndFail = { why };
+    ledger.updateOperation(context.operation.id, { step: "rollback-task", consent: { ...((current.consent as object | null) ?? {}), stopAndFail: decided } });
   }
 
   async #stoppedIfItRuns(backend: Backend, box: BoxRecord): Promise<string | null> {
@@ -3488,8 +3513,7 @@ export class Snapshots {
       return `The box was running, and ${PRODUCT} could not stop it: ${sentence(message(error))}`;
     }
     this.#deps.log?.(`Stopped box ${box.name}, which was running while its disk may be part-restored.`);
-    const after = await backend.power(guest, signal).catch(() => "unknown" as const);
-    return after === "stopped" || after === null ? null : `The box was running, and ${PRODUCT} could not confirm it stopped.`;
+    return null;
   }
 
   async #undoStillThere(context: Restoring, box: BoxRecord, undo: SnapshotRecord): Promise<void> {
@@ -3597,11 +3621,12 @@ export class Snapshots {
     throw new BoxError("failed", `${PRODUCT} did not restore box ${box.name} to ${quoted(target)}: ${words} Nothing on its disk changed, and ${back}.`);
   }
 
-  async #leftStopped(context: Restoring, box: BoxRecord, step: RestoreStep, words: string, restored: boolean, next = ""): Promise<never> {
+  async #leftStopped(context: Restoring, box: BoxRecord, step: RestoreStep, words: string, restored: boolean, settled: { readonly next?: string; readonly power?: "stopped" | null } = {}): Promise<never> {
     const ledger = this.#deps.ledger;
     const { operation, backend, target } = context;
     const guest = box.guest!;
-    const power = await backend.power(guest, this.#stopping.signal).catch(() => null);
+    const next = settled.next ?? "";
+    const power = settled.power !== undefined ? settled.power : await backend.power(guest, this.#stopping.signal).catch(() => null);
     const now = this.#now();
     const said = next ? `${words} ${next}` : words;
     ledger.updateOperation(operation.id, { state: "failed", endedAt: now, error: said });
@@ -3660,6 +3685,8 @@ export class Snapshots {
       const now = ledger.operation(operation.id);
       return now?.state === "done" || now?.state === "failed";
     };
+    const decided = stopAndFailOf(operation);
+    if (decided) return settle(() => this.#partRestored(context, box, decided.why));
     const step = operation.step as RestoreStep;
     if (!RESTORE_STEPS.includes(step)) return unsure(`${PRODUCT} does not know the step "${operation.step}" it had reached.`);
     if (step === "swap-back") return settle(() => this.#swapBack(context, box, `${PRODUCT} restarted while it put the box's old guest back.`));
@@ -4217,6 +4244,14 @@ export class Snapshots {
     }
   }
 
+  #anUnansweredRequestMayOwn(box: BoxRecord, rollback: OutsideRollback): boolean {
+    if (rollback.ours !== true) return false;
+    const now = this.#now();
+    return this.#deps.ledger
+      .operations({ box: box.id, kind: "restore" })
+      .some((operation) => (operation.attempts ?? []).some((attempt) => attempt.task === null && startedWhileItWasOpen(rollback.startedAt, attempt.at, operation.endedAt ?? now)));
+  }
+
   async outsideRestores(signal?: AbortSignal): Promise<void> {
     const ledger = this.#deps.ledger;
     if (ledger.problem) return;
@@ -4238,7 +4273,7 @@ export class Snapshots {
       let earliestRunning: number | null = null;
       for (const rollback of found) {
         const box = boxes.find((candidate) => candidate.guest!.ref === rollback.guest);
-        if (!box || ledger.operationWithTask(rollback.task.ref)) continue;
+        if (!box || ledger.operationWithTask(rollback.task.ref) || this.#anUnansweredRequestMayOwn(box, rollback)) continue;
         if (box.restoring || restoring.has(box.id) || this.#runningOn(box.id)) {
           earliestRunning = Math.min(earliestRunning ?? rollback.startedAt, rollback.startedAt);
           continue;

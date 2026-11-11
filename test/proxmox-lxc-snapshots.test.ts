@@ -439,6 +439,26 @@ test("G16: a guest a cut rollback left locked on LVM-thin is refused with how to
   assert.equal(await refusal(), `Proxmox has guest ${vmid} locked (rollback), so it cannot restore the snapshot. Run \`pct unlock ${vmid}\` on pve.`);
 });
 
+test("G16: a new restore's plan for a guest a cut rollback left locked on LVM-thin says how to make its volume again before the unlock, as the plan refuses first", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks } = tasks();
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  await state.backend.powerOff(guest);
+  const ref = { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest };
+  const config = state.proxmox.guests.get(vmid)!.config;
+  const volume = /(vm-\d+-disk-\d+)/.exec(config.rootfs!)![1]!;
+
+  config.lock = "rollback";
+  const plan = await state.backend.planSnapshots(guest, "linux", ref);
+
+  assert.deepEqual(plan.locked, {
+    lock: "rollback",
+    fix: `A rollback cut short on LVM-thin can leave the guest with no volume, and Proxmox cannot roll it back again then. If \`lvs pve/${volume}\` on pve finds none, first make it again from the snapshot: \`lvcreate -kn -n ${volume} -s pve/snap_${volume}_bbsn7kq2m6xa4pdq\`. Run \`pct unlock ${vmid}\` on pve.`,
+  });
+  assert.deepEqual((await state.backend.planSnapshots(guest, "linux", null)).locked, { lock: "rollback", fix: `Run \`pct unlock ${vmid}\` on pve.` }, "with no snapshot named, only the unlock");
+});
+
 test("a restore's plan: rollback to any snapshot on LVM-thin, the size it goes back to from the snapshot's own config, how many are newer, and why it cannot", async () => {
   const state = world();
   const { guest, vmid, id } = await box(state);
@@ -568,10 +588,10 @@ test("G13: rollbacks of this install's guests are read from the node's task list
   await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks).catch(() => undefined);
   const found = await state.backend.outsideRollbacks(since);
   assert.deepEqual(
-    found.map((each) => ({ guest: each.guest, user: each.user, outcome: each.outcome })),
+    found.map((each) => ({ guest: each.guest, user: each.user, ours: each.ours, outcome: each.outcome })),
     [
-      { guest: guest.ref, user: "bb-box@pve!plugin", outcome: { state: "ok" } },
-      { guest: guest.ref, user: "bb-box@pve!plugin", outcome: { state: "failed", words: "unable to rollback" } },
+      { guest: guest.ref, user: "bb-box@pve!plugin", ours: true, outcome: { state: "ok" } },
+      { guest: guest.ref, user: "bb-box@pve!plugin", ours: true, outcome: { state: "failed", words: "unable to rollback" } },
     ],
   );
 });
@@ -589,6 +609,7 @@ test("G13: a rollback the node lists as running, with no end time, is read as ru
   const [found] = await state.backend.outsideRollbacks(Date.now() - 60_000);
   assert.deepEqual(found?.outcome, { state: "running" });
   assert.equal(found?.user, "root@pam");
+  assert.equal(found?.ours, false, "another user's task is not this install's");
 });
 
 test("G16 on Proxmox LXC: a held copy is cloned into the box range, labelled, disarmed and made a template; a new guest made from it takes the box's MAC and address; the old guest is disarmed with a new MAC as the earlier guest", async () => {

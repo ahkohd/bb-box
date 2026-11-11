@@ -361,6 +361,8 @@ BB Box does not restore a Linux VM on Proxmox QEMU on ZFS yet, until that is che
 
 BB Box reads Proxmox's task list at each sweep. A rollback of one of its boxes that BB Box did not make, such as `pct rollback` on the host, is logged in the box's log by how it ended: done, failed, or still running, which it looks at again at the next sweep. After one that ended well, BB Box reads the box's size back, writes its labels again, and when it runs, its access file, and starts its BB machine again. A change in a box's snapshots without such a task is not taken for a restore.
 
+A rollback whose request BB Box sent but never heard back about is BB Box's own, though Proxmox may list its task only later. So BB Box does not log a rollback of that box by its own Proxmox user that began between that request and the end of its restore, with a minute's slack either side. One by another user, such as root, is still logged.
+
 ### If BB Box restarts during a restore
 
 Each step is recorded before it runs, with Proxmox's task once it begins. When BB Box starts again, it finishes the restore from the step it reached, or puts the box back as it was if it never got past the stop. When it cannot tell how a step ended, such as a rollback whose task it cannot read or that still runs, it keeps the snapshots the restore uses, leaves the box as the restore left it, refuses to start it, and checks again at each sweep. `bb box sweep` checks at once, and `bb box doctor` names such a restore.
@@ -377,7 +379,7 @@ BB Box acts so whenever it cannot be sure whether a rollback began or what the d
 
 To use a box left so, restore it to a snapshot again, or release it. A new restore first takes a fresh undo, of the part-restored disk, so restore to the failed restore's undo to get the disk as it was before. Do not start the box until then. If Proxmox left the guest locked, the new restore is refused, with the command to run on the node, such as `pct unlock 214`.
 
-If BB Box cannot stop the box, or cannot read whether it runs, the restore stays open so that nothing starts the box, and BB Box tries to stop it again at each sweep. It never rolls back then. You can release the box at any time.
+If BB Box cannot stop the box, or cannot read whether it runs, the restore stays open so that nothing starts the box, and BB Box tries to stop it again at each sweep. It never rolls back then, and never finishes the restore, whatever Proxmox later says of the rollback's task. It ends the restore only once it reads the box as stopped. You can release the box at any time.
 
 BB Box knows the node restarted only from the node's own evidence: its uptime is less than it was when the rollback's task began. Without it, a rollback whose task failed leaves the box stopped, as for a restart of BB Box alone.
 

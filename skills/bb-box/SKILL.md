@@ -318,8 +318,9 @@ BB Box starts an Android model cold when its unsaved marker is present. A snapsh
   how to make the box's volume again first. Only root on the node can run
   them: tell the person.
 - A restore stays open, with the box held, while BB Box cannot stop the
-  box or read whether it runs. BB Box tries to stop it at each sweep and
-  never rolls it back then. The person can release the box.
+  box or read whether it runs. BB Box tries to stop it at each sweep,
+  never rolls it back then, and ends the restore failed only once the box
+  reads as stopped. The person can release the box.
 - `box_snapshots` lists what you may see of a box's snapshots. Delete your
   own with `box_snapshot_delete` once they are no longer needed. A box holds 5 unless the person set otherwise; when you take one
   past that, BB Box deletes the oldest one an agent of this thread took.

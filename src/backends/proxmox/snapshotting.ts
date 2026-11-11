@@ -184,6 +184,10 @@ export function storageOfVolume(value: unknown): string | null {
   return /^([A-Za-z][A-Za-z0-9_.-]*):/.exec(String(value ?? ""))?.[1] ?? null;
 }
 
+function userOfTask(upid: string): string {
+  return (upid.split(":")[7] ?? "").split("!")[0] ?? "";
+}
+
 function refusedBeforeItBegan(error: ProxmoxError): boolean {
   return (error.status >= 400 && error.status < 500) || error.locked;
 }
@@ -368,7 +372,10 @@ export class ProxmoxSnapshotting {
         reasons.push(words.running);
         lockWhy = words.running;
         busy = words.running;
-      } else if (words.fix) locked = { lock, fix: words.fix };
+      } else if (words.fix) {
+        const remake = lock === ROLLBACK_LOCK && target ? await this.#remakeAfterACutRollback(api, config, snapshotName(target.id), signal) : null;
+        locked = { lock, fix: remake ? `${remake} ${words.fix}` : words.fix };
+      }
       else {
         reasons.push(`Proxmox has guest ${vmid} locked (${lock}), so ${PRODUCT} takes no snapshot of it.`);
         lockWhy = `Proxmox has guest ${vmid} locked (${lock}).`;
@@ -657,7 +664,8 @@ export class ProxmoxSnapshotting {
       if (!guest) continue;
       const ref = { ref: task.upid, host: api.node };
       const outcome: TaskOutcome = !task.ended || task.status === null ? await this.task(ref, signal) : task.status === "OK" || /^WARNINGS: \d+$/.test(task.status) ? { state: "ok" } : { state: "failed", words: task.status };
-      found.push({ task: ref, guest: guest.ref, user: task.user, startedAt: task.start * 1000, outcome });
+      const ours = this.#guests.tokenUser === null ? {} : { ours: userOfTask(task.upid) === this.#guests.tokenUser };
+      found.push({ task: ref, guest: guest.ref, user: task.user, ...ours, startedAt: task.start * 1000, outcome });
     }
     return found.sort((a, b) => a.startedAt - b.startedAt);
   }
@@ -763,7 +771,7 @@ export class ProxmoxSnapshotting {
     const from = Math.floor(since / 1000) - CLOCK_SLACK_S;
     const ours = this.#guests.tokenUser;
     return (await api.tasksSince(vmid, type, from, signal))
-      .filter((task) => task.start >= from && (ours === null || (task.upid.split(":")[7] ?? "").split("!")[0] === ours))
+      .filter((task) => task.start >= from && (ours === null || userOfTask(task.upid) === ours))
       .sort((a, b) => a.start - b.start)
       .map((task) => ({ ref: task.upid, host: api.node }));
   }
