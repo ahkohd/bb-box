@@ -260,6 +260,7 @@ case $tool in
           echo "$uid ${load##* }"
         done <"$F/processes"
         ;;
+      "-A -o pid=,ppid=,uid=,stat=,lstart=" | "-o stat= -p "*) exec "$FAKE_MACOS_BIN/ps" "$@" ;;
       *) exit 1 ;;
     esac
     ;;

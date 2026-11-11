@@ -210,16 +210,16 @@ and the list of users before it changes anything.
 Version 5 was run on 11 November 2026 on a test pool Mac: a Tart VM, 4
 cores, 8 GiB memory, macOS 27.0 (26A428), APFS, the Mac's admin user at the
 console, made a pool Mac by the helper's `init`, with box user `bbx-0`. It
-passed all 56 checks in 17 s, with users of UID 500 or more the same before
+passed all 56 checks in 16 s, with users of UID 500 or more the same before
 and after, and no snapshot store or record left.
 
 | Step | Time |
 | --- | --- |
-| Take, in all, with 1 s of checks after the resume | 1,626 ms |
-| The scratch user's processes paused | 187 ms |
-| Stop, ending the scratch user's processes | 1,225 ms |
-| Restore, the swap | 203 ms |
-| Fork into a second scratch user | 2,308 ms |
+| Take, in all, with 1 s of checks after the resume | 1,437 ms |
+| The scratch user's processes paused | 166 ms |
+| Stop, ending the scratch user's processes | 1,154 ms |
+| Restore, the swap | 189 ms |
+| Fork into a second scratch user | 2,218 ms |
 
 The review's reproductions were run against version 5 on the same Mac.
 

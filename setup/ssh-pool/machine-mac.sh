@@ -1467,11 +1467,17 @@ PROCESSES
   return 0
 }
 
-ended() { state=$(ps -o stat= -p "$1" 2>/dev/null); case $state in '' | Z*) true ;; *) false ;; esac; }
+still_ending() { state=$(ps -o stat= -p "$1" 2>/dev/null); case $state in '' | Z*) false ;; *) true ;; esac; }
+a_zombie() { state=$(ps -o stat= -p "$1" 2>/dev/null); case $state in Z*) true ;; *) false ;; esac; }
 
 reap_if_ended() {
   for child; do
-    if eventually ended "$child"; then wait "$child" 2>/dev/null; fi
+    tries=0
+    while still_ending "$child" && [ "$tries" -lt 40 ]; do
+      tries=$((tries + 1))
+      sleep 0.25
+    done
+    ! a_zombie "$child" || wait "$child" 2>/dev/null
   done
   return 0
 }
