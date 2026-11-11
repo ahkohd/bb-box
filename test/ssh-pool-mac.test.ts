@@ -114,7 +114,7 @@ test("status gives the pool the Linux helper's keys, and the Mac's user, console
   assert.deepEqual(
     { ...status, diskGiB: null },
     {
-      helper: 3, arch: "arm64", boot: "6F0E2A1C-0000-4000-8000-000000000001", generation: 0, marker: "none", sessionStopped: false, owner: null, hook: false,
+      helper: 4, arch: "arm64", boot: "6F0E2A1C-0000-4000-8000-000000000001", generation: 0, marker: "none", sessionStopped: false, owner: null, hook: false,
       docker: false, systemd: false, cores: 8, memoryMiB: 16384, diskGiB: null, virt: "none", missing: [], enrolment: { node: "24.9.0", lacks: [] }, dirty: null,
       mac: { version: "26.0", user: "bbx-0", console: "bbx-0", autologin: "bbx-0", fileVault: false, screenSharing: true, fullDisk: true, grants: null, xcode: { version: null, runtimes: [] }, leftovers: null, openHomes: null, sip: true, stream: false },
       slots: null,

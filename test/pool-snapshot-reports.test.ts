@@ -66,7 +66,7 @@ describe("Pool machines report whether they can snapshot (090)", () => {
     assert.ok(["build-1", "build-2", "build-3", "mac-1"].every((name) => check(checks, `machine.${name}.snapshots`).status === "ok"));
     assert.equal(
       check(checks, "snapshot-offers").detail,
-      "2 of 4 machines could offer home snapshots (build-2, mac-1); 1 of 4 machines could offer machine snapshots by a hook (build-3). Boxes lent a Mac whole take home snapshots there; BB Box takes no snapshots on the pool's Linux machines yet, nor machine snapshots by a hook.",
+      "2 of 4 machines could offer home snapshots (build-2, mac-1); 1 of 4 machines could offer machine snapshots by a hook (build-3). Boxes lent a Mac whole and boxes in its iOS slots take home snapshots there; BB Box takes no snapshots on the pool's Linux machines yet, nor machine snapshots by a hook.",
     );
   });
 
