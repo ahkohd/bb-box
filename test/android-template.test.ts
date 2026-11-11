@@ -128,7 +128,15 @@ const STAND_INS: Readonly<Record<string, string>> = {
   *"/dev/tcp/"*) exit 1 ;;
 esac`,
   "bb-box-emulator": `case "$1" in
-  start) [ ! -e "$STATE/table-gone" ] || exit 1; echo "$2" >"$STATE/avd"; echo unfold >"$STATE/fold"; echo "avd=$2 boot_s=2.500 snapshot=loaded" ;;
+  start)
+    [ ! -e "$STATE/table-gone" ] || exit 1
+    if [ -e "$STATE/start-ends" ]; then
+      echo "bb-box-emulator: the emulator ended before $2 booted, with exit status 1; its last lines:"
+      for line in $(seq 1 6); do echo "INFO | starting, step $line of six, with a line long enough to fill the check's output"; done
+      echo "FATAL | the last line the emulator wrote"
+      exit 1
+    fi
+    echo "$2" >"$STATE/avd"; echo unfold >"$STATE/fold"; echo "avd=$2 boot_s=2.500 snapshot=loaded" ;;
   stop) rm -f "$STATE/avd" ;;
   grpc) case "\${3:-}" in --no-token | --token) echo 16 ;; *) echo 0 ;; esac ;;
 esac`,
@@ -158,7 +166,14 @@ esac`,
 const ANDROID_POSTURES_CLOSED_LOCKED = "0:1:1:2:2:0";
 const IMAGE_POSTURES_ALL_ROTATING = "0:2:1:2:2:0";
 
-function checkAt(stage: "before finalize" | "after finalize" | "no devices", staleKey = false, wifiInMemoryOnly = false, foldPostures = IMAGE_POSTURES_ALL_ROTATING) {
+interface CheckWorld {
+  readonly staleKey?: boolean;
+  readonly wifiInMemoryOnly?: boolean;
+  readonly foldPostures?: string;
+  readonly startEnds?: boolean;
+}
+
+function checkAt(stage: "before finalize" | "after finalize" | "no devices", { staleKey = false, wifiInMemoryOnly = false, foldPostures = IMAGE_POSTURES_ALL_ROTATING, startEnds = false }: CheckWorld = {}) {
   const root = mkdtempSync(join(tmpdir(), "android-check-"));
   try {
     const bin = join(root, "bin");
@@ -167,6 +182,7 @@ function checkAt(stage: "before finalize" | "after finalize" | "no devices", sta
     const state = join(root, "state");
     for (const dir of [bin, share, home, state]) mkdirSync(dir, { recursive: true });
     if (wifiInMemoryOnly) writeFileSync(join(state, "wifi-in-memory-only"), "");
+    if (startEnds) writeFileSync(join(state, "start-ends"), "");
     writeFileSync(join(state, "fold-postures"), `${foldPostures}\n`);
     for (const [name, body] of Object.entries(STAND_INS)) writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
     writeFileSync(join(share, "android-pins.json"), read("pins.json"));
@@ -210,20 +226,28 @@ test("the image's check fails, not passes, when the build made no devices, and w
   const none = checkAt("no devices");
   assert.ok(none.some((line) => /^no emulator without the firewall +FAIL .*lists no device to try$/.test(line)), none.join("\n"));
   assert.ok(none.some((line) => /^devices the build made +FAIL /.test(line)), none.join("\n"));
-  const stale = checkAt("after finalize", true);
+  const stale = checkAt("after finalize", { staleKey: true });
   assert.ok(stale.some((line) => /^this box's own adb identity +FAIL .*adbkey is older than the image's build/.test(line)), stale.join("\n"));
 });
 
 test("the image's check fails a snapshot whose AndroidWifi is only in its memory, not in the Wi-Fi store on disk (F-3)", () => {
-  const lines = checkAt("after finalize", false, true);
+  const lines = checkAt("after finalize", { wifiInMemoryOnly: true });
   for (const device of pins.devices) assert.ok(lines.some((line) => line.startsWith(`${device.model} Wi-Fi`) && /FAIL AndroidWifi is not in the Wi-Fi store on disk/.test(line)), lines.join("\n"));
 });
 
 test("the image's check fails a Pixel Fold whose closed posture locks auto-rotate, as Android's own default does, though it rotates once opened", () => {
-  const lines = checkAt("after finalize", false, false, ANDROID_POSTURES_CLOSED_LOCKED);
+  const lines = checkAt("after finalize", { foldPostures: ANDROID_POSTURES_CLOSED_LOCKED });
 
   assert.ok(lines.some((line) => /^Pixel Fold defaults +FAIL not as the image sets them: device_state_rotation_lock=0:1:1:2:2:0$/.test(line)), lines.join("\n"));
   for (const model of ["Pixel 8", "Pixel Tablet"]) assert.ok(lines.some((line) => line.startsWith(`${model} defaults`) && /\bok\b/.test(line)), lines.join("\n"));
+});
+
+test("the image's check shows the whole of a failed start, down to the emulator's last line", () => {
+  const lines = checkAt("after finalize", { startEnds: true });
+
+  const failed = lines.findIndex((line) => /^Pixel 8 boots from its snapshot +FAIL bb-box-emulator: the emulator ended before pixel_8 booted, with exit status 1; its last lines:$/.test(line));
+  assert.notEqual(failed, -1, lines.join("\n"));
+  assert.equal(lines[failed + 7], "FATAL | the last line the emulator wrote", lines.join("\n"));
 });
 
 const BUILD_STAND_INS: Readonly<Record<string, string>> = {
@@ -297,4 +321,99 @@ test("the build stops when the Pixel Fold keeps auto-rotate locked in a posture"
 
   assert.notEqual(built.status, 0);
   assert.match(built.stderr, /prepare-avds: device_state_rotation_lock is 0:1:1:2:2:0, which locks auto-rotate in a posture/);
+});
+
+const EMULATOR_STAND_INS: Readonly<Record<string, string>> = {
+  "bb-box-device-firewall": "exit 0",
+  adb: `case "$*" in
+  "-s emulator-5554 shell getprop sys.boot_completed") [ ! -e "$STATE/booted" ] || echo 1 ;;
+  "-s emulator-5554 emu kill") exit 1 ;;
+esac`,
+  emulator: `case "$FAKE_EMULATOR" in
+  hides-its-command-line)
+    echo "INFO | Android emulator version 37.2.12.0"
+    export QEMU=qemu-system-x86_64-headless
+    exec -a "" bash -c 'sleep 1; touch "$STATE/booted"; exec -a "$QEMU" sleep 60' ;;
+  fails)
+    for line in $(seq 1 6); do echo "INFO | starting, step $line of six, with a line long enough to fill the check's output"; done
+    echo "FATAL | Not enough space to create userdata partition"
+    exit 3 ;;
+  killed) kill -KILL $$ ;;
+esac`,
+};
+
+function emulatorWorld() {
+  const root = mkdtempSync(join(tmpdir(), "android-device-"));
+  const bin = join(root, "bin");
+  const home = join(root, "home");
+  const state = join(root, "state");
+  for (const dir of [bin, home, state]) mkdirSync(dir, { recursive: true });
+  for (const [name, body] of Object.entries(EMULATOR_STAND_INS)) writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+
+  const run = (fake: string, ...args: string[]) => {
+    const ran = spawnSync("bash", [join(ANDROID, "bb-box-emulator"), ...args], {
+      env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, STATE: state, ANDROID_HOME: join(root, "no-sdk"), FAKE_EMULATOR: fake },
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    return { status: ran.status, stdout: ran.stdout, stderr: ran.stderr };
+  };
+  const recordedPid = () => Number(readFileSync(join(home, ".bb-box", "device", "emulator", "pid"), "utf8"));
+  const close = () => {
+    try {
+      process.kill(recordedPid(), "SIGKILL");
+    } catch {}
+    rmSync(root, { recursive: true, force: true });
+  };
+  return { run, recordedPid, close };
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test("bb-box-emulator waits for its own emulator while its command line reads empty, as it does for a moment at each exec", () => {
+  const world = emulatorWorld();
+  try {
+    const started = world.run("hides-its-command-line", "start", "pixel_8", "--no-save", "--timeout", "20");
+
+    assert.equal(started.status, 0, started.stderr);
+    assert.match(started.stdout, /^avd=pixel_8 boot_s=\d+\.\d{3} snapshot=not-loaded$/m);
+    assert.equal(world.run("", "status").stdout.trim(), `pixel_8 ${world.recordedPid()}`);
+
+    const pid = world.recordedPid();
+    assert.equal(world.run("", "stop").status, 0);
+    assert.equal(processAlive(pid), false);
+  } finally {
+    world.close();
+  }
+});
+
+test("bb-box-emulator says how an emulator that ends before booting ended, with its last lines", () => {
+  const world = emulatorWorld();
+  try {
+    const started = world.run("fails", "start", "pixel_8", "--no-save", "--timeout", "20");
+
+    assert.equal(started.status, 1);
+    assert.match(started.stderr, /^bb-box-emulator: the emulator ended before pixel_8 booted, with exit status 3; its last lines:\n(INFO .*\n){6}FATAL \| Not enough space to create userdata partition\n$/);
+  } finally {
+    world.close();
+  }
+});
+
+test("bb-box-emulator says why it shows no lines when the emulator is killed before it writes any", () => {
+  const world = emulatorWorld();
+  try {
+    const started = world.run("killed", "start", "pixel_8", "--no-save", "--timeout", "20");
+
+    assert.equal(started.status, 1);
+    assert.match(started.stderr, /^bb-box-emulator: the emulator ended before pixel_8 booted, killed by signal KILL, and wrote nothing to \S+\/emulator\.log; the kernel's log may say why: sudo dmesg \| tail\n$/);
+  } finally {
+    world.close();
+  }
 });

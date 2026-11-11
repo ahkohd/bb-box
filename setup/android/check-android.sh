@@ -104,6 +104,7 @@ wifi() {
 }
 
 POSTURE_LOCKED=1
+FAILED_START_MOST_CHARS=4000
 
 foldable() { [ "$(wc -w <<<"$1")" = 2 ]; }
 
@@ -178,7 +179,7 @@ for i in $(seq 0 $((count - 1))); do
   booted=$(bb-box-emulator start "$avd" --no-save 2>&1)
   case "$booted" in
     *snapshot=loaded*) echo "$(printf '%-34s ' "$model boots from its snapshot")ok   $booted" ;;
-    *) echo "$(printf '%-34s ' "$model boots from its snapshot")FAIL ${booted:0:300}"; bb-box-emulator stop >/dev/null 2>&1; continue ;;
+    *) echo "$(printf '%-34s ' "$model boots from its snapshot")FAIL ${booted:0:$FAILED_START_MOST_CHARS}"; bb-box-emulator stop >/dev/null 2>&1; continue ;;
   esac
   if foldable "$screens"; then t "$model screens" fold_pixels $screens; else t "$model screen" pixels "$screens"; fi
   t "$model defaults" defaults "$avd" "$screens"

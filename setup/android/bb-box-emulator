@@ -34,13 +34,48 @@ state=$HOME/.bb-box/device/emulator
 mkdir -p "$state"
 chmod 0700 "$HOME/.bb-box/device" "$state"
 
+start_time_of_live_process() {
+  local fields
+  fields=$(sed 's/.*) //' "/proc/$1/stat" 2>/dev/null) || return 1
+  read -r -a fields <<<"$fields"
+  [ "${fields[0]:-Z}" != Z ] && echo "${fields[19]}"
+}
+
 running_pid() {
-  local pid
+  local pid started
   pid=$(cat "$state/pid" 2>/dev/null) || return 1
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q -e emulator -e qemu-system && echo "$pid"
+  started=$(cat "$state/started" 2>/dev/null) || return 1
+  [ -n "$pid" ] && [ -n "$started" ] && [ "$(start_time_of_live_process "$pid")" = "$started" ] && echo "$pid"
+}
+
+how_it_ended() {
+  local status=$1
+  if [ "$status" -gt 128 ]; then echo "killed by signal $(kill -l $((status - 128)))"; else echo "with exit status $status"; fi
+}
+
+report_early_end() {
+  local avd=$1 status=$2 log=$3
+  if [ -s "$log" ]; then
+    echo "bb-box-emulator: the emulator ended before $avd booted, $(how_it_ended "$status"); its last lines:" >&2
+    tail -n 20 "$log" >&2
+  else
+    echo "bb-box-emulator: the emulator ended before $avd booted, $(how_it_ended "$status"), and wrote nothing to $log; the kernel's log may say why: sudo dmesg | tail" >&2
+  fi
 }
 
 boot_completed() { [ "$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; }
+
+EMULATOR_ENDED=1
+BOOT_TIMED_OUT=2
+
+wait_for_boot() {
+  local deadline=$(($(date +%s) + $1))
+  until boot_completed; do
+    running_pid >/dev/null || return "$EMULATOR_ENDED"
+    [ "$(date +%s)" -lt "$deadline" ] || return "$BOOT_TIMED_OUT"
+    sleep 0.2
+  done
+}
 
 start() {
   local avd=$1 cold=no save=yes timeout=240
@@ -70,21 +105,21 @@ start() {
   local started log=$state/emulator.log
   started=$(date +%s%N)
   ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL=$save_grace setsid emulator "${flags[@]}" >"$log" 2>&1 </dev/null &
-  echo $! >"$state/pid"
+  local emulator=$!
+  echo "$emulator" >"$state/pid"
   echo "$avd" >"$state/avd"
-  local deadline=$(($(date +%s) + timeout))
-  until boot_completed; do
-    if ! running_pid >/dev/null; then
-      echo "bb-box-emulator: the emulator ended before $avd booted; its last lines:" >&2
-      tail -n 20 "$log" >&2
-      exit 1
-    fi
-    if [ "$(date +%s)" -ge "$deadline" ]; then
-      echo "bb-box-emulator: $avd did not boot within $timeout s" >&2
-      exit 1
-    fi
-    sleep 0.2
-  done
+  start_time_of_live_process "$emulator" >"$state/started" || true
+  local waited=0 status=0
+  wait_for_boot "$timeout" 2>/dev/null || waited=$?
+  if [ "$waited" = "$EMULATOR_ENDED" ]; then
+    { wait "$emulator" || status=$?; } 2>/dev/null
+    report_early_end "$avd" "$status" "$log"
+    exit 1
+  fi
+  if [ "$waited" = "$BOOT_TIMED_OUT" ]; then
+    echo "bb-box-emulator: $avd did not boot within $timeout s" >&2
+    exit 1
+  fi
   local ms=$((($(date +%s%N) - started) / 1000000)) snapshot=cold
   if [ "$cold" = no ]; then
     if grep -q "Successfully loaded snapshot 'default_boot'" "$log"; then snapshot=loaded; else snapshot=not-loaded; fi
@@ -104,7 +139,7 @@ stop() {
     echo "bb-box-emulator: the emulator did not end within $((save_grace + 30)) s; stopping it" >&2
     kill -9 "$pid" 2>/dev/null || true
   fi
-  rm -f "$state/pid" "$state/avd"
+  rm -f "$state/pid" "$state/avd" "$state/started"
 }
 
 discovery_file() {
