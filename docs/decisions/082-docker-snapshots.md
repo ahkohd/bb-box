@@ -4,7 +4,11 @@ Status: accepted, 10 November 2026. Supersedes the anonymous volume in
 [031](031-docker-boxes-are-reached-through-docker-exec.md) for a box made
 after this record. A box made before keeps that volume. Refines the Docker
 pause in [070](070-snapshots.md). The core stays free of provider names
-([001](001-provider-agnostic-core.md)).
+([001](001-provider-agnostic-core.md)). Items 7 and 8 are built: Hetzner
+Cloud and Namespace Linux boxes take snapshots, and
+[089](089-a-namespace-machine-with-snapshots-lives-while-its-box-has-a-container.md)
+extends this record with what a release ends and how a Namespace machine
+with snapshots lives.
 
 ## Context
 
@@ -436,8 +440,9 @@ Three things differ from the package:
 
 Hetzner Cloud and Namespace make their Docker engines with Keep off and the
 reason, `keepOffBecause`: a Hetzner Cloud host is deleted when idle, and a
-Namespace machine at its box's release. They offer no snapshots yet, so the
-reason shows once items 7 and 8 pass snapshots through.
+Namespace machine at its box's release. When this record was made they
+offered no snapshots. Items 7 and 8 now pass snapshots through, and Keep
+gives that reason on both.
 
 The Keep dialog and the doctor's Kept snapshots check say two numbers for a
 kept snapshot. The first is what releasing its box leaves on the engine: the

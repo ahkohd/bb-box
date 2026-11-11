@@ -948,11 +948,19 @@ export class NamespaceBackend implements Backend {
       return live;
     } catch (error) {
       if (signal?.aborted) throw error;
-      const seen = await this.#linux.boxContainerLastSeen(instance.id);
-      const recently = seen !== null && this.#now() - seen < KEEP_UNREACHABLE_ENGINE_ALIVE_MS;
+      const seen = await this.#lastSeenOrGraceFromNow(instance.id);
+      const recently = this.#now() - seen < KEEP_UNREACHABLE_ENGINE_ALIVE_MS;
       this.#context.logError(`list the containers on Namespace machine ${instance.id}; ${recently ? "it keeps its deadline moving for now, as its box's container answered within the hour" : "it no longer moves its deadline on, as its box's container has not answered for an hour"}`, error);
       return recently;
     }
+  }
+
+  async #lastSeenOrGraceFromNow(instance: string): Promise<number> {
+    const seen = await this.#linux.boxContainerLastSeen(instance);
+    if (seen !== null) return seen;
+    const graceStarts = this.#now();
+    await this.#linux.markBoxContainerSeen(instance, graceStarts);
+    return graceStarts;
   }
 
   #recorded(instance: Instance, recordedGuests: ReadonlySet<string> | undefined): boolean {

@@ -402,3 +402,54 @@ test("Namespace keeps its machine's deadline on a snapshot found again after its
   assert.match(take.message, /before this snapshot would be ready/);
   assert.equal(planWithoutAKnownDeadline.take.ok, false, "the plan reads the deadline from the machine");
 });
+
+function stopContainer(fake: FakeDockerHost, name: string): void {
+  const ran = spawnSync(fake.binary, ["container", "stop", name], { encoding: "utf8" });
+  assert.equal(ran.status, 0, ran.stderr);
+}
+
+test("Namespace keeps the machine of a box whose container stopped alive, so its disk stays until the box is released", async () => {
+  const made = await boxWithSnapshotOfA();
+  const { state, fake, box } = made;
+  stopContainer(fake, box.guest!.ref);
+  assert.equal(await namespaceOf(state).power(box.guest!), "stopped");
+  const extendsBefore = extendsSoFar(made);
+
+  made.ahead(HOUR / 2);
+  await state.boxes.sweep();
+
+  assert.equal(extendsSoFar(made) - extendsBefore, 1, "a stopped box's container keeps its machine's deadline moving");
+  assert.equal(machineStatus(made, box), "RUNNING");
+});
+
+async function forgetWhenTheBoxContainerWasLastSeen(state: World, box: BoxRecord): Promise<void> {
+  const keys = await state.kv.list();
+  const lastSeen = keys.filter((key) => key.endsWith(`box-container-seen-on:${String(box.guest!.data?.instance)}`));
+  assert.equal(lastSeen.length, 1, "the machine had a last-seen time");
+  await state.kv.delete(lastSeen[0]!);
+}
+
+test("Namespace gives a snapshot machine with no last-seen time an hour of grace from the first sweep Docker does not answer, which a restart does not reset", async () => {
+  const made = await boxWithSnapshotOfA();
+  const { state, fake, box } = made;
+  await forgetWhenTheBoxContainerWasLastSeen(state, box);
+  made.ahead(50 * 60_000);
+  await state.restart();
+  fake.set({ down: true });
+  const extended: number[] = [];
+  const sweepAfter = async (ms: number) => {
+    const before = extendsSoFar(made);
+    made.ahead(ms);
+    await state.boxes.sweep();
+    extended.push(extendsSoFar(made) - before);
+  };
+
+  await sweepAfter(0);
+  await sweepAfter(11 * 60_000);
+  assert.equal(machineStatus(made, box), "RUNNING", "the grace started at the first sweep without an answer");
+  await state.restart();
+  await sweepAfter(30 * 60_000);
+  await sweepAfter(20 * 60_000);
+
+  assert.deepEqual(extended, [1, 1, 1, 0], "the grace ends an hour after it started, across the restart");
+});
