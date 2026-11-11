@@ -301,36 +301,45 @@ snapshot offer, not by Docker's name:
 
 ### Results
 
-Every snapshot check passed on each engine and image store, except the
-killed restore on the local engine on the containerd store, which is still
-open (below). Each case and its time, from the last run of each:
+Every snapshot check passed on each engine and image store. The killed
+restore on the local containerd engine, open after the first round, passed
+in five runs in a row once its copy was fenced (below). Each case and its
+time, from the last run of each, on the final code:
 
 | Check | Local, containerd | SSH, containerd | Local, overlay2 | SSH, overlay2 |
 | --- | --- | --- | --- | --- |
-| Take, list, restore as a new guest, put back, delete | 5.1 s | 22.1 s | 2.5 s | 19.7 s |
-| Keep dates, read by a new instance on empty storage | 3.2 s | 13.2 s | 1.1 s | 13.2 s |
-| Fork with the identity reset check | 4.6 s | 23.0 s | 2.4 s | 22.5 s |
-| Take killed part way, settled by a new instance | 167.1 s, failed and cleaned | 172.3 s, failed and cleaned | 6.4 s, complete | 17.1 s, complete |
-| Restore killed part way, recovered by a new instance | failed: volume in use, see below | 28.5 s | 7.3 s | 23.0 s |
-| A kept snapshot outlives the box's release | 0.4 s | 3.6 s | 0.2 s | 3.5 s |
-| Whole run of Linux boxes | 213 s | 350 s | 34 s | 176 s |
+| Take, list, restore as a new guest, put back, delete | 4.8 s | 23.9 s | 6.7 s | 25.5 s |
+| Keep dates, read by a new instance on empty storage | 2.6 s | 15.0 s | 5.2 s | 14.9 s |
+| Fork with the identity reset check | 4.2 s | 28.7 s | 7.5 s | 26.2 s |
+| Take killed part way, settled by a new instance | 166.0 s, failed and cleaned | 173.4 s, failed and cleaned | 9.4 s, complete | 159.5 s, failed and cleaned |
+| Restore killed part way, recovered by a new instance | 11.1 s | 21.7 s | 11.4 s | 25.3 s |
+| A kept snapshot outlives the box's release | 0.3 s | 3.5 s | 0.4 s | 3.4 s |
+| Whole run of Linux boxes | 205 s | 349 s | 65 s | 346 s |
 
-On the containerd store the killed take was still copying when it was
-killed, so it settled as failed: the box was unpaused and its partial copy
-removed, once the take's time bound had passed, about 2.7 minutes for a
-1 GiB change. On overlay2 the commit of 1 GiB took under 2 s on the engine,
-which finished it after its client was killed, so the take settled as a
-complete snapshot and the suite deleted it. In every run the killed restore
-was still copying the box's Docker data, and its new container did not
-exist yet.
+The five local containerd runs took 227, 282, 228, 217 and 205 s in all,
+and their killed restores 10.6, 18.1, 12.6, 18.4 and 11.1 s. The overlay2
+runs ran beside the Docker tests on the same VM, so they were slower than
+in the first round.
 
-After each passing run, Docker listed no BB Box containers, volumes or
-snapshot images on either engine. The killed restore also passed on the
-local containerd engine in two earlier runs, in 199 s and 227 s in all,
-when the copy had ended before the new instance released the guest. The rest of the suite passed too: acquire,
+When a take was still copying as it was killed, it settled as failed: the
+box was unpaused and its partial copy removed, once the take's time bound
+had passed, about 2.7 minutes for a 1 GiB change. On the local overlay2
+engine the commit of 1 GiB took under 2 s on the engine, which finished
+it after its client was killed, so the take settled as a complete snapshot
+and the suite deleted it. In three of the five final local containerd
+runs, the restore was killed after Docker had made its copy's container,
+and in one of them the copy was running; in the other two, before the
+copy was asked for.
+
+After each run, Docker listed no BB Box containers, volumes or snapshot
+images on either engine. The rest of the suite passed too: acquire,
 commands, copies, Docker in the box, stop and start, sizes and live
 resize, interrupted acquires, image builds and two installs. Enrolment and
 reconnection to BB were skipped, as the suite ran without a BB server.
+
+The overlay2 engines ran the `bbbox/linux:1` image each had built on the
+containerd store, saved with `docker save` and loaded with `docker load`
+after the switch, as a rebuild's package downloads ran at about 75 KB/s.
 
 ### What the run found
 
@@ -402,8 +411,8 @@ the volume, as in the failed runs. One releases the guest with the
 restore's own storage, the other without it and then runs maintenance.
 Both failed before the change, with the copy left, and pass with it.
 
-In the fifth local containerd run below, Docker's events show the race
-that failed before, and the release clearing it:
+In one local containerd run, Docker's events show the race that failed
+before, and the release clearing it:
 
 | Time (s) | Event |
 | --- | --- |
@@ -414,26 +423,39 @@ that failed before, and the release clearing it:
 | 0.550 | The release removed the copy's container |
 | 0.579 | The release removed the volume it made again |
 
-The suite kills a restore 1 s after it names its new guest, which in most
+The suite kills a restore 1 s after it names its new guest, which in some
 runs falls before the copy is asked for. To cover the whole window, a
 script killed a restore of a box with 1 GiB of Docker data at set delays
-after its new volume appeared, on the local containerd engine, then
-released the guest with a new instance on the restore's storage:
+after its new volume appeared, then released the guest with a new
+instance on the restore's storage. On the local containerd engine, with
+the final code:
 
 | Kill after the volume appeared | The copy when killed | Release | Left after the release |
 | --- | --- | --- | --- |
-| 8 ms | not made yet | 0.9 s | nothing |
-| 106 ms | created, not started | 1.2 s | nothing |
-| 107 ms | created, not started | 0.8 s | nothing |
-| 106 ms | not made yet | 1.7 s | nothing |
-| 206 ms | created, not started | 1.7 s | nothing |
-| 410 ms | running | 1.9 s | nothing |
-| 808 ms | running | 2.6 s | nothing |
-| 1,517 ms | running | 2.6 s | nothing |
+| 5 ms | not made yet | 0.9 s | nothing |
+| 105 ms | created, not started | 0.7 s | nothing |
+| 104 ms | created, not started | 0.8 s | nothing |
+| 105 ms | created, not started | 0.8 s | nothing |
+| 204 ms | created, not started | 0.9 s | nothing |
+| 405 ms | running | 0.9 s | nothing |
+| 807 ms | running | 1.4 s | nothing |
+| 1,051 ms | the restore had finished | 0.6 s | nothing |
 
 "Nothing" means no copy container, no volume of the guest and no note
-left. The copies that were not made yet when the restore was killed were
-made by Docker after the kill, and removed by the release.
+left. On overlay2 the same delays left nothing either, each release taking
+1.5 to 2.5 s.
+
+The first version of the fix made the copy with `--rm`. The sweep on
+overlay2 then found one more case: a restore killed 106 ms after its
+volume appeared, whose copy Docker started, finished and removed by
+itself before the release looked. The release could not tell that copy
+from one not made yet, so it waited out the note's 2 minutes, 120.8 s,
+before it went on, though it left nothing. The copy is now made without
+`--rm`, so a copy Docker has made stays until BB Box removes it. A third
+test in `test/docker-restore.test.ts` kills a restore while its copy
+runs, lets the fake engine finish the copy, and releases with a clock
+that never passes the note's time. It timed out with `--rm` and passes
+without it.
 
 ### Running it again
 
