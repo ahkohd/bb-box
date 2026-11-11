@@ -48,6 +48,12 @@ STATE=/var/lib/bb-box
 HOOK=/usr/local/libexec/bb-box/reset-machine
 SKEL=/etc/bb-box/skel
 PREFIX=bbx-
+HOMES=/home
+SNAPSHOT_PROBE=1
+SNAPSHOT_HOOK=/usr/local/libexec/bb-box/snapshot-machine
+SNAPSHOT_HOOK_SECONDS=30
+SNAPSHOT_REPORT=$STATE/snapshots
+SNAPSHOT_TRIAL=$HOMES/.bb-box-snapshot-trial.$$
 # Container storage is never swept: its files belong to the containers' users.
 SKIP="/proc /sys /var/lib/docker /var/lib/containerd /var/lib/containers /var/lib/lxc /var/lib/lxd /var/snap/lxd /var/lib/incus /var/lib/machines /var/lib/kubelet"
 
@@ -207,6 +213,89 @@ status() {
   done
   echo "lacks=${lacks# }"
   if [ "$marker" = none ]; then echo "dirty=$(dirt | head -n 1)"; else echo dirty=; fi
+  [ ! -r "$SNAPSHOT_REPORT" ] || cat "$SNAPSHOT_REPORT"
+}
+
+filesystem_of() { findmnt -n -o FSTYPE -T "$1" 2>/dev/null || stat -f -c %T "$1" 2>/dev/null; }
+free_kib() { df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print $4 }'; }
+zfs_dataset_mounted_at() { zfs list -H -o name,mountpoint 2>/dev/null | awk -v at="$1" '$2 == at { print $1; exit }'; }
+last_line() { printf '%s\n' "$1" | tail -n 1; }
+
+remove_btrfs_trial() {
+  btrfs subvolume delete "$SNAPSHOT_TRIAL.snapshot" >/dev/null 2>&1
+  btrfs subvolume delete "$SNAPSHOT_TRIAL" >/dev/null 2>&1
+}
+
+btrfs_trial() {
+  remove_btrfs_trial
+  said=$(btrfs subvolume create "$SNAPSHOT_TRIAL" 2>&1) || { last_line "$said"; return 1; }
+  said=$(btrfs subvolume snapshot -r "$SNAPSHOT_TRIAL" "$SNAPSHOT_TRIAL.snapshot" 2>&1)
+  taken=$?
+  remove_btrfs_trial
+  [ "$taken" = 0 ] || { last_line "$said"; return 1; }
+  [ ! -e "$SNAPSHOT_TRIAL" ] || { echo "the trial subvolume $SNAPSHOT_TRIAL could not be deleted"; return 1; }
+}
+
+home_snapshots_on_btrfs() {
+  if ! command -v btrfs >/dev/null 2>&1; then
+    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on btrfs under %s, but the btrfs tool is missing: install btrfs-progs\n' "$HOMES"
+  elif failed=$(btrfs_trial); then
+    printf 'snapshot.home=yes\nsnapshot.home.how=btrfs\n'
+  else
+    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on btrfs under %s, but a trial subvolume failed: %s\n' "$HOMES" "$failed"
+  fi
+}
+
+home_snapshots_on_zfs() {
+  if ! command -v zfs >/dev/null 2>&1; then
+    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on ZFS under %s, but the zfs tool is missing\n' "$HOMES"
+    return
+  fi
+  dataset=$(zfs_dataset_mounted_at "$HOMES")
+  if [ -n "$dataset" ]; then
+    printf 'snapshot.home=yes\nsnapshot.home.how=zfs\nsnapshot.zfs.dataset=%s\n' "$dataset"
+  else
+    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on ZFS under %s, but no dataset is mounted there\n' "$HOMES"
+  fi
+}
+
+home_snapshots() {
+  case $(filesystem_of "$HOMES") in
+    btrfs) home_snapshots_on_btrfs ;;
+    zfs) home_snapshots_on_zfs ;;
+    *) echo snapshot.home=no ;;
+  esac
+}
+
+snapshot_hook() {
+  if [ ! -x "$SNAPSHOT_HOOK" ]; then
+    echo snapshot.hook=none
+    return
+  fi
+  described=$(timeout "$SNAPSHOT_HOOK_SECONDS" "$SNAPSHOT_HOOK" describe 2>"$STATE/snapshot-hook.err" </dev/null 9>&-)
+  code=$?
+  if [ "$code" = 0 ]; then
+    printf 'snapshot.hook=found\nsnapshot.hook.describe=%s\n' "$(printf '%s' "$described" | tr -d '\n')"
+  else
+    printf 'snapshot.hook=failed\nsnapshot.hook.why=it exited with %s: %s\n' "$code" "$(tail -n 2 "$STATE/snapshot-hook.err" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
+  fi
+}
+
+snapshot_report() {
+  echo "snapshot.probe=$SNAPSHOT_PROBE"
+  echo "snapshot.at=$(date +%s)"
+  echo "snapshot.homes=$HOMES"
+  echo "snapshot.filesystem=$(filesystem_of "$HOMES")"
+  echo "snapshot.free_kib=$(free_kib "$HOMES")"
+  home_snapshots
+  snapshot_hook
+}
+
+snapshot() {
+  [ $# -eq 1 ] && [ "$1" = probe ] || quit 2 "usage: machine snapshot probe"
+  mkdir -p "$STATE"
+  snapshot_report | put "$SNAPSHOT_REPORT"
+  cat "$SNAPSHOT_REPORT"
 }
 
 make_user() {
@@ -471,7 +560,8 @@ case $verb in
   claim) claim "$@" ;;
   release) release "$@" ;;
   reset) reset "$@" ;;
+  snapshot) snapshot "$@" ;;
   init) init ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: machine status | claim | release | reset | init | version" ;;
+  *) quit 2 "usage: machine status | claim | release | reset | snapshot probe | init | version" ;;
 esac

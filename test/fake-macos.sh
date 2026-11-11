@@ -529,6 +529,14 @@ case $tool in
     fi
     ;;
   ditto) cp -R "$1" "$2" ;;
+  diskutil) printf '   Device Node:              %s\n   Type (Bundle):             %s\n' "${2:-}" "$(cat "$F/flags/homes-fs" 2>/dev/null || echo apfs)" ;;
+  cp)
+    if [ "${1:-}" = -c ]; then
+      shift
+      ! flag no-clonefile || { echo "cp: $2: clonefile failed: Operation not supported" >&2; exit 1; }
+    fi
+    exec /bin/cp "$@"
+    ;;
   # Gatekeeper accepts what it is shown, unless flags/gatekeeper-refuses.
   spctl) ! flag gatekeeper-refuses ;;
   # installer -pkg <pkg> -target / and killall coreaudiod: recorded only.

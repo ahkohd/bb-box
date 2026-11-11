@@ -506,6 +506,43 @@ The doctor also warns when only some of the Macs that serve a kind have
 Xcode, or an iOS runtime, as that kind's boxes then have neither, or no
 iOS Simulator.
 
+### What each machine reports for snapshots
+
+BB Box takes no snapshots on pool machines yet. Each machine says what it
+could offer, so you can see which will take them as the later parts are
+built ([decision 090](../../docs/decisions/090-pool-machines-say-whether-they-snapshot.md)).
+
+The helper's `machine snapshot probe` finds out, as root:
+
+- **Home snapshots**, of a box user's home folder only. It looks at the
+  filesystem under the box homes, `/home` on Linux and `/Users` on a Mac,
+  and tries it: on a Mac, an APFS clone with `cp -c`, and whether the helper
+  has Full Disk Access; on btrfs, a trial subvolume and a snapshot of it,
+  which it deletes; on ZFS, the dataset mounted at `/home`. It also notes
+  the free space there.
+- **Machine snapshots**, of the whole machine. It runs
+  `/usr/local/libexec/bb-box/snapshot-machine describe`, if an operator
+  installed such a hook, for at most 30 seconds.
+
+`setup.sh` and `setup-mac.sh` run the probe and print what it found. The
+doctor runs it again, and each status passes on the last report, which BB
+Box keeps for each machine. The doctor shows it as `<machine>: snapshots`,
+and counts the machines that could offer each in `Snapshots on the pool's
+machines`. For example:
+
+- "Home snapshots: APFS clones available under /Users, 120 GiB free."
+- "Home snapshots: none: ext4 under /home, which neither clones nor
+  snapshots."
+- "Machine snapshots: hook found: machine scope, LVM thin (vg0/thin, 12%
+  full)."
+
+A machine with `reset=machine` gives its boxes root, so it never offers
+home snapshots: a home snapshot would not hold what they change outside
+the home. A Mac that lends iOS slots never offers machine snapshots. A
+take on a pool box is refused with its machine's own reason. A machine
+whose helper is older than this BB Box's warns: run `setup.sh`, or
+`setup-mac.sh`, on it again.
+
 
 ### Testing on one computer
 

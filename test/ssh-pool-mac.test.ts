@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { EXIT, fields, parseStatus } from "../src/backends/ssh-pool/protocol.ts";
+import { parseSnapshotReport } from "../src/backends/ssh-pool/snapshot-report.ts";
 import { leftoverWords } from "../src/backends/ssh-pool/backend.ts";
 import { CUA_SHA256, CUA_VERSION } from "../src/backends/tart/backend.ts";
 import { fakeMacos, type FakeMacos } from "./fake-macos.ts";
@@ -1086,4 +1087,47 @@ test("each box user gets a code-signing identity of its own in a keychain codesi
   assert.equal(mac.helper(["release", "2"], RELEASE("box_c")).status, 0);
   assert.equal(mac.helper(["claim", "3"], CLAIM("box_d")).status, 0);
   assert.equal(signing("3", "box_d"), "0", "box_status can say the box has no identity");
+});
+
+function probedSnapshots(mac: FakeMacos) {
+  const probe = mac.helper(["snapshot", "probe"]);
+  assert.equal(probe.status, 0, probe.stderr);
+  const report = parseSnapshotReport(probe.stdout, "mac-1");
+  assert.ok(report, probe.stdout);
+  return report;
+}
+
+test("snapshot probe finds APFS clones under /Users, keeps its report for status, and says why not where it cannot clone", () => {
+  const mac = readyMac();
+
+  const apfs = probedSnapshots(mac);
+
+  assert.deepEqual([apfs.homes, apfs.filesystem, apfs.home, apfs.hook], ["/Users", "apfs", { is: "yes", what: { way: "apfs", dataset: null } }, { is: "no", why: "no snapshot hook is installed" }]);
+  assert.match(mac.helper(["status"]).stdout, /^snapshot\.home=yes$/m);
+  assert.deepEqual(readdirSync(join(mac.root, "var/db/bb-box")).filter((name) => name.startsWith(".clone-trial")), []);
+
+  mac.flag("no-clonefile");
+  assert.match(JSON.stringify(probedSnapshots(mac).home), /^\{"is":"no","why":"box homes are on APFS under \/Users, but a trial clone failed: cp: .*clonefile failed: Operation not supported"\}$/);
+  mac.flag("no-clonefile", false);
+
+  rmSync(join(mac.root, TCC));
+  assert.deepEqual(probedSnapshots(mac).home, { is: "no", why: "box homes are on APFS under /Users, but the helper lacks Full Disk Access, which it needs to clone the folders macOS protects in a home" });
+  writeFileSync(join(mac.root, TCC), "SQLite format 3\0");
+
+  mac.flag("homes-fs", true, "hfs");
+  assert.deepEqual([probedSnapshots(mac).filesystem, probedSnapshots(mac).home], ["hfs", { is: "no", why: "" }]);
+});
+
+test("snapshot probe runs an operator's hook's describe, and says when it fails", () => {
+  const mac = readyMac();
+  const hook = join(mac.root, "usr/local/libexec/bb-box/snapshot-machine");
+  mkdirSync(dirname(hook), { recursive: true });
+  writeFileSync(hook, `#!/bin/sh\n[ "$1" = describe ] && printf '{"contract":1,"scope":"machine",\\n"storage":{"name":"vg0/thin","type":"lvmthin","percentFull":12}}\\n'\n`, { mode: 0o755 });
+
+  const found = probedSnapshots(mac);
+
+  assert.deepEqual(found.hook, { is: "yes", what: { whileRunning: null, restarts: null, storage: { name: "vg0/thin", type: "lvmthin", percentFull: 12 } } });
+
+  writeFileSync(hook, "#!/bin/sh\necho 'lvs: volume group vg0 not found' >&2\nexit 3\n", { mode: 0o755 });
+  assert.deepEqual(probedSnapshots(mac).hook, { is: "no", why: "its snapshot hook's describe failed: it exited with 3: lvs: volume group vg0 not found" });
 });

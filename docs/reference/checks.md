@@ -47,6 +47,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `machines` | Machines | At least one machine is listed. |
 | `docker` | Docker | Whether the pool's Linux machines lend Docker to their boxes. |
 | `xcode` | Xcode | Whether the pool's Macs have Xcode. |
+| `snapshot-offers` | Snapshots on the pool's machines | How many of the pool's machines could offer home snapshots, and how many machine snapshots by a hook. |
 | `machine.<machine>.ssh` | &lt;machine>: SSH | The machine answers over SSH with its pinned host key. |
 | `machine.<machine>.sizes` | &lt;machine>: room for each kind | The machine holds a box of each of its kinds at the default size. |
 | `machine.<machine>.helper` | &lt;machine>: helper | BB Box's helper is installed on the machine, at this BB Box's version. |
@@ -63,6 +64,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `machine.<machine>.xcode` | &lt;machine>: Xcode | On a Mac, Xcode and its iOS runtime. |
 | `machine.<machine>.screensharing` | &lt;machine>: Screen Sharing | On a Mac with desktops, Screen Sharing is on. |
 | `machine.<machine>.grants` | &lt;machine>: Cua Driver's grants | On a Mac with desktops, Cua Driver has Accessibility and Screen Recording. |
+| `machine.<machine>.snapshots` | &lt;machine>: snapshots | What snapshots the machine could offer: home snapshots where box homes are on a filesystem that clones or snapshots, and machine snapshots where an operator installed a snapshot hook. BB Box takes no snapshots on pool machines yet. |
 | `machine.<machine>.input` | &lt;machine>: viewer's input | On a Mac with desktops, a viewer's keys and clicks reach the desktop. |
 
 ## Tart

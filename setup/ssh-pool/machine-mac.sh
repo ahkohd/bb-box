@@ -105,6 +105,12 @@ SLOTS_STATE=$STATE/host
 EXIT_LENT_WHOLE=7
 EXIT_SLOTS_HELD=3
 CONTAINERS_PROCESS=containermanagerd
+HOMES=/Users
+SNAPSHOT_PROBE=1
+SNAPSHOT_HOOK=$ROOT/usr/local/libexec/bb-box/snapshot-machine
+SNAPSHOT_HOOK_SECONDS=30
+SNAPSHOT_REPORT=$STATE/snapshots
+CLONE_TRIAL=$STATE/.clone-trial.$$
 
 quit() {
   code=$1
@@ -346,6 +352,64 @@ known_xcode() {
   echo "runtimes=$xcode_runtimes"
 }
 
+volume_of() { df "$1" 2>/dev/null | awk 'NR == 2 { print $1 }'; }
+homes_filesystem() { diskutil info "$(volume_of "$ROOT$HOMES")" 2>/dev/null | sed -n 's/^ *Type (Bundle): *//p' | head -n 1; }
+homes_free_kib() { df -Pk "$ROOT$HOMES" 2>/dev/null | awk 'NR == 2 { print $4 }'; }
+
+clone_trial() {
+  rm -f "$CLONE_TRIAL" "$CLONE_TRIAL.clone"
+  echo trial >"$CLONE_TRIAL" || { echo "the helper could not write $CLONE_TRIAL"; return 1; }
+  said=$(cp -c "$CLONE_TRIAL" "$CLONE_TRIAL.clone" 2>&1)
+  cloned=$?
+  rm -f "$CLONE_TRIAL" "$CLONE_TRIAL.clone"
+  [ "$cloned" = 0 ] || { printf '%s\n' "$said" | tail -n 1; return 1; }
+}
+
+home_snapshots() {
+  filesystem=$1
+  if [ "$filesystem" != apfs ]; then
+    echo snapshot.home=no
+  elif ! full_disk; then
+    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on APFS under %s, but the helper lacks Full Disk Access, which it needs to clone the folders macOS protects in a home\n' "$HOMES"
+  elif failed=$(clone_trial); then
+    printf 'snapshot.home=yes\nsnapshot.home.how=apfs\n'
+  else
+    printf 'snapshot.home=no\nsnapshot.home.why=box homes are on APFS under %s, but a trial clone failed: %s\n' "$HOMES" "$failed"
+  fi
+}
+
+snapshot_hook() {
+  if [ ! -x "$SNAPSHOT_HOOK" ]; then
+    echo snapshot.hook=none
+    return
+  fi
+  described=$(within "$SNAPSHOT_HOOK_SECONDS" "$SNAPSHOT_HOOK" describe 2>"$STATE/snapshot-hook.err")
+  code=$?
+  if [ "$code" = 0 ]; then
+    printf 'snapshot.hook=found\nsnapshot.hook.describe=%s\n' "$(printf '%s' "$described" | tr -d '\n')"
+  else
+    printf 'snapshot.hook=failed\nsnapshot.hook.why=it exited with %s: %s\n' "$code" "$(tail -n 2 "$STATE/snapshot-hook.err" 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')"
+  fi
+}
+
+snapshot_report() {
+  filesystem=$(homes_filesystem)
+  echo "snapshot.probe=$SNAPSHOT_PROBE"
+  echo "snapshot.at=$(date +%s)"
+  echo "snapshot.homes=$HOMES"
+  echo "snapshot.filesystem=$filesystem"
+  echo "snapshot.free_kib=$(homes_free_kib)"
+  home_snapshots "$filesystem"
+  snapshot_hook
+}
+
+snapshot() {
+  [ $# -eq 1 ] && [ "$1" = probe ] || quit 2 "usage: machine snapshot probe"
+  mkdir -p "$STATE"
+  snapshot_report | put "$SNAPSHOT_REPORT"
+  cat "$SNAPSHOT_REPORT"
+}
+
 status() {
   [ $# -eq 0 ] || { [ $# -eq 1 ] && { [ "$1" = grants ] || [ "$1" = xcode ]; }; } || quit 2 "usage: machine status [grants | xcode]"
   current=$(generation)
@@ -410,6 +474,7 @@ status() {
   esac
   [ "${1:-}" != grants ] || grants
   slots_set_up && device_host summary </dev/null 2>/dev/null | sed 's/^/slots./'
+  [ ! -r "$SNAPSHOT_REPORT" ] || cat "$SNAPSHOT_REPORT"
   # For the doctor alone, as du may take a moment.
   if [ -n "${1:-}" ]; then
     left=$(leftovers)
@@ -1335,11 +1400,12 @@ case $verb in
   display) display "$@" ;;
   granted) granted "$@" ;;
   slot) slot "$@" ;;
+  snapshot) snapshot "$@" ;;
   vm-ready | vm-grant | vm-granted)
     [ $# -eq 1 ] && [ -n "$1" ] || quit 2 "usage: machine $verb <user>"
     case $verb in vm-ready) vm_ready "$1" ;; vm-grant) grant "$1" ;; vm-granted) vm_granted "$1" ;; esac
     ;;
   init) init ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: machine status [grants] | claim | grant | granted | release | reset | display | slot | vm-ready | vm-grant | vm-granted | init | version" ;;
+  *) quit 2 "usage: machine status [grants] | claim | grant | granted | release | reset | display | slot | snapshot probe | vm-ready | vm-grant | vm-granted | init | version" ;;
 esac
