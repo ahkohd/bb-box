@@ -392,16 +392,21 @@ A copy is now fenced by its operation:
   copied or failed. Docker does not remove a copy by itself, so once
   Docker has made one, it is there for a release to find. A request whose
   client was killed or timed out leaves the note.
-- A release removes every copy into the box's Docker volume, by its
-  labels, and waits for Docker to remove it. It then removes the volume,
+- A release reads its own storage first. With no note, it removes the
+  volume as before, and looks for a copy only if Docker says the volume is
+  in use. With a note, it removes every copy into the box's Docker volume,
+  by its labels, and waits for Docker to remove it. It then removes the volume,
   and tries again, up to 5 times a second apart, while the volume is in
   use. While the note says Docker may still make that copy, it looks again
   every 250 ms. When the copy appears, it removes it and the volume it
   made again. A volume with no labels is removed only when such a note or
   copy names it.
 - Maintenance removes any copy whose restore this BB Box is not running,
-  with the volume it made again, and drops a note once its copy has been
-  removed or its time has passed. It does not wait for one.
+  writing a note of it first if there is none. It drops a note only once
+  the volume the copy made again has gone, so a failed removal is tried
+  again each run, and the doctor names the volume after 3 failed tries.
+  It does not wait for a copy. See
+  [095](095-a-docker-volume-a-restores-copy-made-again-is-removed-by-its-note.md).
 
 Two tests in `test/docker-restore.test.ts` run a restore in a second
 process against the fake Docker host and kill its process group while the
@@ -423,8 +428,8 @@ before, and the release clearing it:
 | 0.550 | The release removed the copy's container |
 | 0.579 | The release removed the volume it made again |
 
-The suite kills a restore 1 s after it names its new guest, which in some
-runs falls before the copy is asked for. To cover the whole window, a
+The suite then killed a restore 1 s after it named its new guest, which in
+some runs fell before the copy was asked for. To cover the whole window, a
 script killed a restore of a box with 1 GiB of Docker data at set delays
 after its new volume appeared, then released the guest with a new
 instance on the restore's storage. On the local containerd engine, with
@@ -456,6 +461,58 @@ test in `test/docker-restore.test.ts` kills a restore while its copy
 runs, lets the fake engine finish the copy, and releases with a clock
 that never passes the note's time. It timed out with `--rm` and passes
 without it.
+
+### A release with no note, and a volume that will not go
+
+An independent review found three more faults:
+
+- every release, not only one after a killed restore, asked Docker for
+  copies into the box's volume and read the volume's labels twice: 9
+  Docker calls for an acquire and release on the fake engine, against 7
+  before
+- maintenance removed a copy, then dropped its note, before it removed
+  the volume the copy made again. If that removal failed, nothing named
+  the volume again
+- the suite's killed restore could pass without its copy running when it
+  was killed, and did not check what the copy left
+
+[095](095-a-docker-volume-a-restores-copy-made-again-is-removed-by-its-note.md)
+records the fixes. Three tests in `test/docker-restore.test.ts` failed
+before them and pass after:
+
+- a release of a box with no note makes one volume list, one inspect and
+  one removal for the box's volume, and no call about copies. Before, it
+  made 2 inspects
+- a late copy's volume whose first removal fails is removed by the next
+  sweep. Before, it was still there after the second
+- after 3 failed sweeps the doctor's Snapshot leftovers check warns and
+  names the volume. Before, it said ok
+
+The test that releases a restored container while its copy runs, with a
+new storage, needed the copy removed once Docker said the volume was in
+use, as there is no note. It failed until that step was added.
+
+The suite now kills the restore once Docker lists its copy as running,
+and tries again, up to 3 times, if the restore finishes first. After the
+release it checks that no copy container, volume or note of the restore is
+left. With a release changed to drop its note without removing the
+volume, the check failed and named the volume; the unchanged code passed
+it.
+
+The suite's Linux runs on one VM with 8 cores, 16 GiB of memory and
+Ubuntu 24.04, Docker 29.1.3, over SSH to the same VM for the SSH runs:
+
+| Run | Passed, failed, skipped | Killed restore | Killed while copying, at try | Whole run | Left on the engine |
+| --- | --- | --- | --- | --- | --- |
+| containerd, local, 1 | 32, 0, 5 | 10.5 s | 1 | 214.6 s | nothing |
+| containerd, local, 2 | 32, 0, 5 | 14.7 s | 1 | 213.2 s | nothing |
+| containerd, SSH | 32, 0, 5 | 26.6 s | 1 | 348.0 s | nothing |
+| overlay2, local | 32, 0, 5 | 9.4 s | 1 | 43.3 s | nothing |
+| overlay2, SSH | 32, 0, 5 | 29.8 s | 1 | 181.9 s | nothing |
+
+"Nothing" means no container, volume or snapshot image after the run.
+snapshot.ubuntu.com answered 503 while the image was built, so it was
+built from Ubuntu's current archive instead of the pinned snapshot.
 
 ### Running it again
 
