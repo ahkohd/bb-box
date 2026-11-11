@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -50,4 +50,20 @@ test("the Windows image build's disk watchdog ends the QEMU its pid file names",
 
   assert.equal(run.stdout.trim(), "signalled");
   assert.equal(ended, "SIGTERM");
+});
+
+function scriptFunction(name: string): string {
+  const found = new RegExp(`^${name}\\(\\) \\{\\n[\\s\\S]*?\\n\\}\\n`, "m").exec(readFileSync(SCRIPT, "utf8"));
+  assert.ok(found, `prepare-windows-image.sh has ${name}`);
+  return found[0];
+}
+
+test("the Windows image build never says older builds can go, as a snapshot may stand on one no VM uses", async () => {
+  const images = tempDir("windows-builds");
+  for (const build of ["build.1", "build.2", "build.3"]) mkdirSync(join(images, build));
+
+  const run = await inOwnProcessGroup(`step() { printf '%s\\n' "$*"; }\n${scriptFunction("note_older_builds")}images='${images}'; build=build.3; note_older_builds`);
+
+  assert.doesNotMatch(run.stdout, /can go/);
+  assert.equal(run.stdout.trim(), `older builds stay in ${images} while a VM, a snapshot or a restore stands on them, and BB Box's next image refresh removes those that nothing stands on. Do not delete them by hand: build.1 build.2`);
 });

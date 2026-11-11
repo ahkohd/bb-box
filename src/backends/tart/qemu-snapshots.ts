@@ -1,7 +1,7 @@
 import { quote } from "../../transports/process.ts";
 import { PRODUCT } from "../../brand.ts";
 import { NO_PAUSE, type MachineSize, type SnapshotPlan, type Snapshotting, type TakePause } from "../types.ts";
-import { ROLLBACK_BASE_GONE, parseFields, sections } from "./host.ts";
+import { ROLLBACK_BASE_GONE, TURN_NOT_TAKEN, parseFields, sections } from "./host.ts";
 import { parseQemuVm, qemuScript, type QemuVm } from "./qemu.ts";
 import { SNAPSHOT_SH, labelText, parseLabel, roomShort, storageOf, type SnapshotLabel } from "./snapshots.ts";
 
@@ -85,7 +85,7 @@ export function qemuRollbackScript(vm: string, install: string, box: string, sna
 r="$snaps/.restore-$vm"; a="$snaps/.replaced-$vm"
 mine "$vm" ${quote(install)} ${quote(box)} || { echo gone; exit 0; }
 ! rollback_running "$vm" || { echo "Another restore of $vm runs on the Mac." >&2; exit 9; }
-heal_rollback "$vm" "$v" || { echo "The VM's folder $v is missing, and the Mac has nothing whole to put back." >&2; exit 1; }
+heal_rollback "$vm" "$v" || { [ $? = ${TURN_NOT_TAKEN} ] || echo "The VM's folder $v is missing, and the Mac has nothing whole to put back." >&2; exit 1; }
 [ -f "$v/config" ] || { echo "The VM's folder $v is gone." >&2; exit 1; }
 ! qrunning "$vm" || { echo "$vm runs, so ${PRODUCT} does not put a snapshot in its place." >&2; exit 5; }
 [ -d "$sd" ] && ours "$sd" ${quote(install)} || { echo "The Mac has no snapshot $id of this install's." >&2; exit 4; }
@@ -94,14 +94,14 @@ has_base "$sd" || { base_gone "$sd"; exit ${BASE_GONE_EXIT}; }
 same_volume "$v" "$snaps" || { other_volume "$snaps" "$q/vms"; exit 6; }
 room_for_copy "$snaps" ${minFreeGiB} || exit 7
 journal "$vm" "copying $id $try $(this_shell)" || exit 1
-undone() { free_bases; rm -rf "$r"; journal "$vm" "undone $id $try${"$"}{3:+ $3}"; echo "$1" >&2; exit "$2"; }
+undone() { rm -rf "$r"; journal "$vm" "undone $id $try${"$"}{3:+ $3}"; free_turn; echo "$1" >&2; exit "$2"; }
 rm -rf "$r" "$a"
 copy_windows_files "$sd/vm" "$r" || undone "The copy of snapshot $id failed, and $vm is as it was." 1
 { grep -v -e '^ssh=' -e '^vnc=' "$r/config"; grep -e '^ssh=' -e '^vnc=' "$v/config"; } > "$r/config.new" && mv -f "$r/config.new" "$r/config" || undone "${PRODUCT} could not keep the ports of $vm, so it put nothing in its place." 1
 : > "$r/.complete"
 ! qrunning "$vm" || undone "$vm started while ${PRODUCT} copied snapshot $id, so it put nothing in its place." 5
 qvideostop "$vm"
-hold_bases || undone "${PRODUCT} put nothing in the place of $vm." 1
+hold_turn || undone "${PRODUCT} put nothing in the place of $vm." 1
 base_present_for "$r" || undone "Snapshot $id stands on $(base_disk_of "$r"), which the Mac no longer has, so ${PRODUCT} put nothing in the place of $vm. Delete the snapshot." ${BASE_GONE_EXIT} ${ROLLBACK_BASE_GONE}
 journal "$vm" "swapping $id $try $(this_shell)" || undone "${PRODUCT} could not record the swap, so it put nothing in the place of $vm." 1
 if mv "$v" "$a"; then
@@ -109,10 +109,10 @@ if mv "$v" "$a"; then
 else
   undone "${PRODUCT} could not move $vm aside, so it put nothing in its place." 1
 fi
-free_bases
 rm -f "$v/.complete"
 rm -rf "$a"
 journal "$vm" "done $id $try"
+free_turn
 echo restored
 `);
 }

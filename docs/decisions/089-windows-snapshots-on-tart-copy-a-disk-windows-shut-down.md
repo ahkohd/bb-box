@@ -42,13 +42,28 @@ identity reset in bb-box, so a copy must never come up beside its source.
   image refresh, and the removal of a refresh's build, keep every build that
   a VM, a snapshot, or a restore cut short stands on: they read the `config`
   of each VM, of each snapshot, and of both folders a restore stages, the
-  snapshot's copy and the VM's own folder set aside. A restore swaps those
-  folders, and a recovery puts them right, only while it holds the image's
-  builds, and pruning holds them too, so a folder is never between two
-  places while pruning reads them. The hold is a link naming the shell that
-  holds it, and one whose shell has ended is cleared.
-- A restore checks, while it holds the builds, that its copy's build is
-  there. A recovery that finds the build of the disk it would put in place
+  snapshot's copy and the VM's own folder set aside. A folder with a disk
+  whose `config` cannot be read, or does not name both an image and a
+  build, makes the scan unsure, and an unsure scan removes no build and
+  says why.
+- Restores, recoveries, image refreshes, removals of a build and the making
+  of a VM's overlay take turns on the Mac. They can come from more than one
+  process: from the scripts of several BB Box installs that share the Mac,
+  and from a recovery any of them starts. So the turn is a lock on the Mac,
+  `~/.bb-box/turn.lock`, held with `flock` through the shell's own file
+  descriptor. The kernel lets one holder have it at a time and frees it when
+  the last process holding the descriptor ends, the shell's children
+  included, so no lock is ever cleared by hand. A task waits at most 60 s
+  for its turn, then refuses and says to try again; one that cannot open the
+  lock refuses at once.
+- An image refresh takes its turn before it reads which build is current,
+  and keeps it through the promotion and the pruning. A removal checks the
+  build's owner, that it is not current and that nothing stands on it in
+  its turn. A restore holds its turn from the check of its copy's build to
+  its record of the result. A recovery reads the restore's record again in
+  its turn, and leaves a record that another has finished. A new VM names
+  its build in its `config` in its turn, before it makes its overlay.
+- A restore checks, in its turn, that its copy's build is there. A recovery that finds the build of the disk it would put in place
   gone puts the VM's own folder back, or, with none to put back, records the
   restore as failed and says why. It never records it as done, and a start
   of a VM whose build is gone is refused and says so.
@@ -64,4 +79,10 @@ identity reset in bb-box, so a copy must never come up beside its source.
 - An old build of the Windows image stays on the Mac while a snapshot
   stands on it, which can be until the box is released, so a refresh frees
   less disk while old snapshots remain. Deleting the snapshots frees it at
-  the next refresh.
+  the next refresh, once no VM or staged restore stands on it either, and it
+  is neither the current build nor the rollback.
+- A scan that cannot read a VM's or snapshot's `config` keeps every build
+  until it can, so a damaged folder can hold disk until it is fixed or
+  removed.
+- Tasks on one Mac wait for each other's turns, which are seconds long: a
+  refresh's pruning, a restore's swap, a recovery.

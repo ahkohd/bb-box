@@ -22,38 +22,53 @@
 // A VM runs while the process in its pid file runs QEMU with the VM's name,
 // so a process that took the pid after the Mac restarted is not taken for it.
 
+import { PRODUCT } from "../../brand.ts";
 import { quote } from "../../transports/process.ts";
 import { recordFromJson, type ImageRecord } from "../images.ts";
-import { named, parseFields, script, sections } from "./host.ts";
+import { TURN_NOT_TAKEN, named, parseFields, script, sections } from "./host.ts";
 
 /** The ports VMs take on the Mac's loopback, below macOS's ephemeral ports. */
 const FIRST_PORT = 42000;
 const LAST_PORT = 42999;
 
-const BASES_LOCK_WAIT_TENTHS = 600;
+const BASE_IN_USE = 0;
+const BASE_UNUSED = 1;
+const BASE_USE_UNKNOWN = 2;
+const BASES_UNREAD = `${PRODUCT} could not read the config of every Windows VM, snapshot and restore on the Mac to tell which builds they stand on`;
 
-const BASES_SH = String.raw`bases_lock="$q/.bases-lock"
-hold_bases() {
-  mkdir -p "$q" || return 1
-  _hb_me=$(this_shell) _hb_i=0
-  until ln -s "$_hb_me" "$bases_lock" 2>/dev/null; do
-    _hb_was=$(readlink "$bases_lock" 2>/dev/null)
-    if [ -n "$_hb_was" ] && ! runs_still "${"$"}{_hb_was%% *}" "${"$"}{_hb_was#* }"; then
-      [ "$(readlink "$bases_lock" 2>/dev/null)" != "$_hb_was" ] || rm -f "$bases_lock"
-      continue
-    fi
-    _hb_i=$((_hb_i + 1))
-    [ "$_hb_i" -lt ${BASES_LOCK_WAIT_TENTHS} ] || { echo "Another task on the Mac has held the Windows image's builds for ${BASES_LOCK_WAIT_TENTHS / 10} s. Try again once it has ended." >&2; return 1; }
-    sleep 0.1
+const BASES_SH = String.raw`base_disk_of() { printf '%s/images/%s/%s/disk.qcow2' "$q" "$(sed -n 's/^image=//p' "$1/config" 2>/dev/null | head -n 1)" "$(sed -n 's/^build=//p' "$1/config" 2>/dev/null | head -n 1)"; }
+base_present_for() { grep -q '^image=.' "$1/config" 2>/dev/null && grep -q '^build=.' "$1/config" && [ -f "$(base_disk_of "$1")" ]; }
+readable_folder() { [ ! -d "$1" ] || { [ -r "$1" ] && [ -x "$1" ]; }; }
+folder_stands_on() {
+  readable_folder "$1" || return ${BASE_USE_UNKNOWN}
+  [ -e "$1/config" ] || [ -e "$1/disk.qcow2" ] || return ${BASE_UNUSED}
+  _so_i=$(sed -n 's/^image=//p' "$1/config" 2>/dev/null | head -n 1)
+  _so_b=$(sed -n 's/^build=//p' "$1/config" 2>/dev/null | head -n 1)
+  [ -n "$_so_i" ] && [ -n "$_so_b" ] || return ${BASE_USE_UNKNOWN}
+  [ "$_so_i" = "$2" ] && [ "$_so_b" = "$3" ] && return ${BASE_IN_USE}
+  return ${BASE_UNUSED}
+}
+folders_on_bases() {
+  for _fb_f in "$q"/vms/* "$1"/.restore-* "$1"/.replaced-*; do [ ! -e "$_fb_f" ] || printf '%s\n' "$_fb_f"; done
+  for _fb_f in "$1"/*; do
+    [ -d "$_fb_f" ] || continue
+    if readable_folder "$_fb_f"; then printf '%s\n' "$_fb_f/vm"; else printf '%s\n' "$_fb_f"; fi
   done
 }
-free_bases() { [ "$(readlink "$bases_lock" 2>/dev/null)" != "$(this_shell)" ] || rm -f "$bases_lock"; }
-base_disk_of() { printf '%s/images/%s/%s/disk.qcow2' "$q" "$(sed -n 's/^image=//p' "$1/config" 2>/dev/null | head -n 1)" "$(sed -n 's/^build=//p' "$1/config" 2>/dev/null | head -n 1)"; }
-base_present_for() { grep -q '^image=.' "$1/config" 2>/dev/null && grep -q '^build=.' "$1/config" && [ -f "$(base_disk_of "$1")" ]; }
 build_in_use() {
-  grep -qsx "build=$1" "$q"/vms/*/config && return 0
-  _bu_s=$(snaps_dir) || return 1
-  grep -qsx "build=$1" "$_bu_s"/.restore-*/config "$_bu_s"/.replaced-*/config "$_bu_s"/*/vm/config
+  [ -d "$tart_vms" ] || mkdir -p "$tart_vms" || return ${BASE_USE_UNKNOWN}
+  _bu_s=$(snaps_dir) || return ${BASE_USE_UNKNOWN}
+  readable_folder "$q/vms" && readable_folder "$_bu_s" || return ${BASE_USE_UNKNOWN}
+  _bu_all=$(folders_on_bases "$_bu_s") || return ${BASE_USE_UNKNOWN}
+  _bu_ifs=$IFS; IFS='
+'
+  for _bu_f in $_bu_all; do
+    IFS=$_bu_ifs
+    folder_stands_on "$_bu_f" "$1" "$2"
+    case $? in ${BASE_IN_USE}) return ${BASE_IN_USE} ;; ${BASE_UNUSED}) ;; *) return ${BASE_USE_UNKNOWN} ;; esac
+  done
+  IFS=$_bu_ifs
+  return ${BASE_UNUSED}
 }
 `;
 
@@ -231,6 +246,7 @@ export function qemuCloneScript(image: string, vm: string, cores: number, memory
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"; image=${quote(image)}; disk=${Math.max(0, Math.trunc(diskGiB ?? 0))}
 mkdir -p "$q/vms" || exit 1
 if [ ! -d "$v" ]; then
+  hold_turn || exit 1
   b=$(cd "$q/images/$image/"${quote(build)} 2>/dev/null && pwd -P) && [ -f "$b/disk.qcow2" ] && [ -f "$b/vars.fd" ] ||
     { echo "There is no Windows image $image on this Mac, in $q/images." >&2; exit 1; }
   machine=$(qemu-system-aarch64 -machine help 2>/dev/null | sed -n 's/^virt .*(alias of \(virt-[0-9.]*\)).*/\1/p' | head -n 1)
@@ -243,7 +259,9 @@ if [ ! -d "$v" ]; then
     [ $((disk * 1073741824)) -le "$base" ] || size="$disk"G
   fi
   rm -rf "$v.new"; mkdir "$v.new" || exit 1
+  printf 'image=%s\nbuild=%s\n' "$image" "$(basename "$b")" > "$v.new/config" || exit 1
   qemu-img create -q -f qcow2 -F qcow2 -b "$b/disk.qcow2" "$v.new/disk.qcow2" $size || exit 1
+  free_turn
   # An APFS clone, which shares the image's blocks until it changes.
   cp -c "$b/vars.fd" "$v.new/vars.fd" 2>/dev/null || cp "$b/vars.fd" "$v.new/vars.fd" || exit 1
   # One VM at a time takes ports: none another VM has, and none that something listens on.
@@ -294,7 +312,7 @@ export type QemuDisplay = "none" | "dbus";
 export function qemuStartScript(vm: string, waitSeconds: number, display: QemuDisplay = "dbus"): string {
   return qemu(String.raw`vm=${quote(vm)}; v="$q/vms/$vm"
 if rollback_running "$vm"; then echo "BB Box is putting a snapshot in the place of $vm on the Mac, so it does not start it until that has ended." >&2; exit 1; fi
-heal_rollback "$vm" "$v" || { echo "The folder of $vm is missing after a restore cut short, and the Mac has nothing whole to put back." >&2; exit 1; }
+heal_rollback "$vm" "$v" || { [ $? = ${TURN_NOT_TAKEN} ] || echo "The folder of $vm is missing after a restore cut short, and the Mac has nothing whole to put back." >&2; exit 1; }
 [ -f "$v/config" ] || { echo "There is no VM $vm." >&2; exit 1; }
 if qrunning "$vm"; then echo running; exit 0; fi
 base_present_for "$v" || { echo "The disk of $vm stands on $(base_disk_of "$v"), which the Mac no longer has, so QEMU cannot start it. Release the box." >&2; exit 1; }
@@ -579,39 +597,41 @@ echo captured
  * in one rename, and it is no refresh's build any more. The build that was
  * current stays, named by the link "rollback", until the next replace,
  * whatever VMs use it: going back is pointing "current" at it, where a new
- * build from the ISO takes the operator's ISO and an hour. Other builds that
- * no VM, snapshot or restore cut short stands on, the rollback before among
- * them, then go, while restores wait. Prints "replaced".
+ * build from the ISO takes the operator's ISO and an hour. Prints "replaced".
  */
 export function qemuReplaceScript(image: string, build: string): string {
-  return qemu(String.raw`im="$q/images/"${quote(image)}; b=${quote(build)}
+  return qemu(String.raw`image=${quote(image)}; im="$q/images/$image"; b=${quote(build)}
+hold_turn || exit 1
 [ -f "$im/$b/disk.qcow2" ] || { echo "The image has no build $b." >&2; exit 1; }
 was=$(cd "$im/current" 2>/dev/null && pwd -P) && was=$(basename "$was")
 if [ -n "$was" ] && [ "$was" != "$b" ] && [ -f "$im/$was/disk.qcow2" ]; then ln -sfn "$was" "$im/rollback" || exit 1; fi
 ln -sfn "$b" "$im/current" || exit 1
 rm -f "$im/$b/owner"
 rb=$(cd "$im/rollback" 2>/dev/null && pwd -P) && rb=$(basename "$rb")
-hold_bases || exit 1
+unsure=
 for o in "$im"/*; do
   n=$(basename "$o"); [ "$n" != current ] && [ "$n" != rollback ] && [ "$n" != "$b" ] && [ "$n" != "$rb" ] && [ -d "$o" ] && [ ! -L "$o" ] && [ -f "$o/disk.qcow2" ] || continue
-  build_in_use "$n" && continue
+  build_in_use "$image" "$n"
+  case $? in ${BASE_IN_USE}) continue ;; ${BASE_UNUSED}) ;; *) unsure="$unsure $n"; continue ;; esac
   chmod -R u+w "$o"; rm -rf "$o"
 done
-free_bases
+free_turn
+[ -z "$unsure" ] || echo "${BASES_UNREAD}, so it kept the image's builds$unsure. A later refresh removes those that nothing stands on." >&2
 echo replaced
 `);
 }
 
-/** Removes a refresh's build of a Windows image that is not current and no VM, snapshot or restore cut short stands on (049). Prints "removed" or "kept". */
+/** Removes a refresh's build of a Windows image (049). Prints "removed" or "kept". */
 export function qemuRemoveBuildScript(image: string, build: string, installId: string): string {
-  return qemu(String.raw`im="$q/images/"${quote(image)}; b=${quote(build)}
+  return qemu(String.raw`image=${quote(image)}; im="$q/images/$image"; b=${quote(build)}
+hold_turn || exit 1
 [ -d "$im/$b" ] || { echo removed; exit 0; }
 grep -qx "install="${quote(installId)} "$im/$b/owner" 2>/dev/null || { echo "Build $b of the image is not a refresh's build of this install's." >&2; exit 1; }
 [ "$(cd "$im/current" 2>/dev/null && pwd -P)" != "$(cd "$im/$b" && pwd -P)" ] || { echo "Build $b is the image's current build." >&2; exit 1; }
-hold_bases || exit 1
-if build_in_use "$b"; then free_bases; echo kept; exit 0; fi
+build_in_use "$image" "$b"
+case $? in ${BASE_IN_USE}) echo kept; exit 0 ;; ${BASE_UNUSED}) ;; *) echo "${BASES_UNREAD}, so it kept build $b. Try again once they can be read." >&2; echo kept; exit 0 ;; esac
 chmod -R u+w "$im/$b"; rm -rf "$im/$b"
-free_bases
+free_turn
 echo removed
 `);
 }

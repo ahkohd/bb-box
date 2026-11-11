@@ -79,6 +79,27 @@ note_disk_gb() {
 }`;
 
 export const ROLLBACK_BASE_GONE = "base-gone";
+export const TURN_LOCK = ".bb-box/turn.lock";
+export const TURN_WAIT_TENTHS = 600;
+export const TURN_NOT_TAKEN = 2;
+
+const TAKE_TURN_PL = String.raw`open(my $h, ">&=", 9) or exit 2; for (1 .. $ARGV[0]) { exit 0 if flock($h, LOCK_EX | LOCK_NB); select(undef, undef, undef, 0.1) } exit 1`;
+
+export function turnSh(waitTenths: number): string {
+  return String.raw`turn_lock="$HOME/${TURN_LOCK}"
+hold_turn() {
+  mkdir -p "$(dirname "$turn_lock")" && { command exec 9>>"$turn_lock"; } 2>/dev/null || {
+    echo "${PRODUCT} could not open $turn_lock on the Mac, which restores and image refreshes take turns by. Check that $(id -un) can write to it." >&2
+    return 1
+  }
+  perl -MFcntl=:flock -e '${TAKE_TURN_PL}' ${waitTenths} && return 0
+  exec 9>&-
+  echo "Another ${PRODUCT} task on the Mac, a restore or an image refresh, has kept this one waiting for ${waitTenths / 10} s. Try again once it has ended." >&2
+  return 1
+}
+free_turn() { exec 9>&-; }
+`;
+}
 
 /**
  * The start of every script: the PATH to find tart, no automatic pruning of
@@ -99,20 +120,25 @@ rollback_running() {
   read -r _rb_phase _rb_id _rb_try _rb_pid _rb_start < "$_rb_s/.rollbacks/$1" || return 1
   case $_rb_phase in copying | swapping) runs_still "$_rb_pid" "$_rb_start" ;; *) return 1 ;; esac
 }
-heal_rollback() {
-  _rb_s=$(snaps_dir) || return 0
+rollback_to_heal() {
+  _rb_s=$(snaps_dir) || return 1
   _rb_j="$_rb_s/.rollbacks/$1"
-  [ -f "$_rb_j" ] || return 0
-  read -r _rb_phase _rb_id _rb_try _rb_pid _rb_start < "$_rb_j" || return 0
-  case $_rb_phase in copying | swapping) ;; *) return 0 ;; esac
-  ! runs_still "$_rb_pid" "$_rb_start" || return 0
+  [ -f "$_rb_j" ] || return 1
+  read -r _rb_phase _rb_id _rb_try _rb_pid _rb_start < "$_rb_j" || return 1
+  case $_rb_phase in copying | swapping) ;; *) return 1 ;; esac
+  ! runs_still "$_rb_pid" "$_rb_start"
+}
+heal_rollback() {
+  rollback_to_heal "$1" || return 0
+  hold_turn || return ${TURN_NOT_TAKEN}
+  heal_in_turn "$@"; _rb_healed=$?
+  free_turn
+  return "$_rb_healed"
+}
+heal_in_turn() {
+  rollback_to_heal "$1" || return 0
   _rb_v=${"$"}{2:-$tart_vms/$1} _rb_r="$_rb_s/.restore-$1" _rb_a="$_rb_s/.replaced-$1" _rb_to=undone _rb_why=
-  if [ "$_rb_phase" = swapping ]; then
-    hold_bases || return 1
-    heal_swap; _rb_healed=$?
-    free_bases
-    [ "$_rb_healed" = 0 ] || return 1
-  fi
+  if [ "$_rb_phase" = swapping ]; then heal_swap || return 1; fi
   rm -f "$_rb_v/.complete"
   if [ "$_rb_to" = done ] && [ -z "$2" ]; then
     _rb_g=$(sed -n 's/^diskgb=//p' "$_rb_s/$_rb_id/label" 2>/dev/null | head -n 1); [ -z "$_rb_g" ] || note_disk_gb "$_rb_v" "$_rb_g"
@@ -134,10 +160,8 @@ heal_swap() {
     fi
   fi
 }
-hold_bases() { :; }
-free_bases() { :; }
 base_present_for() { :; }
-`;
+${turnSh(TURN_WAIT_TENTHS)}`;
 
 const PRELUDE = String.raw`export PATH="${PATHS.join(":")}:$PATH" TART_NO_AUTO_PRUNE=1
 d="$HOME/.bb-box/tart"
@@ -629,7 +653,7 @@ export function startScript(vm: string, waitSeconds: number): string {
 ${HOLD}
 started() { rm -f "$d/run/$vm.restored"; [ "$(os_of "$vm")" = linux ] || hold || :; echo started; }
 if rollback_running "$vm"; then echo "BB Box is putting a snapshot in the place of $vm on the Mac, so it does not start it until that has ended." >&2; exit 1; fi
-heal_rollback "$vm" || { echo "The folder of $vm is missing after a restore cut short, and the Mac has nothing whole to put back." >&2; exit 1; }
+heal_rollback "$vm" || { [ $? = ${TURN_NOT_TAKEN} ] || echo "The folder of $vm is missing after a restore cut short, and the Mac has nothing whole to put back." >&2; exit 1; }
 case "$(state "$vm")" in
   running) echo running; exit 0 ;;
   "") echo "There is no VM $vm." >&2; exit 1 ;;

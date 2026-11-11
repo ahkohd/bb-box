@@ -2,7 +2,7 @@ import { quote } from "../../transports/process.ts";
 import { PRODUCT } from "../../brand.ts";
 import { NO_PAUSE, type BoxOwner, type Guest, type HeldSnapshot, type HeldSnapshotState, type Holds, type MachineSize, type SnapshotPlan, type SnapshotStorage, type Snapshotting, type TakePause, type TaskOutcome } from "../types.ts";
 import { IOS_IMAGE_KIND } from "./config.ts";
-import { ROLLBACK_BASE_GONE, named, parseConfig, parseFields, script, sections, type VmConfig } from "./host.ts";
+import { ROLLBACK_BASE_GONE, TURN_NOT_TAKEN, named, parseConfig, parseFields, script, sections, type VmConfig } from "./host.ts";
 
 export const SNAPSHOTS_FOLDER = "bb-box-snapshots";
 export const MACOS_FORK_SAFE_FROM = 3;
@@ -509,7 +509,7 @@ export function rollbackScript(vm: string, install: string, box: string, snapsho
 r="$snaps/.restore-$vm"; a="$snaps/.replaced-$vm"
 mine "$vm" ${quote(install)} ${quote(box)} || { echo gone; exit 0; }
 ! rollback_running "$vm" || { echo "Another restore of $vm runs on the Mac." >&2; exit 9; }
-heal_rollback "$vm" || { echo "The VM's folder $v is missing, and the Mac has nothing whole to put back." >&2; exit 1; }
+heal_rollback "$vm" || { [ $? = ${TURN_NOT_TAKEN} ] || echo "The VM's folder $v is missing, and the Mac has nothing whole to put back." >&2; exit 1; }
 [ -d "$v" ] || { echo "The VM's folder $v is gone." >&2; exit 1; }
 [ "$(state "$vm")" != running ] || { echo "$vm runs, so BB Box does not put a snapshot in its place." >&2; exit 5; }
 [ -d "$sd" ] && ours "$sd" ${quote(install)} || { echo "The Mac has no snapshot $id of this install's." >&2; exit 4; }

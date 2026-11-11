@@ -597,12 +597,15 @@ ln -s "$build" "$images/current.new"
 /bin/mv -fh "$images/current.new" "$images/current"
 done_ok=1
 rm -f "$png" "$log"
-old=
-for b in "$images"/build.*; do
-  b=${b##*/}
-  case $b in "$build" | *.new | *.png | *.log) continue ;; esac
-  [ -d "$images/$b" ] || continue
-  grep -qx "build=$b" "$q"/vms/*/config 2>/dev/null || old="$old $b"
-done
-[ -z "$old" ] || step "no VM uses these older builds in $images, which can go:$old"
+note_older_builds() {
+  _older=
+  for _b in "$images"/build.*; do
+    _b=${_b##*/}
+    case $_b in "$build" | *.new | *.png | *.log) continue ;; esac
+    [ -d "$images/$_b" ] || continue
+    _older="$_older $_b"
+  done
+  [ -z "$_older" ] || step "older builds stay in $images while a VM, a snapshot or a restore stands on them, and BB Box's next image refresh removes those that nothing stands on. Do not delete them by hand:$_older"
+}
+note_older_builds
 step "done: $name is $build ($(du -sh "$images/$build" | cut -f1) on disk, $(($(kib) / 1048576)) GiB free)"

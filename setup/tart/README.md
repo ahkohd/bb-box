@@ -513,8 +513,13 @@ snapshot. Nothing is installed for them on the Mac; they use the Mac's
   ordinary Stop saved starts from it, then shuts down. A restore keeps the
   VM's two ports, leaves no `state`, and boots Windows afresh. Its label
   names the image and build its overlay stands on. An image refresh keeps a
-  build while a VM, a snapshot or a restore cut short stands on it, and a
-  restore whose build is gone anyway is refused and says so. `~/.tart/vms` must be
+  build while a VM, a snapshot or a restore cut short stands on it, and
+  every build when it cannot read a VM's or snapshot's `config`. A restore
+  whose build is gone anyway is refused and says so. Restores, image
+  refreshes and the removal of builds take turns through a lock on
+  `~/.bb-box/turn.lock`, held with Perl's `flock`, which macOS includes.
+  Do not delete older builds by hand: a snapshot may stand on one no VM
+  uses. `~/.tart/vms` must be
   on the same volume as `~/.bb-box`, as the clones need, and bb-box makes
   it when Tart has not. Windows snapshots do not fork, and Keep is refused:
   Windows has no identity reset.
