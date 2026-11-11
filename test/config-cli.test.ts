@@ -37,7 +37,10 @@ async function start(options: { failDoctor?: () => string | undefined } = {}) {
     sdk: {
       threads: { get: async ({ threadId }: { threadId: string }) => threads.get(threadId)! },
       system: { machineEnvironment: async () => ({ builtInGit: { status: "logged in", statusMessage: "" }, variables: [] }) },
-      projects: { machineEnvironment: async () => ({ builtInGit: { status: "logged in", statusMessage: "" }, inheritedVariables: [], variables: [] }) },
+      projects: {
+        list: async () => [{ id: "prj_cli", name: "Client work" }, { id: "prj_home", name: "Home" }, { id: "prj_twin_a", name: "Twin" }, { id: "prj_twin_b", name: "Twin" }],
+        machineEnvironment: async () => ({ builtInGit: { status: "logged in", statusMessage: "" }, inheritedVariables: [], variables: [] }),
+      },
     } as never,
   });
   await bb.storage.kv.set(INSTALL_ID_KEY, "earlier01");
@@ -486,4 +489,28 @@ test("bb box run runs a command in a thread's box or one of your machines, and e
   const onMachine = await cli(["run", machine.name, "echo machine", "--machine"]);
   assert.equal(onMachine.stdout, "machine\n");
   assert.match((await cli(["run", machine.name, "true", "--thread", THREAD])).stderr ?? "", /proof-1/);
+});
+
+test("backend set --projects keeps a backend for BB projects by name or ID, stores their IDs, refuses a name BB does not have or has twice, and an empty list gives it back to every project (#1458)", async () => {
+  const { cli, document } = await start();
+  assert.equal((await cli(["backend", "add", "fake", "--no-doctor"])).exitCode, 0);
+  assert.equal(document().backends[0]!.projects, undefined, "a new backend serves every project");
+
+  const kept = await cli(["backend", "set", "fake", "--projects", "client work, prj_home", "--no-doctor"]);
+  assert.equal(kept.exitCode, 0, kept.stderr);
+  assert.match(kept.stdout ?? "", /  backends\.fake\.projects: every project → prj_cli, prj_home\n/);
+  assert.deepEqual(document().backends[0]!.projects, ["prj_cli", "prj_home"]);
+
+  const unknown = await cli(["backend", "set", "fake", "--projects", "Nope"]);
+  assert.equal(unknown.exitCode, 1);
+  assert.match(unknown.stderr ?? "", /BB has no project called "Nope"\. Its projects are: Client work, Home, Twin, Twin\./);
+  const twice = await cli(["backend", "set", "fake", "--projects", "twin"]);
+  assert.equal(twice.exitCode, 1);
+  assert.match(twice.stderr ?? "", /2 projects are called "twin": prj_twin_a, prj_twin_b\. Give its ID\./);
+  assert.deepEqual(document().backends[0]!.projects, ["prj_cli", "prj_home"], "a refusal changes nothing");
+
+  const cleared = await cli(["backend", "set", "fake", "--projects", "", "--no-doctor"]);
+  assert.equal(cleared.exitCode, 0, cleared.stderr);
+  assert.match(cleared.stdout ?? "", /  backends\.fake\.projects: prj_cli, prj_home → every project\n/);
+  assert.equal(document().backends[0]!.projects, undefined);
 });

@@ -20,6 +20,7 @@ import {
   optionsOf,
   pairOf,
   parseDotenv,
+  projectIdsOf,
   removeBackend,
   removeHost,
   setBackend,
@@ -32,6 +33,7 @@ import {
   type FieldEdits,
   type HostEdit,
   type KindEdit,
+  type ProjectChoice,
 } from "./config-edits.ts";
 import { doctorText, problemsText } from "./views.ts";
 import { PRODUCT } from "../brand.ts";
@@ -328,7 +330,7 @@ function driverView(state: ConfigState, type: string): DriverView {
 }
 
 function backendOptions() {
-  return { ...saveOptions, ...fieldOptions, ...secretOptions, ...switchOptions, label: { type: "string", description: "Its name in the settings and in box_list, such as Docker on build-1. Empty gives back the type's name." }, warm: { type: "string", repeatable: true, placeholder: "kind=count", description: "Ready boxes of a kind to keep waiting here, such as linux=1; 0 keeps none." }, "no-doctor": { type: "boolean", description: "Do not run the backend's checks after saving." } } as const;
+  return { ...saveOptions, ...fieldOptions, ...secretOptions, ...switchOptions, label: { type: "string", description: "Its name in the settings and in box_list, such as Docker on build-1. Empty gives back the type's name." }, warm: { type: "string", repeatable: true, placeholder: "kind=count", description: "Ready boxes of a kind to keep waiting here, such as linux=1; 0 keeps none." }, projects: { type: "string", placeholder: "names", description: "The BB projects it is kept for, by name or ID, separated by commas. Only their threads see it and get boxes, spares and forks from it, before the shared backends. Empty serves every project, as by default." }, "no-doctor": { type: "boolean", description: "Do not run the backend's checks after saving." } } as const;
 }
 
 function warmOf(value: unknown): [string, number][] {
@@ -354,7 +356,13 @@ function firstBoxWords(document: ConfigDocument, id: string): string | null {
   return `Next: bb box kinds lists what is on offer. To prove it, acquire a first box there: bb box acquire <kind> --on ${id}, then bb box release <box>.`;
 }
 
-export function configCommands(configuration: Configuration) {
+async function projectsOf(value: unknown, projects: () => Promise<readonly ProjectChoice[]>): Promise<string[] | undefined> {
+  if (value === undefined) return undefined;
+  const text = String(value);
+  return text.trim() ? projectIdsOf(text, await projects()) : [];
+}
+
+export function configCommands(configuration: Configuration, projects: () => Promise<readonly ProjectChoice[]> = async () => []) {
   return {
     "backend list": cliCommand({
       summary: "List the configuration's backends, in the order a new box tries them: each one's switch, state, kinds, boxes and last check.",
@@ -408,12 +416,13 @@ export function configCommands(configuration: Configuration) {
         const enabled = options.off ? false : true;
         if (options.on && options.off) throw new PluginCliError("Give --on or --off, not both.", { code: "invalid_input" });
         const { edits, submission } = await fieldEdits(options, ctx);
-        const edit: BackendEdit = { ...edits, enabled, ...(options.label !== undefined ? { label: options.label } : {}), warm: warmOf(options.warm) };
+        const kept = await projectsOf(options.projects, projects);
+        const edit: BackendEdit = { ...edits, enabled, ...(options.label !== undefined ? { label: options.label } : {}), warm: warmOf(options.warm), ...(kept !== undefined ? { projects: kept } : {}) };
         return save(
           configuration,
           {
             command: "backend add",
-            submission: { type: positionals.type, id, enabled, label: options.label, warm: edit.warm, fields: submission },
+            submission: { type: positionals.type, id, enabled, label: options.label, warm: edit.warm, projects: kept, fields: submission },
             build: (document, state) => addBackend(document, state.drivers, positionals.type, id, edit),
             backend: () => id,
             options,
@@ -424,19 +433,20 @@ export function configCommands(configuration: Configuration) {
       },
     }),
     "backend set": cliCommand({
-      summary: "Change a backend: its fields, secrets, switch, name or warm boxes, through the same checked save as the settings page, then run its checks. Exits 2 when it saved and its checks failed.",
+      summary: "Change a backend: its fields, secrets, switch, name, warm boxes or the projects it is kept for, through the same checked save as the settings page, then run its checks. Exits 2 when it saved and its checks failed.",
       positionals: [{ name: "backend", description: "The backend's ID, from bb box backend list.", required: true }],
       options: backendOptions(),
       run: async ({ positionals, options }, ctx) => {
         const enabled = switchOf(options);
         const { edits, submission } = await fieldEdits(options, ctx);
-        const edit: BackendEdit = { ...edits, ...(enabled !== undefined ? { enabled } : {}), ...(options.label !== undefined ? { label: options.label || null } : {}), warm: warmOf(options.warm) };
+        const kept = await projectsOf(options.projects, projects);
+        const edit: BackendEdit = { ...edits, ...(enabled !== undefined ? { enabled } : {}), ...(options.label !== undefined ? { label: options.label || null } : {}), warm: warmOf(options.warm), ...(kept !== undefined ? { projects: kept } : {}) };
         let id: string | null = null;
         return save(
           configuration,
           {
             command: "backend set",
-            submission: { backend: positionals.backend, enabled, label: options.label, warm: edit.warm, fields: submission },
+            submission: { backend: positionals.backend, enabled, label: options.label, warm: edit.warm, projects: kept, fields: submission },
             build: (document, state) => {
               id = findBackend(document, positionals.backend).id;
               return setBackend(document, state.drivers, positionals.backend, edit);

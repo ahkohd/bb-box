@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, describeError, isAcquiring, type BoxRecord } from "../core/boxes.ts";
+import { EVERYONE, NONE_SERVES_THREAD, threadAudience } from "../core/reserved.ts";
 import { BY_COMMAND } from "../core/box-log.ts";
 import type { DoctorReport } from "../backends/types.ts";
 import { withoutSecretVersions, type ImageBake, type Problem } from "../core/document.ts";
@@ -49,7 +50,7 @@ const sizeOptions = {
 } as const;
 /** Where a box goes (044): a provider by its name from bb box kinds, its backend ID or its one host. */
 const onOption = {
-  on: { type: "string", description: "The provider to use, from bb box kinds, such as \"Docker on devpc\", or several with commas between (pve1,devpc) for the first with room among them: only they are tried. Without it, the first with room." },
+  on: { type: "string", description: "The provider to use, from bb box kinds, such as \"Docker on devpc\", or several with commas between (pve1,devpc) for the first with room among them: only they are tried. Without it, the first with room: those kept for the thread's project first, then the shared ones. One kept for other projects is refused." },
 } as const;
 /** --on's names, one or several with commas between (044). */
 function providersOf(text: string): string | string[] {
@@ -94,6 +95,11 @@ export function bbDirectListen(appUrl: string | null | undefined, machineServerU
   const port = bbServerPort(appUrl, machineServerUrl);
   if (port === null || !listensOnEveryAddress(port, tcp, tcp6)) return null;
   return { port, url: reachableUrl(port, addresses) };
+}
+
+async function projectOfThread(app: Pick<BbBox, "projectOf">, threadId: string, option: string | undefined, ctx: PluginCliContext): Promise<string | null> {
+  const ownThread = option === undefined || option === ctx.threadId;
+  return (ownThread ? ctx.projectId : null) ?? (await app.projectOf(threadId));
 }
 
 function threadOf(option: string | undefined, ctx: PluginCliContext): string {
@@ -231,11 +237,13 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           },
         }),
         kinds: cliCommand({
-          summary: "List the kinds of box the active backends offer.",
-          options: jsonOption,
-          async run({ options }) {
-            const kinds = await app.kinds();
+          summary: "List the kinds of box the active backends offer. In a thread, or with --thread, only those of the backends that serve its project.",
+          options: { ...threadOption, ...jsonOption },
+          async run({ options }, ctx) {
+            const threadId = options.thread ?? ctx.threadId;
+            const kinds = await app.kinds(threadId ? threadAudience(await projectOfThread(app, threadId, options.thread, ctx)) : EVERYONE);
             if (options.json) return json(kinds);
+            if (!kinds.length && app.boxes.kinds().length) return out(NONE_SERVES_THREAD);
             if (!kinds.length) return out(`No backend is on, so there are no kinds. bb box setup docker sets up Docker on the machine that runs BB; or add one with bb box backend add <type>, or in ${PRODUCT}'s settings.`);
             return out(
               kinds
@@ -283,7 +291,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           run: ({ positionals, options }, ctx) =>
             guard("Acquiring a box", async () => {
               const threadId = threadOf(options.thread, ctx);
-              const projectId = ctx.projectId ?? (await app.projectOf(threadId));
+              const projectId = await projectOfThread(app, threadId, options.thread, ctx);
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
               const gpu = options.gpu === undefined ? undefined : String(options.gpu);
               if (gpu !== undefined && gpu !== "none" && gpu !== "shared" && gpu !== "whole") throw new BoxError("unsupported", `--gpu takes ${wholeCardsOn(app) ? "none, shared or whole" : "none or shared"}, not ${gpu}.`);
@@ -793,7 +801,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           },
         }),
         ...(app.replyDrops ? replyDropCommands(app.replyDrops) : {}),
-        ...configCommands(app.configuration),
+        ...configCommands(app.configuration, () => app.projects()),
         ...snapshotCommands(app),
         ...gpuCommands(app),
         ...monitorCommands(bb, app.monitor, app.history),

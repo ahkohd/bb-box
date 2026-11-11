@@ -8,6 +8,7 @@ import { performance } from "node:perf_hooks";
 import { writeHeapSnapshot } from "node:v8";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, SPARES, describeError, ownedByThread, type BoxRecord } from "../core/boxes.ts";
+import { threadAudience } from "../core/reserved.ts";
 import { BY_PERSON } from "../core/box-log.ts";
 import { ControlError } from "../core/control.ts";
 import { contract, type BoxEntry, type BoxPageState, type BoxResult, type DeviceBoot, type MachineEntry, type MonitorReach, type ResizeResult, type ThreadOnBox } from "./contract.ts";
@@ -255,7 +256,8 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   // What each method starts is counted as for it.
   bb.rpc.register(contract, withPurposes("rpc", {
     async state({ threadId }) {
-      const [list, kinds, machine, project, desktopOnDemand, access] = await Promise.all([boxes.list(threadId), app.kinds(), app.runsOn(threadId), app.projectOf(threadId).catch(() => null), app.desktopOnDemand().catch(() => null), app.machineAccess().catch(() => null)]);
+      const project = await app.projectOf(threadId).catch(() => null);
+      const [list, kinds, machine, desktopOnDemand, access] = await Promise.all([boxes.list(threadId), app.kinds(threadAudience(project)), app.runsOn(threadId), app.desktopOnDemand().catch(() => null), app.machineAccess().catch(() => null)]);
       const imageOffer = !!project && !Object.values(app.configuration.exported().images ?? {}).some((image) => image.projects.includes(project));
       const images = await app.imageOptions(project).catch(() => []);
       const yours = machine !== null && (machine.threadId === OPERATOR || machine.threadId === SPARES);
@@ -494,6 +496,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
       }
     },
     kinds: () => app.kinds(),
+    projects: async () => [...(await app.projects())],
     provider: ({ backend }) => app.providerProfile(backend),
     rooms: ({ kind, size }) => app.offerRooms(kind, size),
     "kind.cards": ({ kind }) => app.kindCards(kind),

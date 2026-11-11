@@ -261,7 +261,7 @@ async function start(
         },
       },
       projects: {
-        list: async () => [{ id: PROJECT, kind: world.projectKind, sources: world.projectKind === "personal" ? [] : world.sources }] as never,
+        list: async () => [{ id: PROJECT, name: "Project one", kind: world.projectKind, sources: world.projectKind === "personal" ? [] : world.sources }] as never,
         sources: {
           add: async ({ hostId, type }: { hostId: string; type: string }) => {
             world.sources.push({ hostId, type });
@@ -7865,4 +7865,40 @@ test("files stay on the panel: an agent has no files tool, and another plugin ca
   assert.deepEqual(refused, { error: FILES_FROM_PANEL });
   const gone = await harness.behavior.callRpc("files.home", { box: "bx_missing" });
   assert.deepEqual(gone, { error: "That box is gone." });
+});
+
+test("a backend kept for other projects is not in box_list, box_acquire, bb box kinds or bb box acquire for this thread, naming it is refused, and the doctor warns when its projects are gone (#1458)", async (t) => {
+  const { app, harness, tool } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const keepFor = async (projects: readonly string[]) => {
+    const document = app.configuration.exported();
+    const result = await app.configuration.apply({ ...document, backends: document.backends.map((backend) => ({ ...backend, projects })) }, document.revision);
+    assert.ok(result.ok, JSON.stringify(result));
+  };
+
+  await keepFor(["prj_other"]);
+  const listed = text(await tool("box_list", {}));
+  assert.doesNotMatch(listed, /- linux:/);
+  assert.match(listed, /Every backend here is kept for certain projects, and none for this thread's, so it has no kinds to acquire\./);
+  const acquired = await tool("box_acquire", { kind: "linux" });
+  assert.ok(isError(acquired));
+  assert.match(text(acquired), /Every backend here is kept for certain projects/);
+  const named = await tool("box_acquire", { kind: "linux", on: "fake" });
+  assert.ok(isError(named));
+  assert.doesNotMatch(text(named), /prj_other/);
+  assert.match((await harness.behavior.runCli(["kinds", "--thread", THREAD])).stdout ?? "", /^Every backend here is kept for certain projects/);
+  assert.match((await harness.behavior.runCli(["kinds"])).stdout ?? "", /^linux: /m, "the person's own terminal lists every kind");
+  const refused = await harness.behavior.runCli(["acquire", "linux", "--thread", THREAD]);
+  assert.equal(refused.exitCode, 1);
+  assert.equal((await app.boxes.list(THREAD)).length, 0);
+
+  const doctor = await harness.behavior.runCli(["doctor"]);
+  assert.match(doctor.stdout ?? "", /Projects of [^:\n]+: Kept for 1 project that is no longer in BB, so it serves no project and no thread can use it\./);
+
+  await keepFor([PROJECT]);
+  assert.match(text(await tool("box_list", {})), /- linux: /);
+  const made = await tool("box_acquire", { kind: "linux", wait: false });
+  assert.ok(!isError(made), text(made));
+  assert.match((await harness.behavior.runCli(["doctor"])).stdout ?? "", /Projects of [^:\n]+: Kept for Project one: only their threads see it\./);
+  await app.boxes.idle();
 });

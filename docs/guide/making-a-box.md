@@ -57,6 +57,8 @@ For a Linux server or an X11 desktop on x86_64, where a provider has NVIDIA card
 
 A provider is where the box runs, such as a container host or a pool of physical machines. 'First with room' is chosen at first: BB Box tries the providers in the order listed, and uses the first with room for the box. You can choose one provider instead.
 
+A provider kept for some of your projects in BB Box's settings is listed only for a thread in one of them, and comes before the providers every project shares. A thread in another project, or in none, does not see it. See [backends kept for projects](settings.md#backends-kept-for-projects).
+
 Each provider's row says:
 
 - what its boxes are: Container, VM or Physical

@@ -49,6 +49,7 @@ export function world(options: { readonly identityTool?: string; readonly identi
     guard: { threads: [], threadsUnread: null, control: false, terminals: 0 } as RestoreGuard,
     undoByCopy: false,
     machineRestores: false,
+    keptFor: [] as string[],
     unenrolled: [] as string[],
     marksChanged: 0,
     screen: null as ((box: BoxRecord, signal: AbortSignal) => Promise<Uint8Array | null>) | null,
@@ -92,6 +93,7 @@ export function world(options: { readonly identityTool?: string; readonly identi
     active: (): Backend[] => (state.active ? [state.backend] : []),
     on: (): Backend[] => (state.active ? [state.backend] : []),
     kinds: () => (state.active ? state.backend.kinds().map((kind) => ({ kind, backend: state.backend as Backend })) : []),
+    projects: (): readonly string[] => state.keptFor,
   };
   const general: GeneralConfig = { perThreadLimit: null, enrol: false, sizes: {}, spares: {}, identityResetBackends: options.markersOn === false ? [] : ["fake"], wholeCards: options.wholeCards ?? true } as unknown as GeneralConfig;
   const build = () => {

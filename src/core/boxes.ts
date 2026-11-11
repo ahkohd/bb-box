@@ -104,6 +104,7 @@ import { chooseResize, chooseSize, defaultSize, describeSize, formatMiB, kindSiz
 import { BY_OUTSIDE, EVENT_WORDS_BYTES, UNKNOWN_ACTOR, byBbBox, openStop, utf8Prefix, type Actor, type BoxEvent, type BoxEventKind, type BoxLog, type Observation } from "./box-log.ts";
 import { POWER_CHECK_GAP_MS } from "./reach.ts";
 import { forkCapacityWords } from "./snapshot-refusals.ts";
+import { EVERYONE, NONE_SERVES_THREAD, inAcquireOrder, keptForOthersWords, servesAudience, threadAudience, tiersFor, type Audience } from "./reserved.ts";
 import { WHOLE_CARDS_OFF, WHOLE_CARDS_OFF_FOR_FORK, WHOLE_CARDS_OFF_FOR_RESIZE, chooseGpu, claimOf, configuredGpu, gpuForSpare, gpuBeforeGpuParts, gpuOnOffer, gpuPartWords, gpuResizingWords, hasGpuPart, holdsCard, kindWithGpu, machineSizeOf, offersGpuPart, recordedGpu, withGpu, withRecordedGpu, type NvidiaUserspace, type RecordedSize } from "./gpu.ts";
 import {
   DESKTOP_GPU_CHECK,
@@ -576,6 +577,8 @@ export interface BoxesDeps {
     driverLabel?(id: string): string;
     /** The built backends that are on, so an `on` naming one that is off is told so (044). */
     on?(): Backend[];
+    /** The BB projects a backend is kept for (#1458). Empty, as when left out, it serves every project. */
+    projects?(id: string): readonly string[];
   };
   general(): Promise<GeneralConfig>;
   /** The image a project's boxes of a kind get (049), or image `name` when it covers the kind, from the configuration, or null. */
@@ -773,6 +776,14 @@ interface Named {
   readonly ids: ReadonlySet<string>;
 }
 
+function audienceOf(threadId: string, projectId: string | null): Audience {
+  return ownedByThread(threadId) ? threadAudience(projectId) : EVERYONE;
+}
+
+function reservedFirst<T>(tiers: { readonly reserved: readonly T[]; readonly shared: readonly T[] }): { readonly first: readonly T[]; readonly fallback: readonly T[] } {
+  return tiers.reserved.length ? { first: tiers.reserved, fallback: tiers.shared } : { first: tiers.shared, fallback: [] };
+}
+
 class Unplaced extends BoxError {
   readonly full: readonly string[];
   constructor(code: BoxErrorCode, message: string, full: readonly string[]) {
@@ -913,7 +924,7 @@ export interface ForkRequest {
   readonly who: Actor;
 }
 
-export type ForkAdmission = Pick<ForkRequest, "threadId" | "name" | "backend" | "backendLabel" | "kind" | "gpu"> & { readonly size: MachineSize | null; readonly who?: Actor };
+export type ForkAdmission = Pick<ForkRequest, "threadId" | "projectId" | "name" | "backend" | "backendLabel" | "kind" | "gpu"> & { readonly size: MachineSize | null; readonly who?: Actor };
 
 interface SourceAddresses {
   readonly sourceAddresses: readonly string[];
@@ -1251,10 +1262,10 @@ export class Boxes {
     return box;
   }
 
-  async withheldKinds(waitMs = WITHHELD_READ_WAIT_MS): Promise<readonly UnofferedKind[]> {
-    const ask = this.#deps.backends.withheld?.bind(this.#deps.backends);
-    if (!ask) return [];
-    const offered = () => new Set(this.kinds().map((kind) => kind.id));
+  async withheldKinds(waitMs = WITHHELD_READ_WAIT_MS, audience: Audience = EVERYONE): Promise<readonly UnofferedKind[]> {
+    if (!this.#deps.backends.withheld) return [];
+    const ask = (kind: string, signal: AbortSignal) => this.#withheldFor(kind, audience, signal);
+    const offered = () => new Set(this.kinds(audience).map((kind) => kind.id));
     const unoffered = Object.keys(KIND_INFO).filter((kind) => !offered().has(kind));
     const reading = AbortSignal.timeout(waitMs);
     const answers = await Promise.all(
@@ -1271,13 +1282,29 @@ export class Boxes {
     return answers.filter((answer): answer is UnofferedKind => answer !== null);
   }
 
-  /** The kinds the active backends offer, once each. */
-  kinds(): BoxKind[] {
+  /** The kinds the active backends offer, once each: to `audience`, those of the backends that serve it (#1458). */
+  kinds(audience: Audience = EVERYONE): BoxKind[] {
     const seen = new Set<string>();
-    return this.#deps.backends
-      .kinds()
+    return this.offers(audience)
       .map((offered) => offered.kind)
       .filter((kind) => !seen.has(kind.id) && !!seen.add(kind.id));
+  }
+
+  /** The offers that serve `audience`, its projects' reserved backends first, then the shared ones, each in settings order (#1458). */
+  offers(audience: Audience = EVERYONE): OfferedKind[] {
+    return inAcquireOrder(this.#deps.backends.kinds(), this.#projectsOf, audience);
+  }
+
+  readonly #projectsOf = (backendId: string): readonly string[] => this.#deps.backends.projects?.(backendId) ?? [];
+
+  /** Whether a box of `audience` may be made on a backend (#1458). */
+  serves(backendId: string, audience: Audience): boolean {
+    return servesAudience(this.#projectsOf(backendId), audience);
+  }
+
+  async #withheldFor(kind: string, audience: Audience, signal?: AbortSignal): Promise<readonly WithheldOffer[]> {
+    const withheld = (await this.#deps.backends.withheld?.(kind, signal)) ?? [];
+    return withheld.filter((offer) => this.serves(offer.backend.id, audience));
   }
 
   #askedDevice(name: string | undefined, kind: string, platform: DevicePlatform | null, offers: readonly OfferedKind[]): ModelName | null {
@@ -1393,8 +1420,9 @@ export class Boxes {
     const requested = this.#now();
     const who = input.who ?? UNKNOWN_ACTOR;
     const { kind: wanted, features } = kindRequest(input.kind);
-    const offersOf = () => this.#deps.backends.kinds().filter((candidate) => candidate.kind.id === wanted);
-    const withheld = offersOf().length ? [] : ((await this.#deps.backends.withheld?.(wanted)) ?? []);
+    const audience = audienceOf(input.threadId, input.projectId);
+    const offersOf = () => this.offers(audience).filter((candidate) => candidate.kind.id === wanted);
+    const withheld = offersOf().length ? [] : await this.#withheldFor(wanted, audience);
     const ofKind = offersOf();
     const platform = kindPlatform(wanted, ofKind);
     const askedDevice = this.#askedDevice(input.device, wanted, platform, ofKind);
@@ -1406,8 +1434,9 @@ export class Boxes {
     const everywhere = asksVm ? matching : vmOffersLast(matching);
     if (!ofKind.length && withheld.length) throw withheldRefusal(wanted, withheld, (backend) => this.#providerName(backend));
     if (!ofKind.length) {
-      const kinds = this.kinds().map((kind) => kind.id);
+      const kinds = this.kinds(audience).map((kind) => kind.id);
       if (platform && kinds.length) throw new BoxError("unknown_kind", `No backend offers ${wanted} boxes (${KIND_INFO[wanted]?.label ?? wanted}) now. The kinds you can acquire are: ${kinds.join(", ")}.`);
+      if (!kinds.length && this.kinds(EVERYONE).length) throw new BoxError("unknown_kind", NONE_SERVES_THREAD);
       throw new BoxError(
         "unknown_kind",
         kinds.length
@@ -1435,9 +1464,10 @@ export class Boxes {
     const forAgent = who.is === "agent";
     if (askedGpu === "whole" && !(await this.wholeCards())) throw new BoxError("unsupported", forAgent ? WHOLE_CARDS_OFF.agent : WHOLE_CARDS_OFF.person, WHOLE_CARDS_OFF.agent);
     // The named providers are the only ones tried, in acquire order (044).
-    const namedForKind = input.on !== undefined ? this.#on(input.on, input.kind, everywhere) : null;
+    const namedForKind = input.on !== undefined ? this.#on(input.on, input.kind, everywhere, audience) : null;
     const named = namedForKind && askedDevice ? this.#namedWithDevice(namedForKind, askedDevice, withDevice) : namedForKind;
     const offered = this.#takingGpu(named ? named.offers : withDevice, wanted, askedGpu, gpuAsked, forAgent, gpuFromSetting);
+    const { first, fallback } = named ? { first: offered, fallback: [] } : reservedFirst(tiersFor(offered, this.#projectsOf, audience));
     const role = input.role ?? "box";
     const yours = input.threadId === OPERATOR;
     if (yours) {
@@ -1481,7 +1511,7 @@ export class Boxes {
         }
         const taken = new Set(existing.filter((box) => box.state !== "gone").map((box) => box.name));
         if (input.name !== undefined && taken.has(input.name)) throw new BoxError("invalid_name", `There is a machine called ${input.name} already.`);
-        const claimSpare = async () => (claims ? await this.#claim({ ...input, askedDevice, slim }, offered, features, sized.size, gpuFor, taken, requested, image?.name ?? null) : null);
+        const claimSpare = async (among: readonly OfferedKind[] = first) => (claims ? await this.#claim({ ...input, askedDevice, slim }, [...among], features, sized.size, gpuFor, taken, requested, image?.name ?? null) : null);
         const spare = slotByDefault ? null : await claimSpare();
         if (spare) return { box: spare.box, claimed: spare.from };
         const id = newBoxId(this.#random);
@@ -1509,9 +1539,14 @@ export class Boxes {
           if (fallback) return { box: fallback.box, claimed: fallback.from };
         }
         const placedIn: Record<string, number> = slot ? { "shared-host": this.#now() - createdAt } : {};
-        const chosen = slot ? slot.chosen : await this.#place({ threadId: input.threadId, named, forAgent, gpuFor }, offered, withDevice, withGpu(sized.size, askedGpu), features).catch((error: unknown) => {
-          throw this.#withNoSlotWords(this.#withSharedHint(error, wanted, input.shared, impliedOwnVm, offered), noSlotWords);
-        });
+        const placeAmong = (among: readonly OfferedKind[]) => this.#place({ threadId: input.threadId, named, forAgent, gpuFor }, [...among], withDevice, withGpu(sized.size, askedGpu), features);
+        const placed = slot
+          ? { chosen: slot.chosen }
+          : await this.#placeReservedFirst(first, fallback, placeAmong, claimSpare).catch((error: unknown) => {
+              throw this.#withNoSlotWords(this.#withSharedHint(error, wanted, input.shared, impliedOwnVm, offered), noSlotWords);
+            });
+        if ("spare" in placed) return { box: placed.spare.box, claimed: placed.spare.from };
+        const { chosen } = placed;
         if (tried && !chosen.backend.images?.startsFrom) throw new BoxError("unsupported", `${chosen.backend.label} starts no box from a build.`);
         // A current baked build of the image on the backend chosen starts the box with it (049); otherwise its script runs at start.
         const baked =
@@ -1593,9 +1628,18 @@ export class Boxes {
     this.#forkPlace(request, await this.list(request.threadId), await this.#deps.general());
   }
 
+  /** Why a fork may not go to its thread (#1458): its backend is kept for projects other than the thread's. Null when it may. */
+  forkRefusal(request: Pick<ForkAdmission, "threadId" | "projectId" | "backend" | "backendLabel">): BoxError | null {
+    const audience = audienceOf(request.threadId, request.projectId);
+    if (this.serves(request.backend, audience)) return null;
+    return new BoxError("unsupported", `${keptForOthersWords(request.backendLabel, audience, "a fork there cannot be this thread's box")} Only the person can fork it, as one of their machines.`);
+  }
+
   async #forkRoom(request: ForkAdmission): Promise<OfferedKind> {
     const offered = this.#deps.backends.kinds().find((candidate) => candidate.backend.id === request.backend && candidate.kind.id === request.kind);
     if (!offered) throw new BoxError("unknown_kind", `${request.backendLabel} offers no ${request.kind} boxes now, so ${PRODUCT} cannot fork one there.`);
+    const kept = this.forkRefusal(request);
+    if (kept) throw kept;
     const { backend, kind } = offered;
     const yours = request.threadId === OPERATOR;
     if (yours && request.name !== undefined && !isMachineName(request.name)) {
@@ -2368,7 +2412,7 @@ export class Boxes {
    * named provider that is off is passed over, with its reason in `out`,
    * and `ids` holds every provider named.
    */
-  #on(on: string | readonly string[], kind: string, offered: OfferedKind[]): Named {
+  #on(on: string | readonly string[], kind: string, offered: OfferedKind[], audience: Audience): Named {
     const names = (typeof on === "string" ? [on] : on).map((name) => name.trim()).filter((name) => name.length);
     const others = offered.map((candidate) => this.#providerName(candidate.backend));
     if (!names.length) {
@@ -2383,6 +2427,9 @@ export class Boxes {
       }
       if (matched.length > 1) {
         throw new BoxError("unknown_provider", `"${name}" names ${matched.length} providers: ${matched.map((backend) => backend.id).join(", ")}. Give the ID.`);
+      }
+      if (!this.serves(matched[0]!.id, audience)) {
+        throw new BoxError("unknown_provider", `${keptForOthersWords(`"${name}"`, audience)} ${kind} comes from: ${others.join(", ")}. Leave "on" out for the first with room.`);
       }
       chosen.set(matched[0]!.id, matched[0]!);
     }
@@ -2403,6 +2450,32 @@ export class Boxes {
       }
     }
     return { offers: offered.filter((candidate) => ids.has(candidate.backend.id)), out, ids };
+  }
+
+  /**
+   * Where a thread's box goes (#1458): among its project's reserved
+   * backends first; when none has room, a spare of a shared backend, or the
+   * first shared backend with room.
+   */
+  async #placeReservedFirst(
+    first: readonly OfferedKind[],
+    fallback: readonly OfferedKind[],
+    placeAmong: (among: readonly OfferedKind[]) => Promise<OfferedKind>,
+    claimSpare: (among: readonly OfferedKind[]) => Promise<{ box: BoxRecord; from: string } | null>,
+  ): Promise<{ readonly chosen: OfferedKind } | { readonly spare: { box: BoxRecord; from: string } }> {
+    try {
+      return { chosen: await placeAmong(first) };
+    } catch (error) {
+      if (!fallback.length || !(error instanceof Unplaced)) throw error;
+      const spare = await claimSpare(fallback);
+      if (spare) return { spare };
+      try {
+        return { chosen: await placeAmong(fallback) };
+      } catch (later) {
+        if (!(later instanceof Unplaced)) throw later;
+        throw new Unplaced(error.code === "no_capacity" ? "no_capacity" : later.code, `${error.message} ${later.message}`, [...error.full, ...later.full]);
+      }
+    }
   }
 
   /**

@@ -23,6 +23,8 @@ import { ImageJobs } from "./images.ts";
 import { namedImage, projectImage, withImage } from "../core/project-images.ts";
 import { readableState } from "./monitor.ts";
 import { BoxError, Boxes, SPARES, forgetRefusal, ownedByThread, type BoxRecord, type ThreadAnswer , type ResizeAnswer } from "../core/boxes.ts";
+import { EVERYONE, reservedChecks, type Audience } from "../core/reserved.ts";
+import type { ProjectChoice } from "./config-edits.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, swayKeyboardScript, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
@@ -234,8 +236,8 @@ export interface BbBox {
   forget(threadId: string, ref: string, who: Actor): Promise<void>;
   checkNow(threadId: string, ref: string, signal?: AbortSignal): Promise<BoxRecord>;
   joinAgain(threadId: string, ref: string, options?: { readonly waitMs?: number; readonly signal?: AbortSignal }): Promise<JoinAgain>;
-  /** With each kind's sizes from bb-box's settings. */
-  kinds(): Promise<KindView[]>;
+  /** With each kind's sizes from bb-box's settings: to `audience`, only those of the backends that serve it (#1458). */
+  kinds(audience?: Audience): Promise<KindView[]>;
   /** The projects' images a box can choose (049), marked as `project`'s or not, with their projects' names and builds. */
   imageOptions(project: string | null): Promise<ImageOptionView[]>;
   backendViews(): BackendView[];
@@ -259,6 +261,8 @@ export interface BbBox {
   ancestorStorages(threadId: string, limit: number, signal?: AbortSignal): Promise<{ threadId: string; hostId: string; path: string }[]>;
   /** A thread's project, for boxes the panel or the CLI acquires. */
   projectOf(threadId: string): Promise<string | null>;
+  /** BB's projects, by ID and name, for the projects a backend is kept for (#1458). */
+  projects(): Promise<readonly ProjectChoice[]>;
   /**
    * Starts a child thread of `threadId` on a box's BB machine, with the
    * parent's project, in a worktree of the project's repository there. The
@@ -704,6 +708,8 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   await configuration.configure();
   reloadTimes.phase("configuration and backends");
   const general = async () => configuration.general();
+
+  const listProjects = async (): Promise<readonly ProjectChoice[]> => ((await bb.sdk.projects.list({ includePersonal: true })) as { id: string; name: string }[]).map(({ id, name }) => ({ id, name }));
 
   const projectOf = async (threadId: string): Promise<string | null> => {
     try {
@@ -1590,9 +1596,9 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       }
       return options.sort((a, b) => Number(b.mine) - Number(a.mine) || a.name.localeCompare(b.name));
     },
-    kinds: async () => {
+    kinds: async (audience = EVERYONE) => {
       const config = await general();
-      const offered = backends.kinds();
+      const offered = boxes.offers(audience);
       return kindViews(offered, config.sizes, await boxes.spareCounts(), config.spares, await boxes.typicalReady(), await boxes.spareReadyByBackend(), (id) => backends.driverLabel(id), await gpuRooms(offered), boxes.sharedHostsByKind(), config.gpuWhenNotAsked);
     },
     async providerProfile(backendId, signal) {
@@ -1695,6 +1701,12 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       sections.push(...reports);
       const tailnet = backends.tailnet();
       if (tailnet) sections.push({ title: "Tailnet", report: await tailnetDoctor(tailnet, backends.installId, signal) });
+      const kept = configuration.document.backends.map((backend) => ({ id: backend.id, label: backends.statuses().find((status) => status.id === backend.id)?.label ?? backend.id, projects: backend.projects ?? [] }));
+      if (kept.some((backend) => backend.projects.length)) {
+        const existing = await listProjects().then((projects) => new Map(projects.map((project) => [project.id, project.name])), () => null);
+        const checks = reservedChecks(kept, existing);
+        sections.push({ title: "Projects", report: { ok: true, summary: "The backends kept for certain projects, which only those projects' threads see.", checks, notes: [] } });
+      }
       const offers = offerChecks(backends.kinds());
       if (offers.length) {
         sections.push({
@@ -1826,6 +1838,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return found;
     },
     projectOf,
+    projects: listProjects,
     async runsOn(threadId, signal) {
       // A thread's host does not change once it has an environment, and the panel asks on every update.
       let hostId = threadHosts.get(threadId);

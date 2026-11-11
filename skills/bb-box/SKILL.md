@@ -24,6 +24,11 @@ tools do not.
 where it is built ahead, which its boxes claim at once (#440). The
 [kinds reference](../../docs/reference/kinds.md) describes every kind.
 
+`box_list` lists only the providers this thread's project may use. A
+provider the user kept for certain projects comes first for their threads,
+and is not listed for any other thread; naming it in `on` is refused. Ask
+the user rather than look for a way round it.
+
 - A kind's providers say what their boxes are, in brackets after each
   name, where that differs: VMs, containers, or an SSH host pool's
   physical machines, each lent whole with its own cores, memory and, on a

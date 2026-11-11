@@ -19,6 +19,7 @@ export const CHECKS = {
   "config.<path>": { name: "Settings", from: ["bb-box"], what: `A part of ${PRODUCT}'s configuration that needs fixing, by its path, such as general.defaultKind.` },
   "offers.<kind>": { name: "Offers of <kind>", from: ["bb-box"], what: "Where several backends offer a kind: they agree on what the kind promises, and each has the features it requires." },
   "overlap.<backend>.<backend>": { name: "<backend> and <backend>", from: ["bb-box"], what: "Two backends whose boxes could take the same guest IDs or addresses." },
+  "projects.<backend>": { name: "Projects of <backend>", from: ["bb-box"], what: "A backend kept for certain BB projects (#1458): the projects it serves, and a warning when none of them is still in BB, so no thread can use it." },
   "warm.<kinds>": { name: "Warm pool of <kinds>", from: ["bb-box"], what: "A warm pool that has fewer ready boxes than its count asks for, and no room for another." },
   "sizes.<kind>.<preset>": { name: "Box sizes", from: ["bb-box"], what: "A Linux preset with less than 2 GiB memory, so its boxes can run out of memory as they become BB machines." },
   "box-files": { name: "Files for every box", from: ["bb-box"], what: `The files ${PRODUCT} writes into each box as it joins BB, and whether the last write worked.` },

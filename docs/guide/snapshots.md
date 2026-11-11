@@ -216,6 +216,8 @@ It never acts as its source. BB Box makes the copy unable to start on its own: i
 
 A fork given its source's name still resets: the name plays no part. What a fork still holds is everything else on the disk: a project's secrets, a signed-in browser, a keychain and cloud credentials in files. It is a new BB identity, not a cleaned box. It starts fresh: no apps are running, even from a snapshot with memory: it has what the box's disk held, which the flush before each take brings up to date.
 
+A fork stays on its source's backend. Where that backend is [kept for certain projects](settings.md#backends-kept-for-projects), the fork goes only to a thread in one of them, and a fork into any other thread is refused, as its check says. You can still fork it as one of your machines, as a kept snapshot's fork always is.
+
 Its page's facts say where it came from: "Forked from amber-fox, "before the migration" (yesterday 23:39)". Its log starts with the same words, and its source's log says `fork-asked`, then `forked` or `fork-failed`. While the fork is made, its snapshot cannot be deleted, and its source's take, restore, stop and release wait for the copy.
 
 Who forks:

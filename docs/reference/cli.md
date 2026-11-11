@@ -7,7 +7,7 @@
 | Command | What it does |
 | --- | --- |
 | [`bb box doctor`](#bb-box-doctor) | Check each backend's settings and host, and say how to fix what is wrong. |
-| [`bb box kinds`](#bb-box-kinds) | List the kinds of box the active backends offer. |
+| [`bb box kinds`](#bb-box-kinds) | List the kinds of box the active backends offer. In a thread, or with `--thread`, only those of the backends that serve its project. |
 | [`bb box list`](#bb-box-list) | List a thread's boxes, or every box with `--all`. |
 | [`bb box acquire`](#bb-box-acquire) | Acquire a box for a thread and wait until it answers. |
 | [`bb box status`](#bb-box-status) | Show one box, checking its power state with the backend. |
@@ -44,7 +44,7 @@
 | [`bb box backend types`](#bb-box-backend-types) | List the types of backend BB Box has: what each is for, what setting it up needs, the kinds it makes, and its setup guide and scripts in BB Box's repository. |
 | [`bb box backend fields`](#bb-box-backend-fields) | List a backend type's fields, or a backend's with their values now: each key, what it takes, whether it is a secret, and the first line of its help. Secrets show only as set or not. |
 | [`bb box backend add`](#bb-box-backend-add) | Add a backend, on unless `--off`, through the same checked save as the settings page, then run its checks. Secrets come only from a dotenv file or stdin. Exits 2 when it saved and its checks failed. |
-| [`bb box backend set`](#bb-box-backend-set) | Change a backend: its fields, secrets, switch, name or warm boxes, through the same checked save as the settings page, then run its checks. Exits 2 when it saved and its checks failed. |
+| [`bb box backend set`](#bb-box-backend-set) | Change a backend: its fields, secrets, switch, name, warm boxes or the projects it is kept for, through the same checked save as the settings page, then run its checks. Exits 2 when it saved and its checks failed. |
 | [`bb box backend remove`](#bb-box-backend-remove) | Remove a backend: its settings, its secrets, which cannot be got back, and its warm boxes. Refused while it has boxes, as on the settings page. Asks for `--yes`. |
 | [`bb box backend host add`](#bb-box-backend-host-add) | Add a host to a backend whose hosts are set up alike, such as a Mac to Tart. The SSH host pool lists its machines in its machines field instead: bb box backend set ssh-pool `--add-line`. |
 | [`bb box backend host set`](#bb-box-backend-host-set) | Change a backend's host: its fields, or its switch. Off, it takes no new boxes, and its boxes keep working. |
@@ -86,15 +86,16 @@ Options:
 
 ## bb box kinds
 
-List the kinds of box the active backends offer.
+List the kinds of box the active backends offer. In a thread, or with `--thread`, only those of the backends that serve its project.
 
 ```text
 Usage:
-  bb box kinds [--json]
+  bb box kinds [--thread <value>] [--json]
 
 Options:
-  --json      Print JSON.
-  --help, -h  Show this help and exit
+  --thread <value>  The thread whose boxes to use. Defaults to the thread this runs in.
+  --json            Print JSON.
+  --help, -h        Show this help and exit
 ```
 
 ## bb box list
@@ -130,7 +131,7 @@ Options:
   --cores <1-1024>             Cores, for a custom size. Parts left out come from the preset.
   --memory-gib <1-65536>       Memory in GiB, for a custom size: at least 2 for a Linux box.
   --disk-gib <1-65536>         Root disk in GiB, for a custom size. Presets keep the kind's own disk.
-  --on <value>                 The provider to use, from bb box kinds, such as "Docker on devpc", or several with commas between (pve1,devpc) for the first with room among them: only they are tried. Without it, the first with room.
+  --on <value>                 The provider to use, from bb box kinds, such as "Docker on devpc", or several with commas between (pve1,devpc) for the first with room among them: only they are tried. Without it, the first with room: those kept for the thread's project first, then the shared ones. One kept for other projects is refused.
   --image <value>              The image to start from: a project's image, from bb box image list, or "standard". The thread's project's image for the kind by default.
   --device <value>             For an ios or android box, the device it boots, such as iPhone 18 Pro or Pixel Fold. The kind's first by default.
   --no-slim                    For an ios box: its iOS Simulator keeps every service, for an app that uses widgets, Siri, iCloud, Health, Wallet or the like. Slimmed by default.
@@ -237,7 +238,7 @@ Options:
   --cores <1-1024>             Cores, for a custom size. Parts left out come from the preset.
   --memory-gib <1-65536>       Memory in GiB, for a custom size: at least 2 for a Linux box.
   --disk-gib <1-65536>         Root disk in GiB, for a custom size. Presets keep the kind's own disk.
-  --on <value>                 The provider to use, from bb box kinds, such as "Docker on devpc", or several with commas between (pve1,devpc) for the first with room among them: only they are tried. Without it, the first with room.
+  --on <value>                 The provider to use, from bb box kinds, such as "Docker on devpc", or several with commas between (pve1,devpc) for the first with room among them: only they are tried. Without it, the first with room: those kept for the thread's project first, then the shared ones. One kept for other projects is refused.
   --name <value>               Its name, which is also its BB machine's: a lower-case letter first, then letters, digits and "-". BB Box picks one when left out.
   --no-wait                    Return once the box is recorded.
   --help, -h                   Show this help and exit
@@ -689,7 +690,7 @@ Add a backend, on unless `--off`, through the same checked save as the settings 
 
 ```text
 Usage:
-  bb box backend add <type> [--json] [--check] [--revision <n>] [--operation <value>] [--field <key=value>]... [--field-file <key=path>]... [--unset <key>]... [--add-line <key=line>]... [--remove-line <key=text>]... [--secret-file <field=path>]... [--clear-secret <field>]... [--secret <field=VARIABLE>]... [--secrets-file <path>] [--secrets <line>] [--on] [--off] [--label <value>] [--warm <kind=count>]... [--no-doctor] [--id <value>]
+  bb box backend add <type> [--json] [--check] [--revision <n>] [--operation <value>] [--field <key=value>]... [--field-file <key=path>]... [--unset <key>]... [--add-line <key=line>]... [--remove-line <key=text>]... [--secret-file <field=path>]... [--clear-secret <field>]... [--secret <field=VARIABLE>]... [--secrets-file <path>] [--secrets <line>] [--on] [--off] [--label <value>] [--warm <kind=count>]... [--projects <names>] [--no-doctor] [--id <value>]
 
 Arguments:
   <type>  The type, from bb box backend types, such as docker or ssh-pool. (required)
@@ -713,6 +714,7 @@ Options:
   --off                       Turn it off: it makes no new boxes, and its boxes keep working.
   --label <value>             Its name in the settings and in box_list, such as Docker on build-1. Empty gives back the type's name.
   --warm <kind=count>         Ready boxes of a kind to keep waiting here, such as linux=1; 0 keeps none. (repeatable)
+  --projects <names>          The BB projects it is kept for, by name or ID, separated by commas. Only their threads see it and get boxes, spares and forks from it, before the shared backends. Empty serves every project, as by default.
   --no-doctor                 Do not run the backend's checks after saving.
   --id <value>                Its ID, for a second backend of a type that allows several, such as docker:build-1 for another Docker host or namespace:team-b for another Namespace workspace, or just build-1 or team-b. The type by default.
   --help, -h                  Show this help and exit
@@ -720,11 +722,11 @@ Options:
 
 ## bb box backend set
 
-Change a backend: its fields, secrets, switch, name or warm boxes, through the same checked save as the settings page, then run its checks. Exits 2 when it saved and its checks failed.
+Change a backend: its fields, secrets, switch, name, warm boxes or the projects it is kept for, through the same checked save as the settings page, then run its checks. Exits 2 when it saved and its checks failed.
 
 ```text
 Usage:
-  bb box backend set <backend> [--json] [--check] [--revision <n>] [--operation <value>] [--field <key=value>]... [--field-file <key=path>]... [--unset <key>]... [--add-line <key=line>]... [--remove-line <key=text>]... [--secret-file <field=path>]... [--clear-secret <field>]... [--secret <field=VARIABLE>]... [--secrets-file <path>] [--secrets <line>] [--on] [--off] [--label <value>] [--warm <kind=count>]... [--no-doctor]
+  bb box backend set <backend> [--json] [--check] [--revision <n>] [--operation <value>] [--field <key=value>]... [--field-file <key=path>]... [--unset <key>]... [--add-line <key=line>]... [--remove-line <key=text>]... [--secret-file <field=path>]... [--clear-secret <field>]... [--secret <field=VARIABLE>]... [--secrets-file <path>] [--secrets <line>] [--on] [--off] [--label <value>] [--warm <kind=count>]... [--projects <names>] [--no-doctor]
 
 Arguments:
   <backend>  The backend's ID, from bb box backend list. (required)
@@ -748,6 +750,7 @@ Options:
   --off                       Turn it off: it makes no new boxes, and its boxes keep working.
   --label <value>             Its name in the settings and in box_list, such as Docker on build-1. Empty gives back the type's name.
   --warm <kind=count>         Ready boxes of a kind to keep waiting here, such as linux=1; 0 keeps none. (repeatable)
+  --projects <names>          The BB projects it is kept for, by name or ID, separated by commas. Only their threads see it and get boxes, spares and forks from it, before the shared backends. Empty serves every project, as by default.
   --no-doctor                 Do not run the backend's checks after saving.
   --help, -h                  Show this help and exit
 ```

@@ -12,6 +12,7 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { z } from "zod";
 import { BoxError, OPERATOR, SPARES, describeErrorForAgent, errorForAgent, isAcquiring, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
+import { NONE_SERVES_THREAD, threadAudience } from "../core/reserved.ts";
 import { boxFileSum, readStream, settlePart, writePart, type FileSum } from "../core/copy.ts";
 import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
@@ -484,7 +485,7 @@ export function acquireParameters(wholeCards: boolean) {
     on: z
       .union([z.string().min(1), z.array(z.string().min(1))])
       .optional()
-      .describe("Where the box goes, from box_list: a provider such as Docker on devpc, or a list of them for the first with room among them. Leave it out for the first with room."),
+      .describe("Where the box goes, from box_list: a provider such as Docker on devpc, or a list of them for the first with room among them. Leave it out for the first with room: the providers kept for this thread's project first, then the shared ones. A provider kept for other projects is refused."),
     image: z
       .string()
       .min(1)
@@ -664,11 +665,13 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
     description: "List this thread's boxes and the kinds of box you can acquire.",
     presentation: { label: { pending: "Listing boxes", completed: "Listed boxes" } },
     parameters: z.object({}),
-    async execute(_params, { threadId }) {
+    async execute(_params, { threadId, projectId }) {
       try {
         const id = thread(threadId);
-        const withheld = await boxes.withheldKinds();
-        const [list, kinds, machine, images] = await Promise.all([boxes.list(id), app.kinds(), app.runsOn(id), app.projectOf(id).catch(() => null).then((project) => app.imageOptions(project))]);
+        const project = projectId ?? (await app.projectOf(id).catch(() => null));
+        const audience = threadAudience(project);
+        const withheld = await boxes.withheldKinds(undefined, audience);
+        const [list, kinds, machine, images] = await Promise.all([boxes.list(id), app.kinds(audience), app.runsOn(id), app.imageOptions(project)]);
         const lines: string[] = [];
         // The box this thread runs on comes first, unless it is the thread's own and listed below (036).
         if (machine && !list.some((box) => box.id === machine.id)) {
@@ -678,7 +681,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         lines.push(
           kinds.length
             ? `Kinds:\n${kinds.map((kind) => `- ${kind.id}: ${kind.label}${kind.gpu ? " (GPU)" : ""}. ${kind.description} Sizes: ${kindSizesText(kind)}. ${[adminText(kind), dockerText(kind), kindResizeText(kind), kindSnapshotText(kind)].filter(Boolean).join(" ")} On: ${offersText(kind)}.${placementText(kind)}${devicesText(kind)}${gpuRoomText(kind, kinds)}${gpuPartsText(kind)}${cardReachText(kind)}${imagesText(images, kind.id)}`).join("\n")}`
-            : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
+            : boxes.kinds().length
+              ? NONE_SERVES_THREAD
+              : "No backend is set up, so there are no kinds. With the user's go-ahead, bb box setup docker sets up Docker on the machine that runs BB, as the Box panel's first run does; or the user sets a backend up in BB Box's settings.",
         );
         if (withheld.length) lines.push(`Kinds you cannot acquire now:\n${withheld.map((kind) => `- ${kind.kind}: ${kind.label}. ${kind.words}`).join("\n")}`);
         const hints = list.length

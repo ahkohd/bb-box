@@ -24,6 +24,7 @@ import { MachineCard, useMachineHosts, type Machines } from "./settings-docker-h
 import { machineIdOf } from "./settings-machine-docker.ts";
 import { drafts } from "./settings-drafts.ts";
 import { BackendImages } from "./settings-images.tsx";
+import { BackendProjects } from "./settings-backend-projects.tsx";
 import { GpusGroup } from "./settings-gpus.tsx";
 import { Card, Group, NotHere, PageHeader, ProviderGlyph, RowControl, RowNote, Rows, SavedTick } from "./settings-parts.tsx";
 import { backendAt, backendEnabledPath, backendLabelPath, candidateOf, hostPath, type Path, type PathEdit } from "./settings-paths.ts";
@@ -545,6 +546,7 @@ function BackendEditor({ config }: { config: BackendConfig }) {
       </Group>
       {machine ? <MachineCard config={config} machines={machines} onCheck={runCheck} checking={running} /> : null}
       <InUseCard state={form.state} config={form.config} />
+      <BackendProjects config={form.config} label={label} />
       <FieldCards form={form} groups={groups} forced={forced} custom={(group) => (group.id === "gpus" ? <GpusGroup form={form} title={group.title} fields={group.fields} /> : null)} />
       <HostsSection form={form} forced={forced} onRemove={setRemovingHost} />
       <BackendImages backend={config.id} />

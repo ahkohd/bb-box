@@ -877,3 +877,34 @@ test("071 unit 7 round 2, Astra 4: a fork whose card the backend refuses keeps t
   assert.match(errorForAgent(fork) ?? "", /^Not forked: no card has room\. Fork it with gpu none, or ask the user\. BB Box copied nothing\. BB Box released it, so nothing of it acts as /);
   assert.doesNotMatch(errorForAgent(fork) ?? "", /release a desktop/i);
 });
+
+test("a fork of a box or a snapshot on a backend kept for other projects goes to no thread outside them, the check refusing as the fork would; the person may still fork it as one of their machines (#1458)", async () => {
+  const forks = forkWorld();
+  const { state } = forks;
+  const box = await readyBox(state);
+  await state.snapshots.take(COMMAND, box, standing(box), { name: "set up" });
+  state.keptFor = ["proj_work"];
+  const agent: Caller = { is: "agent", threadId: THREAD };
+  const keptForOthers = /is kept for certain projects, and this thread('s project is not one of them| has no project), so a fork there cannot be this thread's box\. Only the person can fork it, as one of their machines\./;
+
+  for (const projectId of [null, "proj_home"]) {
+    assert.match((await rejection(state.snapshots.checkFork(agent, box, standing(box), "set up", { projectId }))).message, keptForOthers);
+    assert.match((await rejection(state.snapshots.fork(agent, box, standing(box), "set up", { projectId }))).message, keptForOthers);
+    assert.match((await rejection(state.snapshots.checkForkOfBox(agent, box, standing(box), { projectId }))).message, keptForOthers);
+  }
+  assert.match((await rejection(state.snapshots.fork(COMMAND, box, standing(box), "set up"))).message, keptForOthers, "the person's fork into the box's own thread");
+  assert.deepEqual(state.store.operations({ box: box.id, kind: "fork" }), [], "nothing recorded");
+
+  const mine = await forked(state, (await state.snapshots.fork(COMMAND, box, standing(box), "set up", { asMachine: true })).box);
+  assert.equal(mine.threadId, OPERATOR);
+  assert.equal(mine.state, "ready", mine.error ?? "");
+
+  const kept = (await state.snapshots.take(COMMAND, box, standing(box), { name: "kept" })).snapshot!;
+  state.store.updateRecord(kept.id, { keptUntil: state.now + 30 * 24 * 60 * 60_000, keptAt: state.now, owner: "person" });
+  const keptCheck = await state.snapshots.checkFork(COMMAND, box, standing(box), "kept");
+  assert.equal(keptCheck.threadId, OPERATOR, "a kept snapshot's fork is the person's machine, which may be on any backend");
+
+  const work = await forked(state, (await state.snapshots.fork(agent, box, standing(box), "set up", { projectId: "proj_work" })).box);
+  assert.equal(work.threadId, THREAD, "a thread of the project the backend is kept for may fork there");
+  assert.equal(work.projectId, "proj_work");
+});

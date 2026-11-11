@@ -564,7 +564,7 @@ const BACKENDS: BackendView[] = [
 /** RPC handlers over one thread's boxes, recording each change. */
 const NOT_READ: MonitorReach = { is: "not-running", machineId: null, why: null };
 
-function server(initial: BoxView[], options: { cards?: Record<string, SettingsCards>; entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); holdCards?: Promise<void>; cardsFail?: boolean; cardFailed?: boolean; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview | Promise<KeepPreview>; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
+function server(initial: BoxView[], options: { projects?: { id: string; name: string }[]; cards?: Record<string, SettingsCards>; entries?: (box: BoxView) => Partial<BoxEntry>; busy?: Busy; monitor?: MonitorReach; holder?: ThreadOnBox; deviceFailed?: BoxPageState["deviceFailed"]; rooms?: Record<string, string> | ((size: unknown) => Record<string, string>); holdCards?: Promise<void>; cardsFail?: boolean; cardFailed?: boolean; profileFailsOnce?: Set<string>; kinds?: KindView[]; failWith?: string; inUse?: ThreadOnBox[]; machines?: MachineEntry[]; runsOn?: PanelState["runsOn"]; imageOffer?: boolean; images?: ImageOptionView[]; config?: Partial<ConfigState>; checkWith?: CheckResult; applyWith?: ApplyResult; savedWith?: Problem[]; dockerHosts?: DockerHostView[]; setups?: MachineSetup[]; access?: MachineAccessProblem; desktopOnDemand?: PanelState["desktopOnDemand"]; desktopProblem?: PanelState["desktopProblem"]; sharp?: boolean | null; rebuildable?: ImagesStatus["images"]; progress?: ImagesStatus["progress"]; failures?: ImagesStatus["failures"]; refusal?: string; video?: boolean; videoByDefault?: boolean; switching?: { on: boolean }; resize?: (input: ResizeInput) => ResizeResult; deviceClipboard?: string; snapshots?: BoxSnapshotsView; restorePreview?: RestorePreview; restoreAnswers?: SnapshotChange[]; takeCheck?: { check: TakeCheck | null; refusal: string | null }; forkPreview?: (asMachine: boolean) => ForkPreview; forkAnswer?: ForkStarted; keepPreview?: (input: { days?: number; until?: string }) => KeepPreview | Promise<KeepPreview>; tab?: () => SnapshotsTabView | Promise<SnapshotsTabView>; bulkCheck?: (input: { snapshots: string[]; change: "keep" | "delete" }) => BulkCheck } = {}) {
   let boxes = [...initial];
   let machines = [...(options.machines ?? [])];
   let dockerHosts = [...(options.dockerHosts ?? [])];
@@ -683,6 +683,7 @@ function server(initial: BoxView[], options: { cards?: Record<string, SettingsCa
       return result(machines.find((candidate) => candidate.box.id === ref)?.box ?? null);
     },
     kinds: () => options.kinds ?? KINDS,
+    projects: () => options.projects ?? [],
     rooms: ({ kind, size }) => {
       changes.push(`rooms ${kind}${size ? ` ${JSON.stringify(size)}` : ""}`);
       const blocked = typeof options.rooms === "function" ? options.rooms(size) : (options.rooms ?? {});
@@ -2618,6 +2619,28 @@ test("the settings overview shows an honest status, each backend with its state 
   expect(slot.getByRole("switch", { name: "Monitor: machine status in BB's sidebar" }).getAttribute("aria-checked")).toBe("true");
   fireEvent.click(slot.getByRole("button", { name: /^Your machines/ }));
   expect(slot.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "machines" } });
+});
+
+test("a backend's page lists BB's projects by name, saves the IDs of those it is kept for at once, and warns when none of them is still in BB (#1458)", async () => {
+  const projects = [{ id: "proj_work", name: "Work" }, { id: "proj_home", name: "Home" }];
+  const { handlers, changes } = server([], { projects });
+  const slot = settings(handlers, "#backend/fake");
+
+  expect(await slot.findByRole("switch", { name: "Keep Fake host for Work" })).toBeTruthy();
+  expect(slot.getByText("Every project")).toBeTruthy();
+  fireEvent.click(slot.getByRole("switch", { name: "Keep Fake host for Work" }));
+
+  await waitFor(() => expect(changes.filter((change) => change.startsWith("apply "))).toHaveLength(1));
+  const saved = JSON.parse(changes.at(-1)!.slice(changes.at(-1)!.indexOf("{")));
+  expect(saved.backends[0].projects).toEqual(["proj_work"]);
+  expect(await slot.findByText("1 project only")).toBeTruthy();
+  cleanup();
+
+  const document: ConfigDocument = { schema: 1, revision: 3, backends: [{ id: "fake", type: "fake", enabled: true, fields: { token: { set: true } }, projects: ["proj_gone"] }], kinds: {}, general: {} };
+  const gone = settings(server([], { projects, config: { document } }).handlers, "#backend/fake");
+  expect(await gone.findByText("No project: none of its projects is still in BB")).toBeTruthy();
+  expect(gone.getByText("A project no longer in BB")).toBeTruthy();
+  expect(gone.queryByText("proj_gone")).toBeNull();
 });
 
 test("status says a check's age, never ready for a pass over an hour old, and Check all runs every backend that is on", async () => {

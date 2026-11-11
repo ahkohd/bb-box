@@ -57,6 +57,8 @@ A secret, such as a password or an API token, never shows its value. Its field s
 
 A backend with NVIDIA cards, Proxmox LXC or Docker, has a GPUs section: boxes per card, whole cards, and the GPU memory a new box needs, then the list of its cards and the boxes on each. Whole cards is a switch, and saves at once; the rest waits for **Save**. These set limits and defaults only, and a lower limit stops nothing that runs. See [GPU boxes](gpu-boxes.md#settings).
 
+Projects lists your BB projects, each with a switch. While none is on, every project uses the backend, as a new backend does. Turn on the projects a backend is for, such as a work account billed to your employer or a server bought for one project, to keep it for them. Each switch saves at once. See [backends kept for projects](#backends-kept-for-projects).
+
 A backend with several hosts lists them under Hosts. A new box goes to the first host in the list with room. Each host has its own switch.
 
 A backend with standard images lists them under Images, each with its state and age, and **Try again** on one whose last rebuild failed. **Open the Images page** goes to all of them.
@@ -64,6 +66,19 @@ A backend with standard images lists them under Images, each with its state and 
 Select **Check** to run the backend's health checks with the settings in the form, without saving them. Each check says what is wrong and how to fix it.
 
 Select **Save**. Changes reach new boxes; boxes already made keep theirs.
+
+### Backends kept for projects
+
+A backend kept for projects serves only threads in those projects:
+
+- A thread in one of them uses the backends kept for its project first, in the order of the backend list, then the backends every project shares. Work boxes go to work's backends before personal ones.
+- When those backends are full, the thread's box goes to a shared backend.
+- A thread in another project, or in no project, never sees the backend. Its kinds are not listed to that thread, its boxes never go there, and an agent that names it is refused.
+- Spare and warm boxes on the backend go only to threads in its projects. Spares are made in the order of the backend list, as before, so put a shared backend first if every thread should have them.
+- A fork of a box or a snapshot on the backend goes only to a thread in its projects. You can still fork it as one of your machines.
+- You can still make your own machines on any backend.
+
+`bb box doctor` lists each backend's projects. It warns when none of them is still in BB, as after the projects were deleted: no thread can use that backend until you choose its projects again or let every project use it.
 
 ### Adding a backend
 
@@ -149,6 +164,6 @@ If someone saves the settings while you are changing a form, BB Box reloads the 
 
 ## From the command line
 
-You can see and change the same settings from a terminal. `bb box backend add`, `bb box backend set` and `bb box backend remove` change a backend, `bb box kind set` a kind, and `bb box option set` the options under Options. Each makes one checked save, as the page does: it is refused for the same reasons, and it says what it changed and how the backend's checks went. `bb box config show` prints the whole configuration, and `bb box config apply` saves a whole file. `bb box doctor` runs every health check. See the [command-line reference](../reference/cli.md) and [health checks](../reference/checks.md).
+You can see and change the same settings from a terminal. `bb box backend add`, `bb box backend set` and `bb box backend remove` change a backend, and `bb box backend set <id> --projects "Work, Client"` keeps one for projects by name, or for every project again with `--projects ""`, `bb box kind set` a kind, and `bb box option set` the options under Options. Each makes one checked save, as the page does: it is refused for the same reasons, and it says what it changed and how the backend's checks went. `bb box config show` prints the whole configuration, and `bb box config apply` saves a whole file. `bb box doctor` runs every health check. See the [command-line reference](../reference/cli.md) and [health checks](../reference/checks.md).
 
 To have an agent set bb-box up for you, ask it in a thread, such as "set up Docker boxes here". bb-box gives agents the `bb-box-setup` skill, which says what to ask you, which scripts to run where, how to take a secret from you without seeing it, and how to prove it worked with a first box.

@@ -108,6 +108,7 @@ export interface SnapshotBoxes {
   machineBack(box: BoxRecord): boolean;
   fork(request: ForkRequest): Promise<BoxRecord>;
   admitFork(request: ForkAdmission): Promise<void>;
+  forkRefusal?(request: Pick<ForkAdmission, "threadId" | "projectId" | "backend" | "backendLabel">): BoxError | null;
   wholeCards?(): Promise<boolean>;
   readUserspace?(box: BoxRecord, signal?: AbortSignal, started?: boolean): Promise<BoxRecord>;
 }
@@ -246,6 +247,11 @@ interface ForkConsent {
   readonly box: string;
   readonly threadId: string;
   readonly name: string | null;
+}
+
+function forkProjectOf(caller: Caller, input: ForkInput, source: Pick<BoxRecord, "projectId"> | null): string | null {
+  if (input.projectId !== undefined) return input.projectId;
+  return caller.is === "agent" ? null : (source?.projectId ?? null);
 }
 
 function forkConsentOf(operation: Pick<SnapshotOperation, "consent">): ForkConsent | null {
@@ -2560,7 +2566,7 @@ export class Snapshots {
         made = await this.#deps.boxes.fork({
           id: forkId,
           threadId: prepared.threadId,
-          projectId: prepared.threadId === OPERATOR ? null : (input.projectId ?? null),
+          projectId: prepared.threadId === OPERATOR ? null : forkProjectOf(caller, input, prepared.box),
           ...(input.name !== undefined ? { name: input.name } : {}),
           backend: backend.id,
           backendLabel: backend.label,
@@ -2612,6 +2618,7 @@ export class Snapshots {
     const asMachine = caller.is !== "agent" && (input.asMachine === true || box.threadId === OPERATOR);
     await this.#deps.boxes.admitFork({
       threadId: asMachine ? OPERATOR : caller.is === "agent" ? caller.threadId : box.threadId,
+      projectId: asMachine ? null : forkProjectOf(caller, input, box),
       ...(input.name !== undefined ? { name: input.name } : {}),
       backend: backend.id,
       backendLabel: backend.label,
@@ -2672,6 +2679,8 @@ export class Snapshots {
     if (!plan.fork.ok || !plan.fork.size) throw new BoxError("unsupported", `${PRODUCT} cannot fork ${quoted(target)} of box ${name}: ${plan.fork.why ?? `${backend.label} refused it.`}`);
     const asMachine = caller.is !== "agent" && (input.asMachine === true || !source || source.threadId === OPERATOR || isKept(target));
     const threadId = asMachine ? OPERATOR : caller.is === "agent" ? caller.threadId : source!.threadId;
+    const kept = this.#deps.boxes.forkRefusal?.({ threadId, projectId: asMachine ? null : forkProjectOf(caller, input, source), backend: backend.id, backendLabel: backend.label });
+    if (kept) throw kept;
     return { target, box: source, backend, plan, threadId, size: plan.fork.size };
   }
 

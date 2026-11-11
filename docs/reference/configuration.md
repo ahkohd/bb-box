@@ -92,6 +92,7 @@ Each backend's entry, in the order acquire tries them. Its ID is its type, or `<
 | `enabled` | `boolean` |  | Off, the backend takes no new boxes; its boxes keep working. |
 | `fields` | `Readonly<Record<string, FieldValue \| SecretState>>` |  | What the operator set. Stored without secrets; shown with each as its state. |
 | `warm` | `Readonly<Record<string, number>>` |  | Ready guests to keep, by kind. |
+| `projects` | `readonly string[]` |  | The BB projects it is kept for, by their IDs (#1458). Left out or empty, it serves every project. With a list, it makes boxes, spares and forks only for threads in those projects, before the backends every project shares, and threads elsewhere, or in no project, never see it. Your own machines may still be made on it. |
 | `hosts` | `readonly HostConfig[]` |  | For a driver with host fields. |
 
 A host of a backend with hosts:
