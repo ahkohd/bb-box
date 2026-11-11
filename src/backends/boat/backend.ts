@@ -3,7 +3,7 @@ import { PRODUCT } from "../../brand.ts";
 import { readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
+import { joinScript, leaveScript, type Tailnet } from "../../core/tailnet.ts";
 import { IDENTITY_TOOL, IDENTITY_VARIABLE, withDesktopForkSafety } from "../../core/identity.ts";
 import { CUA_DRIVER } from "../docker/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
@@ -922,11 +922,13 @@ export class BoatBackend implements Backend {
 
   async #fromSaved(ref: SnapshotRef, box: BoxIdentity, ways: FromSaved, signal?: AbortSignal): Promise<Guest> {
     const kind = this.#kind(box.kind);
+    const name = this.#savedNameIfOwn(ref);
+    if (name === null) throw ways.refused(`${this.#savedNameOf(ref) || ref.id} is not a saved snapshot of ${this.label}'s on this install, so ${PRODUCT} does not make a box from it here. Restore it on the backend that took it.`);
     const limits = await this.#readLimits(signal, true);
     const refused = savedRefusal(limits);
     if (refused) throw ways.refused(refused);
-    const saved = await this.#api.savedSnapshot(ref.ref, signal);
-    if (!saved || saved.status !== "ready") throw ways.refused(saved ? `boat's saved snapshot ${ref.ref} is ${saved.status}.` : `boat has no saved snapshot ${ref.ref}.`);
+    const saved = await this.#api.savedSnapshot(name, signal);
+    if (!saved || saved.status !== "ready") throw ways.refused(saved ? `boat's saved snapshot ${name} is ${saved.status}.` : `boat has no saved snapshot ${name}.`);
     const allowed = (each: SizeShape) => limits.sizes.find((size) => size.size === each.size)?.available ?? true;
     const shape = (saved.size ? shapeOf(saved.size) : null) ?? sizeFor(box.size, allowed);
     if (!shape) throw ways.refused(this.#tooBig(box.size, limits));
@@ -934,13 +936,13 @@ export class BoatBackend implements Backend {
     const making = `${box.boxId}:${token}`;
     this.#making.add(making);
     try {
-      return await this.#deployAndCopy(ref, box, kind, shape, token, ways, signal);
+      return await this.#deployAndCopy(name, box, kind, shape, token, ways, signal);
     } finally {
       this.#making.delete(making);
     }
   }
 
-  async #deployAndCopy(ref: SnapshotRef, box: BoxIdentity, kind: BoatKind, shape: SizeShape, token: string, ways: FromSaved, signal?: AbortSignal): Promise<Guest> {
+  async #deployAndCopy(snapshotName: string, box: BoxIdentity, kind: BoatKind, shape: SizeShape, token: string, ways: FromSaved, signal?: AbortSignal): Promise<Guest> {
     const env = identityEnv(box.boxId);
     const claimed = (sandbox: Sandbox | null, staging: string | null) => {
       const guest = this.#guest(box.boxId, sandbox, shape, [], token);
@@ -949,7 +951,7 @@ export class BoatBackend implements Backend {
     await ways.claim(claimed(null, null));
     await ways.submitting();
     const staging = await this.#whileBusy(signal, () =>
-      this.#api.createFrom(ref.ref, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: {}, name: stagingName(box.boxId, token, this.#owner.stagingMark), idempotencyKey: this.#owner.idempotencyKey(`${box.boxId}-${token}-staging`), env }, signal),
+      this.#api.createFrom(snapshotName, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: {}, name: stagingName(box.boxId, token, this.#owner.stagingMark), idempotencyKey: this.#owner.idempotencyKey(`${box.boxId}-${token}-staging`), env }, signal),
     ).catch((error: unknown) => {
       throw ways.failed(error);
     });
@@ -1029,11 +1031,20 @@ export class BoatBackend implements Backend {
   }
 
   #ownSavedName(ref: SnapshotRef): string {
-    const box = typeof ref.guest.data?.box === "string" ? ref.guest.data.box : null;
-    const name = ref.ref || (box ? savedName(this.#owner.scope, box, ref.id) : "");
-    const parsed = parseSavedName(name);
-    if (!parsed || parsed.install !== this.#owner.scope || parsed.snapshot !== ref.id) throw new SnapshotFailed(`${name || ref.id} is not a saved snapshot of ${this.label}'s on this install, so ${PRODUCT} does not change it.`);
+    const name = this.#savedNameIfOwn(ref);
+    if (name === null) throw new SnapshotFailed(`${this.#savedNameOf(ref) || ref.id} is not a saved snapshot of ${this.label}'s on this install, so ${PRODUCT} does not change it.`);
     return name;
+  }
+
+  #savedNameIfOwn(ref: SnapshotRef): string | null {
+    const name = this.#savedNameOf(ref);
+    const parsed = parseSavedName(name);
+    return parsed && parsed.install === this.#owner.scope && parsed.snapshot === ref.id ? name : null;
+  }
+
+  #savedNameOf(ref: SnapshotRef): string {
+    const box = typeof ref.guest.data?.box === "string" ? ref.guest.data.box : null;
+    return ref.ref || (box ? savedName(this.#owner.scope, box, ref.id) : "");
   }
 
   async #dropStaging(boxId: string, token: string, id: string | null, signal?: AbortSignal): Promise<void> {
@@ -1502,19 +1513,15 @@ export class BoatBackend implements Backend {
     if (!tailnet) return;
     const live = new Set(all.filter((sandbox) => isRunning(sandbox.state) || isStarting(sandbox.state)).map((sandbox) => this.#tailnetHostname(ownerOf(sandbox)?.name ?? sandbox.id)));
     for (const device of await tailnet.devices(signal)) {
-      if (!device.hostname.startsWith(this.#tailnetHostPrefix()) || live.has(device.hostname)) continue;
+      if (!this.#owner.holdsTailnetHostname(device.hostname) || live.has(device.hostname)) continue;
       if (device.lastSeen !== null && this.#now() - device.lastSeen < STALE_DEVICE_MS) continue;
       await tailnet.removeDevice(device.id, signal);
       this.#context.log?.(`Removed tailnet device ${device.hostname}, whose boat sandbox is gone.`);
     }
   }
 
-  #tailnetHostPrefix(): string {
-    return this.#owner.tailnetPrefix();
-  }
-
   #tailnetHostname(name: string): string {
-    return tailnetHostname(`${this.#tailnetHostPrefix()}${name}`);
+    return this.#owner.tailnetHostname(name);
   }
 
   async #forget(sandbox: string): Promise<void> {

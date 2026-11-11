@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
 import { startMacInput } from "../../core/mac-input.ts";
-import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
+import { joinScript, leaveScript, type Tailnet } from "../../core/tailnet.ts";
 import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
 import { CUA_SHA256, CUA_VERSION } from "../tart/backend.ts";
 import { qemuVideoSource } from "../tart/qemu-video.ts";
@@ -1161,19 +1161,15 @@ export class NamespaceBackend implements Backend {
     if (!tailnet) return;
     const live = new Set(held.map((instance) => this.#tailnetHostname(instance.labels[LABELS.name] ?? instance.id)));
     for (const device of await tailnet.devices(signal)) {
-      if (!device.hostname.startsWith(this.#tailnetHostPrefix()) || live.has(device.hostname)) continue;
+      if (!this.#owner.holdsTailnetHostname(device.hostname) || live.has(device.hostname)) continue;
       if (device.lastSeen !== null && this.#now() - device.lastSeen < STALE_DEVICE_MS) continue;
       await tailnet.removeDevice(device.id, signal);
       this.#context.log?.(`Removed tailnet device ${device.hostname}, whose Namespace machine is gone.`);
     }
   }
 
-  #tailnetHostPrefix(): string {
-    return this.#owner.tailnetPrefix();
-  }
-
   #tailnetHostname(name: string): string {
-    return tailnetHostname(`${this.#tailnetHostPrefix()}${name}`);
+    return this.#owner.tailnetHostname(name);
   }
 
   async #forget(instance: string): Promise<void> {

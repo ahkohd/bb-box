@@ -1,4 +1,4 @@
-import { HOSTNAME_LIMIT, tailnetHostname } from "../core/tailnet.ts";
+import { HOSTNAME_LIMIT, TAILNET_HASH_LENGTH, fitsTailnetHostname, shortTailnetInstall, tailnetHash, tailnetHostname } from "../core/tailnet.ts";
 import { LONGEST_INSTALL_ID } from "../core/install.ts";
 import { backendIdName } from "../core/provider-name.ts";
 
@@ -62,10 +62,38 @@ export class LabelledOwner {
   }
 
   tailnetPrefix(): string {
-    const install = tailnetHostname(this.installId);
+    return this.#prefixWith(tailnetHostname(this.installId));
+  }
+
+  tailnetHostname(box: string): string {
+    const whole = `${this.tailnetPrefix()}${box}`;
+    if (fitsTailnetHostname(whole)) return tailnetHostname(whole);
+    const prefix = this.#prefixWithRoomForABox();
+    return `${prefix}${shortenedBox(box, HOSTNAME_LIMIT - prefix.length)}`;
+  }
+
+  holdsTailnetHostname(hostname: string): boolean {
+    return hostname.startsWith(this.tailnetPrefix()) || hostname.startsWith(this.#prefixWithRoomForABox());
+  }
+
+  #prefixWith(install: string): string {
     if (this.takesUnlabelledMachines) return `${this.#naming.firstTailnetPrefix}${install}-`;
     return `${this.#naming.siblingTailnetPrefix}${install}-${lengthThenName(this.name ?? this.backendMark)}-`;
   }
+
+  #prefixWithRoomForABox(): string {
+    const prefix = this.tailnetPrefix();
+    return prefix.length <= LONGEST_PREFIX_WITH_ROOM_FOR_A_BOX ? prefix : this.#prefixWith(shortTailnetInstall(this.installId));
+  }
+}
+
+const READABLE_BOX_LETTERS = 2;
+const SHORTEST_BOX_PART = READABLE_BOX_LETTERS + "-".length + TAILNET_HASH_LENGTH;
+const LONGEST_PREFIX_WITH_ROOM_FOR_A_BOX = HOSTNAME_LIMIT - SHORTEST_BOX_PART;
+
+function shortenedBox(box: string, room: number): string {
+  const readable = tailnetHostname(box).slice(0, room - "-".length - TAILNET_HASH_LENGTH).replace(/-+$/, "");
+  return readable ? `${readable}-${tailnetHash(box)}` : tailnetHash(box);
 }
 
 function lengthThenName(name: string): string {

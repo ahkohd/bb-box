@@ -60,7 +60,9 @@ under the same tag and unique tag.
   in a tailnet name of 63 characters even with the longest install ID, 32
   characters. A longer prefix would be cut short, and 2 backends could
   then share a tailnet name. A driver sets this limit with `longestName`,
-  and the configuration refuses a longer name.
+  and the configuration refuses a longer name. [094](094-a-tailnet-name-too-long-is-shortened-with-a-code.md)
+  extends this: a box's tailnet name that would still be too long is
+  shortened with a code, so 2 boxes never share one.
 - A shared iOS host's record, and a device host read from storage, that
   has no backend was written before this change and is the backend
   `namespace`'s. Reading it never makes it another backend's.

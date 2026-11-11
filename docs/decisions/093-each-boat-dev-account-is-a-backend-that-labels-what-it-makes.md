@@ -64,7 +64,9 @@ stale tailnet devices.
   name, as 087 does for Namespace. The first backend's prefix,
   `bb-box-boat-`, starts none of theirs. A boat.dev backend's name is so at
   most 13 characters, so its prefix fits a tailnet name with the longest
-  install ID.
+  install ID. A box's tailnet name that would still be too long is
+  shortened with a code, as [094](094-a-tailnet-name-too-long-is-shortened-with-a-code.md)
+  says, so 2 boxes of a backend never share one.
 - A boat.dev backend is called boat.dev, and another by its name in
   brackets, such as boat.dev (team-b), in kinds, `on` and box_list.
 - `bb box images list` lists each boat.dev backend's templates, through

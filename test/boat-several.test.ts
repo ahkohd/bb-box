@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BoatBackend, LABELS, stagingName } from "../src/backends/boat/backend.ts";
-import { BoatOwner } from "../src/backends/boat/owner.ts";
+import { BoatOwner, LONGEST_BOAT_BACKEND_NAME } from "../src/backends/boat/owner.ts";
 import { savedName } from "../src/backends/boat/snapshots.ts";
 import { TEMPLATE_ROLE, templateName, type TemplateRecord } from "../src/backends/boat/templates.ts";
-import { SnapshotFailed, type AcquireHooks, type BoxIdentity, type CopyHooks, type Guest, type SnapshotHooks } from "../src/backends/types.ts";
-import { Tailnet, tailnetHostname } from "../src/core/tailnet.ts";
+import { BackendError, SnapshotFailed, type AcquireHooks, type BoxIdentity, type CopyHooks, type Guest, type SnapshotHooks } from "../src/backends/types.ts";
+import { LONGEST_INSTALL_ID } from "../src/core/install.ts";
+import { Tailnet } from "../src/core/tailnet.ts";
 import { providerName } from "../src/core/provider-name.ts";
 import { ImageJobs } from "../src/plugin/images.ts";
 import { ownImageLines } from "../src/plugin/views.ts";
@@ -20,6 +21,7 @@ const START = Date.UTC(2030, 0, 1, 10, 0);
 const HOUR = 3_600_000;
 const BOX_A = "bxaaaaaaaaaaaa";
 const BOX_B = "bxbbbbbbbbbbbb";
+const BOX_C = "bxcccccccccccc";
 const SNAP_A = "snaaaaaaaaaaaa";
 const SNAP_B = "snbbbbbbbbbbbb";
 const SMALL = { cores: 2, memoryMiB: 4096, diskGiB: null, gpu: "none" as const };
@@ -39,6 +41,7 @@ interface BackendOptions {
   readonly templateLabels?: Record<string, string> | null;
   readonly logs?: string[];
   readonly kinds?: readonly ("linux" | "linux-desktop-cpu" | "android")[];
+  readonly installId?: string;
 }
 
 function account(options: { paid?: boolean } = {}): Account {
@@ -60,14 +63,15 @@ function plantTemplate(on: Account, labels: Record<string, string>, key = "fp1",
 
 function backendOn(on: Account, id: string, options: BackendOptions = {}): BoatBackend {
   const storage = options.storage ?? new MemoryStorage();
-  const templateLabels = options.templateLabels === undefined ? new BoatOwner(id, "inst1").labels() : options.templateLabels;
+  const installId = options.installId ?? "inst1";
+  const templateLabels = options.templateLabels === undefined ? new BoatOwner(id, installId).labels() : options.templateLabels;
   if (templateLabels) {
     const template = plantTemplate(on, templateLabels);
     const record: TemplateRecord = { kind: "linux", sandbox: template.id, key: "fp1", builtAt: on.now(), buildMs: 600_000, usedAt: null };
     void storage.set("template/linux", record);
   }
   const context = {
-    ...testContext(storage, "inst1", { id }),
+    ...testContext(storage, installId, { id }),
     ...(options.tailnet ? { tailnet: () => options.tailnet! } : {}),
     ...(options.logs ? { log: (line: string) => void options.logs!.push(line) } : {}),
   };
@@ -221,6 +225,41 @@ test("each backend's saved snapshots carry its ID in their names, and each lists
   assert.equal(on.fake.saved.size, 2);
 });
 
+function notTheirs(backend: string): (error: unknown) => boolean {
+  return (error) => error instanceof Error && error.message.includes(`is not a saved snapshot of ${backend}'s on this install`);
+}
+
+function refusedAsUnsupported(error: unknown): boolean {
+  return error instanceof BackendError && error.code === "unsupported";
+}
+
+test("a boat.dev backend refuses to restore or fork another backend's saved snapshot, and names from before are the boat backend's alone", async () => {
+  const on = account({ paid: true });
+  const first = backendOn(on, FIRST);
+  const second = backendOn(on, TEAM_B);
+  const firstGuest = await acquire(first, BOX_A);
+  const secondGuest = await acquire(second, BOX_B);
+  const fromBefore = await first.snapshot(firstGuest, { id: SNAP_A, box: BOX_A, memory: false }, snapshotHooks());
+  const seconds = await second.snapshot(secondGuest, { id: SNAP_B, box: BOX_B, memory: false }, snapshotHooks());
+  const legacyRef = { id: SNAP_A, ref: fromBefore.ref, guest: firstGuest };
+  const secondRef = { id: SNAP_B, ref: seconds.ref, guest: secondGuest };
+  const hooks: CopyHooks = { claimed: async () => {}, submitting: async () => {}, task: async () => {} };
+  const identity = { macs: {}, smbios: null };
+  const signal = new AbortController().signal;
+  const sandboxesBefore = on.fake.sandboxes.size;
+
+  await assert.rejects(second.adoptSnapshot(legacyRef, box(BOX_C), identity, hooks), (error) => error instanceof SnapshotFailed && notTheirs("boat.dev (team-b)")(error));
+  await assert.rejects(second.forkSnapshot(legacyRef, box(BOX_C), null, HOOKS, signal), (error) => refusedAsUnsupported(error) && notTheirs("boat.dev (team-b)")(error));
+  await assert.rejects(first.adoptSnapshot(secondRef, box(BOX_C), identity, hooks), (error) => error instanceof SnapshotFailed && notTheirs("boat.dev")(error));
+  await assert.rejects(first.forkSnapshot(secondRef, box(BOX_C), null, HOOKS, signal), (error) => refusedAsUnsupported(error) && notTheirs("boat.dev")(error));
+  assert.equal(on.fake.sandboxes.size, sandboxesBefore, "no backend deployed another's snapshot");
+
+  const forked = await first.forkSnapshot(legacyRef, box(BOX_C), null, HOOKS, signal);
+
+  assert.equal(sandboxOf(on, forked).labels[LABELS.box], BOX_C);
+  assert.ok([...on.fake.sandboxes.values()].some((sandbox) => sandbox.forkedFrom === `saved:${fromBefore.ref}`), "the boat backend forks a name from before");
+});
+
 test("a second backend's restore deploys a sandbox named with its ID, which only it finds, copies and deletes", async () => {
   const on = account({ paid: true });
   const second = backendOn(on, TEAM_B);
@@ -262,7 +301,7 @@ function tailnetOf(devices: readonly Device[]): { readonly tailnet: Tailnet; rea
 }
 
 function tailnetNameOf(backendId: string, installId: string, name: string): string {
-  return tailnetHostname(`${new BoatOwner(backendId, installId).tailnetPrefix()}${name}`);
+  return new BoatOwner(backendId, installId).tailnetHostname(name);
 }
 
 test("each boat.dev backend's upkeep removes only its own sandboxes' stale tailnet devices, and the boat backend's names are as before", async () => {
@@ -280,22 +319,58 @@ test("each boat.dev backend's upkeep removes only its own sandboxes' stale tailn
   assert.deepEqual(removed, ["second-gone", "first-gone"]);
 });
 
-test("no boat.dev backend's tailnet names start with another's prefix, for names that look alike and the longest install ID and name", () => {
+test("no boat.dev backend holds another's tailnet names, for names that look alike and the longest install ID and name", () => {
   const names = ["a", "a-1", "1-a", "1", "11", "b", "team-b", "team-bb", "b-team", "10-x", "x-10", "a".repeat(12), "a".repeat(13)];
   const ids = [FIRST, ...names.map((name) => `boat:${name}`)];
 
-  for (const installId of ["inst1", "x".repeat(32)]) {
+  for (const installId of ["inst1", "x".repeat(LONGEST_INSTALL_ID)]) {
     for (const mine of ids) {
-      const prefix = new BoatOwner(mine, installId).tailnetPrefix();
-      assert.ok(prefix.length <= 63, `${mine}'s prefix fits a tailnet name on install ${installId}`);
+      const owner = new BoatOwner(mine, installId);
       for (const theirs of ids.filter((id) => id !== mine)) {
         for (const name of ["", "b", "gone-box", "z".repeat(63)]) {
           const theirName = tailnetNameOf(theirs, installId, name);
-          assert.ok(!theirName.startsWith(prefix), `${mine} would take ${theirs}'s ${theirName} on install ${installId}`);
+          assert.ok(!owner.holdsTailnetHostname(theirName), `${mine} would take ${theirs}'s ${theirName} on install ${installId}`);
         }
       }
     }
   }
+});
+
+test("on the longest install ID, each boat.dev backend gives every box its own tailnet name, which it holds, and keeps names that fit as they were", () => {
+  const longest = "x".repeat(LONGEST_INSTALL_ID);
+  const ids = [FIRST, "boat:a", "boat:team-b", `boat:${"n".repeat(LONGEST_BOAT_BACKEND_NAME)}`];
+  const boxes = ["gentle-marsh", "happy-reef", "nimble-sparrow-a1b2", "nimble-sparrow-a1b3", `box-${BOX_A}`, `box-${BOX_B}`];
+
+  for (const id of ids) {
+    const owner = new BoatOwner(id, longest);
+    const hostnames = boxes.map((name) => owner.tailnetHostname(name));
+    assert.equal(new Set(hostnames).size, boxes.length, `${id} gives each box its own name: ${hostnames.join(", ")}`);
+    for (const hostname of hostnames) {
+      assert.ok(hostname.length <= 63 && /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(hostname), `${hostname} is a tailnet name`);
+      assert.ok(owner.holdsTailnetHostname(hostname), `${id} holds ${hostname}`);
+    }
+  }
+  assert.equal(tailnetNameOf(FIRST, "inst1", "gentle-marsh"), "bb-box-boat-inst1-gentle-marsh");
+  assert.equal(tailnetNameOf(TEAM_B, "inst1", "gentle-marsh"), "bb-box-boatb-inst1-6-team-b-gentle-marsh");
+  assert.equal(tailnetNameOf(FIRST, longest, "gentle-marsh"), `bb-box-boat-${longest}-gentle-marsh`);
+});
+
+test("on the longest install ID with the longest backend name, releasing one of two boxes removes only its own tailnet device", async () => {
+  const longest = "x".repeat(LONGEST_INSTALL_ID);
+  const id = `boat:${"n".repeat(LONGEST_BOAT_BACKEND_NAME)}`;
+  const on = account({ paid: true });
+  const storage = new MemoryStorage();
+  const maker = backendOn(on, id, { storage, installId: longest });
+  const first = await acquire(maker, BOX_A);
+  await acquire(maker, BOX_B);
+  const { tailnet, removed } = tailnetOf([
+    { nodeId: "box-a", hostname: tailnetNameOf(id, longest, `box-${BOX_A}`) },
+    { nodeId: "box-b", hostname: tailnetNameOf(id, longest, `box-${BOX_B}`) },
+  ]);
+
+  await backendOn(on, id, { storage, installId: longest, tailnet, templateLabels: null }).release(first, RELEASE);
+
+  assert.deepEqual(removed, ["box-a"]);
 });
 
 test("a second boat.dev backend is named by its ID, as a provider and in its label; the first keeps the type's name", () => {
