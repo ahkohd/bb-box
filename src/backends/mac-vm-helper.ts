@@ -19,7 +19,14 @@ export interface MacGrantState {
   readonly signingIdentity: boolean;
 }
 
-const HELPER_TIMEOUT_MS = 60_000;
+export interface MacVmHelperTimeouts {
+  readonly readyMs: number;
+  readonly grantMs: number;
+}
+
+export type MacHelperAnswer<T> = { readonly state: T; readonly failure: null } | { readonly state: null; readonly failure: string };
+
+export const MAC_HELPER_TIMEOUTS: MacVmHelperTimeouts = { readyMs: 10_000, grantMs: 60_000 };
 const HELPER_OUTPUT_BYTES = 64 * 1024;
 
 export function macVmHelperCommand(): string {
@@ -31,43 +38,62 @@ export function parseGrantState(stdout: string): MacGrantState {
   return { blockedBy: grantBlockOf(values), macos: values.get("macos") || null, signingIdentity: values.get("signing") === "1" };
 }
 
+function failureOf(result: Pick<RunResult, "exitCode" | "stderr" | "timedOut">, timeoutMs: number): string {
+  if (result.timedOut) return `the Mac helper did not answer within ${Math.round(timeoutMs / 1000)} seconds`;
+  return result.stderr.trim() || `exit code ${result.exitCode}`;
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export class MacVmHelper {
   readonly #command: string;
+  readonly #timeouts: MacVmHelperTimeouts;
 
-  constructor(command: string = macVmHelperCommand()) {
+  constructor(command: string = macVmHelperCommand(), timeouts: Partial<MacVmHelperTimeouts> = {}) {
     this.#command = command;
+    this.#timeouts = { ...MAC_HELPER_TIMEOUTS, ...timeouts };
   }
 
   get hash(): string {
     return createHash("sha256").update(this.#command).digest("hex").slice(0, 16);
   }
 
-  run(on: MacVmCommand, verb: MacVmVerb, input: string | null, signal?: AbortSignal): Promise<RunResult> {
+  #run(on: MacVmCommand, verb: MacVmVerb, input: string | null, timeoutMs: number, signal?: AbortSignal): Promise<RunResult> {
     return on.run(`${this.#command} ${verb} "$(id -un)"`, {
       ...(input !== null ? { stdin: input } : {}),
-      timeoutMs: HELPER_TIMEOUT_MS,
+      timeoutMs,
       ...(signal ? { signal } : {}),
       maxOutputBytes: HELPER_OUTPUT_BYTES,
     });
   }
 
-  async ready(on: MacVmCommand, signal?: AbortSignal): Promise<{ readonly state: MacGrantState | null; readonly failure: string | null }> {
-    const result = await this.run(on, "vm-ready", null, signal).catch((error: unknown) => ({ exitCode: null, stdout: "", stderr: error instanceof Error ? error.message : String(error) }));
-    if (result.exitCode !== 0) return { state: null, failure: result.stderr.trim() || `exit code ${result.exitCode}` };
-    return { state: parseGrantState(result.stdout), failure: null };
+  async #answer(on: MacVmCommand, verb: MacVmVerb, timeoutMs: number, signal?: AbortSignal): Promise<MacHelperAnswer<string>> {
+    const result = await this.#run(on, verb, null, timeoutMs, signal).catch((error: unknown) => ({ exitCode: null, stdout: "", stderr: messageOf(error), timedOut: false }));
+    if (result.exitCode !== 0 || result.timedOut) return { state: null, failure: failureOf(result, timeoutMs) };
+    return { state: result.stdout, failure: null };
+  }
+
+  async ready(on: MacVmCommand, signal?: AbortSignal): Promise<MacHelperAnswer<MacGrantState>> {
+    const answer = await this.#answer(on, "vm-ready", this.#timeouts.readyMs, signal);
+    return answer.state === null ? answer : { state: parseGrantState(answer.state), failure: null };
   }
 
   async grant(on: MacVmCommand, machine: string, installId: string, box: string, request: GrantRequest, signal?: AbortSignal): Promise<GrantAnswer> {
-    const result = await this.run(on, "vm-grant", grantInput(installId, box, request), signal);
-    const said = result.stderr.trim() || `exit code ${result.exitCode}`;
+    const result = await this.#run(on, "vm-grant", grantInput(installId, box, request), this.#timeouts.grantMs, signal);
+    const said = failureOf(result, this.#timeouts.grantMs);
     if (result.exitCode === EXIT.protected || result.exitCode === EXIT.refused) throw new BackendError("unsupported", said);
     if (result.exitCode !== 0) throw new Error(`${machine} did not grant: ${said}`);
     return parseGrant(result.stdout);
   }
 
+  async measure(on: MacVmCommand, signal?: AbortSignal): Promise<MacHelperAnswer<{ readonly grants: BoxGrants; readonly state: MacGrantState }>> {
+    const answer = await this.#answer(on, "vm-granted", this.#timeouts.grantMs, signal);
+    return answer.state === null ? answer : { state: { grants: parseGranted(answer.state), state: parseGrantState(answer.state) }, failure: null };
+  }
+
   async grants(on: MacVmCommand, signal?: AbortSignal): Promise<{ readonly grants: BoxGrants; readonly state: MacGrantState } | null> {
-    const result = await this.run(on, "vm-granted", null, signal).catch(() => null);
-    if (result?.exitCode !== 0) return null;
-    return { grants: parseGranted(result.stdout), state: parseGrantState(result.stdout) };
+    return (await this.measure(on, signal)).state;
   }
 }

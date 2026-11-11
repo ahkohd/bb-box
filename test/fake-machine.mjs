@@ -33,7 +33,6 @@
 //   sip-off          status says System Integrity Protection is off (058), and grant grants
 //   display-user     the user display gives instead of the box user
 //   no-signing       granted says the box user has no signing identity
-//   tcc-unknown      TCC's database has columns the helper does not know: granted says tcc=0, and grant refuses
 //   stream           status says the Mac has bb-box-stream, its desktop as video (060)
 import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -186,9 +185,21 @@ function grantState() {
   return `sip=${flag("sip-off") !== null ? 0 : 1}\ntcc=${flag("tcc-unknown") !== null ? 0 : 1}\nmacos=26.3.1\nsigning=${flag("no-signing") !== null ? 0 : 1}`;
 }
 
+const STALL_POLL_MS = 50;
+const LONGEST_STALL_MS = 120_000;
+
+function stallWhileFlagged(name) {
+  const until = Date.now() + LONGEST_STALL_MS;
+  while (flag(name) !== null && Date.now() < until) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, STALL_POLL_MS);
+}
+
 function vm(verb) {
-  if (verb === "vm-ready") return console.log(grantState());
+  if (verb === "vm-ready") {
+    stallWhileFlagged("vm-ready-stalls");
+    return console.log(grantState());
+  }
   if (verb === "vm-granted") {
+    if (flag("vm-granted-fails") !== null) quit(EXIT.failed, "sudo: a password is required");
     console.log(grantState());
     for (const line of (read("grants") ?? "").split("\n").filter(Boolean)) console.log(`grant=${line}`);
     return;

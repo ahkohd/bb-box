@@ -50,11 +50,17 @@ Box measures, per Mac, whether it can grant.**
    knows) and `macos=`. `box_status` says a box cannot grant because SIP is
    on, or because its database is unknown.
 4. **Each Mac box's start runs `vm-ready`**, before its desktop is made
-   ready: the box's signing identity, and a measurement. The doctor runs
-   `vm-granted` again on each Mac box it holds. BB Box keeps what the last
-   20 Macs said, across restarts, and the doctor's check **macOS
-   permissions on Namespace's Macs** says whether `box_grant` worked on
-   them, which macOS they ran, and why any refused.
+   ready: the box's signing identity, and a measurement. It is best effort,
+   with a timeout of its own of 10 seconds, so a Mac whose helper stalls
+   delays its box by no more than that; `box_grant` and its own
+   measurement keep a timeout of 60 seconds. The doctor runs `vm-granted`
+   again on each Mac box it holds. BB Box keeps what the last 20 Macs said,
+   and the last 20 measurements that failed, across restarts. The doctor's
+   check **macOS permissions on Namespace's Macs** says whether `box_grant`
+   worked on them, which macOS they ran, and why any refused. Where a Mac's
+   latest measurement failed, the check warns with the reason and still
+   shows what earlier measurements found, until that Mac is measured
+   again.
 5. **Shared iOS hosts grant nothing.** A slot's user has no desktop
    session, so there is no program for Accessibility or Screen Recording
    to act for. A grant in the system database is keyed by the program, not
@@ -71,7 +77,8 @@ Box measures, per Mac, whether it can grant.**
 - `box_grant` works on Namespace's `macos` and `macos-desktop` boxes, with
   the same refusals as on Tart: Apple's programs, shells and interpreters,
   programs outside the user's home and `/Applications`.
-- A Mac box's start takes about half a second more.
+- A Mac box's start takes about half a second more, and at most 10 seconds
+  more when the helper does not answer.
 - `box_run`'s commands on Namespace do not get the microphone and the
   camera by default, as they do on Tart and pool Macs: the helper grants
   those to `sshd-keygen-wrapper`, which Namespace does not use. A program

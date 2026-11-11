@@ -356,6 +356,7 @@ export interface TartBackendOptions {
   readonly readyTimeoutMs?: number;
   /** What runs the Mac helper's VM commands in a macOS VM, instead of machine-mac.sh through sudo: a fake, in tests. */
   readonly macHelper?: string;
+  readonly macHelperReadyTimeoutMs?: number;
   /** Where a macOS VM's bb-box-stream is, instead of MAC_STREAM: a fake, in tests. */
   readonly macStream?: string;
   /** Where a Linux desktop's image has Selkies' launcher, instead of SELKIES_LAUNCHER: a file the test finds, in tests. */
@@ -1740,7 +1741,7 @@ export class TartBackend implements Backend {
   }
 
   #helper(): MacVmHelper {
-    this.#macHelper ??= new MacVmHelper(this.#options.macHelper ?? macVmHelperCommand());
+    this.#macHelper ??= new MacVmHelper(this.#options.macHelper ?? macVmHelperCommand(), this.#options.macHelperReadyTimeoutMs ? { readyMs: this.#options.macHelperReadyTimeoutMs } : {});
     return this.#macHelper;
   }
 

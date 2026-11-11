@@ -61,7 +61,7 @@ import type { DockerCli } from "../docker/cli.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import { PRODUCT } from "../../brand.ts";
 import { BACKEND_LABEL, INSTALL_LABEL, NamespaceOwner } from "./owner.ts";
-import { MacVmHelper, macVmHelperCommand, type MacGrantState } from "../mac-vm-helper.ts";
+import { MacVmHelper, macVmHelperCommand, type MacGrantState, type MacHelperAnswer } from "../mac-vm-helper.ts";
 import { NamespaceGrantReports, grantCheck } from "./grant-reports.ts";
 
 export const LABELS = {
@@ -335,6 +335,7 @@ export interface NamespaceBackendOptions {
   readonly linuxPullScript?: (ref: string, local: string) => string;
   readonly linuxTailscaleScript?: string;
   readonly macHelper?: string;
+  readonly macHelperReadyTimeoutMs?: number;
 }
 
 function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
@@ -1116,7 +1117,7 @@ export class NamespaceBackend implements Backend {
     const macs = held.filter((instance) => instance.labels[LABELS.kind] !== undefined && !isLinuxKind(instance.labels[LABELS.kind] as NamespaceKind));
     for (const instance of macs) await this.#probes.measure(instance.id, signal).catch((error) => this.#context.logError(`measure what Namespace's Mac ${instance.id} offers`, error));
     for (const instance of macs.filter((mac) => mac.status === "running")) await this.#measureGrants(instance.id, signal);
-    checks.push(grantCheck(await this.#grantReports.all(), now));
+    checks.push(grantCheck(await this.#grantReports.all(), await this.#grantReports.failures(), now));
     checks.push(await this.slots.doctor(signal));
     const reports = this.macCapabilities();
     if (!reports.length) checks.push({ id: "devices.namespace", name: "iOS devices on Namespace's Macs", status: "skipped", detail: `Not measured yet: ${PRODUCT} measures each Namespace Mac it starts.`, fix: null });
@@ -1267,7 +1268,7 @@ export class NamespaceBackend implements Backend {
   }
 
   #helper(): MacVmHelper {
-    this.#macHelper ??= new MacVmHelper(this.#options.macHelper ?? macVmHelperCommand());
+    this.#macHelper ??= new MacVmHelper(this.#options.macHelper ?? macVmHelperCommand(), this.#options.macHelperReadyTimeoutMs ? { readyMs: this.#options.macHelperReadyTimeoutMs } : {});
     return this.#macHelper;
   }
 
@@ -1276,18 +1277,19 @@ export class NamespaceBackend implements Backend {
   }
 
   async #readyGrants(instance: string, signal?: AbortSignal): Promise<void> {
-    const { state, failure } = await this.#helper().ready(await this.#macCommand(instance), signal);
-    if (state) await this.#rememberGrants(instance, state);
-    if (!state?.signingIdentity) this.#context.logError("ready the box's grants", new Error(`Namespace's Mac ${instance}: the box's signing identity was not made: ${failure ?? "the helper said signing=0"}`));
+    const answer = await this.#helper().ready(await this.#macCommand(instance), signal);
+    await this.#rememberGrants(instance, answer);
+    if (!answer.state?.signingIdentity) this.#context.logError("ready the box's grants", new Error(`Namespace's Mac ${instance}: the box's signing identity was not made: ${answer.failure ?? "the helper said signing=0"}`));
   }
 
   async #measureGrants(instance: string, signal?: AbortSignal): Promise<void> {
-    const measured = await this.#helper().grants(await this.#macCommand(instance), signal);
-    if (measured) await this.#rememberGrants(instance, measured.state);
+    const answer = await this.#helper().measure(await this.#macCommand(instance), signal);
+    await this.#rememberGrants(instance, answer.state === null ? answer : { state: answer.state.state, failure: null });
   }
 
-  #rememberGrants(instance: string, state: MacGrantState): Promise<void> {
-    return this.#grantReports.remember(instance, state, this.#now());
+  #rememberGrants(instance: string, answer: MacHelperAnswer<MacGrantState>): Promise<void> {
+    if (answer.state === null) return this.#grantReports.rememberFailure(instance, answer.failure, this.#now());
+    return this.#grantReports.remember(instance, answer.state, this.#now());
   }
 
   #macBoxOf(guest: Guest): { readonly instance: string; readonly box: string } | null {

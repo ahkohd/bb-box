@@ -19,11 +19,11 @@ import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnd
 const disposed = disposedOnceTheFileEnds();
 const CONFIG: NamespaceConfig = { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
 
-function setup(options: { config?: Partial<NamespaceConfig>; now?: () => number; cuaScript?: string } = {}) {
+function setup(options: { config?: Partial<NamespaceConfig>; now?: () => number; cuaScript?: string; macHelperReadyTimeoutMs?: number } = {}) {
   fakeSsh();
   const fake = new FakeNamespace({ ...(options.now ? { now: options.now } : {}), lifeCapMs: 4 * 3600_000, maxCores: 64 });
   const context = testContext(new MemoryStorage(), "inst1", { id: "namespace" });
-  const backend = new NamespaceBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: options.cuaScript ?? ":", ...(options.now ? { now: options.now } : {}) });
+  const backend = new NamespaceBackend({ ...CONFIG, ...options.config }, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: options.cuaScript ?? ":", ...(options.now ? { now: options.now } : {}), ...(options.macHelperReadyTimeoutMs ? { macHelperReadyTimeoutMs: options.macHelperReadyTimeoutMs } : {}) });
   return { fake, backend: disposed(backend), context };
 }
 
@@ -670,6 +670,69 @@ test("the doctor says whether box_grant works on Namespace's Macs, as measured o
   await backend.release(guest, { resetting: async () => {}, timing: () => {} });
 });
 
+const STALLED_HELPER_TEST_LIMIT_MS = 30_000;
+
+test("a Mac helper that stalls at a box's start holds the box up only for readiness's short timeout, then the box starts without its grants ready, and the doctor says why (058)", { timeout: STALLED_HELPER_TEST_LIMIT_MS }, async () => {
+  const { backend, context, fake } = setup({ macHelperReadyTimeoutMs: 2_000 });
+  helperFlag("sip-off", true);
+  helperFlag("vm-ready-stalls", true);
+  const recorded = hooks();
+
+  const guest = await backend.acquire(box("b1"), null, recorded.hooks, new AbortController().signal);
+  helperFlag("vm-ready-stalls", false);
+  const instance = [...fake.instances.values()][0]!.id;
+
+  assert.deepEqual(recorded.steps, ["create", "ready", "ssh", "grants"]);
+  assert.ok(context.errors.includes(`ready the box's grants: Namespace's Mac ${instance}: the box's signing identity was not made: the Mac helper did not answer within 2 seconds`), context.errors.join("\n"));
+  await backend.release(guest, { resetting: async () => {}, timing: () => {} });
+  const check = (await backend.doctor()).checks.find((check) => check.id === "namespace.grants");
+
+  assert.equal(check?.status, "warn");
+  assert.equal(check?.detail, `BB Box could not measure whether box_grant works on Namespace's Mac ${instance}, most recently just now: the Mac helper did not answer within 2 seconds.`);
+});
+
+test("a doctor whose measurement of a Mac fails warns with the reason, and keeps what earlier measurements found (058)", async () => {
+  const { backend, fake } = setup();
+  const grantsCheck = async () => (await backend.doctor()).checks.find((check) => check.id === "namespace.grants");
+  helperFlag("sip-off", true);
+  const guest = await backend.acquire(box("b1"), null, hooks().hooks, new AbortController().signal);
+  const instance = [...fake.instances.values()][0]!.id;
+  assert.equal((await grantsCheck())?.status, "ok");
+
+  helperFlag("vm-granted-fails", true);
+  const failed = await grantsCheck();
+
+  assert.equal(failed?.status, "warn");
+  assert.equal(
+    failed?.detail,
+    `BB Box could not measure whether box_grant works on Namespace's Mac ${instance}, most recently just now: sudo: a password is required. Earlier measurements: box_grant works: System Integrity Protection is off and TCC's database is one BB Box knows (macOS 26.3.1). Measured on the last Mac BB Box started, most recently just now.`,
+  );
+  assert.match(failed?.fix ?? "", /sudo -n true/);
+
+  helperFlag("vm-granted-fails", false);
+  const measuredAgain = await grantsCheck();
+
+  assert.equal(measuredAgain?.status, "ok", "a later measurement that works clears the failure");
+  await backend.release(guest, { resetting: async () => {}, timing: () => {} });
+});
+
+test("a failed measurement is kept beside the Macs' earlier measurements across a restart, until that Mac is measured again (058)", async () => {
+  const storage = new MemoryStorage();
+  const logError = () => {};
+  const now = Date.parse("2030-01-01T12:00:00Z");
+  const reports = new NamespaceGrantReports(storage, logError);
+  await reports.remember("m1", { blockedBy: null, macos: "26.3.1", signingIdentity: true }, now - 120_000);
+  await reports.rememberFailure("m1", "exit code 1", now - 60_000);
+
+  const restarted = new NamespaceGrantReports(storage, logError);
+
+  assert.deepEqual(await restarted.all(), [{ machine: "m1", macos: "26.3.1", blockedBy: null, at: now - 120_000 }]);
+  assert.deepEqual(await restarted.failures(), [{ machine: "m1", reason: "exit code 1", at: now - 60_000 }]);
+  assert.equal(grantCheck(await restarted.all(), await restarted.failures(), now).status, "warn");
+  await restarted.remember("m1", { blockedBy: null, macos: "26.3.1", signingIdentity: true }, now);
+  assert.deepEqual(await new NamespaceGrantReports(storage, logError).failures(), []);
+});
+
 test("what Namespace's Macs allowed box_grant is kept for the last Macs measured, across a restart, and the doctor counts those that refused (058)", async () => {
   const storage = new MemoryStorage();
   const logError = () => {};
@@ -683,7 +746,7 @@ test("what Namespace's Macs allowed box_grant is kept for the last Macs measured
   assert.equal(restarted.length, GRANT_REPORTS_KEPT);
   assert.deepEqual(restarted.at(-1), { machine: "m0", macos: "26.4", blockedBy: "sip-on", at: now - 120 * 60_000 });
   assert.ok(!restarted.some((report) => report.machine === "m1"), "the oldest go");
-  const check = grantCheck(restarted, now);
+  const check = grantCheck(restarted, [], now);
   assert.equal(check.status, "warn");
   assert.equal(check.detail, "Measured on the last 20 Macs BB Box started, most recently 1 minute ago. box_grant works on 19 of them and refuses on the others, as System Integrity Protection is on (macOS 26.4).");
 });
