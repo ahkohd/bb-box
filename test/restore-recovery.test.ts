@@ -904,6 +904,50 @@ for (const later of [
   });
 }
 
+function stopsTried(state: World): number {
+  return state.provider.order.filter((step) => step === "power-off").length;
+}
+
+function snapshotListingFails(state: World): void {
+  Object.assign(state.backend, {
+    heldSnapshots: async () => {
+      throw new Error("cannot reach the provider: timed out");
+    },
+  });
+}
+
+async function stillHeldAndRunning(state: World, box: BoxRecord, operation: SnapshotOperation): Promise<void> {
+  assert.equal(state.store.operation(operation.id)!.state, "unknown");
+  assert.ok((await current(state, box)).restoring, "the box stays held");
+  assert.equal(await state.backend.power((await current(state, box)).guest!), "running");
+}
+
+test("a restore held because BB Box could not stop its box tries to stop it at each sweep, and fails once it reads stopped, while the backend's snapshots cannot be listed", async () => {
+  const state = world();
+  const box = await targetBox(state);
+  const operation = await heldAsItCouldNotStop(state, box);
+  await state.restart();
+  snapshotListingFails(state);
+  const before = stopsTried(state);
+
+  state.provider.powerOffFault = new Error("the guest would not stop");
+  assert.equal(await state.snapshots.recover(), 0);
+  assert.equal(stopsTried(state), before + 1);
+  await stillHeldAndRunning(state, box, operation);
+
+  await state.restart();
+  snapshotListingFails(state);
+  state.provider.powerOffFault = new Error("the guest would not stop");
+  assert.equal(await state.snapshots.recover(), 0);
+  assert.equal(stopsTried(state), before + 2);
+  await stillHeldAndRunning(state, box, operation);
+
+  assert.equal(await state.snapshots.recover(), 1);
+  assert.equal(stopsTried(state), before + 3);
+
+  await endsStoppedAndFailed(state, box, operation, /no longer has the rollback's task/, 1);
+});
+
 function starts(state: World): number {
   return state.provider.order.filter((step) => step.startsWith("start")).length;
 }

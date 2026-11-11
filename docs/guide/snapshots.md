@@ -379,7 +379,7 @@ BB Box acts so whenever it cannot be sure whether a rollback began or what the d
 
 To use a box left so, restore it to a snapshot again, or release it. A new restore first takes a fresh undo, of the part-restored disk, so restore to the failed restore's undo to get the disk as it was before. Do not start the box until then. If Proxmox left the guest locked, the new restore is refused, with the command to run on the node, such as `pct unlock 214`.
 
-If BB Box cannot stop the box, or cannot read whether it runs, the restore stays open so that nothing starts the box, and BB Box tries to stop it again at each sweep. It never rolls back then, and never finishes the restore, whatever Proxmox later says of the rollback's task. It ends the restore only once it reads the box as stopped. You can release the box at any time.
+If BB Box cannot stop the box, or cannot read whether it runs, the restore stays open so that nothing starts the box, and BB Box tries to stop it again at each sweep, even while it cannot list the backend's snapshots. It never rolls back then, and never finishes the restore, whatever Proxmox later says of the rollback's task. It ends the restore only once it reads the box as stopped. You can release the box at any time.
 
 BB Box knows the node restarted only from the node's own evidence: its uptime is less than it was when the rollback's task began. Without it, a rollback whose task failed leaves the box stopped, as for a restart of BB Box alone.
 

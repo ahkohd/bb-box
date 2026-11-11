@@ -82,7 +82,9 @@ clears it.
   nothing.
 - If BB Box cannot stop the box, or cannot read whether it runs, the
   restore stays open, so nothing starts the box, and BB Box tries to stop
-  it again at each sweep. It never rolls back then. The person can release
+  it again at each sweep. It does so before it lists the backend's
+  snapshots, so a listing that fails does not stop it. It never rolls back
+  then. The person can release
   the box at any time. BB Box reads the box's power once more as it ends
   the restore, and ends it only when that read says stopped. A box found
   running then, or whose power cannot be read, stays held, and BB Box stops

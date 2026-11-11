@@ -575,6 +575,14 @@ function stopAndFailOf(operation: Pick<SnapshotOperation, "consent">): StopAndFa
   return decided && typeof decided.why === "string" ? { why: decided.why } : null;
 }
 
+function decidedToStopAndFail(operation: SnapshotOperation): boolean {
+  return operation.kind === "restore" && stopAndFailOf(operation) !== null;
+}
+
+const NOTHING_LISTED: ReadonlyMap<string, HeldSnapshot> = new Map();
+
+const BACKEND_NOT_IN_SETTINGS = `Its backend is not in ${PRODUCT}'s settings, so ${PRODUCT} cannot see how it ended.`;
+
 function puttingBackOf(operation: Pick<SnapshotOperation, "consent">): PuttingBack | null {
   const back = (operation.consent as { putBack?: Partial<PuttingBack> } | null)?.putBack;
   if (!back || typeof back.words !== "string" || typeof back.step !== "string" || !RESTORE_STEPS.includes(back.step)) return null;
@@ -3829,11 +3837,19 @@ export class Snapshots {
     for (const [backendId, operations] of byBackend) {
       signal?.throwIfAborted();
       const backend = this.#deps.backends.get(backendId);
-      const unknown = (error: string) => {
-        for (const operation of operations) ledger.updateOperation(operation.id, { state: "unknown", error });
+      const unknown = (waiting: readonly SnapshotOperation[], error: string) => {
+        for (const operation of waiting) ledger.updateOperation(operation.id, { state: "unknown", error });
       };
-      if (!backend?.heldSnapshots) {
-        unknown(`Its backend is not in ${PRODUCT}'s settings, so ${PRODUCT} cannot see how it ended.`);
+      if (!backend) {
+        unknown(operations, BACKEND_NOT_IN_SETTINGS);
+        continue;
+      }
+      const decided = operations.filter(decidedToStopAndFail);
+      const needListing = operations.filter((operation) => !decidedToStopAndFail(operation));
+      settled += await this.#recoverEach(decided, backend, NOTHING_LISTED, [], signal);
+      if (!needListing.length) continue;
+      if (!backend.heldSnapshots) {
+        unknown(needListing, BACKEND_NOT_IN_SETTINGS);
         continue;
       }
       let listing: readonly HeldSnapshot[];
@@ -3841,17 +3857,22 @@ export class Snapshots {
         listing = await backend.heldSnapshots(signal);
       } catch (error) {
         if (signal?.aborted) throw error;
-        unknown(`${PRODUCT} could not list ${backend.label}'s snapshots: ${sentence(message(error))}`);
+        unknown(needListing, `${PRODUCT} could not list ${backend.label}'s snapshots: ${sentence(message(error))}`);
         continue;
       }
-      const byId = preferredById(listing);
-      for (const operation of operations) {
-        try {
-          if (await this.#deps.boxes.inTurn(operation.box, () => this.#recoverOne(operation.id, backend, byId, listing, signal))) settled++;
-        } catch (error) {
-          if (signal?.aborted) throw error;
-          this.#deps.logError(`settle snapshot operation ${operation.id}`, error);
-        }
+      settled += await this.#recoverEach(needListing, backend, preferredById(listing), listing, signal);
+    }
+    return settled;
+  }
+
+  async #recoverEach(operations: readonly SnapshotOperation[], backend: Backend, byId: ReadonlyMap<string, HeldSnapshot>, listing: readonly HeldSnapshot[], signal?: AbortSignal): Promise<number> {
+    let settled = 0;
+    for (const operation of operations) {
+      try {
+        if (await this.#deps.boxes.inTurn(operation.box, () => this.#recoverOne(operation.id, backend, byId, listing, signal))) settled++;
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        this.#deps.logError(`settle snapshot operation ${operation.id}`, error);
       }
     }
     return settled;

@@ -244,6 +244,24 @@ tests pass unchanged.
 
 With one part put back at a time, each fails only its own tests.
 
+## Tests of the sixth change
+
+The sixth change answers a fifth review. Recovery listed a backend's
+snapshots before it looked at any of its operations, and left them all
+unknown when the listing failed. A restore whose decision to stop the box
+and fail was journalled therefore never reached its stop while the listing
+failed, and the box could keep running across sweeps. Recovery now runs
+such restores first, each under its box's lock, and lists the snapshots
+only for the operations that need them.
+
+| Review's case | Test | Fails without |
+| --- | --- | --- |
+| A restore held because BB Box could not stop its box, after BB Box restarts, while the backend's snapshots cannot be listed | "a restore held because BB Box could not stop its box tries to stop it at each sweep, and fails once it reads stopped, while the backend's snapshots cannot be listed": two sweeps, with a restart between, try to stop the box and keep it held; the third stops it and fails the restore, with one rollback in all | the order of recovery, 1 |
+
+The sixth change was not run on the node: it changes only the order in
+which the core's recovery asks the backend for the power, a stop and the
+snapshots.
+
 ## Live on the fifth change
 
 Run on 11 November 2026 with bb-box from this change, on a new test bed
@@ -257,6 +275,12 @@ the person's, `lvm-a` (guest 9900), 2 cores, 2 GiB and 16 GiB, on
 LVM-thin. Each run wrote A to `~/g16.txt`, or B, as below, and the
 snapshot `a-state` held A. snapshot.ubuntu.com was out, so the template
 was built from Ubuntu's live archive on this test bed only.
+
+This section is a summary of what the run saw: each outcome, the commands
+that mattered and excerpts of BB Box's words. It does not keep a raw
+transcript, the rollback tasks' IDs or the commit of the build installed,
+so it does not show by itself that each run used the fifth change's final
+tree.
 
 To cut a rollback short, a wrapper for `/sbin/lvcreate` on pve-1 held it
 for 90 s when a flag in `/run` was set, and the flag was set while the
