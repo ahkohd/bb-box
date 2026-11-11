@@ -606,7 +606,10 @@ export interface ReleaseHooks {
   resetting(): Promise<void>;
   /** How long a named step took, in milliseconds. */
   timing(step: string, ms: number): void;
+  readonly scope?: ReleaseScope;
 }
+
+export type ReleaseScope = "whole-box" | "this-guest-only";
 
 /** A machine in a real backend's pool, or a warm guest, as the panel shows it. */
 export interface PoolMember {

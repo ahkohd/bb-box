@@ -81,6 +81,8 @@ const SSH_KEY = "ssh-key";
 const LARGEST_MACHINE = "largest-machine";
 const USAGE_GRANT = '{"resource_type":"tenant/usage","resource_id":"*","actions":["get"]}';
 const LARGEST_ALLOWED = /maximum ([0-9]+)x([0-9]+)/;
+const KEEP_UNREACHABLE_ENGINE_ALIVE_MS = 60 * 60_000;
+const RELEASED_WHY = "bb-box: the box was released";
 
 function linuxTooBig(size: MachineSize): string {
   return `Namespace's Linux machines have at most 32 cores and 56 GB of memory, less than the ${size.cores} cores and ${Math.round(size.memoryMiB / MIB_PER_GB)} GiB asked for.`;
@@ -267,6 +269,11 @@ function sleepFor(ms: number, signal?: AbortSignal): Promise<void> {
     const timer = setTimeout(resolve, ms);
     signal?.addEventListener("abort", () => (clearTimeout(timer), reject(signal.reason)), { once: true });
   });
+}
+
+function machineNoBoxHolds(machine: HeldGuest): HeldGuest {
+  const { box: _box, ...data } = machine.data ?? {};
+  return { ...machine, ref: typeof data.instance === "string" ? data.instance : machine.ref, owner: null, data };
 }
 
 function tasksOnMachine<Hooks extends SnapshotHooks>(hooks: Hooks, instance: string): Hooks {
@@ -661,23 +668,28 @@ export class NamespaceBackend implements Backend {
       return;
     }
     const instance = await this.#mine(guest, signal);
-    if (instance && (await this.#anotherContainerOfTheBoxStays(instance, guest, hooks, signal))) {
+    if (!instance) return hooks.timing("destroy", Math.round(performance.now() - started));
+    if (hooks.scope === "whole-box") await this.#linux.markReleasingTheBox(instance.id);
+    if (await this.#onlyThisContainerGoes(instance, guest, hooks, signal)) {
       hooks.timing("remove container", Math.round(performance.now() - started));
       return;
     }
-    if (instance) {
-      if (instance.status === "running" && this.#context.tailnet?.()) await this.#leave(instance.id, signal);
-      await this.#api.destroy(instance.id, "bb-box: the box was released", signal);
-      await this.#linux.forget(instance.id);
-      await this.#forget(instance.id);
-    }
+    await this.#destroyMachine(instance, signal);
     hooks.timing("destroy", Math.round(performance.now() - started));
+  }
+
+  async #destroyMachine(instance: Instance, signal?: AbortSignal): Promise<void> {
+    if (instance.status === "running" && this.#context.tailnet?.()) await this.#leave(instance.id, signal);
+    await this.#api.destroy(instance.id, RELEASED_WHY, signal);
+    await this.#linux.forget(instance.id);
+    await this.#forget(instance.id);
   }
 
   async power(guest: Guest, signal?: AbortSignal): Promise<PowerState | null> {
     if (namespaceSlotOf(guest)) return this.slots.power(guest, signal);
     const described = await this.#mine(guest, signal);
     if (!described || described.status === "destroyed" || described.status === "destroying") return null;
+    if (described.status === "running" && (await this.#boxLivesInAContainer(described, guest))) return (await this.#linux.part(described.id)).power(guest, signal);
     if (described.status === "running") return "running";
     if (described.status === "suspended") return "stopped";
     return "unknown";
@@ -702,21 +714,31 @@ export class NamespaceBackend implements Backend {
       return { ...this.#guest(this.#refOf(instance), boxId, instance, shape, isLinuxKind(instance.labels[LABELS.kind] ?? "")), owner, power: instance.status === "running" ? "running" : instance.status === "suspended" ? "stopped" : "unknown" };
     });
     const withSnapshots = new Set(await this.#linux.machinesWithSnapshots());
+    const releasing = new Set(await this.#linux.machinesReleasingTheirBox());
     const listed: HeldGuest[] = [];
     for (const machine of machines) {
       const instance = typeof machine.data?.instance === "string" ? machine.data.instance : null;
+      if (instance && releasing.has(instance)) {
+        listed.push(machineNoBoxHolds(machine));
+        continue;
+      }
       if (!instance || !withSnapshots.has(instance) || machine.power !== "running") {
         listed.push(machine);
         continue;
       }
       try {
-        listed.push(...(await this.#containersOfTheBox(instance, machine.owner?.boxId ?? null, signal)).map((container) => ({ ...machine, ref: container.ref, power: container.power })));
+        const containers = await this.#containersOfTheBox(instance, machine.owner?.boxId ?? null, signal);
+        listed.push(...(containers.length ? containers.map((container) => ({ ...machine, ref: container.ref, power: container.power })) : [machineNoBoxHolds(machine)]));
       } catch (error) {
         if (signal?.aborted) throw error;
-        this.#context.logError(`list the containers on Namespace machine ${instance}`, error);
+        this.#context.logError(`list the containers on Namespace machine ${instance}; ${PRODUCT} leaves it as it is and asks again at its next sweep`, error);
       }
     }
     return [...slots, ...listed];
+  }
+
+  async #boxLivesInAContainer(machine: Instance, guest: Guest): Promise<boolean> {
+    return typeof guest.data?.box === "string" && isLinuxKind(machine.labels[LABELS.kind] ?? "") && (await this.#linux.snapshotsTakenOn(machine.id));
   }
 
   async #containersOfTheBox(instance: string, boxId: string | null, signal?: AbortSignal): Promise<readonly HeldGuest[]> {
@@ -724,7 +746,8 @@ export class NamespaceBackend implements Backend {
     return (await part.held(signal)).filter((container) => boxId !== null && container.owner?.boxId === boxId);
   }
 
-  async #anotherContainerOfTheBoxStays(instance: Instance, guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<boolean> {
+  async #onlyThisContainerGoes(instance: Instance, guest: Guest, hooks: ReleaseHooks, signal?: AbortSignal): Promise<boolean> {
+    if (hooks.scope === "whole-box" || (await this.#linux.releasingTheBox(instance.id))) return false;
     const boxId = typeof guest.data?.box === "string" ? guest.data.box : null;
     if (!boxId || !isLinuxKind(instance.labels[LABELS.kind] ?? "") || !(await this.#linux.snapshotsTakenOn(instance.id)) || instance.status !== "running") return false;
     const others = (await this.#containersOfTheBox(instance.id, boxId, signal)).filter((container) => container.ref !== guest.ref);
@@ -747,12 +770,25 @@ export class NamespaceBackend implements Backend {
 
   async planSnapshots(guest: Guest, kind: string, target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
     const plan = await (await this.#linuxPart(guest)).planSnapshots(guest, kind, target, signal);
-    return withMachineDeadline(plan, guest.endsAt ?? null, this.#now());
+    return withMachineDeadline(plan, await this.#machineEndsAt(guest, signal), this.#now());
+  }
+
+  async #machineEndsAt(guest: Guest, signal?: AbortSignal): Promise<number | null> {
+    const machine = await this.#mine(guest, signal).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      return null;
+    });
+    if (machine?.createdAt != null) return this.#endsAt(machine.createdAt);
+    return guest.endsAt ?? null;
+  }
+
+  #deadlineOf(machine: Instance): Pick<Guest, "endsAt"> {
+    return machine.createdAt === null ? {} : { endsAt: this.#endsAt(machine.createdAt) };
   }
 
   async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
     const instance = this.#instanceOf(guest);
-    await this.#linux.markSnapshotsOn(instance);
+    await this.#linux.markSnapshotsOn(instance, this.#now());
     return (await this.#linux.part(instance)).snapshot(guest, take, tasksOnMachine(hooks, instance), signal);
   }
 
@@ -796,7 +832,9 @@ export class NamespaceBackend implements Backend {
 
   async adoptSnapshot(ref: SnapshotRef, box: BoxIdentity, identity: GuestIdentity, hooks: CopyHooks, signal?: AbortSignal): Promise<Guest> {
     const instance = this.#instanceOf(ref.guest);
-    const own = (guest: Guest): Guest => ({ ...ref.guest, ...guest, host: ref.guest.host, size: ref.guest.size, data: { ...guest.data, box: box.boxId, instance } });
+    const machine = await this.#mine(ref.guest, signal);
+    if (!machine || machine.status !== "running") throw new BackendError("gone", `Namespace's machine ${instance} is gone, and the box's snapshots went with it.`);
+    const own = (guest: Guest): Guest => ({ ...ref.guest, ...guest, host: ref.guest.host, size: ref.guest.size, ...this.#deadlineOf(machine), data: { ...guest.data, box: box.boxId, instance } });
     const made = await (await this.#linux.part(instance)).adoptSnapshot(ref, box, identity, { ...tasksOnMachine(hooks, instance), claimed: (guest) => hooks.claimed(own(guest)) }, signal);
     return own(made);
   }
@@ -805,7 +843,7 @@ export class NamespaceBackend implements Backend {
     const endsAt = machine.createdAt === null ? null : this.#endsAt(machine.createdAt);
     return {
       ...held,
-      guest: { ...held.guest, host: machine.continent ?? null, data: { ...held.guest.data, instance: machine.id } },
+      guest: { ...held.guest, host: machine.continent ?? null, ...this.#deadlineOf(machine), data: { ...held.guest.data, instance: machine.id } },
       storage: held.storage ? { ...held.storage, name: snapshotStorageOnMachine(endsAt) } : null,
     };
   }
@@ -841,12 +879,12 @@ export class NamespaceBackend implements Backend {
     }
     await this.slots.maintain(signal);
     await this.#measureAfreshIfDue(signal).catch((error) => this.#context.logError("measure a Namespace Mac afresh", error));
-    const held = await this.#held(signal);
+    const held = await this.#finishReleases(await this.#held(signal), signal);
     await this.#tendSnapshots(held, signal);
     await this.#removeStaleDevices(held, signal).catch((error) => this.#context.logError("remove Namespace machines' leftover tailnet devices", error));
     for (const instance of held) {
       if (instance.status !== "running" || instance.createdAt === null) continue;
-      if (!this.#recorded(instance, recordedGuests)) continue;
+      if (!(await this.#keptAlive(instance, recordedGuests, signal))) continue;
       const ends = this.#endsAt(instance.createdAt);
       const ahead = Math.min(KEEP_AHEAD_MS, ends - this.#now());
       if (ahead <= 0 || (instance.deadline ?? 0) - this.#now() >= ahead - 5 * 60_000) continue;
@@ -874,6 +912,46 @@ export class NamespaceBackend implements Backend {
       if (!listed.has(instance)) await this.#linux.forget(instance);
       if (!running.has(instance)) continue;
       await (await this.#linux.part(instance)).maintain(signal).catch((error) => this.#context.logError(`tend the snapshots on Namespace machine ${instance}`, error));
+    }
+  }
+
+  async #finishReleases(held: readonly Instance[], signal?: AbortSignal): Promise<Instance[]> {
+    const releasing = new Set(await this.#linux.machinesReleasingTheirBox());
+    if (!releasing.size) return [...held];
+    const listed = new Set(held.map((instance) => instance.id));
+    for (const instance of releasing) if (!listed.has(instance)) await this.#linux.forget(instance);
+    const left: Instance[] = [];
+    for (const instance of held) {
+      if (!releasing.has(instance.id) || instance.status === "destroyed" || instance.status === "destroying") {
+        left.push(instance);
+        continue;
+      }
+      try {
+        await this.#destroyMachine(instance, signal);
+        this.#context.log?.(`Destroyed Namespace machine ${instance.id}, whose box's release had not finished.`);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        this.#context.logError(`destroy Namespace machine ${instance.id}, whose box was released; ${PRODUCT} tries again at its next sweep`, error);
+        left.push(instance);
+      }
+    }
+    return left;
+  }
+
+  async #keptAlive(instance: Instance, recordedGuests: ReadonlySet<string> | undefined, signal?: AbortSignal): Promise<boolean> {
+    if (!this.#recorded(instance, recordedGuests)) return false;
+    if (!isLinuxKind(instance.labels[LABELS.kind] ?? "") || !(await this.#linux.snapshotsTakenOn(instance.id))) return true;
+    try {
+      const containers = await this.#containersOfTheBox(instance.id, instance.labels[LABELS.box] ?? null, signal);
+      const live = containers.some((container) => recordedGuests?.has(container.ref) ?? false);
+      if (live) await this.#linux.markBoxContainerSeen(instance.id, this.#now());
+      return live;
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const seen = await this.#linux.boxContainerLastSeen(instance.id);
+      const recently = seen !== null && this.#now() - seen < KEEP_UNREACHABLE_ENGINE_ALIVE_MS;
+      this.#context.logError(`list the containers on Namespace machine ${instance.id}; ${recently ? "it keeps its deadline moving for now, as its box's container answered within the hour" : "it no longer moves its deadline on, as its box's container has not answered for an hour"}`, error);
+      return recently;
     }
   }
 

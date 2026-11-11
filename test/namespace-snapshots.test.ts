@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -253,4 +254,151 @@ test("Namespace's doctor gives Docker's snapshot lines for a machine only once i
   assert.deepEqual(before, []);
   assert.deepEqual(after.map((check) => check.id), [`namespace.snapshots.${box.guest!.data?.instance}`]);
   assert.match(after[0]!.detail, /^Snapshots: .+ They end with the machine at \d\d:\d\d UTC, the plan's longest life, or at the box's release\.$/);
+});
+
+const OLD_CONTAINER = /^bbbox-bx[0-9a-z]+$/;
+
+function extendsSoFar(world: NamespaceSnapshotWorld): number {
+  return world.api.calls.filter((call) => call.method === "ExtendInstance").length;
+}
+
+function removeContainer(fake: FakeDockerHost, name: string): void {
+  const ran = spawnSync(fake.binary, ["container", "rm", "-f", name], { encoding: "utf8" });
+  assert.equal(ran.status, 0, ran.stderr);
+}
+
+async function boxIsKnown(state: World, boxId: string): Promise<boolean> {
+  return (await state.boxes.all()).some((box) => box.id === boxId);
+}
+
+test("Namespace destroys a released box's machine when its restore could not remove the old container, across a restart, and the sweep brings nothing back", async () => {
+  const made = await boxWithSnapshotOfA();
+  const { state, fake, box, target } = made;
+  fake.set({ failRemoveMatching: OLD_CONTAINER.source });
+  await state.snapshots.restore(COMMAND, box, standing(box), target.id);
+  const restored = (await state.boxes.find(box.id))!;
+  assert.deepEqual(fake.containers(), [box.guest!.ref, restored.guest!.ref].sort(), "the old container stayed");
+
+  await state.restart();
+  await state.boxes.release(THREAD, box.id, "done with it", BY_COMMAND);
+
+  assert.equal(machineStatus(made, box), "DESTROYED");
+  assert.equal(await boxIsKnown(state, box.id), false);
+  await state.boxes.sweep();
+  assert.equal(await boxIsKnown(state, box.id), false, "the sweep adopted no container of the box again");
+  assert.equal(machineStatus(made, box), "DESTROYED");
+});
+
+test("Namespace keeps a box's release in mind until its machine is destroyed, so the sweep finishes it when the box's record is lost", async () => {
+  const made = await boxWithSnapshotOfA();
+  const { state, box } = made;
+  made.api.failNext("DestroyInstance", "internal", "Namespace is busy");
+
+  await state.boxes.release(THREAD, box.id, "done with it", BY_COMMAND).catch(() => undefined);
+  assert.equal(machineStatus(made, box), "RUNNING", "its destroy failed");
+  await state.forgetBox(box);
+  await state.restart();
+  await state.boxes.sweep();
+
+  assert.equal(machineStatus(made, box), "DESTROYED");
+  assert.equal(await boxIsKnown(state, box.id), false, "the sweep did not adopt the released box again");
+});
+
+test("Namespace moves on no deadline for a machine whose box's recorded container is gone, and its sweep destroys the machine and marks the box gone", async () => {
+  const made = await boxWithSnapshotOfA();
+  const { state, fake, box } = made;
+  removeContainer(fake, box.guest!.ref);
+  const extendsBefore = extendsSoFar(made);
+  made.ahead(HOUR / 2);
+
+  await namespaceOf(state).maintain(undefined, new Set([box.guest!.ref]));
+  assert.equal(extendsSoFar(made), extendsBefore, "an empty machine's deadline stays");
+  await state.boxes.sweep();
+
+  assert.equal(machineStatus(made, box), "DESTROYED");
+  assert.equal((await state.boxes.find(box.id))!.state, "gone");
+});
+
+test("Namespace says a box's old container is gone once a restore removed it, while its machine runs", async () => {
+  const made = await boxWithSnapshotOfA();
+  const { state, box, target } = made;
+
+  await state.snapshots.restore(COMMAND, box, standing(box), target.id);
+  const restored = (await state.boxes.find(box.id))!;
+
+  assert.equal(await namespaceOf(state).power(box.guest!), null);
+  assert.equal(await namespaceOf(state).power(restored.guest!), "running");
+  assert.equal(machineStatus(made, box), "RUNNING");
+});
+
+test("Namespace's upkeep destroys the machine of a box whose release could not destroy it", async () => {
+  const made = await boxWithSnapshotOfA();
+  const { state, box } = made;
+  made.api.failNext("DestroyInstance", "internal", "Namespace is busy");
+  await state.boxes.release(THREAD, box.id, "done with it", BY_COMMAND).catch(() => undefined);
+  assert.equal(machineStatus(made, box), "RUNNING", "its destroy failed");
+
+  await namespaceOf(state).maintain(undefined, new Set());
+
+  assert.equal(machineStatus(made, box), "DESTROYED");
+});
+
+test("Namespace's sweep destroys a machine with no container left and no box record", async () => {
+  const made = await boxWithSnapshotOfA();
+  const { state, fake, box } = made;
+  await state.forgetBox(box);
+  removeContainer(fake, box.guest!.ref);
+
+  await state.boxes.sweep();
+
+  assert.equal(machineStatus(made, box), "DESTROYED");
+  assert.equal(await boxIsKnown(state, box.id), false);
+});
+
+test("Namespace leaves a machine whose Docker does not answer, and moves its deadline on only for an hour after its box's container last answered", async () => {
+  const made = await boxWithSnapshotOfA();
+  const { state, fake, box } = made;
+  fake.set({ down: true });
+  const extended: number[] = [];
+  const sweepAfter = async (ms: number) => {
+    const before = extendsSoFar(made);
+    made.ahead(ms);
+    await state.boxes.sweep();
+    extended.push(extendsSoFar(made) - before);
+  };
+
+  await sweepAfter(30 * 60_000);
+  await sweepAfter(20 * 60_000);
+  await sweepAfter(20 * 60_000);
+  assert.equal(machineStatus(made, box), "RUNNING", "an engine that does not answer is not an empty one");
+  assert.equal((await state.boxes.find(box.id))!.state, "ready");
+  fake.set({ down: false });
+  await sweepAfter(10 * 60_000);
+
+  assert.deepEqual(extended, [1, 1, 0, 1]);
+  assert.equal(machineStatus(made, box), "RUNNING");
+  assert.equal((await state.boxes.find(box.id))!.state, "ready");
+});
+
+test("Namespace keeps its machine's deadline on a snapshot found again after its records were lost, and refuses a take near it after the restore", async () => {
+  const made = await boxWithSnapshotOfA();
+  const { state, box, target } = made;
+  const endsAt = box.guest!.endsAt!;
+  state.forgetRecords();
+  await state.restart();
+  await state.snapshots.sweep();
+  assert.equal(state.store.record(target.id)?.state, "ready", "the sweep found the snapshot again");
+  assert.deepEqual((await namespaceOf(state).heldSnapshots()).map((held) => held.guest.endsAt), [endsAt]);
+
+  await state.snapshots.restore(COMMAND, box, standing(box), target.id);
+  const restored = (await state.boxes.find(box.id))!;
+  made.api.instances.get(String(box.guest!.data?.instance))!.deadline = endsAt;
+  made.ahead(endsAt - made.now() - 60_000);
+  const take = await rejection(state.snapshots.checkTake(COMMAND, restored, standing(restored)));
+
+  const planWithoutAKnownDeadline = await namespaceOf(state).planSnapshots({ ...restored.guest!, endsAt: undefined }, "linux", null);
+
+  assert.equal(restored.guest!.endsAt, endsAt);
+  assert.match(take.message, /before this snapshot would be ready/);
+  assert.equal(planWithoutAKnownDeadline.take.ok, false, "the plan reads the deadline from the machine");
 });

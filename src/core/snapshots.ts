@@ -7,6 +7,7 @@ import {
   SnapshotIncomplete,
   type Backend,
   type MachineSize,
+  type ReleaseHooks,
   type CopyHooks,
   type DoctorCheck,
   type Guest,
@@ -439,6 +440,7 @@ const RESTORE_STEP_WORDS: Readonly<Record<RestoreStep, string>> = {
 };
 
 const FLUSH_WAIT_MS = 15_000;
+const RELEASE_THIS_GUEST_ONLY: ReleaseHooks = { resetting: async () => {}, timing: () => {}, scope: "this-guest-only" };
 const UNIX_FLUSH = "sync";
 const WINDOWS_FLUSH = "Get-Volume | Where-Object DriveLetter | ForEach-Object { Write-VolumeCache -DriveLetter $_.DriveLetter }";
 
@@ -3370,7 +3372,7 @@ export class Snapshots {
 
   async #confirmGone(backend: Backend, guest: Guest, box: Pick<BoxRecord, "name">): Promise<boolean> {
     try {
-      await backend.release(guest, { resetting: async () => {}, timing: () => {} }, this.#stopping.signal);
+      await backend.release(guest, RELEASE_THIS_GUEST_ONLY, this.#stopping.signal);
       if ((await backend.power(guest, this.#stopping.signal)) !== null) throw new Error(`${backend.label} still lists it after its delete.`);
       return true;
     } catch (cause) {
@@ -3400,7 +3402,7 @@ export class Snapshots {
 
   async #dropOldGuest(box: BoxRecord, backend: Backend, old: Guest): Promise<void> {
     try {
-      await backend.release(old, { resetting: async () => {}, timing: () => {} }, this.#stopping.signal);
+      await backend.release(old, RELEASE_THIS_GUEST_ONLY, this.#stopping.signal);
       this.#deps.log?.(`Deleted guest ${old.ref}, box ${box.name}'s guest before its restore: its snapshots live ${this.#apart(backend).where}, not on it.`);
     } catch (error) {
       if (this.#stopping.signal.aborted) throw error;

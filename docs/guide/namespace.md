@@ -171,9 +171,12 @@ A Linux box ends at your plan's limit, as a Mac does, and is destroyed when it i
 
 ### Snapshots on a Linux box
 
-A Linux box on Namespace takes snapshots as a Docker box does: of its disk and its Docker data, pausing the box while BB Box copies them. They stay on the box's machine, use its disk and cost nothing beyond the machine. They end with the machine, at the box's release or at the machine's deadline, your plan's longest life.
+A Linux box on Namespace takes snapshots as a Docker box does: of its disk and its Docker data, pausing the box while BB Box copies them. They stay on the box's machine and cost nothing beyond the machine, but they take up its disk, which is fixed by the machine's shape, so each one leaves the box less free space. They end with the machine, at the box's release or at the machine's deadline, your plan's longest life.
 
 - A restore makes a new container on the same machine, with an undo, and keeps the machine.
+- Releasing the box destroys its machine, with any old container a restore could not remove. If Namespace does not destroy it, BB Box tries again at its next sweep, and does not bring the box back.
+- BB Box destroys a machine whose box has no container left at its next sweep.
+- When the machine's Docker does not answer, BB Box leaves the machine as it is and asks again at each sweep. It keeps moving the machine's deadline on for an hour after the box's container last answered, then lets the machine end at its deadline.
 - A take or a restore that would end after the machine is refused, and says when the machine ends.
 - Forks are off: a fork needs a machine of its own, and BB Box cannot carry a snapshot from one machine to another yet.
 - Keep is off, as the snapshots end with the machine.

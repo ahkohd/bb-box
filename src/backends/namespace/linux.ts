@@ -26,6 +26,8 @@ export const CONTAINER_MEMORY_MARGIN_MIB = 512;
 export const NAMESPACE_KEEP_OFF = "a box's snapshots stay on its Namespace machine and end with it, at the box's release or at the machine's deadline";
 export const NAMESPACE_FORK_OFF = `a fork needs a Namespace machine of its own, and ${PRODUCT} cannot carry a snapshot from one machine to another yet`;
 const SNAPSHOTS_TAKEN_ON = "snapshots-taken-on:";
+const RELEASING_THE_BOX_ON = "releasing-the-box-on:";
+const BOX_CONTAINER_SEEN_ON = "box-container-seen-on:";
 const TAKE_ENDS_BEFORE_DEADLINE_MS = 2 * 60_000;
 
 export function namespaceOffer(): Snapshotting {
@@ -153,10 +155,34 @@ export class NamespaceLinux {
   async forget(instance: string): Promise<void> {
     this.#parts.delete(instance);
     await this.#deps.context.storage.delete(SNAPSHOTS_TAKEN_ON + instance);
+    await this.#deps.context.storage.delete(BOX_CONTAINER_SEEN_ON + instance);
+    await this.#deps.context.storage.delete(RELEASING_THE_BOX_ON + instance);
   }
 
-  async markSnapshotsOn(instance: string): Promise<void> {
+  async markSnapshotsOn(instance: string, now: number): Promise<void> {
     await this.#deps.context.storage.set(SNAPSHOTS_TAKEN_ON + instance, true);
+    await this.markBoxContainerSeen(instance, now);
+  }
+
+  async markReleasingTheBox(instance: string): Promise<void> {
+    await this.#deps.context.storage.set(RELEASING_THE_BOX_ON + instance, true);
+  }
+
+  async releasingTheBox(instance: string): Promise<boolean> {
+    return (await this.#deps.context.storage.get(RELEASING_THE_BOX_ON + instance)) === true;
+  }
+
+  async machinesReleasingTheirBox(): Promise<readonly string[]> {
+    return (await this.#deps.context.storage.list(RELEASING_THE_BOX_ON)).map((key) => key.slice(RELEASING_THE_BOX_ON.length));
+  }
+
+  async markBoxContainerSeen(instance: string, now: number): Promise<void> {
+    await this.#deps.context.storage.set(BOX_CONTAINER_SEEN_ON + instance, now);
+  }
+
+  async boxContainerLastSeen(instance: string): Promise<number | null> {
+    const seen = await this.#deps.context.storage.get<number>(BOX_CONTAINER_SEEN_ON + instance);
+    return typeof seen === "number" ? seen : null;
   }
 
   async snapshotsTakenOn(instance: string): Promise<boolean> {

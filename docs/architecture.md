@@ -68,7 +68,7 @@ A backend declares its nature, virtual or real, and implements:
 | `kinds()` | the kinds it offers, with their capabilities |
 | `capacity(kind, size, pending)` | whether one more box of that size fits, with each host's limits and a message that says what is full |
 | `acquire(box, previous, hooks, signal)` | makes or claims a guest, starts it, and returns when its command transport answers, within the kind's `readyTimeoutMs` |
-| `release(guest, hooks)` | deletes a virtual guest, or resets a real machine and returns it to the pool |
+| `release(guest, hooks)` | deletes a virtual guest, or resets a real machine and returns it to the pool. `hooks.scope` says what ends: `whole-box` when the box itself is released, so the backend may remove everything it holds for the box, or `this-guest-only` when a restore drops one guest while the box lives on in another. Without it, a backend removes only this guest where the box may have another |
 | `power(guest)` | `running`, `stopped` or `unknown` now, from the provider, not a listing that may lag; null when the guest is gone |
 | `start?`, `stop?` | only where the provider can; the panel and tools offer them only then |
 | `stopped?(guest)` | why a guest stopped when bb-box did not stop it |

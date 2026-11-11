@@ -2987,6 +2987,7 @@ export class Boxes {
         timing: (step, ms) => {
           timings[`release.${step}`] = ms;
         },
+        scope: "whole-box",
       };
       try {
         const { guest } = await this.#stamped(box);
