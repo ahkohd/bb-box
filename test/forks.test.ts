@@ -320,6 +320,19 @@ test("a fork that asked for its address with its source's DHCP client ID is refu
   assert.match((unreadable as { why: string }).why, /could not read \/run\/systemd\/netif\/leases\/2 in it/);
 });
 
+test("a fork may hold its source's freed address only when its source is gone and its provider says it gave that address to the fork", () => {
+  const freed = { ...EXPECTED, sourceAddresses: [], freedSourceAddresses: ["10.0.0.6"], ownAddress: null, boxAddresses: [] };
+  const holdsFreed = parseForkSeen(seenLines(WHOLE), 0);
+
+  const gone = forkVerdict(holdsFreed, { ...freed, sourceGone: true, givenByProvider: ["10.0.0.6"] });
+  const stopped = forkVerdict(holdsFreed, { ...freed, sourceGone: false, givenByProvider: ["10.0.0.6"] });
+  const unproven = forkVerdict(holdsFreed, { ...freed, sourceGone: true, givenByProvider: ["10.0.0.7"] });
+  const running = forkVerdict(holdsFreed, { ...freed, sourceAddresses: ["10.0.0.6"], freedSourceAddresses: [], sourceGone: false, givenByProvider: ["10.0.0.6"] });
+
+  assert.deepEqual(gone, { is: "ready" });
+  for (const verdict of [stopped, unproven, running]) assert.deepEqual(verdict, { is: "refused", why: "it holds amber-fox's address 10.0.0.6, so it would take what is sent to amber-fox" });
+});
+
 test("the identity a snapshot holds and the fork check read the DHCP client ID of each systemd-networkd lease, hashed", () => {
   const root = join(tempDir("client-id"), "root");
   const bin = join(root, "..", "bin");

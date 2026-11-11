@@ -69,7 +69,8 @@ const identityEnv = (name, container) => ({
   BBBOX_IDENTITY_ROOT: identityRoot(name),
   BBBOX_IDENTITY_NIC_WAIT_SECONDS: "0",
   BBBOX_IDENTITY_SETTLE_SECONDS: "0",
-  FAKE_ADDRESS: container.FakeAddress ?? "",
+  FAKE_ADDRESS: Object.values(container.NetworkSettings?.Networks ?? {})[0]?.IPAddress ?? "",
+  FAKE_ALSO_HOLDS: host.guestAlsoHolds ?? "",
 });
 const envValue = (container, key) => (container.Config.Env ?? []).find((entry) => entry.startsWith(`${key}=`))?.slice(key.length + 1) ?? "";
 
@@ -268,7 +269,6 @@ function create(rest) {
   if (existsSync(imageHome(image))) cpSync(imageHome(image), join(dir(name), "home"), { recursive: true });
   if (existsSync(imageIdentityRoot(image))) cpSync(imageIdentityRoot(image), identityRoot(name), { recursive: true });
   if (existsSync(imageVarLib(image))) cpSync(imageVarLib(image), join(dir(name), "var-lib"), { recursive: true });
-  const count = names().length + 1;
   save({
     Id: id,
     Name: `/${name}`,
@@ -289,8 +289,6 @@ function create(rest) {
       Mounts: mounts,
     },
     NetworkSettings: { Networks: { [network]: { IPAddress: "" } } },
-    // Kept for the address it gets when it starts.
-    FakeAddress: `172.30.0.${count + 1}`,
   });
   console.log(id);
 }
@@ -317,6 +315,21 @@ function inContainer(name, text) {
 }
 
 const quoted = (text) => `'${text.replaceAll("'", "'\\''")}'`;
+
+function lowestFreeAddress(starting) {
+  const taken = new Set(names().map(load).filter((other) => other.Id !== starting.Id).flatMap((other) => Object.values(other.NetworkSettings.Networks).map((network) => network.IPAddress)).filter(Boolean));
+  for (let host = 2; host < 255; host++) if (!taken.has(`172.30.0.${host}`)) return `172.30.0.${host}`;
+  fail("Error response from daemon: no available IPv4 addresses on this network's address pools");
+}
+
+function connect(found) {
+  const address = lowestFreeAddress(found);
+  for (const network of Object.values(found.NetworkSettings.Networks)) network.IPAddress = address;
+}
+
+function disconnect(found) {
+  for (const network of Object.values(found.NetworkSettings.Networks)) network.IPAddress = "";
+}
 
 function servicesStarted(name) {
   const calls = existsSync(join(root, "log")) ? readFileSync(join(root, "log"), "utf8").split("\n").filter(Boolean).length : 0;
@@ -384,6 +397,7 @@ function container(command, rest) {
         const labels = found.Config.Labels;
         if (filters.every((filter) => {
           const [key, ...parts] = filter.split("=");
+          if (key === "ancestor") return found.Image === parts.join("=");
           return labels[key] === parts.join("=");
         })) console.log(found.Id);
       }
@@ -402,6 +416,7 @@ function container(command, rest) {
       const name = found.Name.slice(1);
       mkdirSync(join(dir(name), "run", "bb-box"), { recursive: true });
       if (host.holdStartUntil && new RegExp(host.holdStartMatching ?? "").test(name)) waitFor(host.holdStartUntil);
+      connect(found);
       const identity = bootIdentity(name, found);
       if (host.failStart || (host.failStartMatching && new RegExp(host.failStartMatching).test(name))) {
         writeFileSync(join(dir(name), "logs"), "bb-box-start: something went wrong\n");
@@ -416,8 +431,8 @@ function container(command, rest) {
         if (!host.neverReady) writeFileSync(join(dir(name), "run", "bb-box", "ready"), "");
         found.State = { Status: "running", ExitCode: 0 };
         servicesStarted(name);
-        for (const network of Object.values(found.NetworkSettings.Networks)) network.IPAddress = found.FakeAddress;
       }
+      if (found.State.Status !== "running") disconnect(found);
       save(found);
       return console.log(name);
     }
@@ -453,9 +468,17 @@ function container(command, rest) {
       rmSync(join(dir(found.Name.slice(1)), "run"), { recursive: true, force: true });
       rmSync(join(identityRoot(found.Name.slice(1)), "run"), { recursive: true, force: true });
       found.State = { Status: "exited", ExitCode: 0 };
-      for (const network of Object.values(found.NetworkSettings.Networks)) network.IPAddress = "";
+      disconnect(found);
       save(found);
       return console.log(rest.at(-1));
+    }
+    case "rename": {
+      const [from, to] = rest;
+      const found = find(from) ?? fail(`Error response from daemon: No such container: ${from}`);
+      renameSync(dir(found.Name.slice(1)), dir(to));
+      found.Name = `/${to}`;
+      save(found);
+      return;
     }
     case "rm": {
       const ref = rest.filter((arg) => !arg.startsWith("-")).at(-1);
@@ -497,8 +520,12 @@ function container(command, rest) {
       const identity = identityRoot(found.Name.slice(1));
       if (existsSync(identity)) cpSync(identity, imageIdentityRoot(tag), { recursive: true, filter: (path) => path !== join(identity, "run") });
       write("image-env.json", { ...read("image-env.json", {}), [tag]: [...env].map(([key, value]) => `${key}=${value}`) });
+      const committed = `sha256:${randomBytes(32).toString("hex")}`;
+      const parent = imageIdOf(found.Config.Image);
       write("images.json", { ...images, [tag]: labels });
-      write("image-ids.json", { ...read("image-ids.json", {}), [tag]: `sha256:${randomBytes(32).toString("hex")}` });
+      write("image-ids.json", { ...read("image-ids.json", {}), [tag]: committed });
+      const chain = read("image-chain.json", {});
+      write("image-chain.json", { [parent]: { parent: null, bytes: imageBytes(parent) }, ...chain, [committed]: { parent, bytes: imageBytes(parent) + (host.snapshotLayerBytes ?? 4096) } });
       return console.log(`sha256:${randomBytes(32).toString("hex")}`);
     }
     case "logs": {
@@ -550,6 +577,25 @@ function exec(rest) {
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => child.kill(signal));
   child.on("error", (error) => fail(`OCI runtime exec failed: ${error.message}`, 126));
   child.on("exit", (code, signal) => process.exit(code ?? 128 + (constants.signals[signal] ?? 0)));
+}
+
+function imageIdOf(name) {
+  return read("image-ids.json", {})[name] ?? `sha256:${createHash("sha256").update(name).digest("hex")}`;
+}
+
+function imageBytes(id) {
+  const chained = read("image-chain.json", {})[id];
+  if (chained) return chained.bytes;
+  const name = Object.keys(read("images.json", {})).find((each) => imageIdOf(each) === id);
+  return read("image-sizes.json", {})[name] ?? 6_500_000_000;
+}
+
+function layersOf(id) {
+  const chained = read("image-chain.json", {})[id];
+  if (chained?.parent) return [...layersOf(chained.parent), { id: `${id}:own`, bytes: chained.bytes - imageBytes(chained.parent) }];
+  const count = host.snapshotLayers ?? 2;
+  const whole = imageBytes(id);
+  return Array.from({ length: count }, (_, i) => ({ id: `${id}:${i}`, bytes: Math.floor(whole / count) + (i === 0 ? whole % count : 0) }));
 }
 
 const [command, ...rest] = args;
@@ -683,7 +729,7 @@ switch (command) {
         console.log(JSON.stringify(more.map((ref) => {
           const [name] = named(ref);
           if (!name) fail(`No such image: ${ref}`);
-          return { Id: idOf(name), RepoTags: Object.keys(images).filter((tag) => idOf(tag) === idOf(name)), Config: { Labels: images[name], Env: read("image-env.json", {})[name] ?? [] }, RootFS: { Layers: Array.from({ length: host.snapshotLayers ?? 2 }, (_, i) => `layer-${i}`) } };
+          return { Id: idOf(name), RepoTags: Object.keys(images).filter((tag) => idOf(tag) === idOf(name)), Config: { Labels: images[name], Env: read("image-env.json", {})[name] ?? [] }, RootFS: { Layers: layersOf(idOf(name)).map((layer) => layer.id) }, Size: imageBytes(idOf(name)) };
         })));
         break;
       }
@@ -694,7 +740,13 @@ switch (command) {
       // Its size, in bytes, from image-sizes.json where a test sets it, else as a desktop image's (#474).
       const size = read("image-sizes.json", {})[name] ?? 6_500_000_000;
       console.log(format === "{{.Id}}" ? idOf(name) : format === "{{.Size}} {{json .Config.Labels}}" ? `${size} ${JSON.stringify(images[name])}` : JSON.stringify(images[name]));
+    } else if (sub === "history") {
+      if (host.failImageHistory) fail("Error response from daemon: the image store could not read the image's history");
+      const [name] = named(more.at(-1));
+      if (!name) fail(`Error response from daemon: No such image: ${more.at(-1)}`);
+      for (const bytes of [0, ...layersOf(idOf(name)).map((layer) => layer.bytes).reverse(), 0]) console.log(bytes);
     } else if (sub === "tag") {
+      if (host.failImageTag) fail("Error response from daemon: the image store refused the tag");
       const [source, target] = more;
       const [name] = named(source);
       if (!name) fail(`Error response from daemon: No such image: ${source}`);
@@ -702,6 +754,7 @@ switch (command) {
       write("image-ids.json", { ...ids, [target]: idOf(name) });
     } else if (sub === "rm") {
       const ref = more.at(-1);
+      if (host.failImageRmMatching && new RegExp(host.failImageRmMatching).test(ref)) fail(`Error response from daemon: the image store could not remove ${ref}`);
       const names = named(ref);
       if (!names.length) fail(`Error response from daemon: No such image: ${ref}`);
       // By ID, every name goes, unless a container uses the image; by name, the name goes, as a tag, unless it is the image's last and a container uses it.

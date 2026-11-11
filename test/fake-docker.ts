@@ -31,6 +31,7 @@ export interface FakeContainer {
     readonly Devices: string[];
     readonly Mounts: { readonly Type: string; readonly Name?: string; readonly Source: string; readonly Target: string; readonly ReadOnly: boolean }[];
   };
+  readonly NetworkSettings: { readonly Networks: Readonly<Record<string, { readonly IPAddress: string }>> };
 }
 
 export interface FakeDockerHost {
@@ -78,7 +79,7 @@ function imageWithIdentityReset(root: string, version: number): void {
 
 function fakeIdentityTools(bin: string): void {
   mkdirSync(bin, { recursive: true });
-  const ip = `#!/bin/sh\nif [ "$1" = -o ]; then [ -z "$FAKE_ADDRESS" ] || printf '2: eth0    inet %s/16 scope global eth0\\n' "$FAKE_ADDRESS"; exit 0; fi\necho '[]'\n`;
+  const ip = `#!/bin/sh\nif [ "$1" = -o ]; then for address in $FAKE_ADDRESS $FAKE_ALSO_HOLDS; do printf '2: eth0    inet %s/16 scope global eth0\\n' "$address"; done; exit 0; fi\necho '[]'\n`;
   writeFileSync(join(bin, "ip"), ip, { mode: 0o755 });
 }
 

@@ -34,8 +34,10 @@ import {
   type Limit,
   type MachineNature,
   type ReleaseHooks,
+  type SnapshotRef,
 } from "../../src/backends/types.ts";
 import { KIND_INFO } from "../../src/backends/kinds.ts";
+import { endOfUtcDay, newSnapshotId } from "../../src/core/snapshot.ts";
 import { gpuWhenNotAsked } from "../../src/core/gpu.ts";
 import { displayShows } from "../../src/backends/types.ts";
 import type { BoxRecord } from "../../src/core/boxes.ts";
@@ -79,7 +81,11 @@ export type ConformanceCheck =
   /** Building a small image with the backend's image operations, which needs root in its box (049). */
   | "images"
   | "test-device"
-  | "device";
+  | "device"
+  | "keep";
+
+const KEEP_DAY = "2099-12-30";
+const LATER_KEEP_DAY = "2099-12-31";
 
 /** A new Simulator device's first boot is slow (047). */
 const SIMULATOR_TIMEOUT_MS = 600_000;
@@ -977,6 +983,36 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             await until(() => options.bb!.connected(box, signal()), Math.max(0, restartedAt + RECONNECT_MS - Date.now()), "the box reconnects to BB", 100);
           });
 
+          const offer = backend.snapshotting?.(kind.id) ?? null;
+          const keeps = skip.keep ?? (offer?.keepsPastRelease === "as-is" && backend.snapshot && backend.labelKept && backend.heldSnapshots && backend.deleteSnapshot ? false : "the kind keeps no snapshot as it is past its box's release");
+          let kept: SnapshotRef | null = null;
+          const keptUntil = async (target: Backend, id: string) => (await target.heldSnapshots!(signal())).find((held) => held.id === id)?.keptUntil;
+
+          it("writes a keep date on a snapshot, moves it and takes it off, and a new instance on empty storage reads it from the provider", { timeout, skip: keeps }, async () => {
+            const { guest } = need();
+            const id = newSnapshotId((bytes) => randomBytes(bytes));
+            const taken = await backend.snapshot!(guest, { id, box: box.boxId, memory: false, forkSafe: offer?.forkSafeFrom ?? 9 }, { submitting: async () => {}, task: async () => {} }, signal());
+            const listed = (await backend.heldSnapshots!(signal())).find((held) => held.id === id);
+            assert.ok(listed, "the provider lists the snapshot it took");
+            assert.ok(taken.ref, "the take names its snapshot");
+            const ref: SnapshotRef = { id, ref: listed.ref, guest: listed.guest };
+
+            await backend.labelKept!(ref, KEEP_DAY, signal());
+            assert.equal(await keptUntil(backend, id), endOfUtcDay(KEEP_DAY));
+
+            await backend.labelKept!(ref, LATER_KEEP_DAY, signal());
+            assert.equal(await keptUntil(backend, id), endOfUtcDay(LATER_KEEP_DAY), "a new date replaces the old one");
+
+            await backend.labelKept!(ref, null, signal());
+            assert.equal(await keptUntil(backend, id), null, "taken off");
+
+            await backend.labelKept!(ref, KEEP_DAY, signal());
+            const fresh = await options.create(new MemoryStorage(), CONFORMANCE_INSTALL);
+            others.push(fresh);
+            assert.equal(await keptUntil(fresh, id), endOfUtcDay(KEEP_DAY), "the provider holds the date, not the backend's storage");
+            kept = ref;
+          });
+
           it("a new instance on empty storage with the same install ID names the box's owner", { timeout, skip: skip.recovery ?? false }, async () => {
             const { guest } = need();
             // As when BB Box loses its storage: the sweep rebuilds the box's record from this.
@@ -1011,6 +1047,15 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             await assertReleased(backend, guest, generation);
             await backend.release(guest, releaseHooks().hooks, signal());
             await assertReleased(backend, guest, generation);
+          });
+
+          it("keeps a kept snapshot as it is past its box's release, and deletes it on request", { timeout, skip: keeps }, async (t) => {
+            if (!kept) return t.skip("no snapshot was kept");
+            assert.equal(await keptUntil(backend, kept.id), endOfUtcDay(KEEP_DAY), "listed after the release, with its date");
+
+            await backend.deleteSnapshot!(kept, { submitting: async () => {}, task: async () => {} }, signal());
+
+            assert.equal(await keptUntil(backend, kept.id), undefined, "gone once deleted");
           });
         });
       }

@@ -956,6 +956,8 @@ export interface Backend {
   armFork?(guest: Guest, arming: ForkArming, signal?: AbortSignal): Promise<void>;
   readonly addressIsAnEndpoint?: boolean;
   leasedAddressNow?(guest: Guest, signal?: AbortSignal): Promise<LeasedAddressNow>;
+  addressesGivenByProvider?(guest: Guest, signal?: AbortSignal): Promise<readonly string[]>;
+  boxHasNoGuest?(boxId: string, lastKnown: Guest, signal?: AbortSignal): Promise<boolean>;
   startForForkCheck?(guest: Guest, signal: AbortSignal, timing?: (step: string, ms: number) => void): Promise<void>;
   forkCheckCommand?(guest: Guest, signal?: AbortSignal): Promise<CommandTransport>;
   disarmFork?(guest: Guest, signal?: AbortSignal): Promise<void>;
@@ -1023,6 +1025,7 @@ export interface Snapshotting {
   readonly excludes: string | null;
   readonly forkSafeFrom?: number;
   readonly forkWhy?: string;
+  readonly keepWhy?: string;
 }
 
 export interface SnapshotStorage {
@@ -1069,7 +1072,7 @@ export interface SnapshotPlan {
     readonly copyAboutMs: number | null;
     readonly costWords?: string | null;
   };
-  readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly usedBytes?: number | null; readonly price: Price | null };
+  readonly keep: { readonly way: KeepsPastRelease; readonly why: string | null; readonly aboutMs: number | null; readonly bytes: number | null; readonly usedBytes?: number | null; readonly unsharedBytes?: number | null; readonly price: Price | null };
   readonly fork: { readonly ok: boolean; readonly why: string | null; readonly aboutMs: number; readonly bytes: number | null; readonly size: MachineSize | null };
   readonly locked: { readonly lock: string; readonly fix: string } | null;
   readonly busy?: string | null;
@@ -1085,6 +1088,7 @@ export interface SnapshotTake {
 export interface SnapshotSize {
   readonly bytes: number;
   readonly means: "own" | "whole";
+  readonly estimated?: boolean;
 }
 
 export interface SnapshotTaken {

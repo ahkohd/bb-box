@@ -64,8 +64,9 @@ Cancelling a Docker commit client after the commit reaches the engine was not
 measured here. The failed-task record rejects a late image after interruption.
 
 Delete reports the stored snapshot estimate through the existing core interface.
-When a manually made container still uses the image, Docker retains its layers;
-the displayed freed size does not distinguish that deferred space yet.
+When a manually made container still uses the image, Docker retains its layers.
+Docker's size is marked as an estimate, so a delete says it freed up to about
+that much, less what a fork or another image still uses.
 
 ## Restore, verified live
 
@@ -201,3 +202,68 @@ address pools, so the address was the box's own. With BB's machine URL set
 to the box network's gateway, the fork joined BB. This comes from the VM's
 address pools, not from the hold. After the releases, Docker listed no
 containers, volumes or snapshot images of the test install.
+
+## Keep, verified live
+
+Measured on 11 November 2026 on a Proxmox QEMU VM with 4 vCPU, 8 GiB of
+memory and an 80 GiB disk: Ubuntu 24.04.5, Docker 29.1.3 with the containerd
+image store. A separate BB ran there, a fresh `bb-app@0.49.0` with no
+account, as a user of its own, its ports dropped on the VM's outside
+interface, with BB Box installed from the branch, the Linux image built by
+`bb box setup docker` (5 min), and markers on for its Docker backend. Each
+source was one of the person's machines, `linux` with 2 cores and 2 GiB.
+
+| Step | What happened |
+| --- | --- |
+| Take two snapshots, `before` and `plain` | Each paused the box for 3.1 to 3.5 s; 259 MB each |
+| `bb box snapshot keep ... --check`, then keep | "If src-b is released, it stays where it is until Fri 11 Dec; nothing is copied then, and from then on it takes its whole size, up to 259 MB on (the host)'s Docker's disk". The engine then had the tag `bbbox-kept/<install>/<snapshot>:2026-12-11` on the snapshot's image |
+| Keep `--until 2026-12-31`, unkeep, keep again | The tag moved to `:2026-12-31`, was removed, then came back as `:2026-12-11`; one keep tag at a time |
+| Remove the machine | Its container went, and `plain`'s image and volume with it. `before`'s image, volume and keep tag stayed. `bb box snapshot list --all` listed it, kept until 2026-12-11, its box released. The doctor said "1 kept snapshot holds about 259 MB on Docker's disk" |
+| Fork from the kept snapshot, alone on the engine | Refused by BB Box's check and released: Docker gave the fork the address its source had, as the lowest free one. See below |
+| Fork again, with another machine running | Ready 0.9 s after the request. It held `A` in its file and in an inner Docker volume, written before the take, not the `B` written after. Its reset ran ("BB machines removed: host_<source>"), its identity value was its own box ID, and it joined BB as a machine of its own |
+| Stop BB, move `snapshots.db` away, start BB, sweep | `bb box snapshot list --all` showed nothing before the sweep and, after it, the kept snapshot with its date, 2026-12-11, under its box's name, `src-b` |
+| Keep the released box's snapshot until 2026-12-20 | The tag moved to `:2026-12-20`. Unkeep on a released box was refused: "only its keep holds it. Delete it instead, or keep it longer" |
+| Remove the Docker backend | Refused, for the box record and the snapshot BB Box records, and for the snapshot on the engine: "has 1 snapshot on its host, kept or not, which would stay and take its disk after it is removed". After `bb box snapshot forget`, still refused from the engine's own list |
+| Keep until 2026-11-12; BB's clock at now, then at +1 day (2026-11-12) with `faketime` | Kept, with its image, tag and volume, after a sweep at each |
+| BB's clock at +2 days (2026-11-13) | The sweep deleted it: no snapshot listed, and no snapshot image, keep tag or volume on the engine |
+
+A fork after the release, alone on the engine, is refused. Docker's address
+manager gives a new container the lowest free address on the network, so
+after its source's release the fork gets the source's old address. The
+core's check refuses a fork that holds its source's last address unless a
+DHCP lease shows it asked for it as itself, and Docker has no DHCP. A
+network made with `com.docker.network.ipam.serial=true` gave the same
+address again. The refusal is safe, and nothing of the fork acts as its
+source, but the fork does not happen. A fix needs a choice: Docker holding
+the source's last address while a fork starts, or a core rule for addresses
+an engine assigns, which never gives one address to two running guests.
+[Decision 088](088-a-fork-may-hold-its-gone-sources-address-when-its-provider-gave-it.md)
+takes the second; see below.
+
+## Keep's fix round, verified live
+
+Measured on 11 November 2026 on a Proxmox QEMU VM with 8 vCPU, 16 GiB of
+memory and an 80 GiB disk: Ubuntu 24.04, Docker 29.1.3 with the containerd
+image store. A separate BB ran there, a fresh `bb-app@0.49.0` with no
+account, as a user of its own, bound to 127.0.0.1, with BB Box installed from
+the branch, the Linux image built by `setup/docker/build.sh linux`, and
+markers on for its Docker backend. Each source was one of the person's
+machines, `linux` with 2 cores and 2 GiB. No other container ran on the
+engine.
+
+| Step | What happened |
+| --- | --- |
+| Take `before`, keep `--check` | "It takes about 8 MB of (the host)'s Docker's disk that nothing else there shares, and up to 3.0 GB if what it shares is deleted." Its own layer was 139 kB unpacked, its Docker data 7.2 MB, and `docker system df --verbose` gave the image 2.99 GB in all. Before this round the dialog said "up to 8 MB", and Docker's own unique size for it was 795.6 MB, its packed base layers, which the box's image shares |
+| Remove the machine, then fork from the kept snapshot | The engine had no container. Docker gave the fork 172.16.1.2, its source's address. BB Box handed it over 1.1 s after the request: it held `A` in its file and in an inner Docker volume, and its reset ran, its identity value its own box ID |
+| Tag the kept image with two more keep dates, 2026-11-25 and 2026-12-20, then sweep | One keep tag stayed, `:2026-12-20`, and the snapshot was listed as kept until 2026-12-20 |
+| The backend's host set to `ssh://` the same machine; a new machine, take, keep, remove, fork | Over SSH the fork got its source's address too and was handed over in 6.5 s, with the file from before the take and its reset run |
+| Doctor; remove `bbbox/linux:1`, as a refresh does; delete the first kept snapshot; doctor | With two kept snapshots, about 8 MB that nothing else shares, as the two still shared the base layers. With one left, "It takes about 2.9 GB of Docker's disk that nothing else there shares, and up to 3.0 GB", against Docker's own unique size of 2.898 GB for the image, which shared only the Ubuntu layer, plus 7 MB of Docker data |
+| Delete the kept snapshot | Its image, keep tag and volume went |
+
+The fake Docker host now gives a starting container the lowest free address,
+as Docker does, and a test runs where the BB server's hostname is the
+engine's, so BB Box records the address. Its fork test failed before 088 and
+passes with it. Keep tag changes cut short between the new tag and the old
+one's removal, a renewal and a shortening, each with BB Box's recovery and
+Docker's maintenance in both orders, leave one tag, the date asked for; with
+`snapshots.db` and the backend's own storage both lost, the later date.

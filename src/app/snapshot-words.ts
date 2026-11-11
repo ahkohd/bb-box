@@ -86,6 +86,7 @@ export function gibWords(bytes: number): string {
 
 export function snapshotSizeWords(size: SnapshotSize | null): string {
   if (!size) return "size unknown";
+  if (size.estimated) return `about ${gbWords(size.bytes)}`;
   return size.means === "own" ? gbWords(size.bytes) : `${gbWords(size.bytes)}, some shared`;
 }
 
@@ -158,6 +159,7 @@ export function forkWhyNot(row: SnapshotRowView, view: BoxSnapshotsView, boxName
 export function freesWords(row: SnapshotRowView, boxName: string): string {
   if (row.state === "failed" || row.state === "lost") return "It holds nothing to free.";
   const where = row.host ? ` on ${row.host}` : "";
+  if (row.size?.estimated) return `Frees up to about ${gbWords(row.size.bytes)}${where}, less what a fork or another image still uses.`;
   if (row.size?.means === "own") return `Frees ${gbWords(row.size.bytes)}${where}.`;
   if (row.storage && SHARES_BLOCKS.has(row.storage.type)) return `Frees what it no longer shares with ${boxName}.`;
   return "Its backend does not say how much it frees.";

@@ -915,6 +915,14 @@ export interface ForkRequest {
 
 export type ForkAdmission = Pick<ForkRequest, "threadId" | "name" | "backend" | "backendLabel" | "kind" | "gpu"> & { readonly size: MachineSize | null; readonly who?: Actor };
 
+interface SourceAddresses {
+  readonly sourceAddresses: readonly string[];
+  readonly freedSourceAddresses: readonly string[];
+  readonly sourceGone: boolean;
+}
+
+const NO_SOURCE_ADDRESSES: SourceAddresses = { sourceAddresses: [], freedSourceAddresses: [], sourceGone: false };
+
 function distinctAddresses(addresses: readonly (string | null)[]): string[] {
   return [...new Set(addresses.filter((address): address is string => !!address))];
 }
@@ -2593,18 +2601,22 @@ export class Boxes {
     if (!command) throw new BoxError("unsupported", `${PRODUCT} cannot run commands in fork ${box.name}, so it cannot check that it gave up ${fork.source.name}'s identity.`);
     const own = await backend.guestIdentity!(guest, signal);
     const byEndpoint = backend.addressIsAnEndpoint === true;
-    const expectedNow = async () => ({
-      forkMacs: Object.values(own.macs),
-      forkValue: own.value ?? null,
-      sourceMacs: fork.source.macs,
-      sourceBox: fork.source.id,
-      sourceName: fork.source.name,
-      ...(byEndpoint ? { sourceAddresses: [], freedSourceAddresses: [] } : await this.#sourceAddresses(box, backend, signal)),
-      ownAddress: byEndpoint ? null : guest.address,
-      boxAddresses: backend.boxAddresses?.() ?? [],
-      held: fork.snapshot.identity,
-      safeFrom: backend.snapshotting?.(box.kind)?.forkSafeFrom ?? 1,
-    });
+    const expectedNow = async () => {
+      const source = byEndpoint ? NO_SOURCE_ADDRESSES : await this.#sourceAddresses(box, backend, signal);
+      return {
+        forkMacs: Object.values(own.macs),
+        forkValue: own.value ?? null,
+        sourceMacs: fork.source.macs,
+        sourceBox: fork.source.id,
+        sourceName: fork.source.name,
+        ...source,
+        givenByProvider: source.sourceGone && source.freedSourceAddresses.length ? await this.#addressesGivenToFork(box, guest, backend, signal) : [],
+        ownAddress: byEndpoint ? null : guest.address,
+        boxAddresses: backend.boxAddresses?.() ?? [],
+        held: fork.snapshot.identity,
+        safeFrom: backend.snapshotting?.(box.kind)?.forkSafeFrom ?? 1,
+      };
+    };
     const waitMs = this.#deps.forkWaitMs ?? FORK_WAIT_MS;
     for (let look = 1; ; look++) {
       const seen = await readForkSeen(command, signal, box.capabilities.os === "macos" ? "macos" : "linux");
@@ -2620,13 +2632,35 @@ export class Boxes {
     timings.check = this.#now() - began;
   }
 
-  async #sourceAddresses(box: BoxRecord, backend: Backend, signal: AbortSignal): Promise<{ readonly sourceAddresses: readonly string[]; readonly freedSourceAddresses: readonly string[] }> {
+  async #addressesGivenToFork(box: BoxRecord, guest: Guest, backend: Backend, signal: AbortSignal): Promise<readonly string[]> {
+    if (!backend.addressesGivenByProvider) return [];
+    try {
+      return await backend.addressesGivenByProvider(guest, signal);
+    } catch (error) {
+      signal.throwIfAborted();
+      throw new BoxError("failed", `${PRODUCT} did not hand fork ${box.name} over: it could not read the addresses ${backend.label} gave it, so it cannot tell that the one ${box.fork!.source.name} had is the fork's own now: ${sentenceOf(describeError(error, "Reading them"))}`);
+    }
+  }
+
+  async #lostSourceHasNoGuest(box: BoxRecord, backend: Backend, signal: AbortSignal): Promise<boolean> {
+    const fork = box.fork!;
+    const lastKnown = fork.snapshot.from === "held-copy" ? null : fork.snapshot.livesOn;
+    if (!lastKnown || !backend.boxHasNoGuest || !backend.addressesGivenByProvider) return false;
+    try {
+      return await backend.boxHasNoGuest(fork.source.id, lastKnown, signal);
+    } catch (error) {
+      signal.throwIfAborted();
+      throw new BoxError("failed", `${PRODUCT} did not hand fork ${box.name} over: ${fork.source.name} has no box record with a machine, and it could not ask ${backend.label} whether ${fork.source.name}'s machine is still there, so it cannot tell that the fork may have its address: ${sentenceOf(describeError(error, "Asking"))}`);
+    }
+  }
+
+  async #sourceAddresses(box: BoxRecord, backend: Backend, signal: AbortSignal): Promise<SourceAddresses> {
     const fork = box.fork!;
     const asked = fork.source.address ?? null;
-    if (!backend.leasedAddressNow) return { sourceAddresses: asked ? [asked] : [], freedSourceAddresses: [] };
+    if (!backend.leasedAddressNow) return { sourceAddresses: asked ? [asked] : [], freedSourceAddresses: [], sourceGone: false };
     const source = await this.#read(fork.source.threadId, fork.source.id);
     const recorded = distinctAddresses([asked, source?.guest?.address ?? null]);
-    if (!source?.guest) return { sourceAddresses: [], freedSourceAddresses: recorded };
+    if (!source?.guest) return { sourceAddresses: [], freedSourceAddresses: recorded, sourceGone: recorded.length > 0 && (await this.#lostSourceHasNoGuest(box, backend, signal)) };
     let now: LeasedAddressNow;
     try {
       now = await backend.leasedAddressNow(source.guest, signal);
@@ -2634,8 +2668,8 @@ export class Boxes {
       signal.throwIfAborted();
       throw new BoxError("failed", `${PRODUCT} did not hand fork ${box.name} over: it could not read the address ${fork.source.name} holds now, so it cannot tell that the fork does not take it: ${sentenceOf(describeError(error, "Reading it"))}`);
     }
-    if (now.power === "stopped" || now.power === "gone") return { sourceAddresses: [], freedSourceAddresses: recorded };
-    return { sourceAddresses: distinctAddresses([now.leased, ...recorded]), freedSourceAddresses: [] };
+    if (now.power === "stopped" || now.power === "gone") return { sourceAddresses: [], freedSourceAddresses: recorded, sourceGone: now.power === "gone" };
+    return { sourceAddresses: distinctAddresses([now.leased, ...recorded]), freedSourceAddresses: [], sourceGone: false };
   }
 
   async #acquire(initial: BoxRecord, signal: AbortSignal): Promise<void> {
