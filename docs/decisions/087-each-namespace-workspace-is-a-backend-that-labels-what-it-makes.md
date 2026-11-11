@@ -77,9 +77,8 @@ under the same tag and unique tag.
 - The first Linux box of each kind on each Namespace backend waits for its
   own image build, about 4 to 9 minutes, even where another backend shares
   its workspace.
-- boat.dev can follow the same pattern: a `several` that names no host, a
-  label or name for what each backend makes that the first backend keeps
-  as it was, and templates per backend.
+- boat.dev follows the same pattern, in
+  [093](093-each-boat-dev-account-is-a-backend-that-labels-what-it-makes.md).
 - A backend removed while its machines still run leaves them to their
   deadline, at most an hour away, as before. A machine without a backend
   label is no one's once the backend with the ID `namespace` is gone.

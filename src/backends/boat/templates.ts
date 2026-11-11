@@ -8,6 +8,7 @@ import type { BackendStorage } from "../types.ts";
 import type { RunResult } from "../../transports/types.ts";
 import { BoatError, isRunning, isStarting, isStopped, type BoatApi, type Sandbox, type SandboxSize } from "./api.ts";
 import { BOAT_TEMPLATE_KINDS, type BoatKind } from "./config.ts";
+import type { BoatOwner } from "./owner.ts";
 import { PRODUCT } from "../../brand.ts";
 
 export const TEMPLATE_ROLE = "template";
@@ -159,7 +160,7 @@ export interface Reached {
 export interface TemplateDeps {
   readonly api: BoatApi;
   readonly storage: BackendStorage;
-  readonly installId: string;
+  readonly owner: BoatOwner;
   readonly labelKeys: TemplateLabels;
   readonly publicKey: () => Promise<string>;
   readonly reach: (sandbox: string, user: "user" | "box", signal?: AbortSignal) => Promise<Reached>;
@@ -364,7 +365,7 @@ export class BoatTemplates {
     const labels = this.#deps.labelKeys;
     return (
       (await this.#deps.api.list({ [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: this.key() }, signal))
-        .filter((sandbox) => sandbox.state === "archived" && sandbox.dataExpiredAt === null && sandbox.name === templateName(kind, "ready") && !this.#buildSandboxes.has(sandbox.id))
+        .filter((sandbox) => this.#deps.owner.madeByThisBackendId(sandbox.labels) && sandbox.state === "archived" && sandbox.dataExpiredAt === null && sandbox.name === templateName(kind, "ready") && !this.#buildSandboxes.has(sandbox.id))
         .sort(newestFirst)[0] ?? null
     );
   }
@@ -377,10 +378,10 @@ export class BoatTemplates {
     const labels = this.#deps.labelKeys;
     const recorded = await this.current();
     const kinds = Object.keys(TEMPLATE_STEP) as BoatKind[];
-    return (await this.#deps.api.list({ [labels.install]: this.#deps.installId, [labels.role]: TEMPLATE_ROLE, [labels.key]: this.key() }, signal))
+    return (await this.#deps.api.list({ [labels.install]: this.#deps.owner.installId, [labels.role]: TEMPLATE_ROLE, [labels.key]: this.key() }, signal))
       .filter((sandbox) => {
         const kind = kinds.find((each) => each === sandbox.labels[labels.kind]);
-        return kind !== undefined && !recorded.has(sandbox.id) && !this.#buildSandboxes.has(sandbox.id) && followable(sandbox, kind);
+        return kind !== undefined && this.#deps.owner.owns(sandbox.labels) && !recorded.has(sandbox.id) && !this.#buildSandboxes.has(sandbox.id) && followable(sandbox, kind);
       })
       .sort(newestFirst);
   }
@@ -395,7 +396,7 @@ export class BoatTemplates {
     const labels = this.#deps.labelKeys;
     const found = await this.adoptable(kind, signal);
     if (!found) return null;
-    this.#deps.log(`boat: using the ${kind} template ${found.id}, which bb-box built ${found.labels[labels.install] === this.#deps.installId ? "before" : "for another install on this account"}.`);
+    this.#deps.log(`boat: using the ${kind} template ${found.id}, which bb-box built ${this.#deps.owner.owns(found.labels) ? "before" : "for another install on this account"}.`);
     let devices: readonly unknown[] | null = null;
     if (TEMPLATE_STEP[kind] === "android") {
       const text = await this.#deps.api.latestSnapshotFile(found.id, ANDROID_DEVICES_FILE, signal).catch(() => null);
@@ -526,7 +527,7 @@ export class BoatTemplates {
       .create({
         size,
         ttlSeconds: BUILD_TTL_SECONDS,
-        labels: { [labels.install]: this.#deps.installId, [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: key },
+        labels: { ...this.#deps.owner.labels(), [labels.role]: TEMPLATE_ROLE, [labels.kind]: kind, [labels.key]: key },
         name: templateName(kind, "building"),
       })
       .catch((error: unknown) => {
@@ -592,8 +593,8 @@ export class BoatTemplates {
   async #tryAFork(template: string, kind: BoatKind, size: SandboxSize): Promise<void> {
     const { api, now, log } = this.#deps;
     const labels = this.#deps.labelKeys;
-    const trialLabels = { [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: template };
-    const left = (await api.list(trialLabels)).filter((sandbox) => !this.#buildSandboxes.has(sandbox.id) && (isRunning(sandbox.state) || isStarting(sandbox.state))).sort(newestFirst)[0] ?? null;
+    const trialLabels = { ...this.#deps.owner.labels(), [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: template };
+    const left = (await this.#ownTrials(kind, template)).filter((sandbox) => !this.#buildSandboxes.has(sandbox.id) && (isRunning(sandbox.state) || isStarting(sandbox.state))).sort(newestFirst)[0] ?? null;
     this.#stillHere();
     if (left) log(`boat: checking the ${kind} template ${template} in its trial fork ${left.id}, which ${PRODUCT} made before it restarted.`);
     const trial = left ?? (await api.fork(template, { size, ttlSeconds: BUILD_TTL_SECONDS, labels: trialLabels, name: `bb-box ${kind} template trial` }));
@@ -633,9 +634,15 @@ export class BoatTemplates {
     const sandbox = await this.#deps.api.get(id).catch(() => null);
     if (sandbox?.name === templateName(kind, "ready")) return true;
     const labels = this.#deps.labelKeys;
-    const trials = await this.#deps.api.list({ [labels.install]: this.#deps.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: id }).catch(() => []);
+    const trials = await this.#ownTrials(kind, id).catch(() => []);
     if (trials.some((trial) => (isRunning(trial.state) || isStarting(trial.state)) && !this.#buildSandboxes.has(trial.id))) return true;
     return this.#buildStillHoldsItsLock(id);
+  }
+
+  async #ownTrials(kind: BoatKind, template: string): Promise<Sandbox[]> {
+    const labels = this.#deps.labelKeys;
+    const trials = await this.#deps.api.list({ [labels.install]: this.#deps.owner.installId, [labels.role]: TRIAL_ROLE, [labels.kind]: kind, [labels.template]: template });
+    return trials.filter((trial) => this.#deps.owner.owns(trial.labels));
   }
 
   async #progress(id: string): Promise<{ readonly build: GuestBuild | null; readonly complaint: string }> {

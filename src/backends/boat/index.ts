@@ -1,6 +1,7 @@
 import type { BackendDriver } from "../types.ts";
 import { BoatBackend } from "./backend.ts";
 import { BOAT_FIELDS, BOAT_KINDS, parseBoatPart, type BoatConfig } from "./config.ts";
+import { LONGEST_BOAT_BACKEND_NAME } from "./owner.ts";
 import { PRODUCT } from "../../brand.ts";
 
 export const boatDriver: BackendDriver<BoatConfig> = {
@@ -13,5 +14,7 @@ export const boatDriver: BackendDriver<BoatConfig> = {
   fields: BOAT_FIELDS,
   setup: { guide: "docs/guide/boat.md", scripts: ["setup/boat/template.sh", "setup/boat/customize-sandbox.sh"], needs: "A boat.dev account and API key, and a way for its sandboxes to reach BB." },
   parse: parseBoatPart,
+  several: () => null,
+  longestName: LONGEST_BOAT_BACKEND_NAME,
   create: (config, context) => new BoatBackend(config, context),
 };

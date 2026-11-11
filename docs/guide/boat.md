@@ -24,7 +24,7 @@ BB Box also keeps a stopped template sandbox for each kind, which every box of t
 - **The free trial** lasts 7 days and has 25 hours of compute, in which an hour of a `small` sandbox counts as half. It allows 2 sandboxes at once, the `small` and `default` sizes only, 5 starts a minute and 25 an hour, and auto-stops of at most 2 hours.
 - **A paid plan** allows 100 sandboxes at once or more, and more starts.
 
-BB Box also has its own limit, **Most boxes**, which is 2 by default, a template being built included. When either is reached, a thread that asks for another box is told why.
+BB Box also has its own limit, **Most boxes**, which is 2 by default, a template being built included. When either is reached, a thread that asks for another box is told why. With more than one boat.dev account, add each as a backend of its own: see [several accounts](#several-accounts).
 
 ## Before you start
 
@@ -67,6 +67,28 @@ bb box doctor
 The doctor checks that boat.dev accepts the key and says what your plan allows now: sandboxes at once, starts left, the sizes and their prices, and on the trial the compute hours left. It says when each template was built, and lists the sandboxes BB Box has.
 
 Then make a box from the Box panel, or ask an agent to. The first box of each kind waits for its template, and says so while it waits.
+
+## Several accounts
+
+Each boat.dev account can be a backend of its own, with its own API key. A plan's limits are per account, so each account adds its own sandboxes at once and its own starts.
+
+To add another account, make a key in it as in step 1, signed in to that account, then add a second boat.dev backend with a name of your own, of at most 13 lower-case letters, digits and hyphens:
+
+```sh
+grep '^BOAT_API_KEY_B=' secrets.env | bb box backend add boat --id team-b --secret api-key=BOAT_API_KEY_B --secrets-stdin --field most-boxes=2
+```
+
+Its ID is `boat:team-b`. **Add backend**, then **boat.dev**, in BB Box's settings adds one too, with the ID `boat:2`.
+
+- **Each has its own settings**: API key, Most boxes, Auto-stop and Android SDK licence. It can also be kept for some BB projects, as any backend can, with `--projects` or on its settings page.
+- **Each is named by its ID.** `bb box kinds`, the Box panel and `box_list` call the second one boat.dev (team-b), and `--on`, or an agent's `on`, takes that name or its ID. Without them, a new box goes to the first backend with room.
+- **Each touches only its own sandboxes.** BB Box labels each sandbox it makes with its backend, `bbbox-backend`, as well as its install, `bbbox-install`. A backend's sweep, upkeep, template builds, doctor and cleanup see only sandboxes with its own label, even when 2 backends use one account.
+- **Most boxes counts the backend's own sandboxes**, its template builds included, but not another backend's. The plan's sandboxes at once are the account's, so they count every sandbox on it, and a refusal says how many are another backend's.
+- **Each builds its own templates**, in its own account. So the first box of each kind on each backend waits for its template, about 6 minutes for Linux and 13 for a Linux desktop, even where another backend shares its account. A backend forks only templates that a backend with its ID built, on this install or another BB Box install on the account. `bb box images list` lists each backend's templates, with when each was built.
+- **Each names its own saved snapshots.** The first backend's are named after the install, the box and the snapshot, as before; another's carry its ID after the install, such as `abcdefghij-boat-team-b-bx...-sn...`. A backend lists, keeps and deletes only its own. What boat.dev bills for saved snapshots is the account's, so where 2 backends share an account, each one's ceiling counts the other's saved snapshots too.
+- **With the tailnet on**, a second backend's boxes join it as `bb-box-boatb-`, then the install's ID, the length of the backend's name, the name and the box's name, such as `bb-box-boatb-k3v9q2m7xa-6-team-b-my-box`. So no backend takes another's tailnet devices for its own. A name is at most 13 characters, so that this fits in a tailnet name.
+
+The first boat.dev backend, with the ID `boat`, keeps its ID when you add another, and with it its boxes, sandboxes, templates and saved snapshots. It also looks after sandboxes and templates that carry only the install's label, which versions of BB Box before several accounts made. No other backend touches them.
 
 ## What a box is like
 
@@ -123,7 +145,7 @@ So on the trial, whose largest size is boat.dev's `default`, 4 cores and 8 GB, b
 
 ## Check that nothing is left running
 
-BB Box labels every sandbox it makes with `bbbox-install`, and its boxes with `bbbox-box`. To list them with boat.dev's command line:
+BB Box labels every sandbox it makes with `bbbox-install` and `bbbox-backend`, and its boxes with `bbbox-box`. To list them with boat.dev's command line:
 
 ```sh
 boat list --all
@@ -131,10 +153,12 @@ boat list --all
 
 Each one should be a box in BB Box's Boxes page, or a template, with the label `bbbox-role=template`, stopped. BB Box's saved snapshots are named after the install, the box and the snapshot, such as `abcdefghij-bx...-sn...`; `boat snapshots` lists them, and each should be a snapshot on the Boxes page's Snapshots tab. BB Box checks its backends every few minutes, and deletes a box's sandbox once BB says the box's thread has ended. It deletes an old template an hour after a new one replaces it. `bb box doctor` lists any sandbox no box claims. If one stays, delete it with `boat delete` followed by its ID.
 
+A sandbox's `bbbox-backend` label says which boat.dev backend made it, such as `boat-team-b` for `boat:team-b`. Sandboxes from before several accounts have none, and are the backend `boat`'s.
+
 ## Turn it off
 
 1. Release the boxes on boat.dev.
-2. Delete the saved snapshots BB Box took, kept ones included: `bb box snapshot list --all` names them, and `bb box snapshot delete` deletes each one. A saved snapshot outlives its box and goes on costing past the plan's included ones, so BB Box refuses to remove the backend while boat.dev holds any of this install's, and names them; delete any it has no record of in boat.dev's dashboard.
+2. Delete the saved snapshots BB Box took, kept ones included: `bb box snapshot list --all` names them, and `bb box snapshot delete` deletes each one. A saved snapshot outlives its box and goes on costing past the plan's included ones, so BB Box refuses to remove the backend while boat.dev holds any of its own, and names them; delete any it has no record of in boat.dev's dashboard.
 3. Turn the boat.dev backend off in BB Box's settings. Boxes it already has keep working until they are released.
 4. Delete the templates with `boat delete`, and check that `boat list --all` lists nothing of BB Box's.
 5. Revoke the key in boat.dev's dashboard.

@@ -48,6 +48,7 @@ import {
   type Guest,
   type GuestFact,
   type HeldGuest,
+  type OwnImage,
   type PowerState,
   type ReleaseHooks,
   type ResizePlan,
@@ -62,9 +63,11 @@ import { BOAT_KINDS, type BoatConfig, type BoatKind } from "./config.ts";
 import { BoatTemplates, BuildLeftRunning, CUA_READY, FAILED_BUILD_RETRY_MS, IDENTITY_RESET_KINDS, TEMPLATE_ROLE, TRIAL_ROLE, buildWaitWords, type TemplateDeps } from "./templates.ts";
 import { CANNOT_ENROL_FIX, bbReach, cannotEnrolWords, type BbReach } from "./reach-bb.ts";
 import { storedKeyPair } from "../ssh-key.ts";
+import { BACKEND_LABEL, BoatOwner, INSTALL_LABEL } from "./owner.ts";
 
 export const LABELS = {
-  install: "bbbox-install",
+  install: INSTALL_LABEL,
+  backend: BACKEND_LABEL,
   box: "bbbox-box",
   thread: "bbbox-thread",
   name: "bbbox-name",
@@ -295,13 +298,14 @@ export function knownHostsLine(reach: SshReach): string {
   return `${reach.port === 22 ? reach.host : `[${reach.host}]:${reach.port}`} ${reach.hostKey}`;
 }
 
-export function stagingName(boxId: string, token: string): string {
-  return `${NAME_PREFIX}restoring:${boxId}:${token}`;
+export function stagingName(boxId: string, token: string, backendMark: string | null = null): string {
+  return `${NAME_PREFIX}restoring:${backendMark ? `${backendMark}:` : ""}${boxId}:${token}`;
 }
 
-export function stagingOf(name: string): { readonly box: string; readonly token: string } | null {
-  const found = /^bb-box:restoring:(bx[a-z2-7]{12}):([a-z2-9]{8})$/.exec(name);
-  return found ? { box: found[1]!, token: found[2]! } : null;
+export function stagingOf(name: string, backendMark: string | null = null): { readonly box: string; readonly token: string } | null {
+  const found = /^bb-box:restoring:(?:([a-z0-9-]+):)?(bx[a-z2-7]{12}):([a-z2-9]{8})$/.exec(name);
+  if (!found || (found[1] ?? null) !== backendMark) return null;
+  return { box: found[2]!, token: found[3]! };
 }
 
 interface FromSaved {
@@ -348,13 +352,14 @@ function message(error: unknown): string {
 
 export class BoatBackend implements Backend {
   readonly id: string;
-  readonly label = "boat.dev";
+  readonly label: string;
   readonly nature = "virtual" as const;
   readonly hostOs = "linux" as const;
   readonly #config: BoatConfig;
   readonly #context: BackendContext;
   readonly #options: BoatBackendOptions;
   readonly #api: BoatApi;
+  readonly #owner: BoatOwner;
   readonly #keyFile = new KeyFile();
   readonly #now: () => number;
   readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -378,13 +383,15 @@ export class BoatBackend implements Backend {
     this.#context = context;
     this.#options = options;
     this.id = context.id;
+    this.#owner = new BoatOwner(context.id, context.installId);
+    this.label = this.#owner.name ? `boat.dev (${this.#owner.name})` : "boat.dev";
     this.#now = options.now ?? Date.now;
     this.#sleep = options.sleep ?? sleepFor;
     this.#api = new BoatApi({ key: config.key, ...(options.fetch ? { fetch: options.fetch } : {}), ...(options.endpoint ? { endpoint: options.endpoint } : {}), sleep: this.#sleep, now: this.#now, ...(context.log ? { log: (line: string) => context.log!(line) } : {}) });
     this.templates = new BoatTemplates({
       api: this.#api,
       storage: context.storage,
-      installId: context.installId,
+      owner: this.#owner,
       labelKeys: { install: LABELS.install, role: LABELS.role, kind: LABELS.kind, key: LABELS.key, template: LABELS.template },
       publicKey: async () => (await this.#keys()).publicKey,
       reach: async (sandbox, user, signal) => this.#command(sandbox, user, signal),
@@ -455,19 +462,21 @@ export class BoatBackend implements Backend {
     const shape = sizeFor(size, allowed);
     if (!shape) problems.push(this.#tooBig(size, limits));
     const account = (await this.#api.list({}, signal)).filter((sandbox) => isRunning(sandbox.state) || isStarting(sandbox.state));
-    const mine = account.filter((sandbox) => sandbox.labels[LABELS.install] === this.#context.installId).length + pending.length;
+    const mine = account.filter((sandbox) => this.#owner.owns(sandbox.labels)).length + pending.length;
+    const siblings = account.filter((sandbox) => this.#owner.madeByAnotherBackendOfThisInstall(sandbox.labels)).length;
     const running = account.length + pending.length;
     const needed = (await this.templates.record(boatKind)) || this.templates.building(boatKind) || (await this.templates.adoptable(boatKind, signal).catch(() => null)) || (await this.templates.leftBuild(boatKind, signal).catch(() => null)) ? 1 : 2;
     const plan = limits.tier === "trial" ? "boat's free trial" : "boat's plan";
     if (limits.activeSandboxes && running + needed > limits.activeSandboxes) {
-      const others = running - mine;
+      const others = running - mine - siblings;
+      const whose = [others > 0 ? `${others} of them not ${PRODUCT}'s` : "", siblings > 0 ? `${siblings} another boat.dev backend's` : ""].filter(Boolean).join(" and ");
       problems.push(
-        `${plan} allows ${limits.activeSandboxes} sandboxes at once, and ${running} ${running === 1 ? "is" : "are"} running or starting${others > 0 ? `, ${others} of them not ${PRODUCT}'s` : ""}` +
+        `${plan} allows ${limits.activeSandboxes} sandboxes at once, and ${running} ${running === 1 ? "is" : "are"} running or starting${whose ? `, ${whose}` : ""}` +
           (needed === 2 ? `. This box's template must be built first, in a sandbox of its own: ${buildWaitWords(boatKind, null).replace(/^Building /, "building ")}` : ".") +
           " Release or stop a boat box, or ask another backend.",
       );
     }
-    if (mine + needed - 1 >= this.#config.mostBoxes) problems.push(`${PRODUCT} has ${mine} of the ${this.#config.mostBoxes} boat sandboxes it may run at once${needed === 2 ? ", and this box's template needs one more while it is built" : ""}. Release or stop a boat box, or raise Most boxes in BB Box's settings.`);
+    if (mine + needed - 1 >= this.#config.mostBoxes) problems.push(`${this.label} has ${mine} of the ${this.#config.mostBoxes} sandboxes ${PRODUCT} may run on it at once${needed === 2 ? ", and this box's template needs one more while it is built" : ""}. Release or stop a boat box, or raise Most boxes in BB Box's settings.`);
     if (limits.computeCapSeconds !== null && limits.computeUsedSeconds !== null && limits.computeUsedSeconds >= limits.computeCapSeconds)
       problems.push("The boat trial's compute hours are used up. Make a payment in boat's dashboard to end the trial, or use another backend.");
     const window = limits.starts.find((each) => each.remaining <= 0);
@@ -493,13 +502,13 @@ export class BoatBackend implements Backend {
     let made: Sandbox | null = null;
     try {
       const earlier = typeof previous?.data?.sandbox === "string" ? await this.#api.get(previous.data.sandbox, signal) : null;
-      if (earlier && earlier.labels[LABELS.install] === this.#context.installId && earlier.labels[LABELS.box] === box.boxId) made = earlier;
+      if (earlier && this.#owner.owns(earlier.labels) && earlier.labels[LABELS.box] === box.boxId) made = earlier;
       await hooks.claim(this.#guest(box.boxId, made, shape));
       if (!made) {
         const template = await this.templates.forBox(kind, signal, async (words) => hooks.waiting?.(words));
         made = await step("fork", () =>
           this.#whileBusy(signal, () =>
-            this.#api.fork(template.sandbox, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: this.#labels(box, kind), name: sandboxName(box), idempotencyKey: `bbbox-${this.#context.installId}-${box.boxId}`, env: identityEnv(box.boxId) }, signal),
+            this.#api.fork(template.sandbox, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: this.#labels(box, kind), name: sandboxName(box), idempotencyKey: this.#owner.idempotencyKey(box.boxId), env: identityEnv(box.boxId) }, signal),
           ),
         );
         await hooks.claim(this.#guest(box.boxId, made, shape));
@@ -568,7 +577,7 @@ export class BoatBackend implements Backend {
 
   async #stagingStopped(boxId: string, token: string, id: string | null, signal?: AbortSignal): Promise<boolean> {
     try {
-      const wanted = stagingName(boxId, token);
+      const wanted = stagingName(boxId, token, this.#owner.stagingMark);
       const found = id ? await this.#api.get(id, signal) : ((await this.#api.list({}, signal)).find((sandbox) => sandbox.name === wanted && !Object.keys(sandbox.labels).length) ?? null);
       if (!found || found.state === "archived") return true;
       if (found.name !== wanted || Object.keys(found.labels).length) return true;
@@ -731,6 +740,16 @@ export class BoatBackend implements Backend {
     return billOf(listed.allowance, listed.snapshots.map((saved) => saved.name));
   }
 
+  async ownImages(): Promise<readonly OwnImage[]> {
+    const images: OwnImage[] = [];
+    for (const kind of this.#offered()) {
+      const record = await this.templates.record(kind);
+      const due = record ? await this.templates.whyBuild(kind) : null;
+      images.push({ kind, ref: record?.sandbox ?? null, builtAt: record?.builtAt ?? null, due, building: this.templates.building(kind) });
+    }
+    return images;
+  }
+
   async #keepAllowance(allowance: SavedAllowance): Promise<void> {
     const changed = this.#lastAllowance?.included !== allowance.included;
     this.#lastAllowance = allowance;
@@ -786,7 +805,7 @@ export class BoatBackend implements Backend {
     if (refused) throw new SnapshotFailed(refused);
     const sandbox = await this.#mine(guest, signal);
     if (!sandbox) throw new SnapshotFailed(`boat's sandbox for box ${guest.ref} is gone.`);
-    const name = savedName(this.#context.installId, take.box, take.id);
+    const name = savedName(this.#owner.scope, take.box, take.id);
     await hooks.submitting();
     await hooks.task({ ref: `${SAVE_TASK}${name}`, host: BOAT_HOST });
     try {
@@ -848,7 +867,7 @@ export class BoatBackend implements Backend {
     if (listed.allowance) await this.#keepAllowance(listed.allowance);
     const mine = listed.snapshots.flatMap((saved) => {
       const parsed = parseSavedName(saved.name);
-      return parsed && parsed.install === this.#context.installId ? [{ saved, parsed }] : [];
+      return parsed && parsed.install === this.#owner.scope ? [{ saved, parsed }] : [];
     });
     await this.#forgetGoneFacts(new Set(listed.snapshots.map((saved) => saved.name)), signal);
     const facts = await this.#facts();
@@ -921,7 +940,7 @@ export class BoatBackend implements Backend {
     await ways.claim(claimed(null, null));
     await ways.submitting();
     const staging = await this.#whileBusy(signal, () =>
-      this.#api.createFrom(ref.ref, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: {}, name: stagingName(box.boxId, token), idempotencyKey: `bbbox-${this.#context.installId}-${box.boxId}-${token}-staging`, env }, signal),
+      this.#api.createFrom(ref.ref, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: {}, name: stagingName(box.boxId, token, this.#owner.stagingMark), idempotencyKey: this.#owner.idempotencyKey(`${box.boxId}-${token}-staging`), env }, signal),
     ).catch((error: unknown) => {
       throw ways.failed(error);
     });
@@ -930,7 +949,7 @@ export class BoatBackend implements Backend {
     await this.#whileBusy(signal, () => this.#api.stop(staging.id, signal));
     await this.#api.waitArchived(staging.id, this.#now() + STATE_WITHIN_MS, signal);
     const made = await this.#whileBusy(signal, () =>
-      this.#api.fork(staging.id, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: { ...this.#labels(box, kind), [LABELS.guest]: token }, name: sandboxName(box), idempotencyKey: `bbbox-${this.#context.installId}-${box.boxId}-${token}`, env }, signal),
+      this.#api.fork(staging.id, { size: shape.size, ttlSeconds: this.#leaseSeconds(), labels: { ...this.#labels(box, kind), [LABELS.guest]: token }, name: sandboxName(box), idempotencyKey: this.#owner.idempotencyKey(`${box.boxId}-${token}`), env }, signal),
     ).catch((error: unknown) => {
       throw ways.failed(error);
     });
@@ -1002,14 +1021,14 @@ export class BoatBackend implements Backend {
 
   #ownSavedName(ref: SnapshotRef): string {
     const box = typeof ref.guest.data?.box === "string" ? ref.guest.data.box : null;
-    const name = ref.ref || (box ? savedName(this.#context.installId, box, ref.id) : "");
+    const name = ref.ref || (box ? savedName(this.#owner.scope, box, ref.id) : "");
     const parsed = parseSavedName(name);
-    if (!parsed || parsed.install !== this.#context.installId || parsed.snapshot !== ref.id) throw new SnapshotFailed(`${name || ref.id} is not a saved snapshot of this install's, so ${PRODUCT} does not change it.`);
+    if (!parsed || parsed.install !== this.#owner.scope || parsed.snapshot !== ref.id) throw new SnapshotFailed(`${name || ref.id} is not a saved snapshot of ${this.label}'s on this install, so ${PRODUCT} does not change it.`);
     return name;
   }
 
   async #dropStaging(boxId: string, token: string, id: string | null, signal?: AbortSignal): Promise<void> {
-    const wanted = stagingName(boxId, token);
+    const wanted = stagingName(boxId, token, this.#owner.stagingMark);
     const staging = id ? await this.#api.get(id, signal) : ((await this.#api.list({}, signal)).find((sandbox) => sandbox.name === wanted && !Object.keys(sandbox.labels).length) ?? null);
     if (!staging) return;
     if (staging.name !== wanted || Object.keys(staging.labels).length) throw new Error(`boat's sandbox ${staging.id} is not the one ${PRODUCT} deployed to restore box ${boxId}, so ${PRODUCT} leaves it.`);
@@ -1022,7 +1041,7 @@ export class BoatBackend implements Backend {
   }
 
   async maintain(signal?: AbortSignal, recordedGuests?: ReadonlySet<string>): Promise<void> {
-    const all = await this.#api.list({ [LABELS.install]: this.#context.installId }, signal);
+    const all = await this.#ownSandboxes(signal);
     const lease = this.#leaseSeconds();
     for (const sandbox of all) {
       if (sandbox.labels[LABELS.role] || !isRunning(sandbox.state)) continue;
@@ -1042,9 +1061,9 @@ export class BoatBackend implements Backend {
   async #dropOldStaging(recordedGuests: ReadonlySet<string> | undefined, signal?: AbortSignal): Promise<void> {
     const all = await this.#api.list({}, signal);
     for (const sandbox of all) {
-      const found = stagingOf(sandbox.name);
+      const found = stagingOf(sandbox.name, this.#owner.stagingMark);
       if (!found || Object.keys(sandbox.labels).length || this.#making.has(`${found.box}:${found.token}`)) continue;
-      const copied = all.some((each) => each.labels[LABELS.install] === this.#context.installId && each.labels[LABELS.box] === found.box && tokenOf(each) === found.token && each.state !== "error");
+      const copied = all.some((each) => this.#owner.owns(each.labels) && each.labels[LABELS.box] === found.box && tokenOf(each) === found.token && each.state !== "error");
       const done = copied && (recordedGuests?.has(`bbbox-${found.box}-${found.token}`) ?? false);
       const abandoned = sandbox.createdAt !== null && this.#now() - sandbox.createdAt > STAGING_ABANDONED_MS;
       if (!done && !abandoned) continue;
@@ -1208,7 +1227,7 @@ export class BoatBackend implements Backend {
       const building = this.templates.building(kind) ? ", being built now" : "";
       if (!record) {
         const adoptable = await this.templates.adoptable(kind).catch(() => null);
-        lines.push(adoptable ? `${kind}: ${adoptable.id}, built ${adoptable.labels[LABELS.install] === this.#context.installId ? "here before" : "by another install on this account"}, which boxes fork${building}` : `${kind}: none yet, built when a box first needs it${building}`);
+        lines.push(adoptable ? `${kind}: ${adoptable.id}, built ${this.#owner.owns(adoptable.labels) ? "here before" : "by another install on this account"}, which boxes fork${building}` : `${kind}: none yet, built when a box first needs it${building}`);
         continue;
       }
       const days = Math.floor((this.#now() - record.builtAt) / (24 * 3_600_000));
@@ -1280,7 +1299,7 @@ export class BoatBackend implements Backend {
 
   #labels(box: BoxIdentity, kind: BoatKind): Record<string, string> {
     return {
-      [LABELS.install]: this.#context.installId,
+      ...this.#owner.labels(),
       [LABELS.box]: box.boxId,
       [LABELS.thread]: box.threadId,
       [LABELS.name]: box.name.slice(0, 256),
@@ -1308,11 +1327,15 @@ export class BoatBackend implements Backend {
   }
 
   async #held(signal?: AbortSignal): Promise<Sandbox[]> {
-    return (await this.#api.list({ [LABELS.install]: this.#context.installId }, signal)).filter((sandbox) => !sandbox.labels[LABELS.role]);
+    return (await this.#ownSandboxes(signal)).filter((sandbox) => !sandbox.labels[LABELS.role]);
+  }
+
+  async #ownSandboxes(signal?: AbortSignal): Promise<Sandbox[]> {
+    return (await this.#api.list({ [LABELS.install]: this.#context.installId }, signal)).filter((sandbox) => this.#owner.owns(sandbox.labels));
   }
 
   async #find(boxId: string, token: string | null, signal?: AbortSignal): Promise<Sandbox | null> {
-    return (await this.#api.list({ [LABELS.install]: this.#context.installId, [LABELS.box]: boxId }, signal)).find((sandbox) => tokenOf(sandbox) === token) ?? null;
+    return (await this.#api.list({ [LABELS.install]: this.#context.installId, [LABELS.box]: boxId }, signal)).find((sandbox) => tokenOf(sandbox) === token && this.#owner.owns(sandbox.labels)) ?? null;
   }
 
   async #mine(guest: Guest, signal?: AbortSignal): Promise<Sandbox | null> {
@@ -1321,7 +1344,7 @@ export class BoatBackend implements Backend {
     const id = typeof guest.data?.sandbox === "string" ? guest.data.sandbox : boxId ? ((await this.#find(boxId, token, signal))?.id ?? null) : null;
     if (!id) return null;
     const sandbox = await this.#api.get(id, signal);
-    if (!sandbox || sandbox.labels[LABELS.install] !== this.#context.installId) return null;
+    if (!sandbox || !this.#owner.owns(sandbox.labels)) return null;
     if ((sandbox.labels[LABELS.box] ?? null) !== boxId || tokenOf(sandbox) !== token) return null;
     return sandbox;
   }
@@ -1478,7 +1501,7 @@ export class BoatBackend implements Backend {
   }
 
   #tailnetHostPrefix(): string {
-    return `bb-box-boat-${tailnetHostname(this.#context.installId)}-`;
+    return this.#owner.tailnetPrefix();
   }
 
   #tailnetHostname(name: string): string {
