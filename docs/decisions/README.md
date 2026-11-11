@@ -94,3 +94,4 @@ which records still stand as written. The current design as a whole is in
 | [086](086-proxmox-lxc-boxes-restore-on-zfs-in-zfss-order.md) | Proxmox LXC boxes restore on ZFS in ZFS's order | Accepted; supersedes 070's "ZFS restores ship off" for Proxmox LXC; G16's node reboot is still unproved |
 | [087](087-each-namespace-workspace-is-a-backend-that-labels-what-it-makes.md) | Each Namespace workspace is a backend that labels what it makes | Accepted; extends 042's several backends of a type to backends with no host |
 | [088](088-a-fork-may-hold-its-gone-sources-address-when-its-provider-gave-it.md) | A fork may hold its gone source's address when its provider gave it | Accepted; extends 070's fork check |
+| [089](089-pool-machines-say-whether-they-snapshot.md) | Pool machines say whether they snapshot: home folders where they clone, or an operator's hook | Proposed; extends 070 for the SSH host pool |
