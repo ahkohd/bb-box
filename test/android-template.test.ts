@@ -146,6 +146,7 @@ case "$1" in
         esac ;;
       "settings get system accelerometer_rotation") echo 1 ;;
       "settings get system screen_off_timeout") echo 2147483647 ;;
+      "settings get secure device_state_rotation_lock") if [ "$(cat "$STATE/avd")" = pixel_fold ]; then cat "$STATE/fold-postures"; else echo null; fi ;;
       "settings get "*) echo 0 ;;
       "dumpsys power") echo "mStayOn=true" ;;
       "su 0 grep -c AndroidWifi /data/misc/apexdata/com.android.wifi/WifiConfigStore.xml") if [ -e "$STATE/wifi-in-memory-only" ]; then echo 0; else echo 2; fi ;;
@@ -154,7 +155,10 @@ case "$1" in
 esac`,
 };
 
-function checkAt(stage: "before finalize" | "after finalize" | "no devices", staleKey = false, wifiInMemoryOnly = false) {
+const ANDROID_POSTURES_CLOSED_LOCKED = "0:1:1:2:2:0";
+const IMAGE_POSTURES_ALL_ROTATING = "0:2:1:2:2:0";
+
+function checkAt(stage: "before finalize" | "after finalize" | "no devices", staleKey = false, wifiInMemoryOnly = false, foldPostures = IMAGE_POSTURES_ALL_ROTATING) {
   const root = mkdtempSync(join(tmpdir(), "android-check-"));
   try {
     const bin = join(root, "bin");
@@ -163,6 +167,7 @@ function checkAt(stage: "before finalize" | "after finalize" | "no devices", sta
     const state = join(root, "state");
     for (const dir of [bin, share, home, state]) mkdirSync(dir, { recursive: true });
     if (wifiInMemoryOnly) writeFileSync(join(state, "wifi-in-memory-only"), "");
+    writeFileSync(join(state, "fold-postures"), `${foldPostures}\n`);
     for (const [name, body] of Object.entries(STAND_INS)) writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
     writeFileSync(join(share, "android-pins.json"), read("pins.json"));
     if (stage !== "no devices") writeFileSync(join(share, "android-devices.json"), JSON.stringify(pins.devices.map((device) => ({ model: device.model, native: device.avd }))));
@@ -195,6 +200,8 @@ test("the image's check passes in build.sh's order, before finalize.sh writes th
     for (const device of pins.devices) assert.ok(lines.some((line) => line.startsWith(`${device.model} boots from its snapshot`) && /\bok\b/.test(line)), `${stage}: ${device.model}`);
     assert.ok(lines.some((line) => /^Pixel Fold screens +ok +closed 1080x2092, open 2208x1840$/.test(line)), stage);
     assert.ok(lines.some((line) => /^Pixel 8 Wi-Fi +ok +AndroidWifi saved on disk, a validated default network$/.test(line)), stage);
+    assert.ok(lines.some((line) => /^Pixel Fold defaults +ok +.*, auto-rotate on in every posture, awake$/.test(line)), stage);
+    assert.ok(lines.some((line) => /^Pixel 8 defaults +ok +.*, auto-rotate on, awake$/.test(line)), stage);
     assert.equal(lines.filter((line) => /\bok\b/.test(line)).length, 4 + 6 * pins.devices.length, stage);
   }
 });
@@ -210,4 +217,84 @@ test("the image's check fails, not passes, when the build made no devices, and w
 test("the image's check fails a snapshot whose AndroidWifi is only in its memory, not in the Wi-Fi store on disk (F-3)", () => {
   const lines = checkAt("after finalize", false, true);
   for (const device of pins.devices) assert.ok(lines.some((line) => line.startsWith(`${device.model} Wi-Fi`) && /FAIL AndroidWifi is not in the Wi-Fi store on disk/.test(line)), lines.join("\n"));
+});
+
+test("the image's check fails a Pixel Fold whose closed posture locks auto-rotate, as Android's own default does, though it rotates once opened", () => {
+  const lines = checkAt("after finalize", false, false, ANDROID_POSTURES_CLOSED_LOCKED);
+
+  assert.ok(lines.some((line) => /^Pixel Fold defaults +FAIL not as the image sets them: device_state_rotation_lock=0:1:1:2:2:0$/.test(line)), lines.join("\n"));
+  for (const model of ["Pixel 8", "Pixel Tablet"]) assert.ok(lines.some((line) => line.startsWith(`${model} defaults`) && /\bok\b/.test(line)), lines.join("\n"));
+});
+
+const BUILD_STAND_INS: Readonly<Record<string, string>> = {
+  sleep: "exit 0",
+  emulator: 'echo "Android emulator version 37.2.12.0 (build_id 16428233) (CL:N/A)"',
+  avdmanager: `cat >/dev/null
+while [ $# -gt 0 ]; do [ "$1" = -n ] && name=$2; shift; done
+mkdir -p "$HOME/.android/avd/$name.avd" && touch "$HOME/.android/avd/$name.avd/config.ini"`,
+  "bb-box-emulator": `case "$1" in
+  start) echo "$2" >"$STATE/avd"; mkdir -p "$STATE/settings/$2"; if [ "\${3:-}" = --cold ]; then echo "avd=$2 boot_s=20.000 snapshot=cold"; else echo "avd=$2 boot_s=3.000 snapshot=loaded"; fi ;;
+  stop) [ ! -e "$STATE/avd" ] || { avd=$(cat "$STATE/avd"); mkdir -p "$HOME/.android/avd/$avd.avd/snapshots/default_boot"; touch "$HOME/.android/avd/$avd.avd/snapshots/default_boot/ram.bin"; rm -f "$STATE/avd"; } ;;
+  grpc) echo 0 ;;
+esac`,
+  adb: `[ "$1" = -s ] || exit 0
+shift 2
+[ "$1" = shell ] || exit 0
+shift
+avd=$(cat "$STATE/avd")
+store=$STATE/settings/$avd
+case "$1 $2" in
+  "settings put")
+    [ "$4" = device_state_rotation_lock ] && [ -e "$STATE/postures-refused" ] && exit 0
+    echo "$5" >"$store/$3.$4" ;;
+  "settings get")
+    if [ -e "$store/$3.$4" ]; then cat "$store/$3.$4"
+    elif [ "$3 $4 $avd" = "secure device_state_rotation_lock pixel_fold" ]; then echo ${ANDROID_POSTURES_CLOSED_LOCKED}
+    else echo null; fi ;;
+  "dumpsys power") echo "mStayOn=true" ;;
+  "su 0") echo 2 ;;
+esac`,
+};
+
+function buildAvds(posturesRefused = false) {
+  const root = mkdtempSync(join(tmpdir(), "android-avds-"));
+  try {
+    const bin = join(root, "bin");
+    const home = join(root, "home");
+    const state = join(root, "state");
+    for (const dir of [bin, home, state]) mkdirSync(dir, { recursive: true });
+    for (const [name, body] of Object.entries(BUILD_STAND_INS)) writeFileSync(join(bin, name), `#!/bin/bash\n${body}\n`, { mode: 0o755 });
+    if (posturesRefused) writeFileSync(join(state, "postures-refused"), "");
+
+    const ran = spawnSync("bash", [join(ANDROID, "prepare-avds.sh"), join(ANDROID, "pins.json"), join(root, "devices.json")], {
+      env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, STATE: state, ANDROID_HOME: join(root, "no-sdk") },
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+
+    const written = (avd: string) => {
+      try {
+        return readFileSync(join(state, "settings", avd, "secure.device_state_rotation_lock"), "utf8").trim();
+      } catch {
+        return null;
+      }
+    };
+    return { status: ran.status, stderr: ran.stderr, postures: Object.fromEntries(pins.devices.map((device) => [device.model, written(device.avd)])) };
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test("the build turns auto-rotate on in every posture of the Pixel Fold, where Android locks it when closed, and leaves the other devices' postures alone", () => {
+  const built = buildAvds();
+
+  assert.equal(built.status, 0, built.stderr);
+  assert.deepEqual(built.postures, { "Pixel 8": null, "Pixel Fold": IMAGE_POSTURES_ALL_ROTATING, "Pixel Tablet": null });
+});
+
+test("the build stops when the Pixel Fold keeps auto-rotate locked in a posture", () => {
+  const built = buildAvds(true);
+
+  assert.notEqual(built.status, 0);
+  assert.match(built.stderr, /prepare-avds: device_state_rotation_lock is 0:1:1:2:2:0, which locks auto-rotate in a posture/);
 });
