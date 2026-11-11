@@ -1701,7 +1701,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       sections.push(...reports);
       const tailnet = backends.tailnet();
       if (tailnet) sections.push({ title: "Tailnet", report: await tailnetDoctor(tailnet, backends.installId, signal) });
-      const kept = configuration.document.backends.map((backend) => ({ id: backend.id, label: backends.statuses().find((status) => status.id === backend.id)?.label ?? backend.id, projects: backend.projects ?? [] }));
+      const kept = configuration.document.backends.map((backend) => ({ id: backend.id, label: `${backends.statuses().find((status) => status.id === backend.id)?.label ?? backend.id} (${backend.id})`, projects: backend.projects ?? [] }));
       if (kept.some((backend) => backend.projects.length)) {
         const existing = await listProjects().then((projects) => new Map(projects.map((project) => [project.id, project.name])), () => null);
         const checks = reservedChecks(kept, existing);
