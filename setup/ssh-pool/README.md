@@ -508,9 +508,11 @@ iOS Simulator.
 
 ### What each machine reports for snapshots
 
-BB Box takes no snapshots on pool machines yet. Each machine says what it
-could offer, so you can see which will take them as the later parts are
-built ([decision 090](../../docs/decisions/090-pool-machines-say-whether-they-snapshot.md)).
+A box lent a Mac whole takes snapshots of its home folder, where the Mac
+reports that its homes clone. Linux machines, iOS slots and an operator's
+snapshot hook take none yet. Each machine says what it could offer, so you
+can see which will take them as the later parts are built
+([decision 090](../../docs/decisions/090-pool-machines-say-whether-they-snapshot.md)).
 
 The helper's `machine snapshot probe` finds out, as root:
 
@@ -551,6 +553,46 @@ the home. A Mac that lends iOS slots never offers machine snapshots. A
 take on a pool box is refused with its machine's own reason. A machine
 whose helper is older than this BB Box's warns: run `setup.sh`, or
 `setup-mac.sh`, on it again.
+
+### Home snapshots on a Mac lent whole
+
+The helper keeps each snapshot as an APFS clone of the box user's home in
+`/var/db/bb-box/home-snapshots/<box user>/<snapshot>`, which only root can
+read, with the home's access control lists beside it. `setup-mac.sh`
+builds `clone-tree`, which clones a home in one call to `clonefile`, with
+the Command Line Tools' `clang`; without it the helper clones with
+`ditto --clone`, which pauses the box longer. A Mac needs helper version 3,
+from this BB Box's `setup-mac.sh`.
+
+BB Box runs these helper commands, as root, through the same sudo rule:
+
+| Command | What it does |
+| --- | --- |
+| `machine snapshot take <generation> <snapshot>` | Pauses the box user's processes, clones the home, resumes them, then keeps the home's ACLs |
+| `machine snapshot list` | This install's snapshots on the Mac, and the free space under `/Users` |
+| `machine snapshot stop <generation>` | Ends the box user's session for a restore, after clearing the automatic login |
+| `machine snapshot restore <generation> <snapshot> <operation>` | Puts a clone of the snapshot in the home's place, with its ACLs, and clears the user's temporary and cache folders. Asked again with the same operation, it finishes a restore cut short, or changes nothing |
+| `machine snapshot start <generation>` | Signs the box user in again where it was signed in, by restarting the login window, or userspace after 30 s; it exits 10 until the user is at the console |
+| `machine snapshot delete <snapshot>` | Deletes a snapshot; again, it succeeds |
+| `machine snapshot fork <snapshot> <user> <uid>` | Makes a new user from a snapshot, without BB's machine files, the access file, BB's launch agent, the login keychain or plists naming the source's home. Only where no other user shares the Mac. BB Box does not call it yet |
+| `machine snapshot proof` | On a free Mac: makes a scratch user, `bbbox-probe`, as box users are made, then takes, restores with an undo, forks and deletes, checks each, removes everything it made, and prints a report |
+
+A take killed while it paused the box user is resumed by the helper's next
+command. A release deletes the box user's snapshots before it removes the
+user, and the reset refuses to lend the Mac while a snapshot of an earlier
+box is left. A restore signs a desktop's user out for a few seconds. When
+the login window does not sign the user in again, the userspace restart
+ends every SSH session on the Mac.
+
+To prove home snapshots on a Mac before you rely on them, run the proof
+while no box holds it:
+
+```sh
+sudo /usr/local/libexec/bb-box/machine snapshot proof
+```
+
+It leaves the box user waiting at the console alone, and refuses while a
+box holds the Mac.
 
 
 ### Testing on one computer

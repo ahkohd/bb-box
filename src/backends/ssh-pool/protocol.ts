@@ -50,6 +50,7 @@ export interface MachineStatus {
   /** Resets completed, or null before setup. */
   readonly generation: number | null;
   readonly marker: "none" | "owner" | "resetting";
+  readonly sessionStopped: boolean;
   /** The marker's fields, when there is one. */
   readonly owner: Marker | null;
   /** The operator's reset-machine command is installed. */
@@ -243,6 +244,7 @@ export function parseStatus(stdout: string): MachineStatus {
     boot: values.get("boot") ?? "",
     generation: whole(values.get("generation")),
     marker: kind,
+    sessionStopped: values.get("session") === "stopped",
     owner:
       kind === "none"
         ? null

@@ -103,8 +103,11 @@ resets the machine, which takes a few seconds on Linux and longer on a Mac.
 
 Each machine's `snapshots` check says what snapshots it could offer: home
 snapshots where its box homes are on APFS, btrfs or ZFS, and machine
-snapshots where an operator installed a snapshot hook. BB Box takes no
-snapshots on pool machines yet, so tell the person what the machines could
-offer, not that they snapshot. A check that warns says what to do: run
+snapshots where an operator installed a snapshot hook. Boxes lent a Mac
+whole take home snapshots where the Mac says its homes clone; Linux
+machines, iOS slots and hooks take none yet, so tell the person what those
+could offer, not that they snapshot. To prove home snapshots on a free Mac,
+have the person run `sudo /usr/local/libexec/bb-box/machine snapshot proof`
+there. A check that warns says what to do: run
 the machine's setup script again when its helper is older, or, when the
 probe could not remove its trial, remove as root what it names.

@@ -54,7 +54,7 @@ edit() {
   shift
   touch "$file"
   "$@" <"$file" >"$file.new.$$" || :
-  mv -f "$file.new.$$" "$file"
+  /bin/mv -f "$file.new.$$" "$file"
 }
 # Records that a UID owns paths: with -R, each path and everything under it.
 own() {
@@ -284,16 +284,18 @@ case $tool in
     ;;
 
   sudo)
+    as=''
     while [ $# -gt 0 ]; do
       case $1 in
         -n | -H) shift ;;
-        -u) shift 2 ;;
+        -u) as=$2 && shift 2 ;;
         --) shift && break ;;
         *) break ;;
       esac
     done
     command=$1
     shift
+    if [ -n "$as" ] && flag sudo-processes; then echo "$$ $(uid_of "$as") ${command##*/} 1" >>"$F/processes"; fi
     if [ -x "$FAKE_MAC_BIN/${command##*/}" ]; then exec "$FAKE_MAC_BIN/${command##*/}" "$@"; fi
     if [ -x "$R$command" ]; then exec "$R$command" "$@"; fi
     exec "$command" "$@"
@@ -353,6 +355,8 @@ case $tool in
     # find with -uid: the paths owners says the UID owns. Each argument is moved to the end once. flags/mds: once
     # a sweep of the Data volume has run, as Spotlight's mds does, a process of the user runs again and has made
     # its temporary folders again.
+    given=${1:-}
+    case $given in /*) resolved=$(readlink -f "$1") && shift && set -- "$resolved" "$@" ;; esac
     start=${1:-} uid=''
     count=$#
     while [ "$count" -gt 0 ]; do
@@ -372,6 +376,13 @@ case $tool in
         set -- "$@" "$argument"
       fi
     done
+    case " $* " in
+      *" -acl "*)
+        real=$(readlink -f "$start")
+        awk -F '\t' -v r="$real" -v s="$given" '!seen[$1]++ && ($1 == r || index($1, r "/") == 1) { print s substr($1, length(r) + 1) }' "$F/acls" 2>/dev/null
+        exit 0
+        ;;
+    esac
     case $start in
       */private/var/folders) exec /usr/bin/find "$@" ;;
     esac
@@ -423,7 +434,7 @@ case $tool in
     if [ "$1" = -create ]; then printf '<plist><dict>\n</dict></plist>\n' >"$3"; exit; fi
     if [ "$1" = -replace ]; then
       [ -f "$5" ] || exit 1
-      grep -v "<key>$2</key>" "$5" | sed "s:^</dict></plist>$:<key>$2</key><bool>$4</bool>\n&:" >"$5.new" && mv -f "$5.new" "$5"
+      grep -v "<key>$2</key>" "$5" | sed "s:^</dict></plist>$:<key>$2</key><bool>$4</bool>\n&:" >"$5.new" && /bin/mv -f "$5.new" "$5"
       exit
     fi
     sed -n "s:.*<key>$2</key><string>\([^<]*\)</string>.*:\1:p" "$4" | head -n 1
@@ -454,7 +465,7 @@ case $tool in
     flag no-clang && exit 1
     out=''
     while [ $# -gt 0 ]; do [ "$1" != -o ] || out=$2; shift; done
-    printf '#!/bin/sh\n' >"$out" && chmod 755 "$out"
+    printf '#!/bin/sh\n' >"$out" && /bin/chmod 755 "$out"
     ;;
   security)
     # security create-keychain makes the keychain's file, import -k <keychain> puts the identity in it
@@ -462,7 +473,11 @@ case $tool in
     # [-s <keychains>] keeps the user's search list in keychains/<uid>, and gives it as security does,
     # each quoted on a line.
     case $1 in
-      create-keychain) path=$(eval "echo \${$#}"); mkdir -p "$(dirname "$R$path")" && : >"$R$path" ;;
+      create-keychain)
+        path=$(eval "echo \${$#}")
+        case $path in "$R"/*) ;; *) path=$R$path ;; esac
+        mkdir -p "$(dirname "$path")" && : >"$path"
+        ;;
       import)
         flag no-import && exit 1
         [ -r "$2" ] || { echo "security: Error reading infile $2: Permission denied" >&2; exit 1; }
@@ -477,7 +492,13 @@ case $tool in
     esac
     ;;
   pkill)
-    # pkill -KILL -u <uid>: each process loses a kill.
+    case ${1:-} in
+      -STOP | -CONT)
+        echo "${1#-} $3" >>"$F/signals"
+        if [ "$1" = -STOP ] && [ -s "$F/flags/parent-stops-too" ]; then kill -STOP "$(cat "$F/flags/parent-stops-too")"; fi
+        exit 0
+        ;;
+    esac
     if [ "${4:-}" = -x ]; then
       edit "$F/processes" awk -v u="$(uid_of "$3")" -v n="$5" '$2 == u && $3 == n { $4 -= 1; if ($4 <= 0) next } { print }'
       exit 0
@@ -515,7 +536,7 @@ case $tool in
     done
     fixture=$F/flags/${url##*/}
     [ -n "$url" ] && [ -f "$fixture" ] || fixture=$F/flags/cua.tgz
-    if [ -n "$out" ]; then cp "$fixture" "$out"; else cat "$F/flags/install.sh"; fi
+    if [ -n "$out" ]; then /bin/cp "$fixture" "$out"; else cat "$F/flags/install.sh"; fi
     ;;
   shasum)
     cat >/dev/null
@@ -528,7 +549,41 @@ case $tool in
       tar -xf "$1" -C "$dir"
     fi
     ;;
-  ditto) cp -R "$1" "$2" ;;
+  ditto)
+    [ "$1" != --clone ] || shift
+    flag no-clone && { echo "ditto: $2: Operation not supported" >&2; exit 1; }
+    /bin/cp -R "$1" "$2" || exit 1
+    from=$(readlink -f "$1") to=$(readlink -f "$2")
+    awk -v f="$from" -v t="$to" '{ p = substr($0, index($0, " ") + 1); if (p == f || index(p, f "/") == 1) print $1 " " t substr(p, length(f) + 1) }' "$F/owners" >>"$F/owners.copied"
+    cat "$F/owners.copied" >>"$F/owners" && rm -f "$F/owners.copied"
+    ;;
+  mv)
+    /bin/mv "$@" || exit 1
+    while [ "${1#-}" != "$1" ]; do shift; done
+    [ ! -e "$1" ] && [ -e "$2" ] || exit 0
+    from=$(readlink -m "$1") to=$(readlink -f "$2")
+    awk -v f="$from" -v t="$to" '{ p = substr($0, index($0, " ") + 1); if (p == f || index(p, f "/") == 1) print $1 " " t substr(p, length(f) + 1) }' "$F/owners" >"$F/owners.moved"
+    cat "$F/owners.moved" >>"$F/owners" && rm -f "$F/owners.moved"
+    edit "$F/acls" awk -v f="$from" -v t="$to" -F '\t' -v OFS='\t' '{ if ($1 == f || index($1, f "/") == 1) $1 = t substr($1, length(f) + 1); print }'
+    ;;
+  ls)
+    if [ "${1:-}" = -led ]; then
+      real=$(readlink -f "$2")
+      echo "drwx------+ 1 box staff 0 Jan 1 00:00 $2"
+      awk -v p="$real" -F '\t' '$1 == p { printf " %d: %s\n", n++, $2 }' "$F/acls" 2>/dev/null
+      exit 0
+    fi
+    exec /bin/ls "$@"
+    ;;
+  chmod)
+    case ${1:-} in
+      -N) edit "$F/acls" awk -v p="$(readlink -f "$2")" -F '\t' '$1 != p' ;;
+      -R) [ "$2" = -N ] && exit 0; exec /bin/chmod "$@" ;;
+      +a) printf '%s\t%s\n' "$(readlink -f "$3")" "$2" >>"$F/acls" ;;
+      +ai) printf '%s\t%s\n' "$(readlink -f "$3")" "$(printf '%s' "$2" | sed 's/:\([a-z]*\) \(allow\|deny\)/:\1 inherited \2/')" >>"$F/acls" ;;
+      *) exec /bin/chmod "$@" ;;
+    esac
+    ;;
   diskutil) printf '   Device Node:              %s\n   Type (Bundle):             %s\n' "${2:-}" "$(cat "$F/flags/homes-fs" 2>/dev/null || echo apfs)" ;;
   cp)
     if [ "${1:-}" = -c ]; then

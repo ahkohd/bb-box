@@ -1,8 +1,9 @@
 # 090: Pool machines say whether they snapshot
 
 Status: accepted, 11 November 2026, with the owner's build order (see
-Build order). Unit 1 is built: each machine reports whether it can
-snapshot, and BB Box takes no pool snapshots yet.
+Build order). Units 1 and 2 are built: each machine reports whether it can
+snapshot, and boxes lent a Mac whole take home snapshots and restore them
+with an undo. Forks of them are refused for now (see Unit 2 as built).
 Extends [070](070-snapshots.md), whose table says the SSH host pool takes
 no snapshots, and follows [065](065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md)'s
 pattern: each machine says what it offers, measured on the machine.
@@ -412,7 +413,8 @@ The owner chose this order on 11 November 2026. Each is a unit:
    reset's clean-up and the proof. Forks only where no other user shares
    the Mac. First proved on a real pool Mac. The snapshot store accepts
    the new scopes in this unit, as its records' check allows only `box`
-   and `device` today.
+   and `device` today. Built; forks are refused in BB Box for now (see
+   Unit 2 as built).
 3. **Shared iOS slots.** Take and restore. Forks stay off until a user can
    be signed in without a userspace restart, which ends every SSH session
    on the Mac.
@@ -424,6 +426,62 @@ The owner chose this order on 11 November 2026. Each is a unit:
 
 Later: ZFS homes, a sample cloud hook, and Keep past release where no box
 on the machine has root.
+
+### Unit 2 as built
+
+Built on 11 November 2026, for Macs lent whole. Where it differs from
+section 2, this is what stands:
+
+- **The helper's commands follow the core's restore.** The core stops the
+  box, takes the undo with the take it uses for any snapshot, rolls back
+  and starts the box. So the helper has `stop`, `take`, `restore` and
+  `start` in place of one `restore <snapshot> <undo> <operation>`:
+  `machine snapshot stop <generation>` clears the automatic login when it
+  names the user, notes whether the user was at the console, and ends the
+  session; `take` clones a stopped home without a pause; `restore
+  <generation> <snapshot> <operation>` swaps the home and is safe to ask
+  again with the same operation; `start <generation>` signs the user in
+  again where it was signed in, exiting 10 until it is. `list` and
+  `delete <snapshot>` take no generation, so a sweep can find snapshots of
+  any box of the install.
+- **The swap clones first, then renames twice.** The snapshot's clone and
+  its ACLs go to a staging folder in the store, the home moves aside, the
+  clone moves in, and the old home is deleted. A home moved aside with no
+  home in its place means the clone was complete, so asking again moves it
+  in. A staging folder alone is discarded and made again.
+- **One point in time by SIGSTOP.** A take marks the pause with the
+  helper's process ID, and any later helper command, `status` included,
+  resumes a user whose pauser has gone, so a helper killed mid-take does
+  not leave the box stopped.
+- **ACLs** are kept as `find -acl` and `ls -le` read them, and put back
+  with `chmod +a`, or `chmod +ai` for an inherited entry, which
+  `chmod -E` refuses.
+- **The clone** is one `clonefile(2)` call by `clone-tree`, which
+  `setup-mac.sh` builds with `clang`; without it the helper uses
+  `ditto --clone`. Helper version 3 has the commands; an older helper is
+  refused with what to run.
+- **Signing in again** restarts the login window and waits 30 s, then
+  restarts userspace, which ends every SSH session on the Mac, and fails
+  after 180 s more.
+- **Release.** The reset deletes the user's store before its sweep, and its
+  "nothing left" check counts any store entry of another user, so a Mac
+  with an earlier box's snapshot is not lent again.
+- **Forks stay refused in BB Box** for every pool Mac, with the reason:
+  signing a fork's new user in needs a userspace restart, which ends the
+  source box's session and every SSH session on the Mac. The lead chose
+  this over a fork beside its source without a console session, which
+  would change the helper's one-owner model; that is a later unit. The
+  helper's `fork <snapshot> <user> <uid>` is built and proved: it refuses
+  while another user shares the Mac, and resets the fork's home as the
+  spike lists, plists naming the source's home included.
+- **The proof** is `machine snapshot proof`, which runs only while no box
+  holds the Mac, on scratch users `bbbox-probe` (UID 79999) and
+  `bbbox-probe-fork` (79998), outside the names the reset and its checks
+  look at, under the helper's lock so no claim comes in the middle. It
+  never touches the user waiting at the console. Its results go in
+  [090-results.md](090-results.md).
+- **The snapshot store** takes the new scopes by rebuilding its table with
+  the wider check, keeping every record.
 
 ### History: the spike's fork rule
 

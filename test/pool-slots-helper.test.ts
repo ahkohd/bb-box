@@ -177,7 +177,7 @@ test("the Mac's helper lends slots only while it is not lent whole, and a whole 
   const claim = host.machine(["slot", "claim", slot], SLOT_CLAIM());
   assert.equal(claim.status, 0, claim.stderr);
   const status = parseStatus(host.machine(["status"]).stdout);
-  assert.equal(status.helper, 2);
+  assert.equal(status.helper, 3);
   assert.deepEqual([status.slots?.kept, status.slots?.held, status.slots?.closedSince, status.slots?.model?.name], [true, 1, null, "iPhone 18 Pro"]);
 
   const refused = host.machine(["claim", "0"], WHOLE_CLAIM());

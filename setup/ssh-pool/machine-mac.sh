@@ -82,7 +82,7 @@ export PATH LC_ALL
 # Empty on a Mac. The tests set it to a directory laid out as a Mac's, to run the helper on Linux with stub macOS tools.
 ROOT=
 
-VERSION=2
+VERSION=3
 STATE=$ROOT/var/db/bb-box
 TEMPLATE=$ROOT/usr/local/share/bb-box/home
 # Cua Driver's bundle ID, which macOS keys its screen-capture approval by.
@@ -116,6 +116,16 @@ SNAPSHOT_REPORT=$STATE/snapshots
 CLONE_TRIALS=$STATE/snapshot-trials
 CLONE_TRIAL=$CLONE_TRIALS/$$
 IN_OWN_SESSION='use POSIX (); POSIX::setsid() >= 0 or exit 126; exec { $ARGV[0] } @ARGV or exit 127'
+HOME_SNAPSHOTS=$STATE/home-snapshots
+CLONE_TREE=$ROOT/usr/local/libexec/bb-box/clone-tree
+EXIT_NO_SNAPSHOT=4
+EXIT_REFUSED=5
+EXIT_SIGNING_IN=10
+RESTORE_SIGN_IN_SECONDS=30
+PROOF_USER=bbbox-probe
+PROOF_UID=79999
+PROOF_FORK_USER=bbbox-probe-fork
+PROOF_FORK_UID=79998
 
 quit() {
   code=$1
@@ -230,7 +240,7 @@ box_names() {
   {
     box_users
     for path in "$ROOT"/Users/"$PREFIX"* "$ROOT"/etc/sudoers.d/"$PREFIX"* "$ROOT"/private/var/at/tabs/"$PREFIX"* "$STATE"/passwords/"$PREFIX"* \
-      "$ROOT/Library/Managed Preferences"/"$PREFIX"*; do
+      "$ROOT/Library/Managed Preferences"/"$PREFIX"* "$HOME_SNAPSHOTS"/"$PREFIX"*; do
       [ -e "$path" ] && echo "${path##*/}"
     done
     for group in $JOINS; do box_members "$group"; box_members "$group-disabled"; done
@@ -242,7 +252,7 @@ box_names() {
 dirt() {
   ready=${1:-}
   for user in $(box_users); do [ "$user" = "$ready" ] || echo "user $user"; done
-  for path in "$ROOT"/Users/"$PREFIX"* "$ROOT"/etc/sudoers.d/"$PREFIX"* "$ROOT"/private/var/at/tabs/"$PREFIX"* "$STATE"/passwords/"$PREFIX"*; do
+  for path in "$ROOT"/Users/"$PREFIX"* "$ROOT"/etc/sudoers.d/"$PREFIX"* "$ROOT"/private/var/at/tabs/"$PREFIX"* "$STATE"/passwords/"$PREFIX"* "$HOME_SNAPSHOTS"/*; do
     [ -e "$path" ] && [ "${path##*/}" != "$ready" ] && echo "${path#"$ROOT"}"
   done
   for group in $JOINS; do
@@ -507,8 +517,7 @@ end_snapshot_probe() {
   rm -f "$SNAPSHOT_HOOK_OUT" "$SNAPSHOT_REPORT.new.$$"
 }
 
-snapshot() {
-  [ $# -eq 1 ] && [ "$1" = probe ] || quit 2 "usage: machine snapshot probe"
+probe_snapshots() {
   mkdir -p "$STATE"
   trap end_snapshot_probe EXIT
   trap 'exit 129' HUP
@@ -520,9 +529,644 @@ snapshot() {
   cat "$SNAPSHOT_REPORT"
 }
 
+pausing_user=''
+then_on_exit=''
+
+helper_exit() {
+  code=$?
+  trap - EXIT
+  [ -z "$pausing_user" ] || resume_user "$pausing_user"
+  [ -z "$then_on_exit" ] || "$then_on_exit" "$code"
+  exit "$code"
+}
+
+exit_cleanly() {
+  trap helper_exit EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
+now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
+
+snapshot_name_ok() {
+  case ${1:-} in '' | .* | *[!A-Za-z0-9_-]*) return 1 ;; esac
+  [ "${#1}" -le 64 ]
+}
+
+store_of() { printf '%s\n' "$HOME_SNAPSHOTS/$1"; }
+
+store_is_the_helpers() {
+  [ -d "$HOME_SNAPSHOTS" ] || mkdir -m 700 "$HOME_SNAPSHOTS" 2>/dev/null
+  [ -d "$HOME_SNAPSHOTS" ] && [ ! -L "$HOME_SNAPSHOTS" ] && [ "$(stat -f %u "$HOME_SNAPSHOTS" 2>/dev/null)" = 0 ]
+}
+
+ready_store() {
+  store_is_the_helpers || fail "$HOME_SNAPSHOTS is not a folder of root's own. Remove it, then try again."
+  chmod 700 "$HOME_SNAPSHOTS"
+  store=$(store_of "$1")
+  [ -d "$store" ] || mkdir -m 700 "$store" || fail "Could not make $store."
+  [ ! -L "$store" ] || fail "$store is a link. Remove it, then try again."
+}
+
+remove_tree() {
+  [ -e "$1" ] || [ -L "$1" ] || return 0
+  chflags -R nouchg,nouappnd,noschg "$1" 2>/dev/null
+  chmod -R -N "$1" 2>/dev/null
+  rm -rf "$1" 2>/dev/null
+  [ ! -e "$1" ] && [ ! -L "$1" ]
+}
+
+clone_tree() {
+  if [ -x "$CLONE_TREE" ]; then "$CLONE_TREE" "$1" "$2"; else ditto --clone "$1" "$2"; fi
+}
+
+acl_entries() { ls -led "$1" 2>/dev/null | sed -n 's/^ *[0-9][0-9]*: //p'; }
+
+tab() { printf '\t'; }
+
+kept_acls() {
+  home=$1
+  find "$home" -acl 2>/dev/null | while IFS= read -r path; do
+    case $path in *"$(tab)"*) continue ;; esac
+    relative=${path#"$home"}
+    acl_entries "$path" | while IFS= read -r entry; do
+      case $entry in
+        *' inherited '*) printf '%s\t+ai\t%s\n' "${relative:-/}" "$(printf '%s' "$entry" | sed 's/ inherited / /')" ;;
+        *) printf '%s\t+a\t%s\n' "${relative:-/}" "$entry" ;;
+      esac
+    done
+  done
+}
+
+put_back_acls() {
+  acls=$1 home=$2
+  [ -s "$acls" ] || return 0
+  cut -f 1 "$acls" | sort -u | while IFS= read -r relative; do
+    [ "$relative" = / ] && relative=''
+    chmod -N "$home$relative" 2>/dev/null
+  done
+  while IFS="$(tab)" read -r relative way entry; do
+    [ "$relative" = / ] && relative=''
+    chmod "$way" "$entry" "$home$relative" 2>/dev/null || echo "$relative"
+  done <"$acls" | head -n 1
+}
+
+paused_marker() { printf '%s\n' "$(store_of "$1")/.paused"; }
+
+resume_user() {
+  user=$1
+  uid=$(attribute "$user" UniqueID)
+  number "$uid" && pkill -CONT -u "$uid" >/dev/null 2>&1
+  rm -f "$(paused_marker "$user")"
+}
+
+resume_abandoned_pauses() {
+  for marker in "$HOME_SNAPSHOTS"/*/.paused; do
+    [ -f "$marker" ] || continue
+    pauser=$(cat "$marker" 2>/dev/null)
+    if number "$pauser" && [ "$pauser" != $$ ] && kill -0 "$pauser" 2>/dev/null; then continue; fi
+    held=${marker%/.paused}
+    resume_user "${held##*/}"
+  done
+}
+
+lent_user() {
+  expected=$1
+  number "$expected" || quit 2 "The snapshot command needs the Mac's generation."
+  [ -n "$box" ] || quit 2 "The snapshot command needs box=."
+  [ -e "$STATE/owner" ] || quit 4 "No box holds the Mac."
+  [ "$(field "$STATE/owner" install)" = "$install" ] && [ "$(field "$STATE/owner" box)" = "$box" ] &&
+    [ "$(field "$STATE/owner" generation)" = "$expected" ] || quit 4 "Another box holds the Mac."
+  user=$(field "$STATE/owner" user) uid=$(field "$STATE/owner" uid)
+  box_uid "$uid" && [ "$(attribute "$user" UniqueID)" = "$uid" ] || fail "Box user $user is not on the Mac."
+}
+
+session_file() { printf '%s\n' "$(store_of "$1")/.session"; }
+
+taken_line() {
+  dir=$1
+  printf 'snapshot=%s\n' "${dir##*/}"
+  printf 'captured=%s\n' "$(field "$dir/info" captured)"
+  printf 'paused_ms=%s\n' "$(field "$dir/info" paused_ms)"
+}
+
+stopped_processes() { ps -A -o pid=,stat= 2>/dev/null | awk '$2 ~ /^T/ { print $1 }' | sort; }
+
+continue_stopped_since() {
+  stopped_processes | comm -13 "$1" - | while IFS= read -r pid; do kill -CONT "$pid" 2>/dev/null; done
+}
+
+resume_parents_that_stopped() {
+  continue_stopped_since "$1"
+  sleep 0.2
+  continue_stopped_since "$1"
+  rm -f "$1"
+}
+
+snapshot_info() {
+  printf 'install=%s\nbox=%s\nuser=%s\nuid=%s\ncaptured=%s\npaused_ms=%s\n' "$install" "$box" "$1" "$2" "$3" "$4"
+  for key in thread name kind created; do printf '%s=%s\n' "$key" "$(field "$STATE/owner" "$key")"; done
+}
+
+clone_home() {
+  user=$1 uid=$2 dir=$3 pause=$4
+  home=$ROOT/Users/$user
+  [ -d "$home" ] || fail "Box user $user has no home folder."
+  partial=$dir.partial
+  remove_tree "$partial" || fail "Could not remove $partial, which an earlier take left."
+  mkdir -m 700 "$partial" || fail "Could not make $partial."
+  echo $$ >"$partial/taker"
+  snapshot_info "$user" "$uid" '' 0 >"$partial/info"
+  paused_ms=0
+  captured=$(now_ms)
+  if [ "$pause" = pause ]; then
+    stopped_processes >"$partial/stopped-before"
+    echo $$ >"$(paused_marker "$user")"
+    pausing_user=$user
+    captured=$(now_ms)
+    pkill -STOP -u "$uid" >/dev/null 2>&1
+  fi
+  cloned=yes
+  said=$(clone_tree "$home" "$partial/home" 2>&1) || cloned=no
+  if [ "$pause" = pause ]; then
+    resume_user "$user"
+    pausing_user=''
+    paused_ms=$(($(now_ms) - captured))
+    resume_parents_that_stopped "$partial/stopped-before"
+  fi
+  if [ "$cloned" = no ]; then
+    remove_tree "$partial"
+    fail "Could not clone $user's home: $(printf '%s\n' "$said" | tail -n 1)"
+  fi
+  kept_acls "$home" >"$partial/acls"
+  snapshot_info "$user" "$uid" "$captured" "$paused_ms" | put "$partial/info"
+  rm -f "$partial/taker"
+  mv "$partial" "$dir" || fail "Could not keep the snapshot in $dir."
+}
+
+take_home() {
+  user=$1 uid=$2 id=$3
+  ready_store "$user"
+  dir=$(store_of "$user")/$id
+  if [ ! -d "$dir/home" ]; then
+    pause=pause
+    [ ! -f "$(session_file "$user")" ] || pause=stopped
+    clone_home "$user" "$uid" "$dir" "$pause"
+  fi
+  taken_line "$dir"
+}
+
+end_session() {
+  user=$1 uid=$2
+  ready_store "$user"
+  session=$(session_file "$user")
+  if [ ! -f "$session" ]; then
+    at_console=no autologin=no
+    [ "$(console)" != "$user" ] || at_console=yes
+    [ "$(defaults read "$LOGINWINDOW" autoLoginUser 2>/dev/null)" != "$user" ] || autologin=yes
+    printf 'console=%s\nautologin=%s\nsince=%s\n' "$at_console" "$autologin" "$(now)" | put "$session"
+  fi
+  if [ "$(defaults read "$LOGINWINDOW" autoLoginUser 2>/dev/null)" = "$user" ]; then
+    defaults delete "$LOGINWINDOW" autoLoginUser >/dev/null 2>&1
+    [ "$(defaults read "$LOGINWINDOW" autoLoginUser 2>/dev/null)" != "$user" ] || fail "Could not clear the automatic login, so the Mac would sign $user in again during its restore."
+  fi
+  resume_user "$user"
+  log_out "$user" "$uid"
+  echo stopped=yes
+  echo "console=$(field "$session" console)"
+}
+
+clear_temporary_folders() {
+  uid=$1
+  find "$DATA/private/var/folders" -mindepth 2 -maxdepth 2 -type d -uid "$uid" 2>/dev/null | while IFS= read -r folder; do
+    for kind in T C; do
+      [ -d "$folder/$kind" ] && find "$folder/$kind" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null
+    done
+  done
+  return 0
+}
+
+swap_home() {
+  user=$1 uid=$2 snapshot=$3
+  store=$(store_of "$user")
+  home=$ROOT/Users/$user
+  aside=$store/.replaced
+  staged=$store/.restoring
+  if [ ! -d "$aside" ]; then
+    remove_tree "$staged" || fail "Could not remove $staged, which an earlier restore left."
+    said=$(clone_tree "$snapshot/home" "$staged" 2>&1) || fail "Could not clone the snapshot for $user's home: $(printf '%s\n' "$said" | tail -n 1)"
+    unset_acl=$(put_back_acls "$snapshot/acls" "$staged")
+    [ -z "$unset_acl" ] || fail "Could not put back the ACLs of ${unset_acl:-the home} in $user's restored home."
+    if [ -e "$home" ]; then mv "$home" "$aside" || fail "Could not move $user's home aside."; else mkdir -m 700 "$aside"; fi
+  fi
+  if [ ! -e "$home" ]; then
+    [ -d "$staged" ] || fail "$user's home is moved aside, but its restored copy is gone. Ask for the restore again."
+    mv "$staged" "$home" || fail "Could not put the restored home in place of $user's."
+  fi
+  remove_tree "$aside" || fail "Could not delete the home the restore replaced, in $aside."
+}
+
+restore_home() {
+  user=$1 uid=$2 id=$3 operation=$4
+  store=$(store_of "$user")
+  snapshot=$store/$id
+  record=$store/.restore
+  if [ "$(field "$record" operation)" = "$operation" ] && [ "$(field "$record" state)" = done ]; then
+    printf 'restored=%s\noperation=%s\n' "$id" "$operation"
+    return 0
+  fi
+  [ -d "$snapshot/home" ] || quit "$EXIT_NO_SNAPSHOT" "Box user $user has no snapshot $id."
+  [ -f "$(session_file "$user")" ] || quit "$EXIT_REFUSED" "Box user $user's session has not been ended for a restore. End it with machine snapshot stop first."
+  printf 'operation=%s\nsnapshot=%s\nstate=running\n' "$operation" "$id" | put "$record"
+  log_out "$user" "$uid"
+  swap_home "$user" "$uid" "$snapshot"
+  clear_temporary_folders "$uid"
+  printf 'operation=%s\nsnapshot=%s\nstate=done\n' "$operation" "$id" | put "$record"
+  printf 'restored=%s\noperation=%s\n' "$id" "$operation"
+}
+
+restore_sign_in() {
+  user=$1
+  if [ "$(console)" = "$user" ]; then
+    rm -f "$STATE/signin"
+    return 0
+  fi
+  method='' since=''
+  if [ "$(field "$STATE/signin" user)" = "$user" ]; then
+    method=$(field "$STATE/signin" method) since=$(field "$STATE/signin" since)
+  fi
+  if [ -z "$method" ]; then
+    method=loginwindow
+  elif number "$since" && [ "$method" = loginwindow ] && [ $(($(now) - since)) -ge "$RESTORE_SIGN_IN_SECONDS" ]; then
+    method=userspace since=''
+  elif number "$since" && [ $(($(now) - since)) -ge "$(patience "$method")" ]; then
+    rm -f "$STATE/signin"
+    fail "The Mac did not sign $user in again after its restore, even when userspace restarted. Check that FileVault is off and that the automatic login is $user."
+  fi
+  number "$since" || begin_sign_in "$user" "$method"
+  echo "signin=$method"
+  exit "$EXIT_SIGNING_IN"
+}
+
+start_session() {
+  user=$1 uid=$2
+  session=$(session_file "$user")
+  if [ -f "$session" ]; then
+    [ "$(field "$session" autologin)" != yes ] && [ "$(field "$session" console)" != yes ] || automatic_login "$user"
+    [ "$(field "$session" console)" != yes ] || restore_sign_in "$user"
+    rm -f "$session"
+  fi
+  echo started=yes
+  echo "console=$(console)"
+}
+
+snapshot_dirs() {
+  for dir in "$HOME_SNAPSHOTS"/*/*; do
+    [ -d "$dir" ] && [ -f "$dir/info" ] && printf '%s\n' "$dir"
+  done
+  return 0
+}
+
+snapshot_state() {
+  dir=$1
+  case $dir in
+    *.partial)
+      taker=$(cat "$dir/taker" 2>/dev/null)
+      if number "$taker" && kill -0 "$taker" 2>/dev/null; then echo in-progress; else echo incomplete; fi
+      ;;
+    *) if [ -d "$dir/home" ]; then echo complete; else echo incomplete; fi ;;
+  esac
+}
+
+list_snapshots() {
+  for dir in $(snapshot_dirs); do
+    [ "$(field "$dir/info" install)" = "$install" ] || continue
+    id=${dir##*/}
+    id=${id%.partial}
+    owner=${dir%/*}
+    owner=${owner##*/}
+    printf 'snapshot=%s' "$id"
+    for key in box thread name kind created captured paused_ms; do printf '\t%s=%s' "$key" "$(field "$dir/info" "$key")"; done
+    printf '\tuser=%s\tstate=%s\n' "$owner" "$(snapshot_state "$dir")"
+  done
+  df -Pk "$ROOT$HOMES" 2>/dev/null | awk 'NR == 2 { printf "store.total_kib=%s\nstore.used_kib=%s\nstore.free_kib=%s\n", $2, $3, $4 }'
+}
+
+delete_snapshot() {
+  id=$1
+  for dir in "$HOME_SNAPSHOTS"/*/"$id" "$HOME_SNAPSHOTS"/*/"$id.partial"; do
+    [ -d "$dir" ] || continue
+    [ ! -f "$dir/info" ] || [ "$(field "$dir/info" install)" = "$install" ] || quit 4 "Snapshot $id is another bb-box install's."
+    remove_tree "$dir" || fail "Could not delete $dir."
+  done
+  echo "deleted=$id"
+}
+
+home_naming_files() {
+  grep -rlE --exclude-dir=Caches "/Users/$2([/\"<]|\$)" "$1/Library/Preferences" "$1/Library/Containers" "$1/Library/Application Support" "$1/Pictures" "$1/Library/Metadata" 2>/dev/null |
+    grep '\.plist$'
+}
+
+identity_left_in() {
+  for path in "$1"/.bb-machines/*/host-id "$1"/.bb-machines/*/auth.json "$1"/.bb-machines/*/config.json "$1"/.config/bb-box/env \
+    "$1"/Library/LaunchAgents/app.getbb.* "$1"/Library/Keychains/login.keychain-db "$1"/Library/Keychains/????????-????-????-????-????????????; do
+    [ -e "$path" ] && printf '%s\n' "${path#"$1"/}"
+  done
+  return 0
+}
+
+reset_fork_identity() {
+  for path in $(identity_left_in "$1"); do remove_tree "$1/$path"; done
+  rm -f "$1"/.bb-machines/*/daemon.lock "$1"/.bb-machines/*/install-daemon.pid
+  home_naming_files "$1" "$2" | while IFS= read -r plist; do rm -f "$plist"; done
+}
+
+others_on_the_mac() {
+  source=$1 fork=$2
+  for other in $(box_users); do
+    [ "$other" = "$source" ] || [ "$other" = "$fork" ] || printf 'box user %s\n' "$other"
+  done
+  if slots_set_up; then
+    held=$(device_host summary </dev/null 2>/dev/null | sed -n 's/^held=//p' | head -n 1)
+    number "$held" && [ "$held" -gt 0 ] && printf '%s iOS slots\n' "$held"
+  fi
+  who=$(console)
+  case $who in '' | root | "$source" | "$PREFIX"*) ;; *) printf 'a person, %s, at the console\n' "$who" ;; esac
+  return 0
+}
+
+fork_source() {
+  source_dir=''
+  for dir in "$HOME_SNAPSHOTS"/*/"$1"; do [ -d "$dir/home" ] && source_dir=$dir; done
+  [ -n "$source_dir" ] || quit "$EXIT_NO_SNAPSHOT" "There is no snapshot $1 on the Mac."
+  [ "$(field "$source_dir/info" install)" = "$install" ] || quit 4 "Snapshot $1 is another bb-box install's."
+  source=$(field "$source_dir/info" user) source_uid=$(field "$source_dir/info" uid)
+}
+
+refuse_a_shared_fork() {
+  sharing=$(others_on_the_mac "$1" "$2" 2>/dev/null | head -n 1)
+  [ -z "$sharing" ] || quit "$EXIT_REFUSED" "The Mac is shared ($sharing), so it makes no fork: a fork's user goes beside its source only where no other user shares the Mac."
+}
+
+fork_home() {
+  id=$1 user=$2 uid=$3
+  fork_source "$id"
+  refuse_a_shared_fork "$source" "$user"
+  make_fork "$id" "$user" "$uid"
+}
+
+make_fork() {
+  id=$1 user=$2 uid=$3
+  fork_source "$id"
+  box_uid "$uid" || quit 2 "A fork's user takes a UID from $ID_BASE to $((ID_BASE + ID_SPAN - 1))."
+  ready_user "$user" "$uid" || fail "Could not make the fork's user, $user."
+  fork_home_dir=$ROOT/Users/$user
+  staged=$(store_of "$source")/.fork-$user
+  remove_tree "$staged" || fail "Could not remove $staged, which an earlier fork left."
+  said=$(clone_tree "$source_dir/home" "$staged" 2>&1) || fail "Could not clone snapshot $id for $user: $(printf '%s\n' "$said" | tail -n 1)"
+  put_back_acls "$source_dir/acls" "$staged" >/dev/null
+  find "$staged" -xdev -uid "$source_uid" -exec chown -h "$uid" {} + 2>/dev/null
+  reset_fork_identity "$staged" "$source"
+  remove_tree "$fork_home_dir" || fail "Could not replace $user's new home."
+  mv "$staged" "$fork_home_dir" || fail "Could not put the fork's home in place for $user."
+  printf 'user=%s\nuid=%s\nfrom=%s\n' "$user" "$uid" "$id"
+  printf 'left=%s\n' "$(identity_left_in "$fork_home_dir" | paste -sd ' ' -)"
+  echo signin=userspace
+}
+
+proof_line() {
+  printf '%s: %s\n' "$1" "$2"
+  [ "$1" != FAILED ] || proof_failed=yes
+}
+
+proof_check() {
+  words=$1
+  shift
+  if "$@" >/dev/null 2>&1; then proof_line ok "$words"; else proof_line FAILED "$words"; fi
+}
+
+file_says() { [ "$(cat "$1" 2>/dev/null)" = "$2" ]; }
+absent() { [ ! -e "$1" ] && [ ! -L "$1" ]; }
+owned_by() { [ "$(stat -f %u "$1" 2>/dev/null)" = "$2" ]; }
+has_acl() { acl_entries "$1" | grep -qxF "$2"; }
+running_not_stopped() { state=$(ps -o stat= -p "$1" 2>/dev/null) && case $state in T*) false ;; *) true ;; esac; }
+no_process_of() { ! pgrep -u "$1" >/dev/null 2>&1; }
+no_user() { ! dscl . -read "/Users/$1" >/dev/null 2>&1 && absent "$ROOT/Users/$1" && absent "$STATE/passwords/$1"; }
+nothing_owned_by() { [ -z "$(find "$DATA" -xdev -uid "$1" 2>/dev/null | head -n 1)" ]; }
+same_bytes() { cmp -s "$1" "$2"; }
+
+as_probe() { sudo -n -H -u "$PROOF_USER" -- "$@"; }
+
+proof_keychain() { printf '%s\n' "$ROOT/Users/$PROOF_USER/Library/Keychains/proof.keychain-db"; }
+
+proof_item() {
+  as_probe security unlock-keychain -p proof "$(proof_keychain)" >/dev/null 2>&1
+  as_probe security find-generic-password -a proof -s bb-box-proof -w "$(proof_keychain)" 2>/dev/null
+}
+
+set_proof_item() {
+  as_probe security unlock-keychain -p proof "$(proof_keychain)" >/dev/null 2>&1
+  as_probe security add-generic-password -U -a proof -s bb-box-proof -w "$1" "$(proof_keychain)" >/dev/null 2>&1
+}
+
+plant_proof_home() {
+  home=$1
+  mkdir -p "$home/proof" "$home/.bb-machines/proof" "$home/.config/bb-box" "$home/Library/LaunchAgents" "$home/Library/Keychains/0A1B2C3D-0000-4000-8000-0000000000AA" \
+    "$home/Library/Application Support/Google/Chrome/Default" "$home/Library/Preferences"
+  echo before >"$home/proof/file.txt"
+  for file in host-id auth.json config.json; do echo proof >"$home/.bb-machines/proof/$file"; done
+  echo proof >"$home/.config/bb-box/env"
+  echo proof >"$home/Library/LaunchAgents/app.getbb.proof.plist"
+  echo proof >"$home/Library/Keychains/login.keychain-db"
+  echo proof >"$home/Library/Keychains/0A1B2C3D-0000-4000-8000-0000000000AA/keychain-2.db"
+  echo '{"profile":"before"}' >"$home/Library/Application Support/Google/Chrome/Default/Preferences"
+  printf '<plist><dict><key>path</key><string>/Users/%s/Pictures</string></dict></plist>\n' "$PROOF_USER" >"$home/Library/Preferences/com.apple.proof-path.plist"
+  chown -R "$PROOF_UID:20" "$home"
+}
+
+end_proof() {
+  code=$1
+  [ -z "${proof_pid:-}" ] || kill "$proof_pid" 2>/dev/null
+  for each in "$PROOF_FORK_USER:$PROOF_FORK_UID" "$PROOF_USER:$PROOF_UID"; do
+    name=${each%%:*} id=${each#*:}
+    (remove_user "$name" "$id") >/dev/null 2>&1
+    remove_tree "$HOME_SNAPSHOTS/$name"
+    proof_check "removed $name and every file it owned" no_user "$name"
+    proof_check "nothing of UID $id is left on the Data volume" nothing_owned_by "$id"
+  done
+  if [ "$store_existed" = no ]; then rmdir "$HOME_SNAPSHOTS" 2>/dev/null; proof_check "removed the snapshot store it made" absent "$HOME_SNAPSHOTS"; fi
+  [ "$code" = 0 ] || proof_failed=yes
+  if [ "$proof_failed" = no ]; then
+    echo "result: passed in $(( ($(now_ms) - proof_started) / 1000 )) s"
+  else
+    echo "result: FAILED"
+    exit 1
+  fi
+}
+
+free_proof_uid() {
+  name=$1 id=$2
+  holder=$(dscl . -list /Users UniqueID 2>/dev/null | awk -v id="$id" '$2 == id { print $1; exit }')
+  [ -z "$holder" ] || [ "$holder" = "$name" ] || quit "$EXIT_REFUSED" "UID $id belongs to $holder, so the proof does not run. It changed nothing."
+  if dscl . -read "/Users/$name" >/dev/null 2>&1 || [ -e "$ROOT/Users/$name" ]; then
+    remove_user "$name" "$id"
+    remove_tree "$HOME_SNAPSHOTS/$name"
+    echo "note: removed $name, which an earlier proof left"
+  fi
+}
+
+prove_home_snapshots() {
+  [ ! -e "$STATE/owner" ] && [ ! -e "$STATE/resetting" ] || quit 3 "A box holds the Mac, or its reset is running. Run the proof while the Mac is free. It changed nothing."
+  mkdir -p "$STATE"
+  lock 60
+  install=bb-box-proof box=proof
+  proof_failed=no proof_pid=''
+  proof_started=$(now_ms)
+  store_existed=no
+  [ ! -d "$HOME_SNAPSHOTS" ] || store_existed=yes
+  free_proof_uid "$PROOF_USER" "$PROOF_UID"
+  free_proof_uid "$PROOF_FORK_USER" "$PROOF_FORK_UID"
+  then_on_exit=end_proof
+  exit_cleanly
+  echo "macOS $(sw_vers -productVersion 2>/dev/null), homes on $(homes_filesystem), clone by $([ -x "$CLONE_TREE" ] && echo "clonefile(2)" || echo "ditto --clone")"
+
+  ready_user "$PROOF_USER" "$PROOF_UID" || fail "Could not make $PROOF_USER."
+  proof_line ok "made $PROOF_USER, UID $PROOF_UID, as the helper makes box users"
+  probe_home=$ROOT/Users/$PROOF_USER
+  plant_proof_home "$probe_home"
+  as_probe security create-keychain -p proof "$(proof_keychain)" >/dev/null 2>&1
+  set_proof_item one
+  keychain_said=$(proof_item)
+  proof_check "the box's console user is not touched: $(console) at the console" true
+  sudo -n -H -u "$PROOF_USER" -- /bin/sleep 600 </dev/null >/dev/null 2>&1 &
+  proof_pid=$!
+  sleep 1
+  desktop_acl=$(acl_entries "$probe_home/Desktop" | head -n 1)
+
+  began=$(now_ms)
+  take_home "$PROOF_USER" "$PROOF_UID" snproof000001 >"$STATE/proof.out" || fail "The take failed: $(cat "$STATE/proof.out")"
+  echo "take: $(( $(now_ms) - began )) ms in all, the user's processes paused $(field "$STATE/proof.out" paused_ms) ms"
+  proof_check "the take kept the home in the snapshot store" test -d "$(store_of "$PROOF_USER")/snproof000001/home"
+  proof_check "the user's process runs again after the take" running_not_stopped "$proof_pid"
+  cp "$(proof_keychain)" "$STATE/proof.keychain-at-take"
+
+  echo after >"$probe_home/proof/file.txt"
+  echo later >"$probe_home/proof/new.txt"
+  echo '{"profile":"after"}' >"$probe_home/Library/Application Support/Google/Chrome/Default/Preferences"
+  set_proof_item two
+  chown -R "$PROOF_UID:20" "$probe_home/proof"
+
+  began=$(now_ms)
+  end_session "$PROOF_USER" "$PROOF_UID" >/dev/null
+  echo "stop: $(( $(now_ms) - began )) ms"
+  proof_check "the stop ended the user's processes" no_process_of "$PROOF_UID"
+  take_home "$PROOF_USER" "$PROOF_UID" snproofundo01 >/dev/null || fail "The undo's take failed."
+  began=$(now_ms)
+  restore_home "$PROOF_USER" "$PROOF_UID" snproof000001 opproof000001 >/dev/null
+  echo "restore: $(( $(now_ms) - began )) ms for the swap"
+  start_session "$PROOF_USER" "$PROOF_UID" >/dev/null
+  proof_check "a file is as at the take" file_says "$probe_home/proof/file.txt" before
+  proof_check "a file made after the take is gone" absent "$probe_home/proof/new.txt"
+  proof_check "a browser profile is as at the take" file_says "$probe_home/Library/Application Support/Google/Chrome/Default/Preferences" '{"profile":"before"}'
+  proof_check "a keychain is byte for byte as at the take" same_bytes "$(proof_keychain)" "$STATE/proof.keychain-at-take"
+  if [ -n "$keychain_said" ]; then
+    proof_check "a keychain item reads as at the take" test "$(proof_item)" = one
+  else
+    echo "note: security could not read a keychain item as $PROOF_USER outside a session, so only the keychain's bytes were checked"
+  fi
+  proof_check "the restored home is the user's" owned_by "$probe_home/proof/file.txt" "$PROOF_UID"
+  if [ -n "$desktop_acl" ]; then proof_check "the home's ACLs are back: Desktop has $desktop_acl" has_acl "$probe_home/Desktop" "$desktop_acl"; fi
+  proof_check "the same restore asked again changes nothing" restore_home "$PROOF_USER" "$PROOF_UID" snproof000001 opproof000001
+
+  end_session "$PROOF_USER" "$PROOF_UID" >/dev/null
+  restore_home "$PROOF_USER" "$PROOF_UID" snproofundo01 opproof000002 >/dev/null
+  start_session "$PROOF_USER" "$PROOF_UID" >/dev/null
+  proof_check "the undo puts back the home as before the restore" file_says "$probe_home/proof/file.txt" after
+  proof_check "the undo puts back a file made after the take" file_says "$probe_home/proof/new.txt" later
+
+  sharing=$(others_on_the_mac "$PROOF_USER" "$PROOF_FORK_USER" 2>/dev/null | head -n 1)
+  if [ -n "$sharing" ]; then
+    said=$( (fork_home snproof000001 "$PROOF_FORK_USER" "$PROOF_FORK_UID") 2>&1 >/dev/null)
+    proof_check "a fork is refused while another user shares the Mac: $said" test -n "$said"
+  fi
+  began=$(now_ms)
+  make_fork snproof000001 "$PROOF_FORK_USER" "$PROOF_FORK_UID" >"$STATE/proof.out" || fail "The fork failed: $(cat "$STATE/proof.out")"
+  echo "fork: $(( $(now_ms) - began )) ms"
+  fork=$ROOT/Users/$PROOF_FORK_USER
+  proof_check "the fork's home holds the snapshot's files" file_says "$fork/proof/file.txt" before
+  proof_check "the fork's files are its own user's" owned_by "$fork/proof/file.txt" "$PROOF_FORK_UID"
+  proof_check "the fork keeps nothing of BB's machine, access file, launch agent or keychains: $(field "$STATE/proof.out" left)" test -z "$(field "$STATE/proof.out" left)"
+  proof_check "the fork has no plist naming the source's home" absent "$fork/Library/Preferences/com.apple.proof-path.plist"
+  proof_check "the source's home is untouched by the fork" owned_by "$probe_home/proof/file.txt" "$PROOF_UID"
+
+  for id in snproof000001 snproofundo01; do
+    delete_snapshot "$id" >/dev/null
+    proof_check "deleted snapshot $id" absent "$(store_of "$PROOF_USER")/$id"
+  done
+  rm -f "$STATE/proof.out" "$STATE/proof.keychain-at-take"
+}
+
+snapshot() {
+  verb=${1:-}
+  [ $# -eq 0 ] || shift
+  case $verb in
+    probe)
+      [ $# -eq 0 ] || quit 2 "usage: machine snapshot probe"
+      probe_snapshots
+      ;;
+    take)
+      [ $# -eq 2 ] && snapshot_name_ok "$2" || quit 2 "usage: machine snapshot take <generation> <snapshot>"
+      read_input
+      lock 60
+      lent_user "$1"
+      resume_abandoned_pauses
+      exit_cleanly
+      take_home "$user" "$uid" "$2"
+      ;;
+    list)
+      [ $# -eq 0 ] || quit 2 "usage: machine snapshot list"
+      read_input
+      list_snapshots
+      ;;
+    delete)
+      [ $# -eq 1 ] && snapshot_name_ok "$1" || quit 2 "usage: machine snapshot delete <snapshot>"
+      read_input
+      lock 300
+      delete_snapshot "$1"
+      ;;
+    stop | start)
+      [ $# -eq 1 ] || quit 2 "usage: machine snapshot $verb <generation>"
+      read_input
+      lock 60
+      lent_user "$1"
+      if [ "$verb" = stop ]; then end_session "$user" "$uid"; else start_session "$user" "$uid"; fi
+      ;;
+    restore)
+      [ $# -eq 3 ] && snapshot_name_ok "$2" && snapshot_name_ok "$3" || quit 2 "usage: machine snapshot restore <generation> <snapshot> <operation>"
+      read_input
+      lock 300
+      lent_user "$1"
+      restore_home "$user" "$uid" "$2" "$3"
+      ;;
+    fork)
+      [ $# -eq 3 ] && snapshot_name_ok "$1" && snapshot_name_ok "$2" && number "$3" || quit 2 "usage: machine snapshot fork <snapshot> <user> <uid>"
+      read_input
+      lock 300
+      fork_home "$1" "$2" "$3"
+      ;;
+    proof)
+      [ $# -eq 0 ] || quit 2 "usage: machine snapshot proof"
+      prove_home_snapshots
+      ;;
+    *) quit 2 "usage: machine snapshot probe | take <generation> <snapshot> | list | delete <snapshot> | stop <generation> | restore <generation> <snapshot> <operation> | start <generation> | fork <snapshot> <user> <uid> | proof" ;;
+  esac
+}
+
 status() {
   [ $# -eq 0 ] || { [ $# -eq 1 ] && { [ "$1" = grants ] || [ "$1" = xcode ]; }; } || quit 2 "usage: machine status [grants | xcode]"
   current=$(generation)
+  resume_abandoned_pauses
   echo "helper=$VERSION"
   echo "arch=$(uname -m)"
   echo "boot=$(boot_id)"
@@ -536,6 +1180,7 @@ status() {
   fi
   echo "marker=$marker"
   [ "$marker" = none ] || sed 's/^/marker./' "$STATE/$marker"
+  if [ "$marker" = owner ] && [ -f "$(session_file "$(field "$STATE/owner" user)")" ]; then echo session=stopped; else echo session=; fi
   # A Mac has no whole-machine reset, and its boxes no Docker.
   echo hook=0
   echo docker=0
@@ -1110,6 +1755,7 @@ remove_user() {
   user=$1 uid=${2:-}
   [ -n "$uid" ] || uid=$(attribute "$user" UniqueID)
   log_out "$user" "$uid"
+  remove_tree "$HOME_SNAPSHOTS/$user" || fail "Could not delete the home snapshots of $user in $HOME_SNAPSHOTS/$user."
   rm -f "$ROOT/etc/sudoers.d/$user" "$ROOT/etc/sudoers.d/$user.new"
   crontab -u "$user" -r >/dev/null 2>&1
   rm -f "$ROOT/private/var/at/tabs/$user"

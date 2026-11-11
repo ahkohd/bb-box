@@ -715,7 +715,7 @@ function helperCalls(host: string): string[] {
 // Each has the runtimes setup-mac.sh's `status xcode` noted, so the offers
 // have ios-simulator from the first survey.
 for (const host of ["192.0.2.95", "192.0.2.96"]) {
-  mac(host, { xcode: "26.0" });
+  mac(host, { xcode: "26.0", "homes-snapshot": "apfs" });
   write(host, "xcode", "xcode=26.0\nruntimes=iOS 26.0,watchOS 26.0\n");
   cuaSocket(host);
 }

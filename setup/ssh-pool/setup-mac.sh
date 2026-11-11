@@ -256,6 +256,10 @@ fi
 # bb-box-display gives each box user's desktop the 2x mode of its size, for
 # the session, where the display offers one, as with an HDMI dummy plug: the
 # viewer then draws it as sharp as the Mac does.
+clone_built=
+if clang -O -o "$ROOT$LIBEXEC/clone-tree.new" "$here/mac-clone.c" 2>/dev/null; then
+  chmod 0755 "$ROOT$LIBEXEC/clone-tree.new" && mv -f "$ROOT$LIBEXEC/clone-tree.new" "$ROOT$LIBEXEC/clone-tree" && clone_built=1
+fi
 display_built=
 if clang -O -framework ApplicationServices -o "$ROOT/usr/local/bin/bb-box-display.new" "$here/mac-display.c" 2>/dev/null; then
   chmod 0755 "$ROOT/usr/local/bin/bb-box-display.new" && mv -f "$ROOT/usr/local/bin/bb-box-display.new" "$ROOT/usr/local/bin/bb-box-display" && display_built=1
@@ -321,6 +325,8 @@ warn() { warnings="$warnings
   warn "clang could not build bb-box-display, so desktops stay at 1x. Install the Command Line Tools: xcode-select --install, then run setup-mac.sh again."
 [ -n "$stream_built" ] ||
   warn "swiftc could not build bb-box-stream, so desktops show over Screen Sharing only, not as video. Install the Command Line Tools: xcode-select --install, then run setup-mac.sh again."
+[ -n "$clone_built" ] ||
+  warn "clang could not build clone-tree, so home snapshots copy a home with ditto, which pauses a box longer. Install the Command Line Tools: xcode-select --install, then run setup-mac.sh again."
 [ -n "$own_built" ] ||
   warn "clang could not build bb-box-own, so programs granted permissions cannot run as their own responsible process. Install the Command Line Tools: xcode-select --install, then run setup-mac.sh again."
 if csrutil status 2>/dev/null | grep -q 'status: disabled' && [ -z "$sip_granted" ]; then
@@ -430,7 +436,7 @@ if [ "$(value console)" != "$(value autologin)" ]; then
 fi
 if [ -n "$snapshots" ]; then
   echo
-  echo "For snapshots, which bb-box does not take on pool machines yet, it reported: box homes on $(probed filesystem) under $(probed homes), home snapshots $(probed home), snapshot hook $(probed hook). bb box doctor shows what each machine could offer."
+  echo "For snapshots, it reported: box homes on $(probed filesystem) under $(probed homes), home snapshots $(probed home), snapshot hook $(probed hook). With home snapshots yes, boxes lent this Mac whole take snapshots of their home folders. bb box doctor shows what each machine offers."
 fi
 if [ -n "$warnings" ]; then
   echo

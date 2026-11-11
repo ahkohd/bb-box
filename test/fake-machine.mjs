@@ -34,7 +34,7 @@
 //   display-user     the user display gives instead of the box user
 //   no-signing       granted says the box user has no signing identity
 //   stream           status says the Mac has bb-box-stream, its desktop as video (060)
-import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const EXIT = { ok: 0, failed: 1, usage: 2, held: 3, notOurs: 4, dirty: 5, moved: 6, protected: 7, refused: 8, restoring: 10 };
@@ -114,8 +114,79 @@ function snapshotReport() {
   return `${lines.join("\n")}\n`;
 }
 
-function snapshot(what) {
-  if (flag("no-snapshot") !== null || what !== "probe") quit(EXIT.usage, "usage: machine status | claim | release | reset | init");
+const home = process.env.HOME;
+const homeSnapshots = join(state, "home-snapshots");
+
+const KEPT_OUT_OF_SNAPSHOTS = new Set([".bb-box-state", "Library"]);
+
+function copyHome(from, to) {
+  mkdirSync(to, { recursive: true });
+  for (const name of readdirSync(from)) if (!KEPT_OUT_OF_SNAPSHOTS.has(name)) cpSync(join(from, name), join(to, name), { recursive: true });
+}
+
+function emptyHome() {
+  for (const name of readdirSync(home)) if (!KEPT_OUT_OF_SNAPSHOTS.has(name)) rmSync(join(home, name), { recursive: true, force: true });
+}
+
+function lentTo(expected) {
+  const values = input();
+  const text = holder(values);
+  if (!text || field(text, "generation") !== expected) quit(EXIT.notOurs, "Another box holds the Mac.");
+  return { values, text };
+}
+
+function homeSnapshot(verb, args) {
+  if (verb === "take") {
+    const [expected, id] = args;
+    const { values, text } = lentTo(expected);
+    const dir = join(homeSnapshots, id);
+    if (!existsSync(dir)) {
+      copyHome(home, join(dir, "home"));
+      writeFileSync(join(dir, "info"), `install=${values.install}\nbox=${values.box}\nthread=${field(text, "thread")}\nuser=${field(text, "user")}\ncaptured=${Date.now()}\npaused_ms=5\n`);
+    }
+    return console.log(`snapshot=${id}\ncaptured=${field(read(join("home-snapshots", id, "info")), "captured")}\npaused_ms=5`);
+  }
+  if (verb === "list") {
+    const values = input();
+    for (const id of existsSync(homeSnapshots) ? readdirSync(homeSnapshots) : []) {
+      const info = read(join("home-snapshots", id, "info"));
+      if (field(info, "install") !== values.install) continue;
+      console.log([`snapshot=${id}`, ...["box", "thread", "captured", "paused_ms", "user"].map((key) => `${key}=${field(info, key)}`), "state=complete"].join("\t"));
+    }
+    return console.log("store.total_kib=104857600\nstore.used_kib=52428800\nstore.free_kib=52428800");
+  }
+  if (verb === "delete") {
+    rmSync(join(homeSnapshots, args[0]), { recursive: true, force: true });
+    return console.log(`deleted=${args[0]}`);
+  }
+  if (verb === "stop") {
+    lentTo(args[0]);
+    if (read("session") === null) writeFileSync(join(state, "session"), "console=yes\n");
+    return console.log("stopped=yes\nconsole=yes");
+  }
+  if (verb === "restore") {
+    const [expected, id, operation] = args;
+    lentTo(expected);
+    if (field(read("restore"), "operation") === operation) return console.log(`restored=${id}`);
+    if (!existsSync(join(homeSnapshots, id, "home"))) quit(EXIT.notOurs, `The box user has no snapshot ${id}.`);
+    if (read("session") === null) quit(EXIT.dirty, "The box user's session has not been ended for a restore.");
+    emptyHome();
+    copyHome(join(homeSnapshots, id, "home"), home);
+    writeFileSync(join(state, "restore"), `operation=${operation}\n`);
+    return console.log(`restored=${id}\noperation=${operation}`);
+  }
+  if (verb === "start") {
+    const { text } = lentTo(args[0]);
+    rmSync(join(state, "session"), { force: true });
+    return console.log(`started=yes\nconsole=${field(text, "user")}`);
+  }
+  quit(EXIT.usage, "usage: machine snapshot probe | take | list | delete | stop | restore | start");
+}
+
+function snapshot(what, ...args) {
+  if (flag("no-snapshot") !== null) quit(EXIT.usage, "usage: machine status | claim | release | reset | init");
+  if (mac && what !== "probe") return homeSnapshot(what, args);
+  if (what !== "probe") quit(EXIT.usage, "usage: machine status | claim | release | reset | init");
   writeFileSync(join(state, "snapshots"), snapshotReport());
   process.stdout.write(read("snapshots"));
 }
@@ -126,8 +197,9 @@ function status(...args) {
   const slow = Number(flag("slow-status") ?? 0);
   if (slow) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, slow);
   const kind = marker();
-  const lines = [`helper=${flag("helper") ?? 1}`, `arch=${flag("arch") ?? (mac ? "arm64" : "x86_64")}`, "boot=fake", `generation=${generation() ?? ""}`, `marker=${kind}`];
+  const lines = [`helper=${flag("helper") ?? (mac ? 3 : 1)}`, `arch=${flag("arch") ?? (mac ? "arm64" : "x86_64")}`, "boot=fake", `generation=${generation() ?? ""}`, `marker=${kind}`];
   if (kind !== "none") lines.push(...read(kind).trim().split("\n").map((line) => `marker.${line}`));
+  lines.push(`session=${kind === "owner" && read("session") !== null ? "stopped" : ""}`);
   lines.push(`hook=${flag("hook") !== null ? 1 : 0}`, `docker=${flag("docker") !== null ? 1 : 0}`, "systemd=0", `cores=${flag("cores") ?? 4}`, `memory=${flag("memory") ?? 7861}`, `disk=${flag("disk") ?? 40}`, `missing=${flag("missing") ?? ""}`);
   // What the machine is: as a helper from before it said, nothing unless the test sets it.
   if (flag("virt") !== null) lines.push(`virt=${flag("virt")}`);
@@ -252,6 +324,8 @@ function finish(kind, mode) {
   }
   if (flag("dirty")) quit(EXIT.failed, `The reset left ${flag("dirty")}.`);
   writeFileSync(join(state, "generation"), `${held + 1}\n`);
+  rmSync(homeSnapshots, { recursive: true, force: true });
+  rmSync(join(state, "session"), { force: true });
   rmSync(join(state, "resetting"));
   rmSync(join(state, "grants"), { force: true });
   console.log(`generation=${held + 1}\nreleased=yes`);
