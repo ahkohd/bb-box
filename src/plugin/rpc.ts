@@ -8,7 +8,6 @@ import { performance } from "node:perf_hooks";
 import { writeHeapSnapshot } from "node:v8";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, SPARES, describeError, ownedByThread, type BoxRecord } from "../core/boxes.ts";
-import { threadAudience } from "../core/reserved.ts";
 import { BY_PERSON } from "../core/box-log.ts";
 import { ControlError } from "../core/control.ts";
 import { contract, type BoxEntry, type BoxPageState, type BoxResult, type DeviceBoot, type MachineEntry, type MonitorReach, type ResizeResult, type ThreadOnBox } from "./contract.ts";
@@ -257,7 +256,8 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
   bb.rpc.register(contract, withPurposes("rpc", {
     async state({ threadId }) {
       const project = await app.projectOf(threadId).catch(() => null);
-      const [list, kinds, machine, desktopOnDemand, access] = await Promise.all([boxes.list(threadId), app.kinds(threadAudience(project)), app.runsOn(threadId), app.desktopOnDemand().catch(() => null), app.machineAccess().catch(() => null)]);
+      const audience = await boxes.audienceNow(threadId, project);
+      const [list, kinds, machine, desktopOnDemand, access] = await Promise.all([boxes.list(threadId), app.kinds(audience), app.runsOn(threadId), app.desktopOnDemand(audience).catch(() => null), app.machineAccess().catch(() => null)]);
       const imageOffer = !!project && !Object.values(app.configuration.exported().images ?? {}).some((image) => image.projects.includes(project));
       const images = await app.imageOptions(project).catch(() => []);
       const yours = machine !== null && (machine.threadId === OPERATOR || machine.threadId === SPARES);
@@ -460,7 +460,7 @@ export function registerRpc(bb: BbPluginApi, app: BbBox): void {
     async "snapshot.fork"({ box: boxId, snapshot, name, asMachine, gpu, request }) {
       try {
         const { standing, box } = await standingFor(boxId, snapshot);
-        const answer = await snapshots.fork(PERSON, { id: standing.box!.id }, standing, snapshot, { ...(name?.trim() ? { name: name.trim() } : {}), asMachine: asMachine === true || !box, ...(gpu ? { gpu } : {}), request, projectId: box?.projectId ?? null });
+        const answer = await snapshots.fork(PERSON, { id: standing.box!.id }, standing, snapshot, { ...(name?.trim() ? { name: name.trim() } : {}), asMachine: asMachine === true || !box, ...(gpu ? { gpu } : {}), request });
         return { error: null, box: answer.box ? { id: answer.box.id, name: answer.box.name } : null };
       } catch (error) {
         return { error: describeError(error, "Forking the snapshot"), box: null };

@@ -37,6 +37,16 @@ export function tiersFor<T extends { readonly backend: { readonly id: string } }
   };
 }
 
+const SHARED_RANK = Number.MAX_SAFE_INTEGER;
+
+export function reservedRank<T extends { readonly backend: { readonly id: string } }>(offers: readonly T[], projectsOf: ProjectsOf, audience: Audience): (backendId: string) => number {
+  const reserved = [...new Set(tiersFor(offers, projectsOf, audience).reserved.map((offer) => offer.backend.id))];
+  return (backendId) => {
+    const at = reserved.indexOf(backendId);
+    return at === -1 ? SHARED_RANK : at;
+  };
+}
+
 export function inAcquireOrder<T extends { readonly backend: { readonly id: string } }>(offers: readonly T[], projectsOf: ProjectsOf, audience: Audience): T[] {
   const tiers = tiersFor(offers, projectsOf, audience);
   return [...tiers.reserved, ...tiers.shared];
@@ -55,13 +65,13 @@ export interface KeptBackend {
   readonly projects: readonly string[];
 }
 
-/** For the doctor: each backend kept for projects, the ones it serves by name, and a warning when none is still in BB. Null `existing` when BB did not say. */
-export function reservedChecks(backends: readonly KeptBackend[], existing: ReadonlyMap<string, string> | null): DoctorCheck[] {
+export function reservedChecks(backends: readonly KeptBackend[], existing: ReadonlyMap<string, string> | null, audience: Audience = EVERYONE): DoctorCheck[] {
   return backends
     .filter((backend) => !isShared(backend.projects))
     .map((backend): DoctorCheck => {
       const id = `projects.${backend.id}` as const;
       const name = `Projects of ${backend.label}`;
+      if (!existing && audience.of === "thread") return { id, name, status: "skipped", detail: keptWordsForThread(backend.projects, audience), fix: null };
       if (!existing) return { id, name, status: "skipped", detail: `Kept for ${countWords(backend.projects.length)}. BB did not say which projects it has, so ${PRODUCT} could not check they still exist.`, fix: null };
       const served = backend.projects.filter((project) => existing.has(project)).map((project) => existing.get(project)!);
       const gone = backend.projects.length - served.length;
@@ -75,8 +85,14 @@ export function reservedChecks(backends: readonly KeptBackend[], existing: Reado
         };
       }
       const left = gone ? ` ${countWords(gone, "other")} it was kept for ${gone === 1 ? "is" : "are"} no longer in BB.` : "";
+      if (audience.of === "thread") return { id, name, status: "ok", detail: keptWordsForThread(backend.projects, audience), fix: null };
       return { id, name, status: "ok", detail: `Kept for ${served.join(", ")}: only their threads see it.${left}`, fix: null };
     });
+}
+
+function keptWordsForThread(projects: readonly string[], audience: Audience): string {
+  const ours = servesAudience(projects, audience) ? "this thread's among them" : "not this thread's";
+  return `Kept for certain projects, ${ours}: only their threads see it. The person sees which in ${PRODUCT}'s settings.`;
 }
 
 function countWords(count: number, other = ""): string {

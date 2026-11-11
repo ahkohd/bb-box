@@ -108,7 +108,8 @@ export interface SnapshotBoxes {
   machineBack(box: BoxRecord): boolean;
   fork(request: ForkRequest): Promise<BoxRecord>;
   admitFork(request: ForkAdmission): Promise<void>;
-  forkRefusal?(request: Pick<ForkAdmission, "threadId" | "projectId" | "backend" | "backendLabel">): BoxError | null;
+  forkRefusal?(request: Pick<ForkAdmission, "threadId" | "backend" | "backendLabel">): Promise<BoxError | null>;
+  keptFromThread?(owner: Pick<BoxRecord, "threadId" | "backend" | "backendLabel">, cannot: string): Promise<BoxError | null>;
   wholeCards?(): Promise<boolean>;
   readUserspace?(box: BoxRecord, signal?: AbortSignal, started?: boolean): Promise<BoxRecord>;
 }
@@ -247,11 +248,6 @@ interface ForkConsent {
   readonly box: string;
   readonly threadId: string;
   readonly name: string | null;
-}
-
-function forkProjectOf(caller: Caller, input: ForkInput, source: Pick<BoxRecord, "projectId"> | null): string | null {
-  if (input.projectId !== undefined) return input.projectId;
-  return caller.is === "agent" ? null : (source?.projectId ?? null);
 }
 
 function forkConsentOf(operation: Pick<SnapshotOperation, "consent">): ForkConsent | null {
@@ -2483,6 +2479,10 @@ export class Snapshots {
     const plan = await backend.planSnapshots(box.guest, box.kind, target.guest === "held-copy" ? null : { id: target.id, ref: target.ref ?? "", guest: target.livesOn }, this.#stopping.signal);
     if (plan.busy) throw new BoxError("try_again", `${PRODUCT} cannot restore box ${box.name} now: ${plan.busy}`);
     const byCopy = this.#restoreOrder(box, backend, plan, target, swap, fromSnapshot) === "copy";
+    if (fromSnapshot || (byCopy && input.undo !== false)) {
+      const kept = await this.#deps.boxes.keptFromThread?.(box, `${PRODUCT} cannot make box ${box.name} a new guest there, as this restore would. ${PRODUCT} changed nothing`);
+      if (kept) throw kept;
+    }
     const seen = await this.#lookOn(box, standing.runsOn);
     if (seen.refusal) throw new BoxError("in_use", `${seen.refusal} ${PRODUCT} changed nothing.`);
     const route = restoreRoute(caller, this.#rules(), { onAMachine: seen.onAMachine, memory: target.holds === "disk-and-memory" });
@@ -2566,7 +2566,7 @@ export class Snapshots {
         made = await this.#deps.boxes.fork({
           id: forkId,
           threadId: prepared.threadId,
-          projectId: prepared.threadId === OPERATOR ? null : forkProjectOf(caller, input, prepared.box),
+          projectId: prepared.threadId === OPERATOR ? null : (input.projectId ?? null),
           ...(input.name !== undefined ? { name: input.name } : {}),
           backend: backend.id,
           backendLabel: backend.label,
@@ -2618,7 +2618,6 @@ export class Snapshots {
     const asMachine = caller.is !== "agent" && (input.asMachine === true || box.threadId === OPERATOR);
     await this.#deps.boxes.admitFork({
       threadId: asMachine ? OPERATOR : caller.is === "agent" ? caller.threadId : box.threadId,
-      projectId: asMachine ? null : forkProjectOf(caller, input, box),
       ...(input.name !== undefined ? { name: input.name } : {}),
       backend: backend.id,
       backendLabel: backend.label,
@@ -2679,7 +2678,7 @@ export class Snapshots {
     if (!plan.fork.ok || !plan.fork.size) throw new BoxError("unsupported", `${PRODUCT} cannot fork ${quoted(target)} of box ${name}: ${plan.fork.why ?? `${backend.label} refused it.`}`);
     const asMachine = caller.is !== "agent" && (input.asMachine === true || !source || source.threadId === OPERATOR || isKept(target));
     const threadId = asMachine ? OPERATOR : caller.is === "agent" ? caller.threadId : source!.threadId;
-    const kept = this.#deps.boxes.forkRefusal?.({ threadId, projectId: asMachine ? null : forkProjectOf(caller, input, source), backend: backend.id, backendLabel: backend.label });
+    const kept = await this.#deps.boxes.forkRefusal?.({ threadId, backend: backend.id, backendLabel: backend.label });
     if (kept) throw kept;
     return { target, box: source, backend, plan, threadId, size: plan.fork.size };
   }

@@ -6,7 +6,7 @@ import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli, type BbPluginApi, type PluginCliContext, type PluginCliResult } from "@get-bb/plugin-sdk";
 import { BoxError, OPERATOR, describeError, isAcquiring, type BoxRecord } from "../core/boxes.ts";
-import { EVERYONE, NONE_SERVES_THREAD, threadAudience } from "../core/reserved.ts";
+import { EVERYONE, NONE_SERVES_THREAD } from "../core/reserved.ts";
 import { BY_COMMAND } from "../core/box-log.ts";
 import type { DoctorReport } from "../backends/types.ts";
 import { withoutSecretVersions, type ImageBake, type Problem } from "../core/document.ts";
@@ -231,7 +231,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           summary: "Check each backend's settings and host, and say how to fix what is wrong.",
           options: jsonOption,
           async run({ options }, ctx) {
-            const view = await app.doctor(ctx.signal);
+            const view = await app.doctor(ctx.signal, ctx.threadId ? await app.boxes.audienceNow(ctx.threadId, ctx.projectId ?? null) : EVERYONE);
             if (options.json) return json(view);
             return { exitCode: view.ok ? 0 : 1, stdout: `${doctorText(view)}\n` };
           },
@@ -241,7 +241,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           options: { ...threadOption, ...jsonOption },
           async run({ options }, ctx) {
             const threadId = options.thread ?? ctx.threadId;
-            const kinds = await app.kinds(threadId ? threadAudience(await projectOfThread(app, threadId, options.thread, ctx)) : EVERYONE);
+            const kinds = await app.kinds(threadId ? await app.boxes.audienceNow(threadId, await projectOfThread(app, threadId, options.thread, ctx)) : EVERYONE);
             if (options.json) return json(kinds);
             if (!kinds.length && app.boxes.kinds().length) return out(NONE_SERVES_THREAD);
             if (!kinds.length) return out(`No backend is on, so there are no kinds. bb box setup docker sets up Docker on the machine that runs BB; or add one with bb box backend add <type>, or in ${PRODUCT}'s settings.`);

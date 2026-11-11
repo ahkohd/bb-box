@@ -10,6 +10,7 @@ import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/
 import type { DockerInfo } from "../src/backends/docker/cli.ts";
 import { DRIVERS } from "../src/backends/index.ts";
 import { checkDocument, emptyDocument, type ConfigDocument } from "../src/core/document.ts";
+import { EVERYONE, threadAudience, type Audience } from "../src/core/reserved.ts";
 import { hostEntry } from "../src/host/entry.ts";
 import { DockerHosts, MachineNames, MachinePlatforms, SILENT_MS, desktopsOnDemand, machineHosts, machineOffline, withDesktopImage, withDockerHost, withoutDesktopImage, type MachineRecord } from "../src/plugin/docker-hosts.ts";
 import { dockerKind, dockerKinds } from "../src/backends/docker/backend.ts";
@@ -326,4 +327,15 @@ test("first-run setup turns on the nightly rebuilds unless they were set, and tu
   const off: ConfigDocument = { ...emptyDocument(), general: { nightlyImages: false } };
   assert.equal(withDockerHost(off, { id: "host_a", name: "devpc" }, true, 0, true).general.nightlyImages, false);
   assert.equal(withDockerHost(emptyDocument(), { id: "host_a", name: "devpc" }, true, 0).general.nightlyImages, undefined);
+});
+
+test("a desktop built on demand is offered only to threads of the projects its Docker backend is kept for, and to the person (#1458)", () => {
+  const linuxOnly = withDockerHost(emptyDocument(), { id: "host_a", name: "devpc" }, true, 0, true);
+  const kept = { ...linuxOnly, backends: linuxOnly.backends.map((backend) => ({ ...backend, projects: ["proj_home"] })) };
+  const offered = (audience: Audience) => desktopsOnDemand(kept, audience).map((each) => each.kind);
+
+  assert.deepEqual(offered(threadAudience("proj_personal")), []);
+  assert.deepEqual(offered(threadAudience(null)), []);
+  assert.deepEqual(offered(threadAudience("proj_home")), ["linux-desktop-cpu", "linux-desktop-wayland-cpu"]);
+  assert.deepEqual(offered(EVERYONE), ["linux-desktop-cpu", "linux-desktop-wayland-cpu"]);
 });

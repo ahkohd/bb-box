@@ -2556,6 +2556,61 @@ test("box_thread starts a child thread on a box's BB machine, with the thread's 
   assert.equal(world.sources.length, 1, "later threads use the same clone");
 });
 
+test("box_thread, the panel and bb box thread start no child on a box whose backend is no longer kept for the thread's project now, after the thread moved or the reservation changed, or when BB cannot say the project (#1458)", async (t) => {
+  const { app, harness, tool, world } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const keepFor = async (projects: readonly string[]) => {
+    const document = app.configuration.exported();
+    const result = await app.configuration.apply({ ...document, backends: document.backends.map((backend) => ({ ...backend, projects })) }, document.revision);
+    assert.ok(result.ok, JSON.stringify(result));
+  };
+  const inProject = (projectId: string) => world.threads.set(THREAD, makeThreadResponse({ id: THREAD, projectId, environmentId: "env_one", providerId: "claude-code" }));
+  await keepFor([PROJECT]);
+  await tool("box_acquire", {});
+  const [box] = await app.boxes.list(THREAD);
+  await app.boxes.settled(box!);
+  const name = box!.name;
+  const everyWay = async () => [
+    text(await tool("box_thread", { box: name, prompt: "Run uname -a" })),
+    ((await harness.behavior.callRpc("thread", { threadId: THREAD, box: name, prompt: "Again" })) as { error: string | null }).error ?? "",
+    (await harness.behavior.runCli(["thread", name, "--prompt", "Once more", "--thread", THREAD])).stderr ?? "",
+  ];
+  const kept = /is kept for certain projects, and this thread's project is not one of them, so a new thread cannot start on box \S+\. The box itself keeps working\./;
+
+  inProject("prj_two");
+  for (const said of await everyWay()) assert.match(said, kept, said);
+
+  inProject(PROJECT);
+  await keepFor(["prj_other"]);
+  for (const said of await everyWay()) assert.match(said, kept, said);
+
+  await keepFor([PROJECT]);
+  world.threadErrors.set(THREAD, new Error("thread not readable"));
+  for (const said of await everyWay()) assert.match(said, /This thread has no project/, said);
+  world.threadErrors.delete(THREAD);
+  assert.deepEqual(world.spawned, [], "no child was started");
+  assert.deepEqual(world.sources, [], "nothing was cloned");
+
+  assert.match(text(await tool("box_thread", { box: name, prompt: "Run uname -a" })), /^Started thread thr_child1 on box /);
+  await app.boxes.idle();
+});
+
+test("bb box doctor in a thread says whether a kept backend serves the thread's project, without naming its projects; in the person's own terminal it names them (#1458)", async (t) => {
+  const { app, harness } = await start();
+  t.after(() => harness.lifecycle.dispose());
+  const document = app.configuration.exported();
+  assert.ok((await app.configuration.apply({ ...document, backends: document.backends.map((backend) => ({ ...backend, projects: [PROJECT] })) }, document.revision)).ok);
+
+  const outside = (await harness.behavior.runCli(["doctor"], { threadId: "thr_two", projectId: "prj_two" } as never)).stdout ?? "";
+  const inside = (await harness.behavior.runCli(["doctor"], { threadId: THREAD, projectId: PROJECT } as never)).stdout ?? "";
+  const person = (await harness.behavior.runCli(["doctor"])).stdout ?? "";
+
+  assert.match(outside, /Projects of [^:\n]+: Kept for certain projects, not this thread's: only their threads see it\./);
+  assert.match(inside, /Projects of [^:\n]+: Kept for certain projects, this thread's among them: only their threads see it\./);
+  for (const said of [outside, inside]) assert.doesNotMatch(said, /Project one|prj_one/);
+  assert.match(person, /Projects of [^:\n]+: Kept for Project one: only their threads see it\./);
+});
+
 test("box_thread starts the child on its parent's provider and model when the box has them, a CLI the box has otherwise, and refuses a box with no agent CLI (#561)", async (t) => {
   const { harness, tool, world } = await start();
   t.after(() => harness.lifecycle.dispose());
@@ -2575,12 +2630,13 @@ test("box_thread starts the child on its parent's provider and model when the bo
   // The box lacks the parent's CLI: the first it has, in BB's order, with its default model, not BB's default, which the box may lack too (#47).
   world.agentClis!["claude-code"] = { ...world.agentClis!["claude-code"]!, installed: false };
   assert.deepEqual(await agent(), { providerId: "codex", model: undefined });
-  // The parent's provider unknown, as BB cannot read the thread: the first CLI the box has, though the parent's is there too.
+  // The parent's provider unknown: the first CLI the box has, though the parent's is there too.
   const listed = world.agentClis!;
+  const parent = world.threads.get(THREAD)!;
   world.agentClis = { codex: listed.codex!, "claude-code": { ...listed["claude-code"]!, installed: true } };
-  world.threadErrors.set(THREAD, new Error("thread not readable"));
+  world.threads.set(THREAD, { ...parent, providerId: "" });
   assert.deepEqual(await agent(), { providerId: "codex", model: undefined });
-  world.threadErrors.delete(THREAD);
+  world.threads.set(THREAD, parent);
   world.agentClis = listed;
   // BB cannot say which CLIs the box has: BB's default.
   const clis = world.agentClis;

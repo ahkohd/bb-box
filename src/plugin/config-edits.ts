@@ -39,7 +39,6 @@ export interface ProjectChoice {
   readonly name: string;
 }
 
-/** The project IDs a list of names or IDs gives, as --projects takes them: empty for every project (#1458). */
 export function projectIdsOf(text: string, known: readonly ProjectChoice[]): string[] {
   const asked = text.split(",").map((each) => each.trim()).filter((each) => each.length);
   const names = known.map((project) => project.name).join(", ");

@@ -171,7 +171,6 @@ export function backendProjectsPath(id: string): Path {
 
 const PROJECTS_APART = ",";
 
-/** The projects a backend is kept for, as its settings path holds them: their IDs, comma-separated, or empty for every project (#1458). */
 export function projectsText(projects: readonly string[]): string {
   return projects.join(PROJECTS_APART);
 }

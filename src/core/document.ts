@@ -887,7 +887,6 @@ function readBackend(
   };
 }
 
-/** The most projects one backend may be kept for. */
 export const MOST_BACKEND_PROJECTS = 100;
 
 function readBackendProjects(path: string, value: unknown, problem: (path: string, message: string) => void): string[] {

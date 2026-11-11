@@ -12,7 +12,7 @@ import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { z } from "zod";
 import { BoxError, OPERATOR, SPARES, describeErrorForAgent, errorForAgent, isAcquiring, type BoxErrorCode, type BoxRecord } from "../core/boxes.ts";
-import { NONE_SERVES_THREAD, threadAudience } from "../core/reserved.ts";
+import { NONE_SERVES_THREAD } from "../core/reserved.ts";
 import { boxFileSum, readStream, settlePart, writePart, type FileSum } from "../core/copy.ts";
 import { SCAN_SCRIPT, draftImage } from "../core/draft.ts";
 import { JOB_DAYS, JOB_ID, newJobId } from "../core/in-box.ts";
@@ -669,7 +669,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
       try {
         const id = thread(threadId);
         const project = projectId ?? (await app.projectOf(id).catch(() => null));
-        const audience = threadAudience(project);
+        const audience = await boxes.audienceNow(id, project);
         const withheld = await boxes.withheldKinds(undefined, audience);
         const [list, kinds, machine, images] = await Promise.all([boxes.list(id), app.kinds(audience), app.runsOn(id), app.imageOptions(project)]);
         const lines: string[] = [];

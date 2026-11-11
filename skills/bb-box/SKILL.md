@@ -27,7 +27,10 @@ where it is built ahead, which its boxes claim at once (#440). The
 `box_list` lists only the providers this thread's project may use. A
 provider the user kept for certain projects comes first for their threads,
 and is not listed for any other thread; naming it in `on` is refused. Ask
-the user rather than look for a way round it.
+the user rather than look for a way round it. The thread's project is read when you
+act: after the thread moves, or the user changes a provider's projects, a
+box already there keeps working but cannot grow, restore onto a new guest,
+be forked there or start a child thread.
 
 - A kind's providers say what their boxes are, in brackets after each
   name, where that differs: VMs, containers, or an SSH host pool's
