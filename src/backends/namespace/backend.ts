@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { dirname } from "node:path";
 import { startMacInput } from "../../core/mac-input.ts";
 import { joinScript, leaveScript, tailnetHostname, type Tailnet } from "../../core/tailnet.ts";
+import { formatMiB } from "../../core/sizes.ts";
 import { MAC_STREAM, MAC_VIDEO, macStreamCommand } from "../mac-stream.ts";
 import { CUA_SHA256, CUA_VERSION } from "../tart/backend.ts";
 import { qemuVideoSource } from "../tart/qemu-video.ts";
@@ -239,10 +240,77 @@ export function macDiskGiB(shape: { readonly cores: number; readonly memoryGB: n
   return 48 + Math.max(shape.cores, shape.memoryGB / 2) * 8;
 }
 
+function macsAllowedBy(largest: MacShape | null): readonly MacShape[] {
+  return largest ? MACOS_SHAPES.filter((shape) => shape.cores <= largest.cores && shape.memoryGB <= largest.memoryGB) : MACOS_SHAPES;
+}
+
+function largestOf(shapes: readonly MacShape[]): MacShape | null {
+  return [...shapes].sort((a, b) => b.cores * 100 + b.memoryGB - (a.cores * 100 + a.memoryGB))[0] ?? null;
+}
+
 export function macShapeFor(size: MachineSize, largest: MacShape | null = null): MacShape | null {
-  const allowed = largest ? MACOS_SHAPES.filter((shape) => shape.cores <= largest.cores && shape.memoryGB <= largest.memoryGB) : MACOS_SHAPES;
-  const fits = allowed.filter((shape) => shape.cores >= size.cores && shape.memoryGB * MIB_PER_GB >= size.memoryMiB && (size.diskGiB === null || macDiskGiB(shape) >= size.diskGiB));
+  const fits = macsAllowedBy(largest).filter((shape) => shape.cores >= size.cores && shape.memoryGB * MIB_PER_GB >= size.memoryMiB && (size.diskGiB === null || macDiskGiB(shape) >= size.diskGiB));
   return fits.sort((a, b) => a.cores * 100 + a.memoryGB - (b.cores * 100 + b.memoryGB))[0] ?? null;
+}
+
+function memoryWords(memoryMiB: number): string {
+  return `${formatMiB(memoryMiB)} of memory`;
+}
+
+function macWords(shape: MacShape): string {
+  return `${shape.cores}x${shape.memoryGB} Mac, with ${shape.cores} cores, ${memoryWords(shape.memoryGB * MIB_PER_GB)} and ${macDiskGiB(shape)} GiB of disk`;
+}
+
+function listWords(parts: readonly string[]): string {
+  return parts.length < 2 ? parts.join("") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+function askedWords(size: MachineSize): string[] {
+  return [`${size.cores} cores`, memoryWords(size.memoryMiB), ...(size.diskGiB !== null ? [`${size.diskGiB} GiB of disk`] : [])];
+}
+
+function partsOver(size: MachineSize, largest: MacShape): string[] {
+  return [
+    ...(size.cores > largest.cores ? [`${size.cores} cores`] : []),
+    ...(size.memoryMiB > largest.memoryGB * MIB_PER_GB ? [memoryWords(size.memoryMiB)] : []),
+    ...(diskOver(size, largest) ? [`${size.diskGiB} GiB of disk`] : []),
+  ];
+}
+
+function diskOver(size: MachineSize, largest: MacShape): boolean {
+  return size.diskGiB !== null && size.diskGiB > macDiskGiB(largest);
+}
+
+function clampedTo(size: MachineSize, largest: MacShape): MachineSize {
+  return {
+    cores: Math.min(size.cores, largest.cores),
+    memoryMiB: Math.min(size.memoryMiB, largest.memoryGB * MIB_PER_GB),
+    diskGiB: size.diskGiB === null ? null : Math.min(size.diskGiB, macDiskGiB(largest)),
+  };
+}
+
+function suggestionWords(shape: MacShape, withDisk: boolean): string {
+  const parts = [`${shape.cores} cores`, memoryWords(shape.memoryGB * MIB_PER_GB), ...(withDisk ? [`${macDiskGiB(shape)} GiB of disk`] : [])];
+  return `Ask for at most ${listWords(parts)}, which gets its ${shape.cores}x${shape.memoryGB} Mac, or use another backend.`;
+}
+
+const HOW_TO_ASK_FOR_DISK = " Give the disk with disk_gib, or --disk-gib on the command line.";
+
+function macTooBig(size: MachineSize, workspaceLargest: MacShape | null): string {
+  const largest = largestOf(macsAllowedBy(workspaceLargest));
+  if (!largest) return `Namespace's workspace allows Macs of at most ${workspaceLargest?.cores} cores and ${workspaceLargest?.memoryGB} GiB of memory, less than its smallest Mac. Use another backend.`;
+
+  const offers = workspaceLargest ? "Namespace's workspace allows" : "Namespace has";
+  const over = partsOver(size, largest);
+  const needed = macShapeFor(size);
+  const instead = macShapeFor(clampedTo(size, largest), workspaceLargest) ?? largest;
+
+  return [
+    `The largest Mac ${offers} is its ${macWords(largest)}: less than the ${listWords(over.length ? over : askedWords(size))} asked for`,
+    needed ? `, which needs its ${needed.cores}x${needed.memoryGB} Mac.` : ".",
+    ` ${suggestionWords(instead, size.diskGiB !== null)}`,
+    diskOver(size, largest) ? HOW_TO_ASK_FOR_DISK : "",
+  ].join("");
 }
 
 export interface NamespaceBackendOptions {
@@ -560,7 +628,7 @@ export class NamespaceBackend implements Backend {
     const { concurrency } = isLinuxKind(kind) ? { concurrency: null } : await this.#workspaceLimits(signal);
     const largest = isLinuxKind(kind) ? null : await this.#largestMachine(concurrency);
     const shape = isLinuxKind(kind) ? linuxShapeFor(size) : macShapeFor(size, largest);
-    if (!shape) return { ok: false, message: this.#tooBig(size, largest), warm: null, hosts: [{ host, ok: false, limits: [] }] };
+    if (!shape) return { ok: false, message: macTooBig(size, largest), warm: null, hosts: [{ host, ok: false, limits: [] }] };
     const measuring = this.measuringAfreshUntil();
     const hostWords = this.slots.known()?.instance
       ? " A shared iOS host for ios boxes holds Namespace's Mac now, until its last box goes."
@@ -593,7 +661,7 @@ export class NamespaceBackend implements Backend {
     const linux = isLinuxKind(kind) ? kind : null;
     const largest = linux ? null : await this.#largestMachine((await this.#workspaceLimits(signal)).concurrency);
     const shape = linux ? linuxShapeFor(box.size) : macShapeFor(box.size, largest);
-    if (!shape) throw new BackendError("no_capacity", linux ? linuxTooBig(box.size) : this.#tooBig(box.size, largest));
+    if (!shape) throw new BackendError("no_capacity", linux ? linuxTooBig(box.size) : macTooBig(box.size, largest));
     const step = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
       const started = performance.now();
       try {
@@ -651,7 +719,7 @@ export class NamespaceBackend implements Backend {
       const allowed = error instanceof NamespaceError ? largestAllowedIn(error.message) : null;
       if (allowed) {
         await this.#context.storage.set(LARGEST_MACHINE, allowed);
-        throw new BackendError("no_capacity", this.#tooBig(box.size, allowed));
+        throw new BackendError("no_capacity", macTooBig(box.size, allowed));
       }
       if (error instanceof NamespaceError && error.kind === "full") throw new BackendError("no_capacity", error.message);
       throw error;
@@ -1267,21 +1335,6 @@ export class NamespaceBackend implements Backend {
     const known = [this.#config.largestMachine, fromWorkspace].filter((shape): shape is MacShape => shape !== null);
     if (!known.length) return null;
     return { cores: Math.min(...known.map((shape) => shape.cores)), memoryGB: Math.min(...known.map((shape) => shape.memoryGB)) };
-  }
-
-  #tooBig(size: MachineSize, workspaceLargest: MacShape | null): string {
-    const asked = `${size.cores} cores and ${Math.round(size.memoryMiB / MIB_PER_GB)} GiB`;
-    if (!workspaceLargest) {
-      const largest = MACOS_SHAPES[MACOS_SHAPES.length - 1]!;
-      return `Namespace's largest Mac has ${largest.cores} cores and ${largest.memoryGB} GB of memory, less than the ${asked} asked for.`;
-    }
-    const needed = macShapeFor(size);
-    const instead = macShapeFor({ cores: Math.min(size.cores, workspaceLargest.cores), memoryMiB: Math.min(size.memoryMiB, workspaceLargest.memoryGB * MIB_PER_GB), diskGiB: null }, workspaceLargest);
-    return [
-      `Namespace's workspace allows Macs of at most ${workspaceLargest.cores} cores and ${workspaceLargest.memoryGB} GB of memory`,
-      needed ? `, and ${asked} needs its ${needed.cores}x${needed.memoryGB} Mac.` : `, less than the ${asked} asked for.`,
-      instead ? ` Ask for at most ${instead.cores} cores and ${instead.memoryGB} GiB, which gets its ${instead.cores}x${instead.memoryGB} Mac, or use another backend.` : "",
-    ].join("");
   }
 
   async dispose(): Promise<void> {
