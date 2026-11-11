@@ -202,13 +202,14 @@ BB Box restarts. Beyond those:
 
 ### macOS permissions
 
-On Tart's macOS boxes, and on Macs of the SSH host pool with System
-Integrity Protection off, `box_grant` grants a program macOS permissions
+On Tart's and Namespace's macOS boxes, and on Macs of the SSH host pool
+with System Integrity Protection off, `box_grant` grants a program macOS permissions
 with no prompt: Accessibility, Screen Recording, Input Monitoring, the
 microphone, the camera, the system's audio (`system-audio`, which Screen
 Recording does not cover), or Automation of one app. `box_status` lists the
-box's grants. They go with the box: a Tart VM is deleted, and a pool Mac's
-reset removes them. Linux and Windows boxes refuse.
+box's grants. They go with the box: a Tart VM or a Namespace Mac is
+deleted, and a pool Mac's reset removes them. Linux, Windows and shared
+boxes refuse.
 
 - Grant only the program that needs it, under the box user's home or in
   `/Applications`. BB Box grants nothing to Apple's programs, shells,
@@ -225,6 +226,12 @@ reset removes them. Linux and Windows boxes refuse.
   <arguments>`, then `launchctl remove <label>`. A program `box_run` runs directly is
   charged to SSH instead, which has Accessibility, Screen Recording, the
   microphone and the camera already.
+- On Namespace, `box_run`'s commands run outside the box user's session,
+  and are charged to Namespace's agent, which has neither the microphone
+  nor the camera. Run `codesign` and `launchctl submit` in the user's
+  session: `sudo launchctl asuser "$(id -u)" sudo -u "$(id -un)" codesign
+  ...`, and the same for `launchctl submit` and `launchctl remove`. `open`
+  works as it is.
 - Start the program again after a grant: macOS reads some permissions only
   at launch.
 - The Mac's microphone is BlackHole 2ch, as above. A box has a camera only

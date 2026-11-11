@@ -9,7 +9,7 @@ Cloud and Namespace Linux boxes take snapshots, and
 [091](091-a-namespace-machine-with-snapshots-lives-while-its-box-has-a-container.md)
 extends this record with what a release ends and how a Namespace machine
 with snapshots lives.
-[095](095-a-docker-volume-a-restores-copy-made-again-is-removed-by-its-note.md)
+[096](096-a-docker-volume-a-restores-copy-made-again-is-removed-by-its-note.md)
 supersedes the release rule under "What lives on the engine" for a volume
 a restore's copy made again.
 
@@ -79,7 +79,7 @@ The questions a later sweep has to answer come from that structure.
   snapshot image is built on its layers.
 - A release removes only volumes labelled `bbbox.volume-of` that container,
   for this install. A snapshot volume is never labelled that way, so a
-  release cannot delete one. [095](095-a-docker-volume-a-restores-copy-made-again-is-removed-by-its-note.md)
+  release cannot delete one. [096](096-a-docker-volume-a-restores-copy-made-again-is-removed-by-its-note.md)
   supersedes this for a volume a restore's copy made again, without
   labels: a release or maintenance removes it when BB Box's note of the
   copy, or the copy's labels, name it.

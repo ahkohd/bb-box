@@ -244,6 +244,7 @@ await conformance({
       {
         fetch: namespace.fetch,
         sshBinary: FAKE_SSH_BINARY,
+        macHelper: FAKE_MAC_HELPER,
         sleep: async () => {},
         readyTimeoutMs: 20_000,
         desktopScript: "cat >/dev/null",

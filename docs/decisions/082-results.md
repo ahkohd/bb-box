@@ -406,7 +406,7 @@ A copy is now fenced by its operation:
   the volume the copy made again has gone, so a failed removal is tried
   again each run, and the doctor names the volume after 3 failed tries.
   It does not wait for a copy. See
-  [095](095-a-docker-volume-a-restores-copy-made-again-is-removed-by-its-note.md).
+  [096](096-a-docker-volume-a-restores-copy-made-again-is-removed-by-its-note.md).
 
 Two tests in `test/docker-restore.test.ts` run a restore in a second
 process against the fake Docker host and kill its process group while the
@@ -476,7 +476,7 @@ An independent review found three more faults:
 - the suite's killed restore could pass without its copy running when it
   was killed, and did not check what the copy left
 
-[095](095-a-docker-volume-a-restores-copy-made-again-is-removed-by-its-note.md)
+[096](096-a-docker-volume-a-restores-copy-made-again-is-removed-by-its-note.md)
 records the fixes. Three tests in `test/docker-restore.test.ts` failed
 before them and pass after:
 

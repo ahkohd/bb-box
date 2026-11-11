@@ -5,7 +5,7 @@ import { CONTAINER_MEMORY_MARGIN_MIB, linuxShapeFor, pullScript } from "../src/b
 import { DockerCli } from "../src/backends/docker/cli.ts";
 import { fakeDockerHost } from "./fake-docker.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace } from "./fake-namespace.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
 
 const disposed = disposedOnceTheFileEnds();
 const CONFIG = { token: FAKE_NAMESPACE_TOKEN, region: "us" as const, macosVersion: "26.x", machines: 2, longestLifeHours: 4, largestMachine: null };
@@ -17,7 +17,7 @@ function setup() {
   const hosts = new Map<string, DockerCli>();
   const backend = new NamespaceBackend(CONFIG, testContext(new MemoryStorage(), "inst1", { id: "namespace" }), {
     fetch: fake.fetch,
-    sshBinary: FAKE_SSH_BINARY,
+    sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER,
     sleep: async () => {},
     readyTimeoutMs: 20_000,
     setupArchive: async () => Buffer.from("setup"),
