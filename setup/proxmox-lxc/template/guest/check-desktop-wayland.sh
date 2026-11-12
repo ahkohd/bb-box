@@ -28,7 +28,7 @@ socket=$home/.cache/cua-driver/cua-driver.sock
 
 # Docker starts on first use (041): stopped after boot, then quick to start.
 d "docker stopped after boot" sh -c '! pgrep -x dockerd >/dev/null || { echo "dockerd runs"; exit 1; }; ! pgrep -x containerd >/dev/null || { echo "containerd runs"; exit 1; }; if [ -d /run/systemd/system ]; then echo "docker.socket $(systemctl is-active docker.socket)"; else echo "bb-box-start listens on /run/docker.sock"; fi'
-d "first docker command" sh -c 's=$(date +%s%N); docker version --format "{{.Server.Version}}" >/dev/null || exit 1; ms=$(( ($(date +%s%N) - s) / 1000000 )); echo "$ms ms (limit 2000)"; [ "$ms" -le 2000 ]'
+d "first docker command" /usr/local/libexec/bb-box/docker-first-start
 # A TUN device, for Tailscale and other VPNs (050): build.sh gives a
 # template /dev/net/tun, a VM and a microsandbox box have their own, and a
 # Docker box has its host's, where the host has one.

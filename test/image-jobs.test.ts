@@ -271,6 +271,26 @@ test("the doctor's checks: Nightly rebuilds, and each image whose last rebuild f
   assert.deepEqual([firstNight.status, firstNight.detail, firstNight.fix], ["ok", "Rebuild each night is on, and no run has ended yet: the first is tonight.", null], "with the switch on, a new install is not told to turn it on");
 });
 
+test("a failed image is tried again by the next run once the program that builds it changes, with no one asking", async () => {
+  const lxc = backend("proxmox-lxc", [build("9101", "linux", record(10))]);
+  const program = { value: "the build scripts that failed" };
+  const { job, refreshed, clock } = jobs([lxc.backend], { fail: ["9101"], program: async () => program.value });
+
+  await job.refreshAll();
+  clock.now += DAY;
+  const unchanged = await job.refreshAll();
+
+  assert.equal(unchanged.lines.find((line) => line.name === "proxmox-lxc/9101")?.outcome, "skipped");
+  assert.deepEqual(refreshed, ["9101"]);
+
+  program.value = "the build scripts with a fix, after a BB Box update";
+  clock.now += DAY;
+  const changed = await job.refreshAll();
+
+  assert.equal(changed.lines.find((line) => line.name === "proxmox-lxc/9101")?.outcome, "failed");
+  assert.deepEqual(refreshed, ["9101", "9101"]);
+});
+
 test("a backend that refreshes its Windows images has them due monthly, and a failed refresh is tried again the next month (054)", async () => {
   const windows = (days: number) => record(days, { kind: "windows-desktop", bbApp: null, os: "Windows 11 Pro" });
   const qemu = backend("proxmox-qemu", [build("9104", "windows-desktop", null), build("9105", "windows-desktop", windows(20)), build("9106", "windows-desktop", windows(31))], { windows: true });

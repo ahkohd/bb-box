@@ -48,7 +48,7 @@ which records still stand as written. The current design as a whole is in
 | [038](038-the-agent-can-take-control-back.md) | The agent can take control back when asked | Current |
 | [039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md) | Windows desktops are clones of a template that is not generalized | Current |
 | [040](040-linux-on-arm64-has-kinds-of-its-own.md) | Linux on arm64 has kinds of its own | Partly superseded by 041 |
-| [041](041-every-linux-box-has-docker.md) | Every Linux box has Docker, started on first use | Current |
+| [041](041-every-linux-box-has-docker.md) | Every Linux box has Docker, started on first use | Current, but for its check's rule, superseded by 098 |
 | [042](042-a-docker-host-can-be-a-bb-machine.md) | A Docker host can be a BB machine, reached through BB | Current |
 | [043](043-a-viewer-has-5-s-to-come-back-after-the-box-ends-its-connection.md) | A viewer has 5 s to come back after the box ends its connection | Current |
 | [044](044-a-box-can-be-asked-for-on-one-provider.md) | A box can be asked for on one provider | Current |
@@ -103,3 +103,4 @@ which records still stand as written. The current design as a whole is in
 | [095](095-namespaces-macs-grant-macos-permissions-through-the-mac-helper.md) | Namespace's Macs grant macOS permissions through the Mac helper, measured per Mac | Accepted; extends 058; [results](095-results.md) |
 | [096](096-a-docker-volume-a-restores-copy-made-again-is-removed-by-its-note.md) | A Docker volume a restore's copy made again is removed by its note | Accepted; supersedes 082's release rule for such a volume |
 | [097](097-proxmox-restores-recover-from-a-nodes-restart.md) | Proxmox restores recover from a node's restart | Accepted; G16 run in part on LVM-thin and ZFS, with root's steps where needed; a rollback cut short by its node's restart, or one BB Box cannot be sure of, is not rolled back again: the box is stopped and the restore fails, and the person restores again or releases it; that decision is journalled, and the restore ends only once the box reads as stopped; the final rule run live on LVM-thin, not on ZFS; supersedes 070's missing rollback task left unknown, and its unanswered request sent again more than once; LVM-thin's rollback between its two steps needs root; a power cut can lose a recent undo, with no safe wait or recovery proved |
+| [098](098-a-slow-first-docker-start-is-timed-again-from-a-fresh-start.md) | A slow first Docker start is timed again from a fresh start | Accepted; supersedes 041's check rule; [results](098-results.md) |

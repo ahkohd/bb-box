@@ -48,7 +48,7 @@ t "apt package lists" sh -c 'v=$(apt-cache policy cowsay | awk "/Candidate:/ { p
 t "bb-app pre-installed" sh -c 'ls ~/.bb-machines/*/host-artifact.sha256 2>/dev/null || echo "none (no BB server URL at build)"'
 # Docker starts on first use (041): stopped after boot, then quick to start.
 d "docker stopped after boot" sh -c '! pgrep -x dockerd >/dev/null || { echo "dockerd runs"; exit 1; }; ! pgrep -x containerd >/dev/null || { echo "containerd runs"; exit 1; }; if [ -d /run/systemd/system ]; then echo "docker.socket $(systemctl is-active docker.socket)"; else echo "bb-box-start listens on /run/docker.sock"; fi'
-d "first docker command" sh -c 's=$(date +%s%N); docker version --format "{{.Server.Version}}" >/dev/null || exit 1; ms=$(( ($(date +%s%N) - s) / 1000000 )); echo "$ms ms (limit 2000)"; [ "$ms" -le 2000 ]'
+d "first docker command" /usr/local/libexec/bb-box/docker-first-start
 d "docker info" docker info --format '{{.Driver}} {{.CgroupDriver}} {{json .SecurityOptions}} {{.ServerVersion}}'
 d "docker offline probe" sh -c '
   libc=$(ldd /usr/bin/true | awk "/libc.so/ {print \$3}")

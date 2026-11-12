@@ -239,7 +239,7 @@ export class ImageJobs {
     if (days > INTERVAL_DAYS[os]) return [2, `it is ${Math.floor(days)} days old, past its ${INTERVAL_DAYS[os]}-day interval`];
     if (carriesBbApp(build.kind) && app && record.bbApp !== app) return [4, "it has another build of BB's app than BB's server gives"];
     if (pins && record.pins !== pins) return [5, `it was built with other pins than this ${PRODUCT}'s`];
-    const program = await this.#deps.facts.program?.(build.kind, backend.id).catch(() => null);
+    const program = await this.#program(build, backend.id);
     if (program && record.program && record.program !== program) return [6, "its guest program or prepare script changed"];
     return null;
   }
@@ -274,12 +274,15 @@ export class ImageJobs {
     return found;
   }
 
-  /** What an image is built from now: its pins, BB's app, the versions a rebuild takes, and its current build. */
-  #from(build: ImageBuild, pins: string | null, app: string | null, versions: Versions | null): string {
+  #builtFromNow(build: ImageBuild, pins: string | null, app: string | null, versions: Versions | null, program: string | null): string {
     // A Windows image takes its pins alone, and Windows' updates, which come monthly (054).
     if (osOf(build.kind) === "windows") return createHash("sha256").update(JSON.stringify({ pins, month: new Date(this.#now()).toISOString().slice(0, 7), current: build.build })).digest("hex").slice(0, 16);
     const tools = versions?.tools.filter((tool) => tool.arch === (build.record?.arch === "arm64" ? "arm64" : "x86_64")).map((tool) => `${tool.name}@${tool.version}`) ?? [];
-    return createHash("sha256").update(JSON.stringify({ pins, app, tools, current: build.build })).digest("hex").slice(0, 16);
+    return createHash("sha256").update(JSON.stringify({ pins, app, tools, program, current: build.build })).digest("hex").slice(0, 16);
+  }
+
+  async #program(build: ImageBuild, backendId: string): Promise<string | null> {
+    return (await this.#deps.facts.program?.(build.kind, backendId).catch(() => null)) ?? null;
   }
 
   async failures(): Promise<StandardImageFailure[]> {
@@ -461,7 +464,7 @@ export class ImageJobs {
         }
         const backend = this.#deps.backends().find((candidate) => candidate.id === view.backend)!;
         const pins = await this.#deps.facts.pins(pinSet(view.build.kind)).catch(() => null);
-        const from = this.#from(view.build, pins, app, versions);
+        const from = this.#builtFromNow(view.build, pins, app, versions, await this.#program(view.build, view.backend));
         if (!options.image && view.last && !view.last.ok && !view.last.waiting && view.last.from === from) {
           note({ name: view.name, outcome: "skipped", detail: `its last rebuild failed and nothing it is built from has changed; bb box images build ${view.name} tries again` });
           continue;
@@ -566,7 +569,7 @@ export class ImageJobs {
       pinned: !!options.pinned,
       replace: !options.try,
       signal: options.signal,
-      from: this.#from(view.build, pins, app, versions),
+      from: this.#builtFromNow(view.build, pins, app, versions, await this.#program(view.build, view.backend)),
       log: options.log ?? (() => {}),
     });
   }

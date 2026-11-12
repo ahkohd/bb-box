@@ -247,7 +247,16 @@ The standard images are built by each backend's setup, or by bb-box itself
 for Docker on a BB machine and the cloud backends. `bb box images list`
 shows their age and what is due, and after them the Linux images each
 Namespace backend builds in its own workspace, and each boat.dev backend's
-templates. A project's own image, a script run on the
+templates. An image whose rebuild failed is skipped until something it is
+built from changes, such as the build program after a BB Box update; `bb box
+images build <name>` tries it again at once. Builds retry a package download
+only when Ubuntu's archive did not serve it, for at most 10 minutes in all.
+A failure that says the archive did not serve it for that long is an
+outage: build again later. Any other apt error fails at once with apt's
+own message, and needs a fix. Scripts that call `apt-get` themselves are
+not retried. A check line "first docker command" that says "slow both
+times" means Docker was slow at two fresh starts: a busy host, or a delay
+in the image. A project's own image, a script run on the
 standard image, is in the `bb-box` skill, under "A project's image".
 
 ## When it goes wrong

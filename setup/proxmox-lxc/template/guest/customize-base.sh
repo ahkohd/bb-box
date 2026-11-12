@@ -282,6 +282,8 @@ printf 'LANG=C.UTF-8\n' >/etc/default/locale
 
 # A health check the plugin (or a person) can run as the box user.
 install -m 0755 "$build/guest/check-headless.sh" /usr/local/bin/bb-box-check-headless
+install -d -m 0755 /usr/local/libexec/bb-box
+install -m 0755 "$build/guest/docker-first-start.sh" /usr/local/libexec/bb-box/docker-first-start
 # Dev Container features for a project image's script (049).
 install -m 0755 "$build/guest/bb-box-feature.sh" /usr/local/bin/bb-box-feature
 

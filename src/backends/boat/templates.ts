@@ -49,6 +49,7 @@ export const TEMPLATE_FILES = [
   "proxmox-lxc/template/guest/check-headless.sh",
   "proxmox-lxc/template/guest/customize-base.sh",
   "proxmox-lxc/template/guest/customize-desktop.sh",
+  "proxmox-lxc/template/guest/docker-first-start.sh",
   "proxmox-lxc/template/guest/files/bb-box-nofbc.c",
   "proxmox-lxc/template/guest/files/chrome-gpu.mjs",
   "proxmox-lxc/template/guest/files/cua-probe.mjs",
