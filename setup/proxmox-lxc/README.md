@@ -213,10 +213,12 @@ Every download is checked against a pinned SHA-256, and kept in
   installs them from the cache. A download is tried again only when the
   archive did not serve it: an HTTP 5xx or 429, a connection refused, reset
   or timed out, a temporary failure to resolve the archive's name, or a
-  half-served file whose hash does not match. It waits 30, 60, 90 and
-  120 s between tries, and all its tries take at most 10 minutes, measured
-  from the first. Then it fails with the archive's errors and the time it
-  took: build again later. Any other error, such as an unknown package,
+  half-served file whose hash does not match. A download that is still
+  arriving is never stopped, however slow: apt itself ends one that sends
+  nothing for 30 s, which counts as a connection timed out. It waits 30,
+  60, 90 and 120 s between tries, and tries again for at most 10 minutes
+  after the first failure. Then it fails with the archive's errors and the
+  time it took: build again later. Any other error, such as an unknown package,
   unmet dependencies, a held package or a broken apt setting, fails at once
   with apt's own message. The two scripts that call `apt-get` themselves,
   Android's build-tree server and Docker on WSL, are not retried;

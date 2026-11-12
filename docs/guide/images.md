@@ -50,6 +50,6 @@ BB Box rebuilds one image at a time, the most needed first, and starts none afte
 
 When a rebuild fails, the image's old build stays, and later runs skip the image until something it is built from changes: its pins, BB's app, the versions of the tools it takes, or the program that builds it. A BB Box update that changes how the image is built makes it due again, with no one asking. To try it again sooner, run `bb box images build <name>`.
 
-A rebuild does not fail for a short outage of Ubuntu's package archive. Each step that installs packages through BB Box's helper retries a download the archive did not serve, for at most 10 minutes in all. Any other package error, such as a package that does not exist, fails at once with apt's own message.
+A rebuild does not fail for a short outage of Ubuntu's package archive. Each step that installs packages through BB Box's helper retries a download the archive did not serve, for at most 10 minutes after the first failure. A slow download is never stopped while it is still arriving. Any other package error, such as a package that does not exist, fails at once with apt's own message.
 
 To see each standard image's age and its last rebuild, run `bb box images list`. `bb box doctor` warns when a rebuild failed, or when no nightly run has finished for 8 days. See [health checks](../reference/checks.md).
