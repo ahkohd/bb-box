@@ -47,7 +47,7 @@ check() { # pin name -> path of the checked artifact
 desktop_packages="xserver-xorg-core xfce4-session xfwm4 xfce4-panel xfdesktop4 xfce4-terminal xfconf
   xfce4-settings thunar xauth dbus-x11 dbus-user-session x11-xserver-utils x11-utils xinput xterm scrot
   ffmpeg xdotool wmctrl xclip xsel xdg-utils fonts-dejavu-core fonts-liberation fonts-noto-color-emoji
-  arc-theme at-spi2-core libvulkan1 vulkan-tools mesa-vulkan-drivers mesa-utils libegl1 libgl1 libgles2
+  arc-theme at-spi2-core python3-gi libvulkan1 vulkan-tools mesa-vulkan-drivers mesa-utils libegl1 libgl1 libgles2
   libglvnd0 libglx0 pciutils"
 # The small apps people and agents expect on a desktop: a text editor, an
 # image viewer, a PDF viewer and the panel's application finder (about 40 MiB).

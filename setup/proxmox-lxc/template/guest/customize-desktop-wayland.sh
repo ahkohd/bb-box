@@ -53,7 +53,7 @@ case $release in 24.04 | 26.04) ;; *) die "the Wayland desktop is for Ubuntu 24.
 # wf-recorder records the desktop for box_record (059). gsettings
 # (libglib2.0-bin) switches GTK apps' cursor theme, to hide the pointer (#707).
 desktop_packages="sway swaybg waybar wayvnc foot wofi wl-clipboard grim slurp wf-recorder wtype wayland-utils
-  dbus-user-session at-spi2-core xdg-utils ffmpeg adwaita-icon-theme hicolor-icon-theme libglib2.0-bin
+  dbus-user-session at-spi2-core python3-gi xdg-utils ffmpeg adwaita-icon-theme hicolor-icon-theme libglib2.0-bin
   fonts-dejavu-core fonts-liberation fonts-noto-color-emoji libvulkan1 vulkan-tools mesa-vulkan-drivers
   libgl1-mesa-dri libegl1 libgl1 libgles2 libglvnd0 pciutils"
 # The small apps people and agents expect on a desktop, all GTK and so native

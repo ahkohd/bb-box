@@ -28,6 +28,7 @@ import type { ProjectChoice } from "./config-edits.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
 import { Computer, swayKeyboardScript, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
+import { SECURE_FIELD_TIMEOUT_MS, focusedFieldScript, parseFocusedProbe } from "../core/secret-file.ts";
 import { DeviceComputer } from "../core/device-computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
 import { GENERAL_DEFAULTS, emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig, type InUse } from "../core/document.ts";
@@ -418,7 +419,7 @@ export interface SetupOptions {
   /** setup/docker/build.sh, which builds images on a BB machine (042). By default the one beside the plugin's bundle. */
   readonly dockerBuildScript?: string | null;
   /** Computer use's waits, shorter in tests. */
-  readonly computer?: Pick<ComputerDeps, "idleMs" | "pauseWaitMs" | "cursorRestoreRetryMs" | "callTimeoutMs" | "launchWaitMs" | "lookupWaitMs" | "pageWaitMs" | "desktopWaitMs" | "smallTree" | "nameWindows">;
+  readonly computer?: Pick<ComputerDeps, "idleMs" | "pauseWaitMs" | "cursorRestoreRetryMs" | "callTimeoutMs" | "launchWaitMs" | "lookupWaitMs" | "pageWaitMs" | "desktopWaitMs" | "smallTree" | "nameWindows" | "focusedField">;
   readonly liveChecks?: boolean;
 }
 
@@ -1084,6 +1085,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       return result.stdout.trim() === "terminal" ? "terminal" : "app";
     },
     runOwn: (box, script, options) => boxes.runOwn(box, script, options),
+    async focusedField(box, pid, point, signal) {
+      const script = focusedFieldScript(box.capabilities.os, pid, point);
+      if (!script) return null;
+      const session = box.capabilities.os === "macos" ? undefined : "desktop";
+      const result = await boxes.runOwn(box, script, { session, timeoutMs: SECURE_FIELD_TIMEOUT_MS, maxOutputBytes: 4096, signal });
+      return result.exitCode === 0 ? parseFocusedProbe(result.stdout) : null;
+    },
     async restoreClipboard(box, signal) {
       const result = await boxes.runOwn(box, swayRestoreScript(), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
       if (result.exitCode !== 0) throw new Error(`Putting the clipboard back failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);

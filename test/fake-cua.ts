@@ -136,6 +136,9 @@ export interface FakeDesktop {
   showsPasswords?: boolean;
   typingFailsEchoingText?: boolean;
   typedTextLowercased?: boolean;
+  sameNameOverlay?: boolean;
+  passwordTurnsPlainOnFocus?: boolean;
+  clicksFocusNothing?: boolean;
 }
 
 const desktopPause = new Int32Array(new SharedArrayBuffer(4));
@@ -193,6 +196,19 @@ export function openSignIn(desktop: FakeDesktop): FakeWindow {
   desktop.fields[window.id] = "";
   desktop.passwords = { ...desktop.passwords, [window.id]: "" };
   return window;
+}
+
+function signInPasswordIsPlain(desktop: FakeDesktop, window: FakeWindow): boolean {
+  return desktop.passwordTurnsPlainOnFocus === true && desktop.signInFocus?.[window.id] === "password";
+}
+
+export function focusedOf(desktop: FakeDesktop, pid: number): { trusted: boolean; role: string | null; name: string | null; secure: boolean; frame: { x: number; y: number; width: number; height: number } | null } {
+  const window = desktop.windows.find((each) => each.pid === pid && each.app === "signin");
+  const key = window ? desktop.signInFocus?.[window.id] : undefined;
+  const node = window && key ? tree(desktop, window).children.find((child) => child.key === key) : undefined;
+  if (!window || !node) return { trusted: true, role: null, name: null, secure: false, frame: null };
+  const frame = { x: window.x + node.frame.x, y: window.y + node.frame.y, width: node.frame.width, height: node.frame.height };
+  return { trusted: true, role: node.role, name: node.label, secure: key === "password" && !signInPasswordIsPlain(desktop, window), frame };
 }
 
 /** A solid PNG of the size. */
@@ -331,7 +347,10 @@ function shape(desktop: FakeDesktop, window: FakeWindow): Node {
   }
   if (window.app === "signin") {
     const password = desktop.passwords?.[window.id] ?? "";
-    const shown = desktop.showsPasswords ? password : "\u2022".repeat([...password].length);
+    const plain = signInPasswordIsPlain(desktop, window);
+    const shown = desktop.showsPasswords || plain ? password : "\u2022".repeat([...password].length);
+    const overlay = desktop.sameNameOverlay === true;
+    const passwordRole = desktop.mac ? "AXTextField" : plain ? "text" : "password text";
     return {
       key: "frame",
       role: "frame",
@@ -339,8 +358,8 @@ function shape(desktop: FakeDesktop, window: FakeWindow): Node {
       actions: [],
       frame: whole,
       children: [
-        { key: "email", role: desktop.mac ? "AXTextField" : "text", label: "Email", value: desktop.fields[window.id] ?? "", actions: [], frame: frame(20, 40, 400, 40), children: [] },
-        { key: "password", role: desktop.mac ? "AXTextField" : "password text", label: "Password", value: shown, actions: [], frame: frame(20, 100, 400, 40), children: [] },
+        { key: "email", role: desktop.mac ? "AXTextField" : "text", label: overlay ? "Same" : "Email", value: desktop.fields[window.id] ?? "", actions: [], frame: frame(20, 40, 400, 40), children: [] },
+        { key: "password", role: passwordRole, label: overlay ? "Same" : "Password", value: shown, actions: [], frame: overlay ? frame(20, 40, 400, 40) : frame(20, 100, 400, 40), children: [] },
         { key: "signin", role: "push button", label: "Sign in", actions: ["click"], frame: frame(20, 160, 120, 40), children: [] },
       ],
     };
@@ -750,7 +769,7 @@ export class FakeCua {
     }
     // Any other click closes a context menu.
     desktop.windows = desktop.windows.filter((other) => other.menuOf === undefined || (other.menuOf !== window.id && other.id !== window.id));
-    if (window.app === "signin" && (node.key === "email" || node.key === "password")) desktop.signInFocus = { ...desktop.signInFocus, [window.id]: node.key };
+    if (window.app === "signin" && (node.key === "email" || node.key === "password") && !desktop.clicksFocusNothing) desktop.signInFocus = { ...desktop.signInFocus, [window.id]: node.key };
     const tasks = desktop.tasks[window.id];
     if (node.key.startsWith("delete:") && tasks) {
       desktop.tasks[window.id] = tasks.filter((task) => `delete:${task}` !== node.key);

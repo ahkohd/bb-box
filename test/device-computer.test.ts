@@ -547,44 +547,80 @@ describe("the computer tools on a device (063, 7.1)", () => {
     assert.match(done.text, new RegExp(`^Typed "example\\.com" and pressed Return into ${ref}, text field "Address"\\. ${ref} reads "example\\.com" now\\.`));
   });
 
-  test("types a password from a file on the device's host only into a secure text field given by ref, says only how many characters, from where and into which ref, and deletes the file", async () => {
+  test("types a password from a file only into the secure text field that has the focus after its tap, says only the count, the file and the ref, and hides the field's value in every later read, on Android and iOS", async () => {
+    for (const platform of ["android", "ios"] as const) {
+      const secret = "Vq7#mZ2!pL9$wR4xT8kN";
+      const dir = tempDir("device-secret");
+      const passwordFile = join(dir, "pw");
+      const missing = join(dir, "missing");
+      writeFileSync(passwordFile, `${secret}\n`);
+      const email = element("text field", "Email", { x: 60, y: 400, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
+      const password = element("secure text field", "Password", { x: 60, y: 600, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
+      const keyboard = element(KEYBOARD_KEY_ROLE, "q", { x: 0, y: 2000, width: 100, height: 150 });
+      const device = new FakeDevice(screenOf([email, password]));
+      device.platform = platform;
+      device.onInput = (input) => {
+        if (input.type === "tap") device.tree = screenOf([email, { ...password, focused: true }, keyboard]);
+        if (input.type === "text") device.tree = screenOf([email, { ...password, value: input.text, focused: true }, keyboard]);
+      };
+      const computer = new DeviceComputer({ ...device.deps(), runOwn: runHere });
+      const tree = (await computer.observe(BOX, { window: 1 })).text;
+      const passwordRef = refOf(tree, /"Password"/);
+      const emailRef = refOf(tree, /"Email"/);
+      const refusal = async (input: TypeInput, said: string) =>
+        assert.rejects(computer.type(BOX, input), (error: unknown) => {
+          assert.ok(error instanceof ComputerError);
+          assert.equal(error.message, said);
+          return true;
+        });
+
+      await refusal({ ref: emailRef, textFile: missing }, `${emailRef} is not a password field, so BB Box types no secret into it. It typed nothing and left ${missing} as it was.`);
+      await refusal({ textFile: missing }, `A secret goes only into a password field given by ref. BB Box typed nothing and left ${missing} as it was.`);
+      await refusal({ ref: passwordRef, textFile: passwordFile, keys: "Return" }, "Give text, keys or text_file. text may come with keys, such as Return; text_file goes alone.");
+      await refusal({ ref: passwordRef }, "Give text, keys or text_file. text may come with keys, such as Return; text_file goes alone.");
+      assert.equal(device.inputs.length, 0, "nothing typed");
+
+      const done = await computer.type(BOX, { ref: passwordRef, textFile: passwordFile, deleteFile: true });
+      const later = (await computer.observe(BOX, { window: 1 })).text;
+      const again = (await computer.observe(BOX, { window: 1 })).text;
+
+      assert.deepEqual(device.inputs.map((input) => input.type), ["tap", "text"]);
+      assert.deepEqual(device.inputs.at(-1), { type: "text", text: secret }, `${platform}: the text goes to the focus, at no element`);
+      assert.equal(done.text, `Typed 20 characters from ${passwordFile} into ${passwordRef}. BB Box deleted ${passwordFile}.`);
+      assert.deepEqual(done.hints, ["Call computer_observe with window 1 to see it."]);
+      for (const seen of [later, again]) {
+        assert.ok(!seen.includes(secret), `${platform}: ${seen}`);
+        assert.match(seen, /secure text field "Password" = "\(hidden\)"/);
+      }
+      assert.equal(existsSync(passwordFile), false);
+    }
+  });
+
+  test("refuses a secret, with nothing typed, when the field turns plain as it gets the focus, when the focus lands elsewhere, and when a plain field of the same name takes the tap", async () => {
     const secret = "Vq7#mZ2!pL9$wR4xT8kN";
-    const dir = tempDir("device-secret");
-    const passwordFile = join(dir, "pw");
-    const missing = join(dir, "missing");
-    writeFileSync(passwordFile, `${secret}\n`);
-    const email = element("text field", "Email", { x: 60, y: 400, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
-    const password = element("secure text field", "Password", { x: 60, y: 600, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
-    const keyboard = element(KEYBOARD_KEY_ROLE, "q", { x: 0, y: 2000, width: 100, height: 150 });
-    const device = new FakeDevice(screenOf([email, password]));
-    device.onInput = (input) => {
-      if (input.type === "tap") device.tree = screenOf([email, { ...password, focused: true }, keyboard]);
-      if (input.type === "text") device.tree = screenOf([email, { ...password, value: input.text, focused: true }, keyboard]);
-    };
-    const computer = new DeviceComputer({ ...device.deps(), runOwn: runHere });
-    const tree = (await computer.observe(BOX, { window: 1 })).text;
-    const passwordRef = refOf(tree, /"Password"/);
-    const emailRef = refOf(tree, /"Email"/);
-    const refusal = async (input: TypeInput, said: string) =>
-      assert.rejects(computer.type(BOX, input), (error: unknown) => {
-        assert.ok(error instanceof ComputerError);
-        assert.equal(error.message, said);
+    const passwordFile = join(tempDir("device-secret"), "pw");
+    writeFileSync(passwordFile, secret);
+    const password = element("secure text field", "Same", { x: 60, y: 600, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
+    const cases: { readonly name: string; readonly after: readonly DeviceElement[]; readonly said: (ref: string) => string }[] = [
+      { name: "turns plain", after: [{ ...password, role: "text field", focused: true }], said: (ref) => `${ref} is not a password field, so BB Box types no secret into it.` },
+      { name: "focus elsewhere", after: [password], said: (ref) => `The focus is not on ${ref} after BB Box focused it, so it types no secret.` },
+      { name: "same-name overlay", after: [password, element("text field", "Same", password.frame, { focused: true })], said: (ref) => `${ref} is not a password field, so BB Box types no secret into it.` },
+    ];
+    for (const each of cases) {
+      const device = new FakeDevice(screenOf([password]));
+      device.onInput = (input) => {
+        if (input.type === "tap") device.tree = screenOf([...each.after]);
+      };
+      const computer = new DeviceComputer({ ...device.deps(), runOwn: runHere, sleep: async () => undefined });
+      const ref = refOf((await computer.observe(BOX, { window: 1 })).text, /"Same"/);
+
+      await assert.rejects(computer.type(BOX, { ref, textFile: passwordFile }), (error: unknown) => {
+        assert.ok(error instanceof ComputerError, each.name);
+        assert.equal(error.message, `${each.said(ref)} It typed nothing and left ${passwordFile} as it was.`, each.name);
         return true;
       });
-
-    await refusal({ ref: emailRef, textFile: missing }, `${emailRef} is not a password field, so BB Box types no secret into it. It typed nothing and left ${missing} as it was.`);
-    await refusal({ textFile: missing }, `A secret goes only into a password field given by ref. BB Box typed nothing and left ${missing} as it was.`);
-    await refusal({ ref: passwordRef, textFile: passwordFile, keys: "Return" }, "Give text, keys or text_file. text may come with keys, such as Return; text_file goes alone.");
-    await refusal({ ref: passwordRef }, "Give text, keys or text_file. text may come with keys, such as Return; text_file goes alone.");
-    assert.equal(device.inputs.length, 0, "nothing typed");
-
-    const done = await computer.type(BOX, { ref: passwordRef, textFile: passwordFile, deleteFile: true });
-
-    assert.deepEqual(device.inputs.map((input) => input.type), ["tap", "text"]);
-    assert.deepEqual(device.inputs.at(-1), { type: "text", text: secret });
-    assert.equal(done.text, `Typed 20 characters from ${passwordFile} into ${passwordRef}. BB Box deleted ${passwordFile}.`);
-    assert.deepEqual(done.hints, ["Call computer_observe with window 1 to see it."]);
-    assert.equal(existsSync(passwordFile), false);
+      assert.deepEqual(device.inputs.map((input) => input.type), ["tap"], `${each.name}: nothing typed`);
+    }
   });
 
   test("after the tap that opens a field, the first key waits until a field has the focus and its keyboard shows, as Safari's address field moves and its keyboard comes in (F-25)", async () => {

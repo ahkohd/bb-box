@@ -144,32 +144,37 @@ Then it gives `computer_type` the file's path as `text_file`, the password field
 computer_type(box, ref: "e12", text_file: "/tmp/pw", delete: true)
 ```
 
-BB Box reads the file in the box itself and types what it holds only into a field it has confirmed is a password field. The result says only how many characters it typed, from which file, into which reference, and whether it deleted the file: never anything read from the screen.
+BB Box reads the file in the box itself. It focuses the field by its reference, then asks the platform which element has the focus. It types only if that element is the field and reports itself as a password field at that moment, and it sends the characters to the focus. The result says only how many characters it typed, from which file, into which reference, and whether it deleted the file: never anything read from the screen.
 
 What this protects:
 
-- The password is not in the agent's call, the tool's result, the thread, BB's logs or BB Box's records.
-- It never shows as text on the screen: BB Box types it only into a password field, which shows dots.
+- The file's contents are not in the agent's call, the tool's result, the thread, BB's logs or BB Box's records.
+- BB Box types them only into an element that reports itself as a password field when the keys go in.
+- Whenever BB Box reads a window or a device's screen, a password field's value reads as `(hidden)`, so a later `computer_observe` cannot show it, even where the platform gives the field's text.
 
-What it does not:
+What it does not protect:
 
-- A password field's dots still show the password's length, on the screen and in screenshots.
-- A recording shows what the screen shows, so the dots too.
-- The box itself holds the password while the file is there, and the app holds it once typed.
+- The app receives the password, and an app can still reveal or misuse it. A page could switch the field to plain text after BB Box checked it.
+- A password field's dots show the password's length, on the screen, in screenshots and in recordings.
+- The box holds the password while the file is there.
 
-How BB Box confirms a password field:
+How BB Box knows the focused element is a password field:
 
 | Desktop | How it knows |
 | --- | --- |
-| Linux | The field's role in AT-SPI is `password text` |
-| macOS | The field's Accessibility subrole is `AXSecureTextField`, read at the field's point by a script in the box. It needs Accessibility access for scripts run over SSH: Namespace's Macs have it, and the SSH host pool's setup grants it. Without it BB Box refuses |
-| Windows | UI Automation says `IsPassword` for the field, read at the field's point in the desktop session |
-| iOS and Android | The field's role is `secure text field` |
+| Linux | AT-SPI: the focused accessible of the app, found in the desktop session, has the role `password text` |
+| macOS | Accessibility: the app's focused element has the subrole `AXSecureTextField`, read by a script in the box. It needs Accessibility access for scripts run over SSH: Namespace's Macs have it, and the SSH host pool's setup grants it. Without it BB Box refuses |
+| Windows | UI Automation: the focused element, read in the desktop session, says `IsPassword` |
+| iOS and Android | The focused element's role is `secure text field` |
 
-BB Box refuses, before it reads the file:
+The focused element must be the field: the same role and name, and on desktops the same place on the screen, within a few pixels. On Windows its automation ID must match too, and on macOS the element under the field's centre must be the one with the focus.
 
-- a field that is not a password field, such as an email or search field
-- a field where it cannot tell, such as a macOS box without that Accessibility access: "BB Box cannot tell a password field from a plain one here, so it types no secret into e12."
+BB Box refuses, and types nothing:
+
+- a field whose role says it is not a password field, such as an email or search field, before it focuses it
+- when the focus does not land on the field: "The focus is not on e12 after BB Box focused it, so it types no secret."
+- when the focused field is not a password field, such as a field a page turns into plain text as it gets the focus
+- where it cannot tell, such as a macOS box without that Accessibility access
 - a window, or the desktop, without `ref`
 
 It also refuses a missing file, a folder, a file the box user cannot read, an empty file and one over 4 KiB, without saying anything of what the file holds. One line break at the file's end is left out, as `op read` adds one.

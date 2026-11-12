@@ -144,16 +144,30 @@ export function maskSecrets(text: string, secrets: Iterable<string>): string {
   return masked;
 }
 
+export const HIDDEN_VALUE = "(hidden)";
+
+export interface FieldFrame {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface FieldIdentity {
   readonly role: string;
   readonly label: string;
+  readonly frame: FieldFrame | null;
+  readonly identifier?: string | null;
 }
 
-export interface SecureProbe {
+export interface FocusedProbe {
   readonly trusted: boolean;
   readonly role: string | null;
   readonly name: string | null;
   readonly secure: boolean;
+  readonly frame: FieldFrame | null;
+  readonly identifier?: string | null;
+  readonly samePlace?: boolean | null;
 }
 
 export interface ScreenPoint {
@@ -161,48 +175,114 @@ export interface ScreenPoint {
   readonly y: number;
 }
 
+export type FocusVerdict = "secure" | "plain" | "elsewhere" | "unknown";
+
+const FRAME_SLACK_PIXELS = 4;
+const LINUX_SECURE_ROLE = "password text";
 const MAC_SECURE_SUBROLE = "AXSecureTextField";
 
-function macSecureFieldScript(point: ScreenPoint): string {
+function macFocusedScript(pid: number, point: ScreenPoint | null): string {
+  const samePlace = point
+    ? `(() => { const at = Ref(); return $.AXUIElementCopyElementAtPosition($.AXUIElementCreateSystemWide(), ${point.x}, ${point.y}, at) === 0 && $.CFEqual(focused, ObjC.castRefToObject(at[0])); })()`
+    : "null";
   return `osascript -l JavaScript <<'BBBOXJXA'
 ObjC.import("ApplicationServices");
 function run() {
   if (!$.AXIsProcessTrusted()) return JSON.stringify({ trusted: false });
-  const found = Ref();
-  if ($.AXUIElementCopyElementAtPosition($.AXUIElementCreateSystemWide(), ${point.x}, ${point.y}, found) !== 0) return JSON.stringify({ trusted: true, role: null });
-  const read = (name) => {
+  const read = (element, name) => {
     const value = Ref();
-    if ($.AXUIElementCopyAttributeValue(found[0], $(name), value) !== 0) return null;
-    const plain = ObjC.unwrap(ObjC.castRefToObject(value[0]));
+    if ($.AXUIElementCopyAttributeValue(element, $(name), value) !== 0) return null;
+    return ObjC.castRefToObject(value[0]);
+  };
+  const text = (element, name) => {
+    const value = read(element, name);
+    if (value === null) return null;
+    const plain = ObjC.unwrap(value);
     return typeof plain === "string" ? plain : null;
   };
-  return JSON.stringify({ trusted: true, role: read("AXRole"), name: read("AXTitle") || read("AXDescription"), secure: read("AXSubrole") === "${MAC_SECURE_SUBROLE}" });
+  const focused = read($.AXUIElementCreateApplication(${pid}), "AXFocusedUIElement");
+  if (focused === null) return JSON.stringify({ trusted: true, role: null });
+  return JSON.stringify({ trusted: true, role: text(focused, "AXRole"), name: text(focused, "AXTitle") || text(focused, "AXDescription"), secure: text(focused, "AXSubrole") === "${MAC_SECURE_SUBROLE}", frame: null, samePlace: ${samePlace} });
 }
 BBBOXJXA`;
 }
 
-function windowsSecureFieldScript(point: ScreenPoint): string {
+function windowsFocusedScript(): string {
   return [
     "Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase",
-    `$found = [System.Windows.Automation.AutomationElement]::FromPoint([System.Windows.Point]::new(${point.x}, ${point.y}))`,
-    "$current = $found.Current",
-    "[pscustomobject]@{ trusted = $true; role = ($current.ControlType.ProgrammaticName -replace '^ControlType\\.', ''); name = $current.Name; secure = [bool]$current.IsPassword } | ConvertTo-Json -Compress",
+    "$current = [System.Windows.Automation.AutomationElement]::FocusedElement.Current",
+    "$box = $current.BoundingRectangle",
+    "[pscustomobject]@{ trusted = $true; role = ($current.ControlType.ProgrammaticName -replace '^ControlType\\.', ''); name = $current.Name; secure = [bool]$current.IsPassword; frame = @([int]$box.X, [int]$box.Y, [int]$box.Width, [int]$box.Height); identifier = $current.AutomationId } | ConvertTo-Json -Compress",
   ].join("\n");
 }
 
-export function secureFieldScript(os: GuestOs, point: ScreenPoint): string | null {
-  if (os === "macos") return macSecureFieldScript(point);
-  if (os === "windows") return windowsSecureFieldScript(point);
+function linuxFocusedScript(pid: number): string {
+  return `python3 - ${pid} <<'BBBOXPY'
+import json, sys
+from gi.repository import Gio, GLib
+pid = int(sys.argv[1])
+session = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+address = session.call_sync("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", None, GLib.VariantType("(s)"), 0, 2000, None).unpack()[0]
+bus = Gio.DBusConnection.new_for_address_sync(address, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+def call(name, path, interface, method, args, reply):
+    return bus.call_sync(name, path, interface, method, args, GLib.VariantType(reply), 0, 3000, None).unpack()
+FOCUSED = 1 << 12
+apps = call("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root", "org.a11y.atspi.Accessible", "GetChildren", None, "(a(so))")[0]
+found = []
+for app in apps:
+    try:
+        owner = call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetConnectionUnixProcessID", GLib.Variant("(s)", (app[0],)), "(u)")[0]
+    except Exception:
+        continue
+    if owner != pid:
+        continue
+    stack, seen = [(app, 0)], 0
+    while stack and seen < 20000:
+        node, depth = stack.pop()
+        seen += 1
+        try:
+            state = call(node[0], node[1], "org.a11y.atspi.Accessible", "GetState", None, "(au)")[0]
+            if state and state[0] & FOCUSED:
+                found.append((depth, node))
+            stack.extend((child, depth + 1) for child in call(node[0], node[1], "org.a11y.atspi.Accessible", "GetChildren", None, "(a(so))")[0])
+        except Exception:
+            pass
+deepest = [node for depth, node in found if depth == max((each for each, _ in found), default=-1)]
+if len(deepest) != 1:
+    print(json.dumps({"trusted": True, "role": None}))
+    sys.exit(0)
+node = deepest[0]
+role = call(node[0], node[1], "org.a11y.atspi.Accessible", "GetRoleName", None, "(s)")[0]
+name = call(node[0], node[1], "org.freedesktop.DBus.Properties", "Get", GLib.Variant("(ss)", ("org.a11y.atspi.Accessible", "Name")), "(v)")[0]
+try:
+    frame = list(call(node[0], node[1], "org.a11y.atspi.Component", "GetExtents", GLib.Variant("(u)", (0,)), "((iiii))")[0])
+except Exception:
+    frame = None
+print(json.dumps({"trusted": True, "role": role, "name": name, "secure": role == "${LINUX_SECURE_ROLE}", "frame": frame}))
+BBBOXPY`;
+}
+
+export function focusedFieldScript(os: GuestOs, pid: number, point: ScreenPoint | null = null): string | null {
+  if (os === "macos") return macFocusedScript(pid, point);
+  if (os === "windows") return windowsFocusedScript();
+  if (os === "linux") return linuxFocusedScript(pid);
   return null;
 }
 
-export function parseSecureProbe(stdout: string): SecureProbe | null {
+function frameOf(value: unknown): FieldFrame | null {
+  if (!Array.isArray(value) || value.length !== 4 || !value.every((part) => typeof part === "number")) return null;
+  const [x, y, width, height] = value as number[];
+  return { x: x!, y: y!, width: width!, height: height! };
+}
+
+export function parseFocusedProbe(stdout: string): FocusedProbe | null {
   const line = stdout.trim().split("\n").at(-1);
   if (!line) return null;
   try {
     const parsed = JSON.parse(line) as Record<string, unknown>;
     const text = (value: unknown) => (typeof value === "string" ? value : null);
-    return { trusted: parsed.trusted === true, role: text(parsed.role), name: text(parsed.name), secure: parsed.secure === true };
+    const samePlace = typeof parsed.samePlace === "boolean" ? parsed.samePlace : null;
+    return { trusted: parsed.trusted === true, role: text(parsed.role), name: text(parsed.name), secure: parsed.secure === true, frame: frameOf(parsed.frame), identifier: text(parsed.identifier) || null, samePlace };
   } catch {
     return null;
   }
@@ -213,8 +293,23 @@ function sameName(left: string | null, right: string): boolean {
   return left !== null && plain(left) === plain(right);
 }
 
-export function secureVerdict(probe: SecureProbe | null, field: FieldIdentity): "secure" | "plain" | "unknown" {
-  if (!probe?.trusted || probe.role !== field.role) return "unknown";
-  if (field.label && !sameName(probe.name, field.label)) return "unknown";
+function sameFrame(left: FieldFrame, right: FieldFrame): boolean {
+  return [left.x - right.x, left.y - right.y, left.width - right.width, left.height - right.height].every((gap) => Math.abs(gap) <= FRAME_SLACK_PIXELS);
+}
+
+export function focusVerdict(probe: FocusedProbe | null, target: FieldIdentity): FocusVerdict {
+  if (!probe?.trusted) return "unknown";
+  if (probe.role === null) return "elsewhere";
+  if (!sameName(probe.name, target.label)) return "elsewhere";
+  if (probe.frame && target.frame && !sameFrame(probe.frame, target.frame)) return "elsewhere";
+  if (probe.identifier && target.identifier && probe.identifier !== target.identifier) return "elsewhere";
+  if (probe.samePlace === false) return "elsewhere";
+  if (probe.role !== target.role) return probe.secure ? "elsewhere" : "plain";
   return probe.secure ? "secure" : "plain";
+}
+
+const QUOTED_VALUE = /( = |value=)"(?:[^"\\]|\\.)*"/g;
+
+export function withValueHidden(line: string): string {
+  return line.replace(QUOTED_VALUE, `$1"${HIDDEN_VALUE}"`);
 }

@@ -44,7 +44,7 @@ import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { waylandPointerScript } from "../src/backends/wayvnc.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, loseLastByteOfCopies, type FakeBackendOptions } from "./fake-backend.ts";
 import { FakeSnapshots } from "./fake-snapshots.ts";
-import { openSignIn, readDesktopFile, tasksDesktop, writeDesktopFile, type FakeDesktop } from "./fake-cua.ts";
+import { focusedOf, openSignIn, readDesktopFile, tasksDesktop, writeDesktopFile, type FakeDesktop } from "./fake-cua.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
 import { fakeDaemon, fakeFfmpeg, joined, tempDir, testContext } from "./helpers.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
@@ -5604,7 +5604,10 @@ const TEST_PASSWORD = "Vq7#mZ2!pL9$wR4xT8kN";
 const MAC_DESKTOP_KIND: BoxKind = { ...FAKE_KINDS[1]!, id: "macos-desktop", label: "macOS desktop", capabilities: { ...FAKE_KINDS[1]!.capabilities, os: "macos" } };
 
 async function signInBox(edit: (desktop: FakeDesktop) => void = () => {}, options: { mac?: boolean } = {}) {
-  const started = await desktopBox(options.mac ? { kind: MAC_DESKTOP_KIND } : {});
+  let desktopFile = "";
+  const focusedField = async (_box: BoxRecord, pid: number) => focusedOf(readDesktopFile(desktopFile), pid);
+  const started = await desktopBox({ ...(options.mac ? { kind: MAC_DESKTOP_KIND } : {}), computer: { focusedField } });
+  desktopFile = started.file;
   let signIn = 0;
   editDesktop(started.file, (desktop) => {
     desktop.mac = options.mac === true;
@@ -5613,28 +5616,21 @@ async function signInBox(edit: (desktop: FakeDesktop) => void = () => {}, option
   });
   const home = /stdout:\n(.*)\n/.exec(text(await started.tool("box_run", { box: started.box.name, command: "pwd" })))![1]!;
   const tree = text(await started.tool("computer_observe", { box: started.box.name, window: signIn }));
-  const password = refOf(tree, '"Password"');
-  const email = refOf(tree, '"Email"');
+  const overlay = readDesktop(started.file).sameNameOverlay === true;
+  const email = refOf(tree, overlay ? '"Same"' : '"Email"');
+  const password = overlay ? email : refOf(tree, '"Password"');
   const passwordFile = join(home, "pw");
   writeFileSync(passwordFile, `${TEST_PASSWORD}\n`);
   const typedPassword = () => readDesktop(started.file).passwords?.[signIn] ?? "";
   const typeTextCalls = () => readDesktop(started.file).calls.filter((call) => call.tool === "type_text").length;
   const logs = () => started.harness.inspection.logEntries.map((entry) => entry.message).join("\n");
-  return { ...started, signIn, home, password, email, passwordFile, typedPassword, typeTextCalls, logs };
+  const observe = async () => text(await started.tool("computer_observe", { box: started.box.name, window: signIn }));
+  return { ...started, signIn, home, password, email, passwordFile, typedPassword, typeTextCalls, logs, observe };
 }
 
-function osascriptAnswersFromHome(t: TestContext): void {
-  const bin = tempDir("osascript");
-  writeFileSync(join(bin, "osascript"), '#!/bin/sh\ncat > /dev/null\ncat "$HOME/ax-answer.json"\n');
-  chmodSync(join(bin, "osascript"), 0o755);
-  const path = process.env.PATH;
-  process.env.PATH = `${bin}:${path}`;
-  t.after(() => {
-    process.env.PATH = path;
-  });
-}
+const NOTHING_TYPED = "nothing typed";
 
-test("computer_type types a password from a file into a confirmed password field, and says only how many characters it typed, from where and into which ref", async (t) => {
+test("computer_type focuses the ref, checks that the field with the focus is it and is a password field, then types the file into the focus and says only the count, the file and the ref", async (t) => {
   const { harness, box, tool, file, signIn, password, passwordFile, typedPassword, logs } = await signInBox();
   t.after(() => harness.lifecycle.dispose());
 
@@ -5642,23 +5638,28 @@ test("computer_type types a password from a file into a confirmed password field
 
   assert.equal(isError(typed), false, text(typed));
   assert.equal(text(typed), `Typed 20 characters from ${passwordFile} into ${password}.\n\nNext: Call computer_observe with window ${signIn} to see it.`);
-  assert.equal(typedPassword(), TEST_PASSWORD, "the file's contents without its line break went to the driver");
+  assert.equal(typedPassword(), TEST_PASSWORD, "the file's contents without its line break went to the field with the focus");
   assert.ok(!logs().includes(TEST_PASSWORD));
   assert.equal(existsSync(passwordFile), true, "the file stays without delete");
-  assert.ok(readDesktop(file).calls.some((call) => call.tool === "type_text" && call.args.text === TEST_PASSWORD));
+  const typing = readDesktop(file).calls.filter((call) => call.tool === "type_text" && call.args.text === TEST_PASSWORD);
+  assert.ok(typing.length > 0 && typing.every((call) => call.args.element_token === undefined), "typed into the focus, not at an element");
 });
 
-test("computer_type's result for a secret holds no screen text, so a field that shows the password, even changed, cannot leak it", async (t) => {
-  const { harness, box, tool, signIn, password, passwordFile, typedPassword } = await signInBox((desktop) => {
+test("a password field's value is hidden in every later read of the window, so an app that shows it cannot leak it", async (t) => {
+  const { harness, box, tool, password, passwordFile, typedPassword, observe } = await signInBox((desktop) => {
     desktop.showsPasswords = true;
     desktop.typedTextLowercased = true;
   });
   t.after(() => harness.lifecycle.dispose());
 
   const typed = text(await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile }));
+  const later = await observe();
+  const again = await observe();
 
   assert.equal(typedPassword(), TEST_PASSWORD.toLowerCase(), "the app changed what it got and shows it");
-  assert.equal(typed, `Typed 20 characters from ${passwordFile} into ${password}.\n\nNext: Call computer_observe with window ${signIn} to see it.`);
+  assert.match(typed, new RegExp(`^Typed 20 characters from ${passwordFile} into ${password}\\.`));
+  for (const seen of [typed, later, again]) assert.ok(!seen.toLowerCase().includes(TEST_PASSWORD.toLowerCase()), seen);
+  assert.match(later, new RegExp(`\\[${password}\\] password text "Password" value="\\(hidden\\)"`));
 });
 
 test("computer_type with delete deletes the secret's file after typing, and after typing that failed, which says in fixed words that the field may hold part of it", async (t) => {
@@ -5697,7 +5698,65 @@ test("computer_type refuses a secret for a field that is not a password field, a
     assert.equal(isError(refused), true);
     assert.equal(text(refused), `A secret goes only into a password field given by ref. BB Box typed nothing and left ${missing} as it was.\n\nNext: Give ref, the password field's reference from computer_observe.`);
   }
-  assert.equal(typeTextCalls(), 0, "nothing typed");
+  assert.equal(typeTextCalls(), 0, NOTHING_TYPED);
+});
+
+test("computer_type refuses when the field turns into plain text as it gets the focus, as a page's onfocus can make it", async (t) => {
+  const { harness, box, tool, password, passwordFile, typedPassword, typeTextCalls } = await signInBox((desktop) => {
+    desktop.passwordTurnsPlainOnFocus = true;
+  });
+  t.after(() => harness.lifecycle.dispose());
+
+  const refused = await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile });
+
+  assert.equal(isError(refused), true);
+  assert.equal(text(refused).split("\n")[0], `${password} is not a password field, so BB Box types no secret into it. It typed nothing and left ${passwordFile} as it was.`);
+  assert.equal(typeTextCalls(), 0, NOTHING_TYPED);
+  assert.equal(typedPassword(), "");
+});
+
+test("computer_type refuses a plain field under a password field of the same name, as the field with the focus is not a password field", async (t) => {
+  const { harness, box, tool, file, signIn, email, passwordFile, typeTextCalls } = await signInBox(
+    (desktop) => {
+      desktop.sameNameOverlay = true;
+    },
+    { mac: true },
+  );
+  t.after(() => harness.lifecycle.dispose());
+
+  const refused = await tool("computer_type", { box: box.name, ref: email, text_file: passwordFile });
+
+  assert.equal(isError(refused), true);
+  assert.equal(text(refused).split("\n")[0], `${email} is not a password field, so BB Box types no secret into it. It typed nothing and left ${passwordFile} as it was.`);
+  assert.equal(typeTextCalls(), 0, NOTHING_TYPED);
+  assert.equal(readDesktop(file).fields[signIn], "");
+});
+
+test("computer_type refuses when the focus does not land on the ref", async (t) => {
+  const { harness, box, tool, password, passwordFile, typeTextCalls } = await signInBox((desktop) => {
+    desktop.clicksFocusNothing = true;
+  });
+  t.after(() => harness.lifecycle.dispose());
+
+  const refused = await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile });
+
+  assert.equal(
+    text(refused),
+    `The focus is not on ${password} after BB Box focused it, so it types no secret. It typed nothing and left ${passwordFile} as it was.\n\nNext: Call computer_observe, close anything over the field, and give the password field's reference again.`,
+  );
+  assert.equal(typeTextCalls(), 0, NOTHING_TYPED);
+});
+
+test("on macOS, where Chrome gives every input one role, computer_type types only once the focused element reports itself a password field", async (t) => {
+  const { harness, box, tool, email, password, passwordFile, typedPassword, typeTextCalls } = await signInBox(() => {}, { mac: true });
+  t.after(() => harness.lifecycle.dispose());
+
+  const plain = await tool("computer_type", { box: box.name, ref: email, text_file: passwordFile });
+  assert.equal(text(plain).split("\n")[0], `${email} is not a password field, so BB Box types no secret into it. It typed nothing and left ${passwordFile} as it was.`);
+  assert.equal(typeTextCalls(), 0, NOTHING_TYPED);
+
+  assert.match(text(await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile })), new RegExp(`^Typed 20 characters from ${passwordFile} into ${password}\\.`));
+  assert.equal(typedPassword(), TEST_PASSWORD);
 });
 
 test("computer_type refuses a secret's file it cannot use, says nothing of what it holds, and reads a name that starts with a dash as a file", async (t) => {
@@ -5723,30 +5782,10 @@ test("computer_type refuses a secret's file it cannot use, says nothing of what 
   await refused({ ref: password, text_file: passwordFile, keys: "Return" }, /^Give one of text, keys or text_file\./);
   await refused({ ref: password, text: "x", keys: "Return" }, /^Give one of text, keys or text_file\./);
   await refused({ ref: password, text: "x", delete: true }, /^delete goes with text_file only\./);
-  assert.equal(typeTextCalls(), 0, "nothing typed");
+  assert.equal(typeTextCalls(), 0, NOTHING_TYPED);
 
   writeFileSync(join(home, "-pw"), TEST_PASSWORD);
   assert.match(text(await tool("computer_type", { box: box.name, ref: password, text_file: "-pw" })), /^Typed 20 characters from -pw into /);
-  assert.equal(typedPassword(), TEST_PASSWORD);
-});
-
-test("on macOS, where Chrome gives every input one role, BB Box types a secret only where the Accessibility subrole says secure text field, and refuses where it says otherwise or cannot say", async (t) => {
-  osascriptAnswersFromHome(t);
-  const { harness, box, tool, home, email, password, passwordFile, typedPassword, typeTextCalls } = await signInBox(() => {}, { mac: true });
-  t.after(() => harness.lifecycle.dispose());
-  const answer = (said: Record<string, unknown>) => writeFileSync(join(home, "ax-answer.json"), JSON.stringify(said));
-  const missing = join(home, "missing");
-
-  answer({ trusted: true, role: "AXTextField", name: "Email", secure: false });
-  assert.equal(text(await tool("computer_type", { box: box.name, ref: email, text_file: missing })).split("\n")[0], `${email} is not a password field, so BB Box types no secret into it. It typed nothing and left ${missing} as it was.`);
-  answer({ trusted: false });
-  assert.equal(text(await tool("computer_type", { box: box.name, ref: password, text_file: missing })).split("\n")[0], `BB Box cannot tell a password field from a plain one here, so it types no secret into ${password}. It typed nothing and left ${missing} as it was.`);
-  answer({ trusted: true, role: "AXTextField", name: "Search", secure: true });
-  assert.match(text(await tool("computer_type", { box: box.name, ref: password, text_file: missing })), /^BB Box cannot tell a password field from a plain one here/, "another element at the field's point");
-  assert.equal(typeTextCalls(), 0, "nothing typed");
-
-  answer({ trusted: true, role: "AXTextField", name: "Password", secure: true });
-  assert.match(text(await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile })), new RegExp(`^Typed 20 characters from ${passwordFile} into ${password}\\.`));
   assert.equal(typedPassword(), TEST_PASSWORD);
 });
 

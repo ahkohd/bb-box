@@ -1,6 +1,6 @@
 import type { BoxRecord } from "./boxes.ts";
 import { ComputerError, IMAGE_MAX_EDGE, TREE_LIMIT, checkTypeInput, chord, pngSize, secretNeedsRef, typeFromFile, unconfirmedFieldRefusal, type ActInput, type ComputerResult, type Direction, type TypeInput, type WindowRef } from "./computer.ts";
-import { fieldSecrecy, type RunInBox } from "./secret-file.ts";
+import { HIDDEN_VALUE, fieldSecrecy, focusVerdict, type FocusVerdict, type RunInBox } from "./secret-file.ts";
 import type { RunResult } from "../transports/types.ts";
 import {
   KEYBOARD_KEY_ROLE,
@@ -171,6 +171,12 @@ function quoted(text: string): string {
   return JSON.stringify(text.replace(/\s+/g, " "));
 }
 
+function withSecureValuesHidden(box: BoxRecord, element: DeviceElement): DeviceElement {
+  const secure = fieldSecrecy(box.capabilities.os, element.role) === "hides" && element.value !== null;
+  const own = secure ? { ...element, value: HIDDEN_VALUE } : element;
+  return own.children.length ? { ...own, children: own.children.map((child) => withSecureValuesHidden(box, child)) } : own;
+}
+
 function elementWords(element: DeviceElement): string {
   if (element.label) return `${element.role} ${quoted(element.label)}`;
   if (element.identifier) return `${element.role} (id ${element.identifier})`;
@@ -324,7 +330,8 @@ export class DeviceComputer {
     const answer = await this.#ok(this.#deps.read(box, { type: "tree" }), `${PRODUCT} could not read the device's elements`);
     if (answer.result.type !== "tree") throw new ComputerError("driver", "The device server answered a read of its elements with something else.", "Try again.");
     const { screen, orientation } = this.#screen(answer.state);
-    const snapshot = this.#snapshot(state, answer.state.model, answer.state.platform, answer.result.generation, screen, orientation, answer.result.elements);
+    const elements = answer.result.elements.map((element) => withSecureValuesHidden(box, element));
+    const snapshot = this.#snapshot(state, answer.state.model, answer.state.platform, answer.result.generation, screen, orientation, elements);
     return changesShowAtStart(answer.state) ? { ...snapshot, changesShowAtStart: true } : snapshot;
   }
 
@@ -506,7 +513,7 @@ export class DeviceComputer {
     for (const point of tapPoints(visible)) {
       const answer = await this.#deps.read(box, { type: "at", ...point });
       if (!answer.ok || answer.result.type !== "at") return centre(visible);
-      const found = answer.result.element;
+      const found = answer.result.element && withSecureValuesHidden(box, answer.result.element);
       if (!found || isPartOf(found, shown.element)) return point;
       covering ??= found;
     }
@@ -666,20 +673,27 @@ export class DeviceComputer {
   async #typeFile(box: BoxRecord, state: BoxState, input: TypeInput, path: string, signal?: AbortSignal): Promise<ComputerResult> {
     if (input.ref === undefined) throw secretNeedsRef(path);
     const run = this.#runner(box);
-    const shown = this.#found(state, await this.#read(box, state), input.ref);
-    if (fieldSecrecy(box.capabilities.os, shown.element.role) !== "hides") throw unconfirmedFieldRefusal("plain", shown.ref, path);
+    const target = await this.#target(box, state, { ref: input.ref }, "typing");
+    const field = target.shown;
+    if (!field) throw secretNeedsRef(path);
+    if (fieldSecrecy(box.capabilities.os, field.element.role) !== "hides") throw unconfirmedFieldRefusal("plain", field.ref, path);
+    if (!field.element.focused) {
+      await this.#send(box, { type: "tap", at: target.point }, "The tap that focuses it failed");
+      await this.#settled(box, SCROLL_STEP_SETTLE);
+      await this.#awaitKeyboard(box, state);
+    }
+    const verdict = focusedDeviceVerdict(box, await this.#read(box, state), field.element);
+    if (verdict !== "secure") throw unconfirmedFieldRefusal(verdict, field.ref, path);
     return typeFromFile({
       run,
       os: box.capabilities.os,
       path,
-      ref: shown.ref,
+      ref: field.ref,
       deleteFile: input.deleteFile === true,
       typing: [],
       seeHint: `Call computer_observe with window ${DEVICE_WINDOW} to see it.`,
       signal,
-      type: async (secret) => {
-        await this.#typed(box, state, { ref: input.ref, text: secret }, signal);
-      },
+      type: (secret) => this.#send(box, { type: "text", text: secret }, "Typing failed"),
     });
   }
 
@@ -803,6 +817,13 @@ export class DeviceComputer {
     }
     return { text: `You already have control of box ${box.name}'s device.`, hints: [] };
   }
+}
+
+function focusedDeviceVerdict(box: BoxRecord, snapshot: Snapshot, target: DeviceElement): FocusVerdict {
+  const focused = snapshot.shown.filter((shown) => shown.element.focused).at(-1)?.element;
+  if (focused && focused.identifier !== target.identifier) return "elsewhere";
+  const probe = focused ? { trusted: true, role: focused.role, name: focused.label, secure: fieldSecrecy(box.capabilities.os, focused.role) === "hides", frame: null } : { trusted: true, role: null, name: null, secure: false, frame: null };
+  return focusVerdict(probe, { role: target.role, label: target.label, frame: null });
 }
 
 function selectAllModifier(platform: DevicePlatform): KeyModifier {

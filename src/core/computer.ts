@@ -15,7 +15,7 @@ import { inSlot, sharedBoxWords } from "./device-host.ts";
 import { driverCommand } from "./in-box.ts";
 import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
 import { typingKeptSecret, type ActedInput, type InputArea, type TypedField } from "./record-input.ts";
-import { SECURE_FIELD_TIMEOUT_MS, fieldSecrecy, maskSecrets, parseSecureProbe, readSecretFile, removeSecretFile, secureFieldScript, secureVerdict, type RunInBox } from "./secret-file.ts";
+import { fieldSecrecy, focusVerdict, maskSecrets, readSecretFile, removeSecretFile, withValueHidden, type FocusVerdict, type FocusedProbe, type RunInBox } from "./secret-file.ts";
 import { PRODUCT } from "../brand.ts";
 
 export const PAUSED =
@@ -115,7 +115,7 @@ export interface ComputerResult {
   readonly hints: readonly string[];
 }
 
-export type SecureVerdict = "secure" | "plain" | "unknown";
+export const FOCUS_SETTLE_MS = 300;
 
 export function checkTypeInput(input: TypeInput, textWithKeys: boolean): void {
   const given = [input.text, input.keys, input.textFile].filter((part) => part !== undefined).length;
@@ -136,13 +136,20 @@ export function secretNeedsRef(path: string): ComputerError {
   return new ComputerError("input", `A secret goes only into a password field given by ref. ${PRODUCT} typed nothing and left ${path} as it was.`, "Give ref, the password field's reference from computer_observe.");
 }
 
-export function unconfirmedFieldRefusal(verdict: Exclude<SecureVerdict, "secure">, ref: string, path: string): ComputerError {
-  const said =
-    verdict === "plain"
-      ? `${ref} is not a password field, so ${PRODUCT} types no secret into it.`
-      : `${PRODUCT} cannot tell a password field from a plain one here, so it types no secret into ${ref}.`;
-  const hint = verdict === "plain" ? "Give the password field's reference from computer_observe." : `${PRODUCT} types a secret only into a field it can confirm is a password field.`;
-  return new ComputerError("refused", `${said} It typed nothing and left ${path} as it was.`, hint);
+const REFUSED_FOCUS_WORDS: Readonly<Record<Exclude<FocusVerdict, "secure">, (ref: string) => string>> = {
+  plain: (ref) => `${ref} is not a password field, so ${PRODUCT} types no secret into it.`,
+  elsewhere: (ref) => `The focus is not on ${ref} after ${PRODUCT} focused it, so it types no secret.`,
+  unknown: (ref) => `${PRODUCT} cannot tell whether the field that has the focus is a password field, so it types no secret into ${ref}.`,
+};
+
+const REFUSED_FOCUS_HINTS: Readonly<Record<Exclude<FocusVerdict, "secure">, string>> = {
+  plain: "Give the password field's reference from computer_observe.",
+  elsewhere: "Call computer_observe, close anything over the field, and give the password field's reference again.",
+  unknown: `${PRODUCT} types a secret only into a field that has the focus and reports itself as a password field.`,
+};
+
+export function unconfirmedFieldRefusal(verdict: Exclude<FocusVerdict, "secure">, ref: string, path: string): ComputerError {
+  return new ComputerError("refused", `${REFUSED_FOCUS_WORDS[verdict](ref)} It typed nothing and left ${path} as it was.`, REFUSED_FOCUS_HINTS[verdict]);
 }
 
 function removalWords(path: string, removed: boolean): string {
@@ -225,6 +232,7 @@ export interface ComputerDeps {
   /** Puts back the clipboard's text that stageText saved (swayRestoreScript). */
   restoreClipboard?(box: BoxRecord, signal?: AbortSignal): Promise<void>;
   runOwn?(box: BoxRecord, script: string, options: { readonly timeoutMs: number; readonly maxOutputBytes: number; readonly signal?: AbortSignal; readonly session?: "desktop" }): Promise<RunResult>;
+  focusedField?(box: BoxRecord, pid: number, point: { readonly x: number; readonly y: number } | null, signal?: AbortSignal): Promise<FocusedProbe | null>;
   /** Who controls the box's desktop now. */
   owner(boxId: string): Owner;
   /** Takes control of the box's desktop back from a person (038). False when the agent had it already. */
@@ -318,6 +326,7 @@ interface Element {
   readonly place: string | null;
   /** Where it is on the screen, when the driver says. */
   readonly frame: Rect | null;
+  readonly identifier: string | null;
 }
 
 /** A line of the tree text. An element's line carries its reference. */
@@ -472,6 +481,7 @@ interface BoxState {
   readonly titled: Map<number, string>;
   /** On Linux, windows where the last action could have selected text: a key chord or a double-click. */
   readonly selecting: Set<number>;
+  readonly secureFields: Set<string>;
   driverSession: DriverSession | null;
   cursorCapture: CursorCapture | null;
 }
@@ -918,8 +928,17 @@ export function windowLine(window: WindowInfo): string {
   return `window ${window.id}: ${window.app || "an app"}${title}, ${window.width} by ${window.height}${window.onScreen ? "" : ", not on screen"}`;
 }
 
-function centreOf(rect: Rect): Point {
-  return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+const TREE_ELEMENT_LINE = /^\s*- \[(\d+)\] (.*)$/;
+const LINE_IDENTIFIER = /(?:\[|\s)id=([^\s\]]+?):?(?=\s|\])/;
+
+function identifiersIn(tree: string): ReadonlyMap<number, string> {
+  const found = new Map<number, string>();
+  for (const line of tree.split("\n")) {
+    const element = TREE_ELEMENT_LINE.exec(line);
+    const identifier = element ? LINE_IDENTIFIER.exec(withValueHidden(element[2]!)) : null;
+    if (element && identifier) found.set(Number(element[1]), identifier[1]!);
+  }
+  return found;
 }
 
 function toArea(rect: Rect): InputArea {
@@ -1315,9 +1334,13 @@ export class Computer {
   async #typeFile(use: Use, input: TypeInput, path: string): Promise<ComputerResult> {
     if (input.ref === undefined) throw secretNeedsRef(path);
     const run = this.#runner(use.box);
-    const { snapshot, element } = await this.#element(use, input.ref);
-    const verdict = await this.#secureVerdict(use, run, element);
+    const target = await this.#target(use, { action: "click", ref: input.ref });
+    const { element, snapshot } = target;
+    if (!element || !snapshot) throw secretNeedsRef(path);
+    if (fieldSecrecy(use.box.capabilities.os, element.role) === "shows") throw unconfirmedFieldRefusal("plain", element.ref, path);
+    const verdict = await this.#focusedVerdict(use, target, element, snapshot.window);
     if (verdict !== "secure") throw unconfirmedFieldRefusal(verdict, element.ref, path);
+    use.state.secureFields.add(element.fingerprint);
     return typeFromFile({
       run,
       os: use.box.capabilities.os,
@@ -1328,25 +1351,28 @@ export class Computer {
       seeHint: `Call computer_observe with window ${snapshot.window.id} to see it.`,
       signal: use.signal,
       type: async (secret) => {
-        await this.#type(use, { ref: input.ref, text: secret }, path);
+        await this.#type(use, { window: snapshot.window.id, text: secret }, path);
       },
     });
   }
 
-  async #secureVerdict(use: Use, run: RunInBox, element: Element): Promise<SecureVerdict> {
-    const os = use.box.capabilities.os;
-    const byRole = fieldSecrecy(os, element.role);
-    if (byRole === "hides") return "secure";
-    if (byRole === "shows") return "plain";
-    const script = element.frame ? secureFieldScript(os, centreOf(element.frame)) : null;
-    if (!script) return os === "linux" ? "plain" : "unknown";
+  async #focusedVerdict(use: Use, target: Target, element: Element, window: WindowInfo): Promise<FocusVerdict> {
+    const focusedField = this.#deps.focusedField;
+    if (!focusedField) return "unknown";
+    const { result } = await this.#deliver(use, "click", { ...target.args, button: "left", count: 1 }, "foreground", element.frame ? cannotInject : undefined);
+    if (result.isError) await this.#centre(use, target, { button: "left", count: 1 });
+    await sleep(FOCUS_SETTLE_MS, use.signal);
+    const centre = element.frame ? { x: Math.round(element.frame.x + element.frame.width / 2), y: Math.round(element.frame.y + element.frame.height / 2) } : null;
     try {
-      const probed = await run(script, { timeoutMs: SECURE_FIELD_TIMEOUT_MS, maxOutputBytes: 4096, signal: use.signal, ...(os === "windows" ? { session: "desktop" as const } : {}) });
-      return secureVerdict(probed.exitCode === 0 ? parseSecureProbe(probed.stdout) : null, { role: element.role, label: element.label });
+      return focusVerdict(await focusedField(use.box, window.pid, centre, use.signal), { role: element.role, label: element.label, frame: element.frame, identifier: element.identifier });
     } catch (error) {
       if (use.signal?.aborted) throw error;
       return "unknown";
     }
+  }
+
+  #holdsSecret(use: Use, element: Element): boolean {
+    return fieldSecrecy(use.box.capabilities.os, element.role) === "hides" || use.state.secureFields.has(element.fingerprint);
   }
 
   #runner(box: BoxRecord): RunInBox {
@@ -1685,6 +1711,7 @@ export class Computer {
         lastNaming: null,
         titled: new Map(),
         selecting: new Set(),
+        secureFields: new Set(),
         driverSession: null,
         cursorCapture: null,
       };
@@ -2366,6 +2393,7 @@ export class Computer {
         taken.add(ref);
       }
     }
+    const identifiers = identifiersIn(clean(str(structured.tree_markdown) ?? ""));
     const given = new Map([...byIndex].map(([index, entry]) => [index, rectOf(entry.frame)]));
     const frames = kindInfo(currentKindId(use.box.kind)).windowing === "wayland" ? screenFrames(given, updated) : given;
     const elements: Element[] = [];
@@ -2388,6 +2416,7 @@ export class Computer {
         unique,
         place: counts.get(`p${place}`) === 1 ? place : null,
         frame: frames.get(index) ?? null,
+        identifier: identifiers.get(index) ?? null,
       };
       elements.push(element);
       byRef.set(ref, element);
@@ -2407,7 +2436,8 @@ export class Computer {
       const indexed = /^(\s*)- \[(\d+)\] (.*)$/.exec(text);
       if (indexed) {
         const element = elementAt.get(Number(indexed[2])) ?? null;
-        const rest = indexed[3]!.replace(" [actions=[]]", "");
+        const shown = indexed[3]!.replace(" [actions=[]]", "");
+        const rest = element && this.#holdsSecret(use, element) ? withValueHidden(shown) : shown;
         read.push({ text: `${indexed[1]}- ${element ? `[${element.ref}] ` : ""}${rest}`, depth: indexed[1]!.length / 2, element });
       } else if (/^\s*- /.test(text) || !read.length) {
         read.push({ text, depth: (/^\s*/.exec(text)![0].length) / 2, element: null });

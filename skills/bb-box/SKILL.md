@@ -377,14 +377,16 @@ Open an app or a URL with `computer_launch`, then read a window with
 - Type a password from a file, never as `text`. Write it in the box without
   printing it, such as `op read "op://vault/item/password" > /tmp/pw` in
   `box_run`, then call `computer_type` with the password field's `ref`,
-  `text_file: "/tmp/pw"` and `delete: true`. BB Box types it only into a
-  field it confirms is a password field: it refuses any other field, a
-  window without `ref`, and an app where it cannot tell, before it reads
-  the file. The result says only the count, the file and the ref. If the
-  typing fails, the field may hold part of the password: clear it before
-  trying again. The dots still show the password's length, and recordings
-  show the dots. Type the email and an authenticator code as `text`. This
-  works on device boxes too, with the file on the device's host.
+  `text_file: "/tmp/pw"` and `delete: true`. BB Box focuses the ref and
+  types only into the element that then has the focus and reports itself
+  as a password field; it refuses anything else, a window without `ref`,
+  and an app where it cannot tell. The result says only the count, the
+  file and the ref, and password fields read as `(hidden)` in every
+  observation. The app still receives the password and could reveal it,
+  and the dots show its length on screen and in recordings. If the typing
+  fails, the field may hold part of the password: clear it before trying
+  again. Type the email and an authenticator code as `text`. This works on
+  device boxes too, with the file on the device's host.
 - On a Wayland desktop, text that goes through the real keyboard is typed
   with a US keyboard layout. Text with a character that layout lacks, such
   as `é`, is pasted instead: BB Box puts it on the box's clipboard, presses

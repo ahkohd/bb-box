@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { SECRET_MASK, fieldSecrecy, maskSecret, parseSecureProbe, readSecretFile, removeSecretFile, secureFieldScript, secureVerdict, withoutTrailingNewline, type RunInBox } from "../src/core/secret-file.ts";
+import { SECRET_MASK, fieldSecrecy, focusVerdict, focusedFieldScript, maskSecret, parseFocusedProbe, readSecretFile, removeSecretFile, withValueHidden, withoutTrailingNewline, type FocusedProbe, type RunInBox } from "../src/core/secret-file.ts";
 import { tempDir } from "./helpers.ts";
 
 const SECRET = "Vq7#mZ2!pL9$wR4xT8kN";
@@ -27,21 +27,37 @@ test("a field's role says whether it hides what is typed: password fields do, te
   assert.equal(fieldSecrecy("linux", "group"), "unknown");
 });
 
-test("on macOS and Windows a field is confirmed secure only when the element at its point is it, by role and name, and the platform says it hides its text", () => {
-  const password = { role: "AXTextField", label: "Password" };
-  assert.equal(secureVerdict({ trusted: true, role: "AXTextField", name: "Password", secure: true }, password), "secure");
-  assert.equal(secureVerdict({ trusted: true, role: "AXTextField", name: "Password", secure: false }, password), "plain");
-  assert.equal(secureVerdict({ trusted: true, role: "AXTextField", name: "Search", secure: true }, password), "unknown", "another element at its point");
-  assert.equal(secureVerdict({ trusted: true, role: "AXButton", name: "Password", secure: true }, password), "unknown");
-  assert.equal(secureVerdict({ trusted: false, role: null, name: null, secure: false }, password), "unknown", "no Accessibility grant");
-  assert.equal(secureVerdict({ trusted: false, role: "AXTextField", name: "Password", secure: true }, password), "unknown", "an answer without the grant is not trusted, whatever it says");
-  assert.equal(secureVerdict(null, password), "unknown");
-  assert.equal(secureVerdict({ trusted: true, role: "Edit", name: " Password ", secure: true }, { role: "Edit", label: "Password" }), "secure");
-  assert.deepEqual(parseSecureProbe('noise\n{"trusted":true,"role":"Edit","name":"Password","secure":true}\n'), { trusted: true, role: "Edit", name: "Password", secure: true });
-  assert.equal(parseSecureProbe("not json"), null);
-  assert.equal(secureFieldScript("linux", { x: 1, y: 2 }), null, "AT-SPI's role says it on Linux");
-  assert.match(secureFieldScript("macos", { x: 169, y: 268 })!, /AXUIElementCopyElementAtPosition\(\$\.AXUIElementCreateSystemWide\(\), 169, 268, found\)[\s\S]*AXSubrole/);
-  assert.match(secureFieldScript("windows", { x: 184, y: 217 })!, /FromPoint\(\[System\.Windows\.Point\]::new\(184, 217\)\)[\s\S]*IsPassword/);
+test("the field with the focus is the target only with its name and frame, and is typed into only when it reports itself a password field", () => {
+  const frame = { x: 95, y: 206, width: 178, height: 22 };
+  const password = { role: "Edit", label: "Password", frame };
+  const probe = (changes: Partial<FocusedProbe>): FocusedProbe => ({ trusted: true, role: "Edit", name: "Password", secure: true, frame, ...changes });
+  assert.equal(focusVerdict(probe({}), password), "secure");
+  assert.equal(focusVerdict(probe({ frame: { ...frame, x: 98 } }), password), "secure", "within a few pixels");
+  assert.equal(focusVerdict(probe({ secure: false }), password), "plain");
+  assert.equal(focusVerdict(probe({ role: "text", secure: false }), { ...password, role: "password text" }), "plain", "a field that turned into plain text as it got the focus");
+  assert.equal(focusVerdict(probe({ role: "Document" }), password), "elsewhere");
+  assert.equal(focusVerdict(probe({ name: "Search" }), password), "elsewhere");
+  assert.equal(focusVerdict(probe({ frame: { ...frame, y: 300 } }), password), "elsewhere", "another field of the same name");
+  assert.equal(focusVerdict(probe({ frame: null }), password), "secure", "where the platform gives no frame, the name and role decide");
+  assert.equal(focusVerdict(probe({ identifier: "secure" }), { ...password, identifier: "plain" }), "elsewhere", "an overlay of the same name, role and frame, told apart by its automation ID");
+  assert.equal(focusVerdict(probe({ identifier: "password" }), { ...password, identifier: "password" }), "secure");
+  assert.equal(focusVerdict(probe({ frame: null, samePlace: false }), { ...password, role: "AXTextField" }), "elsewhere", "on macOS the focused element is not the one at the field's place");
+  assert.equal(focusVerdict(probe({ role: "AXTextField", frame: null, samePlace: true }), { ...password, role: "AXTextField" }), "secure");
+  assert.equal(focusVerdict(probe({ role: null }), password), "elsewhere", "nothing has the focus");
+  assert.equal(focusVerdict(probe({ trusted: false }), password), "unknown", "an answer without the Accessibility grant is not trusted, whatever it says");
+  assert.equal(focusVerdict(null, password), "unknown");
+  assert.deepEqual(parseFocusedProbe('noise\n{"trusted":true,"role":"Edit","name":"Password","secure":true,"frame":[95,206,178,22],"identifier":"password"}\n'), { trusted: true, role: "Edit", name: "Password", secure: true, frame, identifier: "password", samePlace: null });
+  assert.equal(parseFocusedProbe("not json"), null);
+  assert.equal(focusedFieldScript("macos", 3621)!.includes("AXUIElementCreateApplication(3621), \"AXFocusedUIElement\""), true);
+  assert.match(focusedFieldScript("macos", 3621, { x: 204, y: 308 })!, /AXUIElementCopyElementAtPosition\(\$\.AXUIElementCreateSystemWide\(\), 204, 308, at\) === 0 && \$\.CFEqual\(focused/);
+  assert.match(focusedFieldScript("windows", 0)!, /AutomationElement\]::FocusedElement[\s\S]*IsPassword/);
+  assert.match(focusedFieldScript("linux", 1418)!, /python3 - 1418[\s\S]*GetState[\s\S]*password text/);
+});
+
+test("a value in a tree line is hidden whatever it holds", () => {
+  assert.equal(withValueHidden('- [e15] AXTextField "Password" = "••••" [actions=[press]]'), '- [e15] AXTextField "Password" = "(hidden)" [actions=[press]]');
+  assert.equal(withValueHidden('- [e20] Edit "Password" [value="a\\"b c" id=password actions=[set_value,text]]'), '- [e20] Edit "Password" [value="(hidden)" id=password actions=[set_value,text]]');
+  assert.equal(withValueHidden('- [e26] password text "Password" [actions=[activate]]'), '- [e26] password text "Password" [actions=[activate]]');
 });
 
 test("one line break at a file's end is left out, as op read > file adds one", () => {
