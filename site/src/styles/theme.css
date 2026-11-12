@@ -690,7 +690,9 @@ dialog[aria-label="Search"] .dialog-frame {
     border-inline-end: 0;
     --sidebar-fade-top: 0rem;
     --sidebar-fade-bottom: 0rem;
-    mask-image: linear-gradient(to bottom, transparent, #000 var(--sidebar-fade-top), #000 calc(100% - var(--sidebar-fade-bottom)), transparent);
+    mask-image:
+      linear-gradient(to bottom, transparent, #000 var(--sidebar-fade-top), #000 calc(100% - var(--sidebar-fade-bottom)), transparent),
+      linear-gradient(to left, #000 0.625rem, transparent 0.625rem);
     transition:
       --sidebar-fade-top 160ms ease,
       --sidebar-fade-bottom 160ms ease;
