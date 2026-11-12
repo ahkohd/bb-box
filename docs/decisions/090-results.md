@@ -368,3 +368,36 @@ store or record was left.
 After the restore, `simctl` listed the device as at the take and not the
 device made after it, the device booted, and its setting read as at the
 take. The undo put the later device and setting back.
+
+### After review: the slot's identity, the stop's lock and the proof's device folder
+
+Measured on 12 November 2026 on a second test pool Mac: a macOS VM, 6
+cores, 14 GiB memory, macOS 26.3.1, Xcode 26.1.1 with iOS 26.2, APFS,
+FileVault off, set up with this unit's `setup-mac.sh` to lend iOS slots of
+the iPhone 17. The checks drove the installed helpers as root, as BB Box
+does over SSH; no BB ran on the Mac.
+
+| What | Result |
+| --- | --- |
+| A new slot's record | `user-made` held the user's `GeneratedUID`, the same as the Mac's directory gave |
+| Take, stop, undo, restore and start of a slot | each exit 0; the home file was as at the take |
+| The slot's user deleted and made again with the same name and UID | its new `GeneratedUID` differed from the record; the pool helper's stop, take, restore and start each refused with exit 1, and `device-host start` with exit 1; the new account's process ran on, the device stayed shut down, the daemons unloaded and the slot marked as stopped; the release then deleted the slot's snapshots and store |
+| A slot whose `user-made` record has no `GeneratedUID`, as an earlier slots' helper made | claimed with exit 0; the pool helper's take and stop refused with exit 5, and `device-host stop` with exit 6, each saying it was made by an older slot helper; its device ran on; its release worked |
+| A release asked for 0.5 s into a slot's stop | the stop ended with exit 0, then the release; no store or session file of the slot was left, and the sweep left 0 paths |
+
+The proof script, version 8, with the helper's SHA-256 checked:
+
+| Run | Result |
+| --- | --- |
+| With an idle spare slot | passed all 74 checks in 172 s; the device's first boot took 42 s, a take with it booted 4,579 ms, of which its processes were paused 2,400 ms, the stop 10,494 ms, the restore's swap 2,206 ms and the boot after it 16 s; no folder of the proof's devices was left in `/private/var/tmp` |
+| With that slot claimed | refused with exit 3, changing nothing; the users were the same before and after |
+| Killed during the scratch device's first boot | the device's folder in `/private/var/tmp` already held Simulator's `launchd.log` and `syslogsock`, and the proof's record named it by its device and inode; the wrapper exited 137 |
+| The next run | recovered what the record named, then passed all 74 checks in 179 s, 247 s in all; the cut-short device's folder and the record were gone, and the users were as before the killed run |
+
+Version 7, killed at the same point on another test Mac in review, left
+that folder: the next run passed and removed the rest, but had not recorded
+the folder. After version 8's recovery, the cut-short scratch users still
+had macOS's per-user temporary folders in `/private/var/folders`, with
+CoreSimulator's service caches in them, and Spotlight's message files in
+`/private/var/db/mds/messages`, which the proof's note lists as outside its
+record.

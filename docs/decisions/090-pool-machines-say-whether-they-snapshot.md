@@ -633,22 +633,42 @@ helper. Where it differs from section 2 or unit 2, this is what stands:
   `restore` and `start` take `slot-<n>` where a Mac lent whole gives its
   generation. The helper checks, from the iOS slots' helper's own records,
   that the slot is held by this install's box, and that its user is the
-  one the slots' helper made for it: `bbd-<n>`, UID 80000 plus n, with its
-  slot and user-made records, and that UID in the Mac's directory. A
+  account the slots' helper made for it: `bbd-<n>`, UID 80000 plus n, with
+  its slot and user-made records, and in the Mac's directory that UID and
+  the `GeneratedUID` the slots' helper recorded in the user-made record
+  when it made the account. Name and UID alone are not enough: an account
+  made again with the same name and UID would otherwise have its processes
+  ended. The check runs just before each take, stop, restore and start
+  acts, and `device-host stop` and `start` make it again themselves. A slot
+  whose user-made record has no `GeneratedUID`, made by an earlier slots'
+  helper, is refused snapshots with that reason and is lent as before;
+  slots are made again after each release, so new ones have the record. A
   snapshot's record also names the slot and the moment it was made. Helper
   version 4 and the iOS slots' helper, `device-host`, version 8 have the
   commands; older ones are refused with what to run.
-- **The slot's lock, not the Mac's.** A take and a restore of a slot hold
-  the slot's own lock, the one `device-host` holds for the slot's claim,
-  making, release and reset, and never the Mac's lock. So no claim,
-  release, reset or top-up of that slot runs in the middle, and other slots
-  and the whole-Mac box user are not held up. A delete of a slot user's
-  snapshot takes the Mac's lock, then the slot's.
+- **The slot's lock, not the Mac's.** A take, stop, restore and start of
+  a slot each hold the slot's own lock, the one `device-host` holds for the
+  slot's claim, making, release and reset, and never the Mac's lock. Each
+  takes it before its check that this install's box holds the slot, and
+  holds it through every change it makes to the slot's session file,
+  snapshot store and pause record. A stop or start passes the lock to
+  `device-host` as an open file, and `device-host` uses that file rather
+  than taking the lock again. So no claim, release, reset or top-up of
+  that slot runs in the middle of one, and other slots and the whole-Mac
+  box user are not held up. A restore is several commands, and the lock is
+  let go between them. A release can mark the slot between two, as it
+  marks the slot before it waits for the lock; the next command then
+  refuses, as no box holds the slot, and the release's removal deletes the
+  store, its working files with it. An earlier build checked the holder
+  before it took the lock, and only `device-host` took it: a release in
+  that gap left a store and its session file behind after the slot's user
+  was gone, which kept the Mac from being lent whole. A delete of a slot
+  user's snapshot takes the Mac's lock, then the slot's.
 - **Stop and start through the slots' helper.** `device-host stop <slot>`
   marks the slot as stopped, unloads its device server and BB's daemon,
   shuts its devices down and ends every process of the slot's user, under
-  the slot's lock, once the slot's user is the one it made. `device-host
-  start <slot>` boots the slot's device and loads its daemons again, as
+  the slot's lock, once the slot's user is the account it made.
+  `device-host start <slot>` makes the same check, then boots the slot's device and loads its daemons again, as
   when the slot was lent, then clears the mark. While the mark is there,
   the box reads as stopped, BB's daemon is not taken over and the device
   server is not restarted. A restore of a slot is refused unless the slot
@@ -671,8 +691,10 @@ helper. Where it differs from section 2 or unit 2, this is what stands:
 - **Forks** of a slot's snapshots are refused, with the reason that a new
   slot user can need a userspace restart to be signed in, which ends every
   session on the Mac. Keep stays off. A macOS box in a slot takes the same
-  snapshots; its slot has no device to boot.
-- **The proof, version 7,** also makes a scratch user for a slot, with no
+  snapshots; its slot has no device, so its restore stops and starts its
+  daemons and its user's processes, and nothing boots. The words BB Box
+  shows for its restore name no device.
+- **The proof, version 8,** also makes a scratch user for a slot, with no
   console session, and a Simulator device for it from the slots'
   `devices.tsv` and `runtimes.tsv`, on a Mac that lends slots. It takes
   with the device booted, restores with an undo, checks that `simctl` lists
@@ -680,6 +702,28 @@ helper. Where it differs from section 2 or unit 2, this is what stands:
   boots and its setting is as at the take, restores the undo, and deletes
   what it made by its record. It runs under the same admission as before,
   so it never touches a slot of the Mac's.
+- **What the proof shows, and what it does not.** The scratch slot user is
+  made as a whole box's user is, and is stopped and started through the
+  helper's path for a whole box's user, not through `device-host`. So the
+  proof, run on a person's own Mac, shows that a clone of a home restores a
+  Simulator device's data there. It does not prove the slot's protocol:
+  `device-host stop` and `start`, the slot's lock, its identity check and
+  its daemons. Those are proven by the tests, against the fake Mac, and
+  live on test Macs by the unit's builder and its verifier, not by the
+  proof.
+- **A proof cut short during a device's first boot.** Simulator makes a
+  device's folder outside the home,
+  `/private/var/tmp/com.apple.CoreSimulator.SimDevice.<UUID>`, owned by
+  the device's user, when the device first boots. Version 7 recorded that
+  folder only once the boot ended, which can take minutes: a proof killed
+  during the boot left the folder, and the next proof recovered all else
+  and reported success. Version 8 makes the folder itself, records it by
+  its device and inode and gives it to the scratch user, before the first
+  boot, as `device-host` seeds a slot's device, so the next proof removes
+  it by that record. It still removes nothing by name or UID. What macOS
+  makes for a scratch user outside its home, such as its temporary
+  folders, stays as before; the proof's note says how to list it, and
+  makes no claim that Simulator left nothing else.
 
 ### History: the spike's fork rule
 

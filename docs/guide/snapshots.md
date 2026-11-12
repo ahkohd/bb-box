@@ -49,11 +49,15 @@ A box in an iOS slot on a pool Mac is a macOS user too, `bbd-<n>`, with no conso
 
 A take pauses the slot user's running processes, with its booted device, while APFS clones the home, as for a whole box, and the device runs on after it. It never pauses, stops or touches another slot's user or the Mac's own box user. A take waits for the slot's lock, which the slot's claim, release and reset hold too, so none of them runs in the middle of it.
 
-A restore, under the slot's lock:
+A restore, each step holding the slot's lock:
 
-1. stops the slot: its device server and BB's daemon, the device, and then every process of the slot user, after checking that the user is the one the Mac made for that slot
+1. stops the slot: its device server and BB's daemon, the device, and then every process of the slot user, after checking that the user is the account the Mac made for that slot, by its UID and the GeneratedUID the Mac recorded when it made it
 2. takes the undo, then puts a clone of the snapshot in the home's place, as for a whole box
 3. starts the slot's daemons again and boots its device, as when the slot was lent
+
+Each take, stop, restore and start checks the slot user's account the same way just before it acts, and refuses an account that has the slot's name and UID but is not the one the Mac made. A slot made before the Mac's slot helper kept that record is refused snapshots with that reason, and is lent as before; slots are made again after each release, so new ones have snapshots. A release that comes while one of these steps runs waits for it; one that comes between two steps makes the next refuse, and the release deletes the slot's snapshots.
+
+A macOS box in a slot takes the same snapshots of its home. Its slot has no device, so a restore stops its daemons and ends its user's processes, then starts its daemons again, and nothing boots.
 
 On a test Mac, a restore took about 16 s in all, and the device was back as at the take: `simctl` listed it and not a device made after the take, it booted, and its setting, appearance and an app's data were as at the take. A take paused the slot for 0.7 s with its device booted. While a slot is stopped for its restore, its box reads as stopped, and BB's daemon is not taken over there. If BB Box or the Mac's helper stops in the middle, BB Box finishes the same restore, as for a whole box.
 

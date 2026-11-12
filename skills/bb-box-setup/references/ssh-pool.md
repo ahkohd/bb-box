@@ -106,7 +106,9 @@ snapshots where its box homes are on APFS, btrfs or ZFS, and machine
 snapshots where an operator installed a snapshot hook. Boxes lent a Mac
 whole, and boxes in its iOS slots, take home snapshots where the Mac says
 its homes clone; slots need helper version 4 and the slots' helper version
-8, from this BB Box's `setup-mac.sh`. Linux machines and hooks take none
+8, from this BB Box's `setup-mac.sh`. A slot made before that is refused
+snapshots with that reason and lent as before; slots made after it have
+them. Linux machines and hooks take none
 yet, so tell the person what those could offer, not that they snapshot. To prove home snapshots on a free Mac,
 have the person run `sudo /usr/local/libexec/bb-box/machine snapshot proof`
 there. On a Mac that lends iOS slots it also checks a scratch slot user's

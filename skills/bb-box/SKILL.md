@@ -296,8 +296,11 @@ the same snapshots of its slot user's home, which holds its Simulator
 device: the device's apps, data and settings come back with it. Its
 restore shuts the device down and ends the slot user's processes, then
 boots the device again, in about 15 s, without touching the Mac's other
-slots. These snapshots do not fork or Keep, and go when the box is
-released. Other pool boxes take none yet: a take is refused
+slots. A macOS box in a slot takes the same snapshots, and has no device
+to boot. A slot made before the Mac's slot helper recorded its user's
+identity is refused snapshots with that reason and still works; tell the
+person, as a new box gets a new slot. These snapshots do not fork or Keep,
+and go when the box is released. Other pool boxes take none yet: a take is refused
 with the machine's own reason, such as its box homes being on a filesystem
 that neither clones nor snapshots. Tell the person that reason; do not try
 again on the same box.
