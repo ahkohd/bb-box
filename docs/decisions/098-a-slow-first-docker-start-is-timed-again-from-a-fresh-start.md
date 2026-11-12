@@ -1,8 +1,9 @@
-# 098: Docker's first start is judged by its own time, not its host's
+# 098: A slow first Docker start is timed again from a fresh start
 
-Status: accepted, 11 November 2026. Supersedes the check's rule in
+Status: accepted, 12 November 2026. Supersedes the check's rule in
 [041](041-every-linux-box-has-docker.md): "fail above 2 s" becomes "fail
-above 2 s of Docker's own time".
+when a first start and a second one from a fresh start both take more
+than 2 s".
 
 ## Context
 
@@ -16,47 +17,66 @@ itself, and 4,232 ms at a node load of 12 to 15 in
 Those builds installed from Ubuntu's live archive, not the pinned snapshot,
 so newer packages were a second suspect. Measured in a Linux VM on Proxmox
 QEMU, the live archive's containerd and runc and the snapshot's took the
-same time: warm 521 to 573 ms, cold 731 to 1,003 ms, and 1,862 to 2,417 ms
-with Docker held to a tenth of a core. Docker's own work is about 210 ms
-of CPU. Disk load is what slows it: with a cold cache and four disk writers
-in the box, the first command took 4.3 to 8.9 s. The measurements are in
+same time. Docker's own work is about 210 ms of CPU. A cold disk and a busy
+host are what slow it: with a cold cache and four disk writers in the box,
+the first command took 4.3 to 8.9 s. The measurements are in
 [098-results.md](098-results.md).
 
 The check exists to catch a start that is slow for a reason in the image,
-such as Docker waiting for another unit or a timeout. A wider limit would
-let such waits through; a retry would still fail on a host that stays busy.
+such as Docker waiting for another unit, a missing socket or a daemon that
+hangs. A wider limit would let such waits through.
+
+A first version of this decision took off the time Docker waited for its
+host, from counters of disk waits, CPU pressure and steal. Those counters
+overlap, count other work and hold time from before the check, so the
+remainder is not Docker's own time. A review built broken starts that
+passed from them, and 2 of 3 starts held 3 s by another unit passed under
+disk load. This version estimates nothing.
 
 ## Decision
 
-- The check times the first `docker` command, as before, and takes off the
-  time Docker waited for its host: the time any of Docker's threads was
-  waiting for the disk, sampled every 10 ms; the time its cgroups waited
-  for a CPU, from their pressure stall information; and the CPU time its
-  host took from Docker's work: Docker's CPU time times the box's steal
-  time over its busy time, at most 19 times, as when 95% is stolen.
-- What remains is Docker's own time. The check fails above 2 s of it, 041's
-  limit, or above 30 s in all, or when Docker does not answer.
-- Under systemd, Docker's threads are those of `containerd.service` and
-  `docker.service`. In a Docker or microsandbox box, which has no systemd,
-  they are the box's.
-- The check is one script, `docker-first-start.sh`, that every Linux
-  image installs and its three checks run.
+- The check times the first `docker` command with a monotonic clock, the
+  kernel's uptime. The whole check has 30 s. A command still running 1 s
+  before then is sent TERM, and its process group KILL at 30 s. Anything
+  left in the group when the command ends is killed then.
+- The check runs no other `docker` command before the one it times.
+- A first command that answers within 2 s passes.
+- A first command that answers more slowly is timed again. The check stops
+  Docker as boot leaves it, then times a second first start the same way.
+  The check passes only when the second answers within 2 s, and its line
+  gives both times and says the first was slowed by a cold or busy host.
+- Under systemd, the check stops `docker.service` and `containerd.service`
+  without waiting, through `sudo`, and polls until both are inactive.
+  `docker.socket` keeps listening, as at boot.
+- Without systemd, in a Docker or microsandbox box, the check sends TERM to
+  `dockerd`, waits for it to end, then waits until `bb-box-start` listens
+  on Docker's socket again and the box user can open it.
+- A failure says which of these it is: no answer within 30 s, a connection
+  refused or no socket, slow both times, or Docker did not stop for a second
+  start.
+- The check is one script, `docker-first-start.sh`, that every Linux image
+  installs and its three checks run.
 
 ## Consequences
 
-- A healthy image passes on a busy host: 178 to 1,252 ms of its own in every
-  load measured in a box, against the limit of 2,000 ms. In an Android
-  template's build at a host load of 7 to 22, the linked clone's first
-  command took 2,622 ms, which failed 041's rule, and 1,623 ms of its own
-  while steal was counted over all CPU time. Counted over busy time, at a
-  load of about 18, the clone took 1,637 ms, 508 ms of its own.
-- What Docker's own time still holds: its CPU work, about 0.2 s in a Linux
-  box and 0.7 s in an Android box; its waits for anything but the disk or
-  a CPU, such as timers, sockets and child processes; and the time systemd
-  and the `docker` command take to pass it the connection.
-- A start that waits 3 s for another unit fails on a quiet box and under CPU
-  load. Under heavy disk load, the part of such a wait that overlaps
-  Docker's own waits for the disk is not counted: it delayed nothing that the
-  disk did not.
-- The check reads `/proc`, cgroups and pressure stall information, which
-  Ubuntu's kernels have. Without them, it counts the whole time, as before.
+- A cold disk passes: the first start reads Docker from the disk, and the
+  second finds it in the page cache. A start held by something that repeats
+  at each start fails both times: a 3 s `ExecStartPre`, a 3 s unit Docker
+  requires, a missing socket and a hung daemon all failed, idle and under
+  disk load.
+- A delay that happens only at the first start after boot passes, since the
+  second start does not repeat it. A unit that stays active after it first
+  runs is one such delay.
+- A host that stays busy through both starts fails a healthy image. Four
+  disk writers in a 2-core LXC box, or a Proxmox host whose load stays near
+  32, failed both starts. Build again when the host is quieter.
+- `docker.service` allows 3 starts in 60 s. The check starts it at most
+  twice, so a build step that started Docker in the minute before can make
+  the second start fail as refused.
+- The check takes at most 30 s. A second start costs about 2 s more
+  without systemd: `dockerd` takes about 1 s to stop, and `bb-box-start`
+  waits 1 s before it listens again.
+- The box user stops Docker through `sudo`, which every image gives it. A
+  command started through `sudo` is root's, so the check cannot kill it:
+  it asks systemd to stop Docker without waiting, so `sudo` returns at
+  once.

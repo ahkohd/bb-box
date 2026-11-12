@@ -59,8 +59,9 @@ inside" for the feature, which reads as the same thing.
   `systemd-socket-activate`, and no longer waits for Docker.
 - The template's checks find Docker stopped after boot, then time the
   first `docker` command from there, and fail above 2 s. Superseded by
-  [098](098-dockers-first-start-is-judged-by-its-own-time-not-its-hosts.md):
-  they fail above 2 s of Docker's own time, not of its host's.
+  [098](098-a-slow-first-docker-start-is-timed-again-from-a-fresh-start.md):
+  a first command slower than 2 s is timed again from a fresh start, and
+  the check fails only when both take more than 2 s.
 - One kind per shape. `linux-docker` and `linux-arm64-docker` become
   aliases of `linux` and `linux-arm64` with the feature `docker`,
   accepted wherever an ID comes in, as 027's old IDs are. An acquire

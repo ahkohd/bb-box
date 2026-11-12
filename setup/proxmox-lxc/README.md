@@ -208,11 +208,18 @@ Every download is checked against a pinned SHA-256, and kept in
 `/var/cache/bb-box/artifacts`:
 
 - `template/apt-snapshot`: the Ubuntu archive snapshot each build installs
-  from, so builds repeat. Every step that installs Ubuntu's packages,
-  in every image, downloads them first and retries for about 5 minutes
-  when the snapshot service or the archive does not answer, with waits of
-  30, 60, 90 and 120 s. Then it fails, with the archive's errors: build
-  again later;
+  from, so builds repeat. Every step that installs Ubuntu's packages
+  through bb-box's apt helper, in every image, downloads them first, then
+  installs them from the cache. A download is tried again only when the
+  archive did not serve it: an HTTP 5xx or 429, a connection refused, reset
+  or timed out, a temporary failure to resolve the archive's name, or a
+  half-served file whose hash does not match. It waits 30, 60, 90 and
+  120 s between tries, and all its tries take at most 10 minutes, measured
+  from the first. Then it fails with the archive's errors and the time it
+  took: build again later. Any other error, such as an unknown package,
+  unmet dependencies, a held package or a broken apt setting, fails at once
+  with apt's own message. The two scripts that call `apt-get` themselves,
+  Android's build-tree server and Docker on WSL, are not retried;
 - `template/pins.json`: Node.js, GitHub CLI, ripgrep, fd, Jujutsu, uv, Claude
   Code, Codex and Pi, for x86_64 and arm64;
 - `template/desktop-pins.tsv`: TigerVNC, VirtualGL, Selkies, Google Chrome,
@@ -787,12 +794,16 @@ Every template:
 - `/dev/net/tun`;
 - `bb-box-check-headless`, a check bb-box runs as `box`. Its "first docker
   command" line times the first `docker` command, which starts Docker
-  through its socket, and fails when Docker's start took more than 2 s of
-  its own. Time Docker spent waiting for its host's disk or CPU does not
-  count, so a busy host does not fail a healthy image: a line such as
-  "412 ms of its own (limit 2000), of 4280 ms, 3868 ms of it waiting for
-  the host's disk or CPU". A start held by anything else, such as another
-  unit it waits for, counts in full and fails.
+  through its socket, and passes when it answers within 2 s. A slower
+  start may come from a cold disk or a busy host, so the check stops Docker
+  as boot leaves it and times a second first start. It passes only when
+  that one answers within 2 s: "answered in 750 ms at a second first start;
+  the first took 6240 ms, slowed by a cold or busy host (limit 2000 ms)".
+  It fails when Docker does not answer within 30 s, refuses the connection
+  or has no socket, or is slow both times. A delay at every start, such as
+  a unit Docker waits for, fails. A delay at the first start after boot
+  alone passes, and a host that stays busy through both starts fails a
+  healthy image: build again when it is quieter.
 
 The XFCE desktops add:
 

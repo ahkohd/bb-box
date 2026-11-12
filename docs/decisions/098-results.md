@@ -1,5 +1,7 @@
 # 098: results
 
+## Why a first start is slow
+
 Measured on 11 November 2026 in fresh linked clones on Proxmox QEMU: a Linux
 box of 4 cores and 8 GiB, and an Android box of 8 cores and 16 GiB, both
 Ubuntu 24.04 with kernel 6.8.0-149 and docker.io 29.1.3-0ubuntu3~24.04.2.
@@ -9,7 +11,7 @@ first. The load ran in the box: `stress-ng --hdd 4 --hdd-bytes 512M` for
 disk, `stress-ng --cpu 8` for CPU, and a `CPUQuota=10%` drop-in on both
 units for a starved CPU.
 
-## Live archive or snapshot
+### Live archive or snapshot
 
 The snapshot `20260926T060000Z` has containerd 2.2.1-0ubuntu1~24.04.3 and
 runc 1.3.3-0ubuntu1~24.04.3. The live archive had 2.2.1-0ubuntu1~24.04.4 and
@@ -27,7 +29,7 @@ about 25 ms warm and 105 ms cold, and dockerd's about 500 ms warm and
 dockerd. In the Android box, 2 minutes after its device booted, the first
 command took 1,184 ms, and dockerd used 619 ms of CPU.
 
-## What the host's load does
+### What the host's load does
 
 The whole first command, in ms:
 
@@ -40,57 +42,92 @@ The whole first command, in ms:
 
 ## The check
 
-Docker's own time, as `docker-first-start.sh` reports it, against its
-limit of 2,000 ms:
+Measured on 12 November 2026 with `docker-first-start.sh` run as the box
+user, against its limit of 2,000 ms and its deadline of 30 s. Each run
+under systemd stopped Docker, containerd and `docker.socket`, cleared
+systemd's start limit, and started `docker.socket` again. "Cold" dropped
+the page cache first, which only a VM can do. Disk load was
+`stress-ng --hdd 4 --hdd-bytes 64M` in the box. A 3 s hold was an
+`ExecStartPre=/bin/sleep 3` drop-in on `docker.service`, or a oneshot unit
+running `sleep 3` that `docker.service` requires and follows. A hung
+activation was `ExecStartPre=/bin/sleep infinity`.
 
-| Start | Condition | Runs | Whole time, ms | Docker's own, ms | Result |
-| --- | --- | --- | --- | --- | --- |
-| Healthy | cold, idle | 3 | 667 to 730 | 178 to 237 | pass |
-| Healthy | cold, disk load | 5 | 4,280 to 7,242 | 223 to 492 | pass |
-| Healthy | cold, CPU load | 3 | 637 to 1,459 | 243 to 340 | pass |
-| Healthy | cold, a tenth of a core | 3 | 1,992 to 2,390 | 639 to 1,252 | pass |
-| Held 3 s by another unit | idle | 3 | 3,487 to 3,493 | 3,119 to 3,197 | fail |
-| Held 3 s by another unit | CPU load | 3 | 3,568 to 3,912 | 2,260 to 3,148 | fail |
-| Held 3 s by another unit | cold, disk load | 3 | 4,464 to 7,855 | 1,187 to 2,206 | fail once, pass twice |
-| No socket | idle | 1 | | | fail: Docker did not answer |
+Times are in ms: the first start, then the second where there was one.
 
-Two first tries, counting stalls system-wide and then only Docker's cgroups'
-pressure, were set aside. System-wide, a 3 s wait passed under disk or CPU
-load, as other tasks' stalls covered it. Docker's cgroups alone failed
-healthy starts under disk load, at 4,518 to 5,148 ms of their own, because
-the kernel does not count a wait for the file system's journal, as in
-`fsync`, as a stall. Such a thread is in uninterruptible sleep, so sampling
-Docker's threads counts it.
+### A Linux VM on Proxmox QEMU
 
-## An Android template's build
+8 cores and 16 GiB, Ubuntu 24.04.5, kernel 6.8.0-149, docker.io 29.1.3,
+cold.
 
-The Android template built from this change on a Proxmox host, with the
-host's load rising from about 7 to 22 during the linked clone's check. The
-check then counted steal time over all of the box's CPU time, not over its
-busy time alone.
-
-| Where | Whole time, ms | Waiting for the host, ms | Docker's own, ms | Result |
+| Start | Condition | Runs | Times | Result |
 | --- | --- | --- | --- | --- |
-| Build VM | 653 | 348 | 305 | pass |
-| Linked clone | 2,622 | 999 | 1,623 | pass |
+| Healthy | idle | 3 | 2,260 to 6,700, then 730 to 770 | pass |
+| Healthy | disk load | 2 | 8,060 to 8,370, then 1,390 to 1,640 | pass |
+| `ExecStartPre` 3 s | idle | 1 | 10,510, then 3,790 | fail: slow both times |
+| `ExecStartPre` 3 s | disk load | 3 | 13,860 to 13,950, then 4,700 to 5,340; and 26,300, then no answer | fail |
+| Required unit 3 s | idle | 1 | 7,570, then 3,760 | fail: slow both times |
+| Required unit 3 s | disk load | 3 | 10,210 to 11,280, then 4,080 to 5,310 | fail: slow both times |
+| No socket | idle | 1 | refused | fail at once |
+| Hung activation | idle | 1 | no answer | fail after 29.1 s in all |
 
-041's rule would have failed the clone, as it failed the builds of 10 and
-11 November.
+### A Linux box on Proxmox LXC
 
-On a VM whose other CPUs are idle, steal over all CPU time is a small
-fraction even when the host takes much of the time Docker runs. So the
-check now scales Docker's CPU time by steal over busy time: on 8 CPUs with
-600 of 720 ticks idle, 60 busy and 60 stolen, 600 ms of Docker's work is
-credited 600 ms, not 55 ms.
+2 cores and 4 GiB, Ubuntu 24.04.5, kernel 6.17.13-2-pve, warm. A run of
+the VM's cases loaded the same host's disk for part of this.
 
-Built again with steal counted over busy time, at a host load of about 18
-throughout:
-
-| Where | Whole time, ms | Waiting for the host, ms | Docker's own, ms | Result |
+| Start | Condition | Runs | Times | Result |
 | --- | --- | --- | --- | --- |
-| Build VM | 616 | 321 | 295 | pass |
-| Linked clone | 1,637 | 1,129 | 508 | pass |
+| Healthy, the box's first | fresh box | 1 | 6,880, then 1,040 | pass |
+| Healthy | idle | 3 | 960 to 1,700 | pass at once |
+| Healthy | disk load | 2 | 2,660 to 4,990, then 2,360 to 4,820 | fail: slow both times |
+| `ExecStartPre` 3 s | idle | 1 | 4,390, then 4,510 | fail: slow both times |
+| `ExecStartPre` 3 s | disk load | 3 | 6,020 to 7,390, then 9,820 to 12,870; and 18,960, then no answer | fail |
+| Required unit 3 s | idle | 1 | 5,070, then 6,680 | fail: slow both times |
+| Required unit 3 s | disk load | 3 | 5,910 to 7,060, then 5,450 to 8,160 | fail: slow both times |
+| No socket | idle | 1 | refused | fail at once |
+| Hung activation | idle | 1 | no answer | fail after 29.0 s in all |
 
-At a similar load, the clone's own time fell from 1,623 ms to 508 ms, a
-quarter of the limit.
+### A Wayland desktop on Proxmox LXC
 
+4 cores and 8 GiB, Ubuntu 26.04.1, kernel 6.17.13-2-pve, warm.
+
+| Start | Condition | Runs | Times | Result |
+| --- | --- | --- | --- | --- |
+| Healthy, the box's first | fresh box | 1 | 4,030, then 1,880 | pass |
+| Healthy | quiet host | 7 | 1,010 to 1,220 | pass at once |
+| Healthy | host disk loaded by the runs above | 7 | 4,030 to 15,660, then 1,130 to 12,690 | 1 pass, 6 fail |
+
+### A Docker box, without systemd
+
+2 cores and 4 GiB, docker.io 29.1.3. Before each run after the first, the
+check's own steps stopped `dockerd` and waited for `bb-box-start` to listen
+again.
+
+| Start | Condition | Runs | Times | Result |
+| --- | --- | --- | --- | --- |
+| Healthy, the box's first | fresh box | 1 | 7,610, then 1,200 | pass, 10.0 s in all |
+| Healthy | second box, warm | 5 | 2,060, then 1,190; and 980 to 1,160 | pass |
+
+An earlier check in such a box took 2,685 ms of Docker's own time, as the
+first version counted it, and failed.
+
+### What this shows
+
+- Every start held 3 s, idle or under disk load, failed, as did no socket
+  and a hung activation. A hung start ended by the deadline, with no
+  `docker` command left running.
+- Every healthy start passed on an idle or cold host, including each box's
+  first start, the case the build checks.
+- A healthy start failed when the host stayed busy through both starts: 2
+  of 2 with disk load in a 2-core LXC box, and 6 of 7 in the Wayland box
+  while other boxes loaded the host's disk. Both passed on a quiet host.
+
+## The first version
+
+The first version took off the time Docker waited for its host, from
+counters of disk waits, CPU pressure and steal. Its healthy starts passed
+at 178 to 1,252 ms of Docker's own time. But 2 of 3 starts held 3 s by
+another unit passed under cold disk load, at 1,187 to 2,206 ms of their own.
+A review then built broken starts that passed from overlapping and
+historical counters. In two Android template builds the linked clone's
+first command took 2,622 and 1,637 ms in all.
