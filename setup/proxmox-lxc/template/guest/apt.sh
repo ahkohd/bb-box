@@ -32,7 +32,7 @@ apt_retry_conf() {
 
 apt_uptime_s() {
   local up _
-  read -r up _ </proc/uptime
+  read -r up _ <"${APT_RETRY_CLOCK:-/proc/uptime}"
   echo "${up%%.*}"
 }
 
@@ -50,35 +50,35 @@ apt_archive_did_not_serve() {
 }
 
 apt_retry() {
-  local try tries status wait log began budget elapsed left
+  local try tries status wait log began budget first_failed_at outage
   tries=${APT_RETRY_TRIES:-5}
   budget=${APT_RETRY_BUDGET_S:-600}
   log=$(mktemp)
   began=$(apt_uptime_s)
+  first_failed_at=
   try=1
   while :; do
-    left=$((budget - ($(apt_uptime_s) - began)))
-    if [ "$left" -gt 0 ] && timeout --kill-after=10 "$left" "$@" >"$log" 2>&1; then
+    if "$@" >"$log" 2>&1; then
       cat "$log"
       rm -f "$log"
       return 0
     else
       status=$?
     fi
-    elapsed=$(($(apt_uptime_s) - began))
-    wait=$((try * ${APT_RETRY_SLEEP_SCALE:-30}))
-    if [ "$status" -eq 124 ] || [ "$status" -eq 137 ] || [ "$left" -le 0 ]; then
-      apt_give_up "$log" "apt: $* was stopped after $elapsed s, as its tries may take at most $budget s. The package archive did not serve it for that long: check the errors above, then build again."
-      return 1
-    fi
+
     if ! apt_archive_did_not_serve "$log"; then
       apt_give_up "$log" "apt: $* failed for a reason other than the package archive, so it was not tried again: see apt's message above."
       return "$status"
     fi
-    if [ "$try" -ge "$tries" ] || [ $((elapsed + wait)) -ge "$budget" ]; then
-      apt_give_up "$log" "apt: $* failed $try times over $elapsed s, with at most $budget s for its tries. The package archive did not serve it for that long: check the errors above, then build again."
+
+    first_failed_at=${first_failed_at:-$(apt_uptime_s)}
+    outage=$(($(apt_uptime_s) - first_failed_at))
+    wait=$((try * ${APT_RETRY_SLEEP_SCALE:-30}))
+    if [ "$try" -ge "$tries" ] || [ $((outage + wait)) -ge "$budget" ]; then
+      apt_give_up "$log" "apt: $* failed $try times over $(($(apt_uptime_s) - began)) s. The package archive did not serve it for $outage s after its first failure, and its tries go on for at most $budget s after that: check the errors above, then build again."
       return "$status"
     fi
+
     echo "apt: $* failed (try $try of $tries), as the package archive did not serve it; retrying in ${wait} s" >&2
     sleep "$wait"
     try=$((try + 1))

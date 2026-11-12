@@ -10,6 +10,8 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const APT = join(ROOT, "setup/proxmox-lxc/template/guest/apt.sh");
 const MIRROR_ERROR = "E: Failed to fetch http://snapshot.ubuntu.com/ubuntu/dists/noble/InRelease  503  Service Unavailable [IP: 192.0.2.40 80]";
 const DEB = "http://archive.ubuntu.com/ubuntu/pool/universe/c/cowsay/cowsay_3.03%2bdfsg2-8_all.deb";
+const LONGER_THAN_THE_BUDGET_S = 2;
+const SHORT_BUDGET_S = "1";
 
 const APT_SAYS = {
   ok: "",
@@ -25,15 +27,21 @@ const APT_SAYS = {
   "unmet dependencies": "The following packages have unmet dependencies:\n bbbox-conflict : Depends: bbbox-impossible but it is not installable\nE: Unable to correct problems, you have held broken packages.",
   "held package": "E: Held packages were changed and -y was used without --allow-change-held-packages.",
   "configuration error": "E: Syntax error /etc/apt/apt.conf.d/99broken:1: Extra junk at end of file",
-  hangs: "",
+  "slow, then served": "",
+  "slow, then 503": MIRROR_ERROR,
 } as const;
 
 type AptSays = keyof typeof APT_SAYS;
 
+function aptFails(says: AptSays): string {
+  return `printf '%b\\n' "${APT_SAYS[says].replace(/"/g, '\\"')}" >&2; exit 100`;
+}
+
 function aptCall(says: AptSays): string {
   if (says === "ok") return "exit 0";
-  if (says === "hangs") return "exec /bin/sleep 1000";
-  return `printf '%b\\n' "${APT_SAYS[says].replace(/"/g, '\\"')}" >&2; exit 100`;
+  if (says === "slow, then served") return `/bin/sleep ${LONGER_THAN_THE_BUDGET_S}; exit 0`;
+  if (says === "slow, then 503") return `/bin/sleep ${LONGER_THAN_THE_BUDGET_S}; ${aptFails(says)}`;
+  return aptFails(says);
 }
 
 function layout(...calls: AptSays[]): string {
@@ -43,6 +51,7 @@ function layout(...calls: AptSays[]): string {
   writeFileSync(join(dir, "calls"), "0");
   writeFileSync(join(dir, "log"), "");
   writeFileSync(join(dir, "sleeps"), "");
+  writeFileSync(join(dir, "clock"), "0.00 0.00\n");
   const cases = calls.map((says, index) => `  ${index + 1}) ${aptCall(says)} ;;`).join("\n");
   writeFileSync(
     join(bin, "apt-get"),
@@ -61,6 +70,8 @@ esac
     join(bin, "sleep"),
     `#!/bin/bash
 printf '%s\\n' "$*" >> "$APT_FAKE_SLEEPS"
+read -r now _ < "$APT_RETRY_CLOCK"
+echo "$(( \${now%%.*} + $1 )).00 0.00" > "$APT_RETRY_CLOCK"
 exit 0
 `,
     { mode: 0o755 },
@@ -77,6 +88,7 @@ function run(dir: string, body: string, env: Record<string, string> = {}) {
       APT_FAKE_LOG: join(dir, "log"),
       APT_FAKE_CALLS: join(dir, "calls"),
       APT_FAKE_SLEEPS: join(dir, "sleeps"),
+      APT_RETRY_CLOCK: join(dir, "clock"),
       APT_RETRY_SLEEP_SCALE: "0",
       APT_RETRY_TRIES: "5",
       ...env,
@@ -157,7 +169,7 @@ test("an outage longer than every try fails the install with the archive's error
   assert.ok(lines(dir, "log").every((call) => call.includes("--download-only")), "nothing is installed from a download that failed");
   assert.deepEqual(lines(dir, "sleeps"), ["30", "60", "90", "120"]);
   assert.match(ran.stderr, /503 {2}Service Unavailable/);
-  assert.match(ran.stderr, /apt: apt-get -o Acquire::Retries=5 install --download-only -y -q jq failed 5 times over \d+ s, with at most 600 s for its tries\. The package archive did not serve it for that long: check the errors above, then build again\.$/m);
+  assert.match(ran.stderr, /apt: apt-get -o Acquire::Retries=5 install --download-only -y -q jq failed 5 times over 300 s\. The package archive did not serve it for 300 s after its first failure, and its tries go on for at most 600 s after that: check the errors above, then build again\.$/m);
 });
 
 test("an error that is not the archive's fails at once with apt's own message, and is not tried again", () => {
@@ -185,28 +197,34 @@ test("each way the archive fails to serve a file is tried again", () => {
   }
 });
 
-test("the tries stop before a wait that would pass their budget, and say how long they took", () => {
+test("the tries stop before a wait that would pass their budget, counted from the first failure", () => {
   const dir = layout("503");
 
   const ran = run(dir, '. "$APT_SCRIPT"\napt_install -y -q jq\n', { APT_RETRY_DELAY_SUPPORTED: "0", APT_RETRY_SLEEP_SCALE: "30", APT_RETRY_BUDGET_S: "100" });
 
   assert.equal(ran.status, 100);
-  assert.deepEqual(lines(dir, "sleeps"), ["30", "60", "90"]);
-  assert.match(ran.stderr, /jq failed 4 times over \d+ s, with at most 100 s for its tries\. The package archive did not serve it for that long/);
+  assert.deepEqual(lines(dir, "sleeps"), ["30", "60"]);
+  assert.match(ran.stderr, /jq failed 3 times over 90 s\. The package archive did not serve it for 90 s after its first failure, and its tries go on for at most 100 s after that/);
 });
 
-test("a download that stalls is stopped at the budget, measured from the first try", () => {
-  const dir = layout("hangs");
-  const budgetS = 2;
-  const began = performance.now();
+test("a download still arriving when the budget would end is not stopped", () => {
+  const dir = layout("slow, then served", "ok");
 
-  const ran = run(dir, '. "$APT_SCRIPT"\napt_install -y -q jq\n', { APT_RETRY_DELAY_SUPPORTED: "0", APT_RETRY_BUDGET_S: String(budgetS) });
+  const ran = run(dir, '. "$APT_SCRIPT"\napt_install -y -q jq\n', { APT_RETRY_DELAY_SUPPORTED: "0", APT_RETRY_BUDGET_S: SHORT_BUDGET_S });
 
-  const tookS = (performance.now() - began) / 1000;
-  assert.equal(ran.status, 1);
-  assert.ok(tookS >= budgetS - 1 && tookS < budgetS + 2, `${tookS} s`);
-  assert.equal(lines(dir, "log").length, 1);
-  assert.match(ran.stderr, /jq was stopped after [1-3] s, as its tries may take at most 2 s\. The package archive did not serve it for that long: check the errors above, then build again\.$/m);
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(lines(dir, "log"), ["-o Acquire::Retries=5 install --download-only -y -q jq", "-o Acquire::Retries=5 install -y -q jq"]);
+  assert.doesNotMatch(ran.stderr, /stopped|failed/);
+});
+
+test("a long download that the archive then fails is tried again, as the budget starts at the failure", () => {
+  const dir = layout("slow, then 503", "ok");
+
+  const ran = run(dir, '. "$APT_SCRIPT"\napt_install -y -q jq\n', { APT_RETRY_DELAY_SUPPORTED: "0", APT_RETRY_BUDGET_S: SHORT_BUDGET_S });
+
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.equal(lines(dir, "log").length, 3);
+  assert.match(ran.stderr, /jq failed \(try 1 of 5\), as the package archive did not serve it; retrying in 0 s/);
 });
 
 test("running apt.sh install is the same retry", () => {

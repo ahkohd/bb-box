@@ -250,7 +250,8 @@ Namespace backend builds in its own workspace, and each boat.dev backend's
 templates. An image whose rebuild failed is skipped until something it is
 built from changes, such as the build program after a BB Box update; `bb box
 images build <name>` tries it again at once. Builds retry a package download
-only when Ubuntu's archive did not serve it, for at most 10 minutes in all.
+only when Ubuntu's archive did not serve it, for at most 10 minutes after
+the first failure. A slow download that is still arriving is not stopped.
 A failure that says the archive did not serve it for that long is an
 outage: build again later. Any other apt error fails at once with apt's
 own message, and needs a fix. Scripts that call `apt-get` themselves are

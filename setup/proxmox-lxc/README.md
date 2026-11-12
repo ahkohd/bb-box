@@ -213,10 +213,12 @@ Every download is checked against a pinned SHA-256, and kept in
   installs them from the cache. A download is tried again only when the
   archive did not serve it: an HTTP 5xx or 429, a connection refused, reset
   or timed out, a temporary failure to resolve the archive's name, or a
-  half-served file whose hash does not match. It waits 30, 60, 90 and
-  120 s between tries, and all its tries take at most 10 minutes, measured
-  from the first. Then it fails with the archive's errors and the time it
-  took: build again later. Any other error, such as an unknown package,
+  half-served file whose hash does not match. A download that is still
+  arriving is never stopped, however slow: apt itself ends one that sends
+  nothing for 30 s, which counts as a connection timed out. It waits 30,
+  60, 90 and 120 s between tries, and tries again for at most 10 minutes
+  after the first failure. Then it fails with the archive's errors and the
+  time it took: build again later. Any other error, such as an unknown package,
   unmet dependencies, a held package or a broken apt setting, fails at once
   with apt's own message. The two scripts that call `apt-get` themselves,
   Android's build-tree server and Docker on WSL, are not retried;
@@ -823,7 +825,11 @@ The XFCE desktops add:
 - Cua Driver, as a daemon in the desktop session, with its telemetry and
   update check off;
 - `bb-box-check-desktop`, which checks the display, VNC, Selkies, the GPU,
-  Chrome, the fonts, Mousepad and Cua Driver.
+  Chrome, the fonts, Mousepad and Cua Driver. On the Wayland desktop it
+  first waits up to 10 s for Sway to answer and write
+  `/run/bb-box/display.env`, as `bb-box-display` does at its start, so a
+  check run just after boot reads Sway's socket. Its first line, "Sway
+  ready", fails when Sway does not.
 
 The Docker and microsandbox images, made from the same scripts, carry both
 checks. There, with no systemd, the lines for systemd and its units say

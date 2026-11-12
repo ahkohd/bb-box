@@ -9,9 +9,12 @@ set -u
 # environment had (build.sh runs this through pct exec and runuser).
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
 export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
-# The environment programs on the desktop get: WAYLAND_DISPLAY, SWAYSOCK.
-if [ -r /run/bb-box/display.env ]; then set -a; . /run/bb-box/display.env; set +a; fi
+libexec=${BBBOX_LIBEXEC:-/usr/local/libexec/bb-box}
+display_env=${BBBOX_RUN_DIR:-/run/bb-box}/display.env
 t() { printf '%-26s ' "$1"; shift; out=$("$@" 2>&1) && echo "ok   ${out:0:400}" || echo "FAIL ${out:0:400}"; }
+t "Sway ready" sh -c '"$1" wait && echo "Sway answers, and has written display.env"' sh "$libexec/display"
+# The environment programs on the desktop get: WAYLAND_DISPLAY, SWAYSOCK.
+if [ -r "$display_env" ]; then set -a; . "$display_env"; set +a; fi
 # Where it runs (#598): under systemd, as a Proxmox LXC box or a VM, or in a
 # Docker or microsandbox box, whose bb-box-start does what the units do. A
 # line that does not apply there says skip, which no reader takes for a FAIL.
@@ -22,7 +25,6 @@ s() { printf '%-26s skip %s\n' "$1" "$2"; }
 # a Docker or microsandbox box when bb-box-start listens on its socket.
 docker=; [ "$runtime" = systemd ] || [ -S /run/docker.sock ] && docker=1
 d() { if [ -n "$docker" ]; then t "$@"; else s "$1" "this box has no Docker"; fi; }
-libexec=/usr/local/libexec/bb-box
 home=$(getent passwd "$(id -un)" | cut -d: -f6)
 socket=$home/.cache/cua-driver/cua-driver.sock
 
