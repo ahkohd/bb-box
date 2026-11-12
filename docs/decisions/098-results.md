@@ -83,3 +83,14 @@ check now scales Docker's CPU time by steal over busy time: on 8 CPUs with
 600 of 720 ticks idle, 60 busy and 60 stolen, 600 ms of Docker's work is
 credited 600 ms, not 55 ms.
 
+Built again with steal counted over busy time, at a host load of about 18
+throughout:
+
+| Where | Whole time, ms | Waiting for the host, ms | Docker's own, ms | Result |
+| --- | --- | --- | --- | --- |
+| Build VM | 616 | 321 | 295 | pass |
+| Linked clone | 1,637 | 1,129 | 508 | pass |
+
+At a similar load, the clone's own time fell from 1,623 ms to 508 ms, a
+quarter of the limit.
+

@@ -47,8 +47,9 @@ let such waits through; a retry would still fail on a host that stays busy.
 - A healthy image passes on a busy host: 178 to 1,252 ms of its own in every
   load measured in a box, against the limit of 2,000 ms. In an Android
   template's build at a host load of 7 to 22, the linked clone's first
-  command took 2,622 ms, which failed 041's rule, and 1,623 ms of its own,
-  before the steal time was counted over busy time alone.
+  command took 2,622 ms, which failed 041's rule, and 1,623 ms of its own
+  while steal was counted over all CPU time. Counted over busy time, at a
+  load of about 18, the clone took 1,637 ms, 508 ms of its own.
 - What Docker's own time still holds: its CPU work, about 0.2 s in a Linux
   box and 0.7 s in an Android box; its waits for anything but the disk or
   a CPU, such as timers, sockets and child processes; and the time systemd
