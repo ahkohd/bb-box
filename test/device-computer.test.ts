@@ -7,6 +7,7 @@ import { DeviceComputer, KEYBOARD_NEVER_CAME_WORDS, KEYBOARD_WAIT, deviceKey, sc
 import { KEYBOARD_KEY_ROLE, PERSON_HAS_CONTROL_WORDS, type DeviceAgentRequest, type DeviceAnswer, type DeviceElement, type DeviceInput, type DeviceRead, type DeviceState } from "../src/core/device.ts";
 import { rgbaPng } from "../src/core/png.ts";
 import { instrumentationWords } from "../src/device/android-tree-source.ts";
+import { NODE_FLAGS, androidElements, parseServerTree } from "../src/device/android-tree.ts";
 import { GrpcError } from "../src/device/grpc.ts";
 import { PAGE_BY_POINTS_WORDS, READ_BY_POINTS_WORDS, STARTING_WORDS, iosElementAt, iosTree, readIosTree, roleWords, type TreeReads } from "../src/device/ios-tree.ts";
 import { SETTING_SHOWN_AT_START_WORDS } from "../src/core/device-computer.ts";
@@ -520,6 +521,83 @@ describe("the computer tools on a device (063, 7.1)", () => {
     const link = await computer.launch(BOX, { url: "https://example.com" });
     assert.match(link.text, /^Opened https:\/\/example\.com\./);
     assert.deepEqual(device.requests, [{ type: "launch", app: "Settings" }, { type: "open", url: "https://example.com" }]);
+  });
+
+  test("a password field's value reads as (hidden) on Android and iOS, in each read after typing, in what changed and in what it reads, though the device gives it in full", async () => {
+    const password = "Kd8rTq2Lm5Xw";
+    for (const platform of ["android", "ios"] as const) {
+      const email = element("text field", "Email", { x: 60, y: 400, width: 1000, height: 120 }, { value: "box@example.com", can: { tap: true, edit: true, scroll: false } });
+      const field = element("secure text field", "Password", { x: 60, y: 600, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
+      const key = element(KEYBOARD_KEY_ROLE, "q", { x: 0, y: 2000, width: 100, height: 150 });
+      const device = new FakeDevice(screenOf([email, field]));
+      device.platform = platform;
+      device.onInput = (input) => {
+        if (input.type === "tap") device.tree = screenOf([email, { ...field, focused: true }, key]);
+        if (input.type === "text") device.tree = screenOf([email, { ...field, value: input.text, focused: true }, key]);
+      };
+      const computer = new DeviceComputer(device.deps());
+      const ref = refOf((await computer.observe(BOX, { window: 1 })).text, /"Password"/);
+
+      const typed = await computer.type(BOX, { ref, text: password });
+      const later = (await computer.observe(BOX, { window: 1 })).text;
+      const again = (await computer.observe(BOX, { window: 1 })).text;
+
+      assert.deepEqual(device.inputs.at(-1), { type: "text", text: password }, platform);
+      const [echo, ...afterEcho] = typed.text.split(`Typed ${JSON.stringify(password)} into `);
+      assert.equal(echo, "", `${platform}: only the echo of what was given names it: ${typed.text}`);
+      assert.ok(!afterEcho.join("").includes(password), `${platform}: ${typed.text}`);
+      assert.match(typed.text, new RegExp(`${ref} reads "\\(hidden\\)" now\\.`), platform);
+      assert.match(typed.text, new RegExp(`\\[${ref}\\] secure text field "Password" = "\\(hidden\\)"`), `${platform}: what changed`);
+      for (const seen of [later, again]) {
+        assert.ok(!seen.includes(password), `${platform}: ${seen}`);
+        assert.match(seen, new RegExp(`\\[${ref}\\] secure text field "Password" = "\\(hidden\\)", focused, editable`), platform);
+        assert.match(seen, /text field "Email" = "box@example\.com"/, `${platform}: a plain field keeps its value`);
+      }
+    }
+  });
+
+  test("a password field from Android's tree server and from iOS's idb, which give its text in full, reads as (hidden) in each read", async () => {
+    const password = "Kd8rTq2Lm5Xw";
+    const flags = NODE_FLAGS.editable | NODE_FLAGS.password | NODE_FLAGS.enabled | NODE_FLAGS.visible | NODE_FLAGS.focusable | NODE_FLAGS.clickable;
+    const field = { c: "android.widget.EditText", b: [60, 600, 1020, 720], f: flags, d: "Password", t: password };
+    const served = parseServerTree(JSON.stringify({ ok: true, rotation: 0, width: 1080, height: 2400, windows: [{ type: 1, layer: 0, title: "Chrome", active: true, focused: true, b: [0, 0, 1080, 2400], pkg: "com.android.chrome", root: { c: "android.widget.FrameLayout", b: [0, 0, 1080, 2400], f: NODE_FLAGS.visible | NODE_FLAGS.enabled, k: [field] } }] }));
+    assert.ok(served.ok);
+    const fromAndroid = androidElements(served.screen, { video: { width: 1080, height: 2400 }, physical: "upright" }, () => "Chrome").elements;
+    const fromIos = iosTree([{ role: "AXTextField", subrole: "AXSecureTextField", AXLabel: "Password", AXValue: password, traits: ["TextEntry"], enabled: true, frame: { x: 20, y: 200, width: 360, height: 44 } }], SCALE);
+    assert.ok(flatten(fromAndroid).some((each) => each.value === password), "Android's tree holds the text");
+    assert.ok(flatten(fromIos).some((each) => each.value === password), "idb's tree holds the text");
+
+    for (const [platform, tree] of [["android", fromAndroid], ["ios", fromIos]] as const) {
+      const device = new FakeDevice(tree);
+      device.platform = platform;
+      const computer = new DeviceComputer(device.deps());
+
+      const reads = [(await computer.observe(BOX, { window: 1 })).text, (await computer.observe(BOX, { window: 1 })).text];
+
+      for (const seen of reads) {
+        assert.ok(!seen.includes(password), `${platform}: ${seen}`);
+        assert.match(seen, /secure text field "Password" = "\(hidden\)"/, `${platform}: ${seen}`);
+      }
+    }
+  });
+
+  test("a password field with no name, in the way of a tap, is named by (hidden), not its value", async () => {
+    const password = "Kd8rTq2Lm5Xw";
+    const button = element("button", "Sign in", { x: 60, y: 800, width: 1000, height: 120 });
+    const field = element("secure text field", "", { x: 0, y: 700, width: 1206, height: 400 }, { value: password, can: { tap: true, edit: true, scroll: false } });
+    const device = new FakeDevice(screenOf([button, field]));
+    device.platform = "android";
+    const computer = new DeviceComputer(device.deps());
+    const ref = refOf((await computer.observe(BOX, { window: 1 })).text, /"Sign in"/);
+
+    const refused = await computer.act(BOX, { action: "click", ref }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    assert.ok(refused instanceof ComputerError, String(refused));
+    assert.match(refused.message, /is covered by secure text field "\(hidden\)"/);
+    assert.ok(!refused.message.includes(password), refused.message);
   });
 
   test("type taps the field first, types, presses keys by their W3C names, and says what it reads", async () => {

@@ -1,4 +1,5 @@
 import type { GuestOs } from "../transports/types.ts";
+import { isSecureRole } from "./secure-fields.ts";
 
 export interface InputPoint {
   readonly x: number;
@@ -172,7 +173,6 @@ export function agentPress(key: string, modifiers: readonly string[], os: GuestO
   return pressOf(keyName(key), modifiers.map((each) => agentModifier(each, os)), os);
 }
 
-const SECRET_ROLE = /password|secure/i;
 const SECRET_NAME = /pass(word|code|phrase)|\bpin\b|secret|token|api[ _-]?key/i;
 const SECRET_PREFIX = /^(sk-|sk_|pk_|rk_|ghp_|gho_|ghs_|github_pat_|glpat-|xox[abpr]-|AKIA|ASIA|AIza|ya29\.|eyJ|-----BEGIN)/;
 
@@ -185,7 +185,7 @@ export function looksLikeSecret(text: string): boolean {
 }
 
 export function isSecretTyping(role: string | null, name: string | null, text: string): boolean {
-  return (!!role && SECRET_ROLE.test(role)) || (!!name && SECRET_NAME.test(name)) || looksLikeSecret(text);
+  return (!!role && isSecureRole(role)) || (!!name && SECRET_NAME.test(name)) || looksLikeSecret(text);
 }
 
 export function typingKeptSecret(field: TypedField | null, text: string): boolean {

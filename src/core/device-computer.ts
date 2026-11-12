@@ -1,4 +1,5 @@
 import type { BoxRecord } from "./boxes.ts";
+import { isSecureRole, withSecureValuesHidden } from "./secure-fields.ts";
 import { ComputerError, IMAGE_MAX_EDGE, TREE_LIMIT, chord, pngSize, type ActInput, type ComputerResult, type Direction, type TypeInput, type WindowRef } from "./computer.ts";
 import {
   KEYBOARD_KEY_ROLE,
@@ -321,7 +322,8 @@ export class DeviceComputer {
     const answer = await this.#ok(this.#deps.read(box, { type: "tree" }), `${PRODUCT} could not read the device's elements`);
     if (answer.result.type !== "tree") throw new ComputerError("driver", "The device server answered a read of its elements with something else.", "Try again.");
     const { screen, orientation } = this.#screen(answer.state);
-    const snapshot = this.#snapshot(state, answer.state.model, answer.state.platform, answer.result.generation, screen, orientation, answer.result.elements);
+    const elements = answer.result.elements.map(withSecureValuesHidden);
+    const snapshot = this.#snapshot(state, answer.state.model, answer.state.platform, answer.result.generation, screen, orientation, elements);
     return changesShowAtStart(answer.state) ? { ...snapshot, changesShowAtStart: true } : snapshot;
   }
 
@@ -503,7 +505,7 @@ export class DeviceComputer {
     for (const point of tapPoints(visible)) {
       const answer = await this.#deps.read(box, { type: "at", ...point });
       if (!answer.ok || answer.result.type !== "at") return centre(visible);
-      const found = answer.result.element;
+      const found = answer.result.element && withSecureValuesHidden(answer.result.element);
       if (!found || isPartOf(found, shown.element)) return point;
       covering ??= found;
     }
@@ -729,7 +731,7 @@ export class DeviceComputer {
     await this.#settled(box, SCROLL_STEP_SETTLE);
     const now = await this.#read(box, state);
     const shown = (ref ? now.byRef.get(ref) : undefined) ?? now.shown.filter((each) => each.element.focused).at(-1);
-    if (!shown || shown.element.value === null || /secure/.test(shown.element.role)) return null;
+    if (!shown || shown.element.value === null || isSecureRole(shown.element.role)) return null;
     return { field: `${shown.ref}, ${elementWords(shown.element)},`, reads: shown.element.value };
   }
 
