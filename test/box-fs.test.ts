@@ -788,8 +788,11 @@ test("a file name with a colon stays intact in a search", async () => {
   }
 });
 
+const A_DIRECTORY_WHOSE_NAME_HAS_A_DASH_Z = "fs-colon-plain-Z";
+const GREP_Z_FLAG = /\s-Z\s/;
+
 test("a file name with a colon stays intact when grep has no NUL flag", async () => {
-  const dir = tempDir("fs-colon-plain");
+  const dir = tempDir(A_DIRECTORY_WHOSE_NAME_HAS_A_DASH_Z);
   writeFileSync(join(dir, "notes:2026.txt"), "a\nb\nneedle\n");
   writeFileSync(join(dir, "notes:2026"), "a\nb\nneedle\n");
   writeFileSync(join(dir, ".secret"), "needle in a hidden file\n");
@@ -809,7 +812,7 @@ exec ${real} "\$@"
   const flags = { matchCase: false, wholeWord: false, regex: false, hidden: false };
   const script = searchScript("linux", dir, "needle", flags);
   assert.match(script, /grep --null/);
-  assert.doesNotMatch(script, /-Z/);
+  assert.doesNotMatch(script, GREP_Z_FLAG);
   const found = await searchDirectory(linux, dir, "needle", flags, shRun({ PATH: `${bin}:${pathWithoutRg()}` }), new SearchCorpus(), () => undefined);
   assert.equal(found.error, null);
   if (found.error) return;

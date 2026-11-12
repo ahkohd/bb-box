@@ -12,6 +12,8 @@ const GUEST = join(ROOT, "setup/proxmox-lxc/template/guest");
 const HELPER = join(GUEST, "docker-first-start.sh");
 const TEST_LIMIT_MS = 400;
 const TEST_DEADLINE_MS = 3000;
+const DEADLINE_OUT_OF_REACH_MS = 60_000;
+const DEADLINE_IN_PLAY = { BBBOX_DOCKER_START_DEADLINE_MS: String(TEST_DEADLINE_MS) };
 const SLOW_START_S = 0.9;
 const HELD_BY_ANOTHER_UNIT_S = 3;
 const KILL_GRACE_MS = 1000;
@@ -108,7 +110,7 @@ function judge(box: FakeBox, env: Record<string, string> = {}): Promise<Judged> 
     env: {
       PATH: `${join(box.dir, "bin")}:/usr/bin:/bin`,
       BBBOX_DOCKER_START_LIMIT_MS: String(TEST_LIMIT_MS),
-      BBBOX_DOCKER_START_DEADLINE_MS: String(TEST_DEADLINE_MS),
+      BBBOX_DOCKER_START_DEADLINE_MS: String(DEADLINE_OUT_OF_REACH_MS),
       BBBOX_SYSTEMD_RUN_DIR: join(box.dir, box.runtime === "systemd" ? "systemd" : "no-systemd"),
       BBBOX_DOCKER_SOCKET: join(box.dir, "docker.sock"),
       BBBOX_DOCKER_PID_FILE: join(box.dir, "docker.pid"),
@@ -190,7 +192,7 @@ test("a hung daemon, a command that ignores TERM and a helper that ignores it ar
   ] as const;
   const boxes = hangs.map((hang) => fakeBox([hang.start]));
 
-  const judged = await Promise.all(boxes.map((box) => judge(box)));
+  const judged = await Promise.all(boxes.map((box) => judge(box, DEADLINE_IN_PLAY)));
 
   for (const [index, each] of judged.entries()) {
     assert.equal(each.status, 1, each.line);
@@ -204,7 +206,7 @@ test("the check runs no docker command before the one it times, so a hung docker
   const box = fakeBox([0]);
   writeFileSync(join(box.dir, "version-hangs"), "");
 
-  const judged = await judge(box);
+  const judged = await judge(box, DEADLINE_IN_PLAY);
 
   assert.equal(judged.status, 0, judged.line);
   assert.ok(judged.ms < TEST_DEADLINE_MS - KILL_GRACE_MS, `${judged.ms} ms`);
@@ -214,7 +216,7 @@ test("a slow first start whose Docker does not stop again fails by the deadline"
   const box = fakeBox([SLOW_START_S, 0]);
   writeFileSync(join(box.dir, "stop-hangs"), "");
 
-  const judged = await judge(box);
+  const judged = await judge(box, DEADLINE_IN_PLAY);
 
   assert.equal(judged.status, 1, judged.line);
   assert.match(judged.line, /^answered in \d+ ms \(limit 400 ms\), then did not stop within 3 s for a second first start$/);
