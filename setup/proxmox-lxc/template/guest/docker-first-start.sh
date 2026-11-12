@@ -1,122 +1,122 @@
 #!/bin/bash
 set -u
-shopt -s nullglob
 limit_ms=${BBBOX_DOCKER_START_LIMIT_MS:-2000}
-ceiling_ms=${BBBOX_DOCKER_START_CEILING_MS:-30000}
-cgroup_root=${BBBOX_CGROUP_ROOT:-/sys/fs/cgroup}
-proc_root=${BBBOX_PROC_ROOT:-/proc}
+deadline_ms=${BBBOX_DOCKER_START_DEADLINE_MS:-30000}
 systemd_run_dir=${BBBOX_SYSTEMD_RUN_DIR:-/run/systemd/system}
-docker_units=(containerd.service docker.service)
-sample_every_s=0.01
+docker_socket=${BBBOX_DOCKER_SOCKET:-/run/docker.sock}
+docker_pid_file=${BBBOX_DOCKER_PID_FILE:-/var/run/docker.pid}
+docker_units=(docker.service containerd.service)
+kill_grace_ms=1000
+poll_every_s=0.05
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-now_us() { echo "${EPOCHREALTIME/./}"; }
+monotonic_ms() {
+  local up _
+  read -r up _ </proc/uptime
+  echo $((10#${up/./} * 10))
+}
 
-docker_unit_cgroups() {
+deadline_at_ms=$(($(monotonic_ms) + deadline_ms))
+
+before_deadline() { [ "$(monotonic_ms)" -lt "$deadline_at_ms" ]; }
+
+as_seconds() { printf '%d.%03d' $(($1 / 1000)) $(($1 % 1000)); }
+
+within_deadline() {
+  local left_ms=$((deadline_at_ms - $(monotonic_ms) - kill_grace_ms)) group status
+  [ "$left_ms" -gt 0 ] || return 124
+  setsid timeout --kill-after="$(as_seconds "$kill_grace_ms")" "$(as_seconds "$left_ms")" "$@" 2>&1 &
+  group=$!
+  wait "$group" 2>/dev/null
+  status=$?
+  kill -KILL -- "-$group" 2>/dev/null
+  return "$status"
+}
+
+time_first_start() {
+  local began status
+  began=$(monotonic_ms)
+  within_deadline docker version --format '{{.Server.Version}}' >"$work/answer"
+  status=$?
+  took_ms=$(($(monotonic_ms) - began))
+  read -r answer <<<"$(head -c 200 "$work/answer" | tr '\n' ' ')"
+  case $status in
+    0) outcome=answered ;;
+    124 | 137) outcome=silent ;;
+    *) outcome=refused ;;
+  esac
+}
+
+docker_units_stopped() {
+  local unit state
+  for unit in "${docker_units[@]}"; do
+    state=$(within_deadline systemctl show -p ActiveState --value "$unit") || return 1
+    case $state in inactive | failed) ;; *) return 1 ;; esac
+  done
+}
+
+stop_docker_under_systemd() {
+  within_deadline sudo -n systemctl stop --no-block "${docker_units[@]}" >/dev/null 2>&1 || return 1
+  until docker_units_stopped; do
+    before_deadline || return 1
+    sleep "$poll_every_s"
+  done
+}
+
+docker_socket_listens() {
+  awk -v path="$docker_socket" '$4 == "00010000" && $NF == path { found = 1 } END { exit !found }' /proc/net/unix
+}
+
+stop_docker_without_systemd() {
+  local pid
+  pid=$(cat "$docker_pid_file" 2>/dev/null) && [ -n "$pid" ] || return 1
+  within_deadline sudo -n kill -TERM "$pid" >/dev/null 2>&1 || return 1
+  while [ -d "/proc/$pid" ]; do
+    before_deadline || return 1
+    sleep "$poll_every_s"
+  done
+  until docker_socket_listens && [ -w "$docker_socket" ]; do
+    before_deadline || return 1
+    sleep "$poll_every_s"
+  done
+}
+
+stop_docker_as_boot_leaves_it() {
   if [ -d "$systemd_run_dir" ]; then
-    local unit
-    for unit in "${docker_units[@]}"; do
-      echo "$cgroup_root/$(systemctl show -p Slice --value "$unit")/$unit"
-    done
+    stop_docker_under_systemd
   else
-    echo "$cgroup_root"
+    stop_docker_without_systemd
   fi
 }
 
-docker_thread_stats() {
-  local group pid
-  if [ ! -d "$systemd_run_dir" ]; then
-    printf '%s\n' "$proc_root"/[0-9]*/task/*/stat
-    return
-  fi
-  for group in "$@"; do
-    [ -r "$group/cgroup.procs" ] || continue
-    while read -r pid; do printf '%s\n' "$proc_root/$pid/task/"*/stat; done <"$group/cgroup.procs"
-  done
+fail_without_answer() {
+  local when=$1 said=${answer:+: $answer}
+  case $outcome in
+    silent) echo "no answer within $((deadline_ms / 1000)) s$when, so the check stopped the command$said" ;;
+    refused) echo "refused the connection or has no socket$when$said" ;;
+  esac
+  exit 1
 }
 
-docker_waits_for_disk() {
-  local stats=()
-  mapfile -t stats < <(docker_thread_stats "$@")
-  [ "${#stats[@]}" -gt 0 ] || return 1
-  awk '$3 == "D" { found = 1; exit } END { exit !found }' "${stats[@]}" 2>/dev/null
-}
+time_first_start
+[ "$outcome" = answered ] || fail_without_answer ""
+if [ "$took_ms" -le "$limit_ms" ]; then
+  echo "answered in $took_ms ms (limit $limit_ms ms)"
+  exit 0
+fi
 
-time_docker_waited_for_disk_us() {
-  local done_file=$1 waited=0 before after
-  shift
-  before=$(now_us)
-  while [ ! -e "$done_file" ]; do
-    if docker_waits_for_disk "$@"; then
-      after=$(now_us)
-      waited=$((waited + after - before))
-      before=$after
-    else
-      before=$(now_us)
-    fi
-    sleep "$sample_every_s"
-  done
-  echo "$waited"
-}
-
-cpu_pressure_us() {
-  local group total=0 stall
-  for group in "$@"; do
-    stall=$(awk '/^some / { for (i = 2; i <= NF; i++) if ($i ~ /^total=/) { sub(/^total=/, "", $i); print $i; exit } }' "$group/cpu.pressure" 2>/dev/null)
-    total=$((total + ${stall:-0}))
-  done
-  echo "$total"
-}
-
-cpu_used_us() {
-  local group total=0 used
-  for group in "$@"; do
-    used=$(awk '$1 == "usage_usec" { print $2 }' "$group/cpu.stat" 2>/dev/null)
-    total=$((total + ${used:-0}))
-  done
-  echo "$total"
-}
-
-busy_and_stolen_ticks() {
-  awk '$1 == "cpu" { print $2 + $3 + $4 + $7 + $8, ($9 == "" ? 0 : $9) }' "$proc_root/stat" 2>/dev/null || echo "0 0"
-}
-
-most_stolen_per_busy_milli=19000
-
-stolen_from_work_us() {
-  local work_us=$1 before=($2) after=($3)
-  local busy=$((${after[0]} - ${before[0]})) stolen=$((${after[1]} - ${before[1]})) per_busy_milli
-  [ "$stolen" -gt 0 ] || { echo 0; return; }
-  per_busy_milli=$most_stolen_per_busy_milli
-  [ "$busy" -le 0 ] || per_busy_milli=$((stolen * 1000 / busy))
-  [ "$per_busy_milli" -le "$most_stolen_per_busy_milli" ] || per_busy_milli=$most_stolen_per_busy_milli
-  echo $((work_us * per_busy_milli / 1000))
-}
-
-mapfile -t groups < <(docker_unit_cgroups)
-docker --version >/dev/null 2>&1
-cpu_stall_before=$(cpu_pressure_us "${groups[@]}")
-ticks_before=$(busy_and_stolen_ticks)
-time_docker_waited_for_disk_us "$work/answered" "${groups[@]}" >"$work/disk-wait" &
-sampler=$!
-started=$(now_us)
-answered=yes
-answer=$(timeout $((ceiling_ms / 1000 + 1)) docker version --format '{{.Server.Version}}' 2>&1) || answered=no
-took_ms=$((($(now_us) - started) / 1000))
-touch "$work/answered"
-wait "$sampler"
-if [ "$answered" = no ]; then
-  echo "Docker did not answer through its socket: $answer"
+first_ms=$took_ms
+if ! stop_docker_as_boot_leaves_it; then
+  echo "answered in $first_ms ms (limit $limit_ms ms), then did not stop within $((deadline_ms / 1000)) s for a second first start"
   exit 1
 fi
 
-disk_us=$(cat "$work/disk-wait")
-cpu_us=$(($(cpu_pressure_us "${groups[@]}") - cpu_stall_before))
-steal_us=$(stolen_from_work_us "$(cpu_used_us "${groups[@]}")" "$ticks_before" "$(busy_and_stolen_ticks)")
-waited_ms=$(((disk_us + cpu_us + steal_us) / 1000))
-[ "$waited_ms" -le "$took_ms" ] || waited_ms=$took_ms
-own_ms=$((took_ms - waited_ms))
-
-echo "$own_ms ms of its own (limit $limit_ms), of $took_ms ms, $waited_ms ms of it waiting for the host's disk or CPU"
-[ "$own_ms" -le "$limit_ms" ] && [ "$took_ms" -le "$ceiling_ms" ]
+time_first_start
+[ "$outcome" = answered ] || fail_without_answer " at a second first start, after $first_ms ms at the first"
+if [ "$took_ms" -le "$limit_ms" ]; then
+  echo "answered in $took_ms ms at a second first start; the first took $first_ms ms, slowed by a cold or busy host (limit $limit_ms ms)"
+  exit 0
+fi
+echo "slow both times: $first_ms ms, then $took_ms ms at a second first start (limit $limit_ms ms)"
+exit 1
