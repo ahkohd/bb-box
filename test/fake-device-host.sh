@@ -39,9 +39,23 @@ make_device() {
   printf 'name=%s\ntype=%s\nruntime=%s\nstate=Shutdown\n' "$1" "$2" "$3" >"$sims/$udid"
   echo "$udid"
 }
+make_the_devices_store() {
+  store=$R/private/var/tmp/com.apple.CoreSimulator.SimDevice.$1
+  if [ ! -d "$store" ]; then
+    mkdir -p "$store" && echo "$(uid_of "$as") $(readlink -f "$store")" >>"$F/owners"
+  fi
+  : >>"$store/launchd.log"
+}
+wait_mid_boot_if_asked() {
+  flag boot-waits || return 0
+  echo "$$" >"$F/flags/boot-waiting"
+  while ! flag boot-go; do sleep 0.05; done
+}
 boot_device() {
   [ -f "$sims/$1" ] || { echo "Invalid device: $1" >&2; exit 164; }
   [ "$(device_value "$1" state)" = Shutdown ] || { echo "Unable to boot device in current state: Booted" >&2; exit 149; }
+  make_the_devices_store "$1"
+  wait_mid_boot_if_asked
   set_device_value "$1" state Booted
   mkdir -p "$R/Users/$as/Library/Developer/CoreSimulator/Devices/$1/data/Library/Preferences"
   pid=$(next_number pids 20000)

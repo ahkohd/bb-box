@@ -648,7 +648,7 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
         if (!cancelled) show(answer);
       })
       .catch((error: unknown) => {
-        if (!cancelled) setPreview({ refusal: message(error), threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "", undoUnflushed: null, inSlot: false });
+        if (!cancelled) setPreview({ refusal: message(error), threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "", undoUnflushed: null, homeUser: "signed-in" });
       });
     return () => {
       cancelled = true;
@@ -726,7 +726,7 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
             </p>
           ) : row && row.scope === "home" ? (
             <p>
-              It goes back to {whenInSentence(row.takenAt, now)}, {ago(row.takenAt, now)}. {homeRestoreGoesWords(box.name, preview?.inSlot === true)} What it did to the world since stays done.
+              It goes back to {whenInSentence(row.takenAt, now)}, {ago(row.takenAt, now)}. {homeRestoreGoesWords(box.name, preview?.homeUser)} What it did to the world since stays done.
             </p>
           ) : row ? (
             <p>

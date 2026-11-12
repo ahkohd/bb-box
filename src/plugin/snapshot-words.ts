@@ -1,8 +1,8 @@
 import type { Backend, HeldSnapshot, Snapshotting } from "../backends/types.ts";
 import { OPERATOR, forkedFromWords, type BoxRecord } from "../core/boxes.ts";
-import { homeRestoreWentWords, homeRestoreGoesWords, aboutSecondsWords, countsAgainstLimit, dayWords, gbWords, goneWords, holdsWords, pausedWords, pauseWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, unflushedWords, utcDay, type SnapshotRecord } from "../core/snapshot.ts";
+import { homeRestoreWentWords, homeRestoreGoesWords, aboutSecondsWords, countsAgainstLimit, dayWords, gbWords, goneWords, holdsWords, pausedWords, pauseWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, unflushedWords, utcDay, type HomeUser, type SnapshotRecord } from "../core/snapshot.ts";
 import { describeSize } from "../core/sizes.ts";
-import { inSlot } from "../core/device-host.ts";
+import { homeUserOf } from "../core/device-host.ts";
 import { freedWords, type DeleteAnswer, type ForkAnswer, type ForkCheck, type KeepAnswer, type KeepCheck, type RestoreAnswer, type RestoreCheck, type Snapshots, type TakeAnswer, type TakeCheck } from "../core/snapshots.ts";
 import type { BackendSnapshotsView } from "./configuration.ts";
 import { PRODUCT } from "../brand.ts";
@@ -60,7 +60,7 @@ export function restoredText(answer: RestoreAnswer, boxName: string): string {
     return `The restore of box ${boxName} to ${named} was asked for with that request already. ${how}`;
   }
   const processes = snapshot?.holds === "disk-and-memory" ? `It came back running, as it was then, with the credentials its apps held then; what ran since ended.` : "Every process in it ended.";
-  const lost = snapshot?.scope === "home" ? homeRestoreWentWords(answer.box !== null && inSlot(answer.box)) : `Everything on its disk since then went. ${processes}`;
+  const lost = snapshot?.scope === "home" ? homeRestoreWentWords(answer.box === null ? "signed-in" : homeUserOf(answer.box)) : `Everything on its disk since then went. ${processes}`;
   const lines = [`Restored box ${boxName} to ${named}${snapshot ? `, taken ${dayWords(snapshot.takenAt)}` : ""}. ${lost}`];
   if (answer.newGuest) lines.push("It runs on a new guest made from that snapshot, with the box's own identity, and its old guest is deleted.");
   if (typeof answer.earlier === "number") lines.push(`It runs on a new guest made from that held copy, with the box's own identity. ${answer.earlier === 1 ? "1 snapshot stays" : `${answer.earlier} snapshots stay`} on its earlier guest, which ${PRODUCT} never starts: fork only.`);
@@ -148,6 +148,18 @@ export function forkedText(answer: ForkAnswer, box: BoxRecord | null): string {
   return [`Forked ${named} into box ${box.name} (${box.id}), ${where}, ready${total}.${again}`, box.fork ? forkedFromWords(box.fork) : "", FORK_HOLDS, answer.snapshot ? (forkMayMissWords(answer.snapshot) ?? "") : ""].filter(Boolean).join("\n");
 }
 
+const HOME_STOP_STEP: Record<HomeUser, string> = {
+  "signed-in": "- clear the Mac's automatic login, then end its user's session and every process of its user;",
+  slot: "- stop its daemons, then end every process of its user;",
+  "slot-with-device": "- shut its device down and stop its daemons, then end every process of its user;",
+};
+
+const HOME_SWAP_STEP: Record<HomeUser, string> = {
+  "signed-in": "- put a clone of the snapshot in its home folder's place, and sign its user in again where it was;",
+  slot: "- put a clone of the snapshot in its home folder's place, and start its daemons again;",
+  "slot-with-device": "- put a clone of the snapshot in its home folder's place, start its daemons and boot its device again;",
+};
+
 export function restoreCheckText(check: RestoreCheck): string {
   const snapshot = check.snapshot;
   const name = check.box.name;
@@ -160,9 +172,7 @@ export function restoreCheckText(check: RestoreCheck): string {
         : check.fromSnapshot
           ? "- stop it, which ends every process in it;"
           : snapshot.scope === "home"
-            ? inSlot(check.box)
-              ? "- shut its device down and stop its daemons, then end every process of its user;"
-              : "- clear the Mac's automatic login, then end its user's session and every process of its user;"
+            ? HOME_STOP_STEP[homeUserOf(check.box)]
             : `- stop it at once, without a clean shutdown;`,
   );
   if (check.undo?.kind === "held-copy") {
@@ -179,11 +189,11 @@ export function restoreCheckText(check: RestoreCheck): string {
       ? `${check.leavesOnEarlierGuest === 1 ? "1 snapshot stays" : `${check.leavesOnEarlierGuest} snapshots stay`} on its old guest, which becomes its earlier guest: fork only`
       : `its old guest holds no snapshot, so ${PRODUCT} deletes it${check.undo ? "" : ", and with no undo, nothing then holds the box as it is now"}`;
     lines.push(`- make it a new guest from that held copy, with the box's own identity, and start it; ${old};`);
-  } else if (snapshot.scope === "home") lines.push(inSlot(check.box) ? "- put a clone of the snapshot in its home folder's place, start its daemons and boot its device again;" : "- put a clone of the snapshot in its home folder's place, and sign its user in again where it was;");
+  } else if (snapshot.scope === "home") lines.push(HOME_SWAP_STEP[homeUserOf(check.box)]);
   else lines.push(check.capture === "suspend" ? "- put the snapshot's copy in its place, and resume it;" : "- roll its disk back, and start it;");
   if (check.replaces) lines.push(`- once it is done, delete its oldest undo, "${check.replaces}", as a box keeps two;`);
   lines.push("- write its access file first, then its labels, and start its BB machine again.");
-  lines.push(snapshot.scope === "home" ? `${homeRestoreGoesWords(name, inSlot(check.box))} What it did to the world since stays done.` : `Everything on its disk since then goes. ${snapshot.holds === "disk-and-memory" ? "It comes back running, as it was then, with the credentials its apps held then." : "Every process in it ends."} What it did to the world since stays done.`);
+  lines.push(snapshot.scope === "home" ? `${homeRestoreGoesWords(name, homeUserOf(check.box))} What it did to the world since stays done.` : `Everything on its disk since then goes. ${snapshot.holds === "disk-and-memory" ? "It comes back running, as it was then, with the credentials its apps held then." : "Every process in it ends."} What it did to the world since stays done.`);
   if (check.from && check.to && describeSize(check.from) !== describeSize(check.to)) lines.push(`It goes back to ${describeSize(check.to)}, as it was then; it has ${describeSize(check.from)} now.`);
   if (check.gpuStay) lines.push(check.gpuStay);
   if (check.userspaceNote) lines.push(check.userspaceNote);

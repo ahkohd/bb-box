@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test, type TestContext } from "node:test";
 import { EXIT as MACHINE_EXIT, fields, parseStatus } from "../src/backends/ssh-pool/protocol.ts";
@@ -89,6 +89,49 @@ function bystanders(host: FakeDeviceHost, other: string): () => void {
     const signalled = host.calls().filter((call) => /^(pkill|launchctl bootout) /.test(call) && new RegExp(`(-u |/)(${otherUid}|${WHOLE_MAC_UID})\\b`).test(call));
     assert.deepEqual(signalled, [], "nothing signalled the other slot's user or the whole-Mac box user");
   };
+}
+
+function slotFolder(host: FakeDeviceHost, slot: string): string {
+  return join(host.root, "var/db/bb-box/host/slots", slot);
+}
+
+function replaceTheSlotsAccount(host: FakeDeviceHost, slot: string): void {
+  writeFileSync(join(host.state, "users", `bbd-${slot}`, "GeneratedUID"), "REPLACEMENT-ACCOUNT\n");
+  host.add("processes", `62001 ${80000 + Number(slot)} replacement-work 1`);
+}
+
+function asAnOlderSlotHelperMadeIt(host: FakeDeviceHost, slot: string): void {
+  writeFileSync(join(slotFolder(host, slot), "user-made"), "");
+}
+
+function signalledUid(host: FakeDeviceHost, uid: number): string[] {
+  return host.calls().filter((call) => /^(pkill|launchctl bootout) /.test(call) && new RegExp(`(-u |/)${uid}\\b`).test(call));
+}
+
+function lockHeldElsewhere(path: string): boolean {
+  return spawnSync("perl", ["-e", 'use Fcntl ":flock"; open(my $f, ">>", $ARGV[0]) or exit 2; exit(flock($f, LOCK_EX | LOCK_NB) ? 1 : 0)', path]).status === 0;
+}
+
+function pausedAt(host: FakeDeviceHost, functionName: string): { readonly reached: string; readonly go: string } {
+  const reached = join(host.state, `${functionName}-reached`);
+  const go = join(host.state, `${functionName}-go`);
+  const helper = readFileSync(host.machineHelper, "utf8");
+  assert.equal(helper.split(`${functionName}() {`).length, 2, `the helper has one ${functionName}`);
+  writeFileSync(host.machineHelper, helper.replace(`${functionName}() {`, `${functionName}() {\n  touch '${reached}'\n  while [ ! -e '${go}' ]; do sleep 0.05; done`));
+  return { reached, go };
+}
+
+function started(host: FakeDeviceHost, args: readonly string[], input: string): { readonly child: ChildProcess; readonly ended: Promise<{ code: number | null; output: string }> } {
+  const child = spawn("/bin/sh", [host.machineHelper, ...args], { env: host.env, stdio: ["pipe", "pipe", "pipe"] });
+  let output = "";
+  child.stdout!.on("data", (data) => (output += data));
+  child.stderr!.on("data", (data) => (output += data));
+  child.stdin!.end(input);
+  return { child, ended: new Promise((resolve) => child.on("exit", (code) => resolve({ code, output }))) };
+}
+
+function stateOf(host: FakeDeviceHost, slot: string): string {
+  return lines(readFileSync(join(slotFolder(host, slot), "state"), "utf8")).get("is") ?? "";
 }
 
 function restoreOf(host: FakeDeviceHost, slot: string, snapshotId: string, operation: string, undo: string): void {
@@ -278,6 +321,130 @@ describe("An iOS slot on a pool Mac takes home snapshots of its slot user (090)"
   });
 });
 
+describe("A slot's snapshots act only on the account the device host made, checked by its UID and GeneratedUID (090 unit 3)", () => {
+  test("a stop of a replacement account with the slot user's name and UID is refused, and ends none of its processes", () => {
+    const { host, slot } = slotMac();
+    const uid = 80000 + Number(slot);
+    replaceTheSlotsAccount(host, slot);
+
+    const refused = snapshot(host, ["stop", `slot-${slot}`]);
+
+    assert.equal(refused.status, MACHINE_EXIT.failed);
+    assert.match(refused.stderr, /UID or GeneratedUID differs from the record/);
+    assert.ok(stillRuns(host, uid, "replacement-work"), "the replacement account's process runs on");
+    assert.deepEqual(signalledUid(host, uid), []);
+    assert.ok(!existsSync(join(host.root, STORES, `bbd-${slot}`)), "no store or session is made for it");
+    assert.deepEqual(parseHostStatus(host.run(["status"]).stdout)!.stopped, []);
+  });
+
+  test("a take and a restore of a replacement account are refused, and its home is as it was", () => {
+    const { host, slot } = slotMac();
+    homeFile(host, slot, "app/data.txt", "at the take\n");
+    ok(host, ["take", `slot-${slot}`, "snaaaaaaaaaaaa"]);
+    homeFile(host, slot, "app/data.txt", "now\n");
+    ok(host, ["stop", `slot-${slot}`]);
+    ok(host, ["take", `slot-${slot}`, "snundoaaaaaaaa"]);
+    replaceTheSlotsAccount(host, slot);
+
+    const take = snapshot(host, ["take", `slot-${slot}`, "snbbbbbbbbbbbb"]);
+    const restore = snapshot(host, ["restore", `slot-${slot}`, "snaaaaaaaaaaaa", "opaaaaaaaaaaaa"]);
+
+    for (const refused of [take, restore]) {
+      assert.equal(refused.status, MACHINE_EXIT.failed);
+      assert.match(refused.stderr, /UID or GeneratedUID differs from the record/);
+    }
+    assert.ok(!existsSync(join(host.root, STORES, `bbd-${slot}`, "snbbbbbbbbbbbb")));
+    assert.equal(host.file(`/Users/bbd-${slot}/app/data.txt`), "now\n");
+    assert.ok(stillRuns(host, 80000 + Number(slot), "replacement-work"));
+  });
+
+  test("a start of a replacement account is refused, by the pool helper and by the device host itself, and nothing of the slot runs again", () => {
+    for (const startOf of [
+      (host: FakeDeviceHost, slot: string) => snapshot(host, ["start", `slot-${slot}`]),
+      (host: FakeDeviceHost, slot: string) => host.run(["start", slot], BOX("box_a")),
+    ]) {
+      const { host, slot } = slotMac();
+      ok(host, ["stop", `slot-${slot}`]);
+      replaceTheSlotsAccount(host, slot);
+
+      const refused = startOf(host, slot);
+
+      assert.equal(refused.status, MACHINE_EXIT.failed, refused.stderr);
+      assert.match(refused.stderr, /UID or GeneratedUID differs from the record/);
+      assert.deepEqual([host.slot(slot)!.booted, host.slot(slot)!.loaded], [false, false], "its device and daemons stay stopped");
+      assert.deepEqual(parseHostStatus(host.run(["status"]).stdout)!.stopped.map((each) => each.slot), [slot]);
+    }
+  });
+
+  test("a slot made by an older slot helper, with no GeneratedUID on record, is refused snapshots with the reason, and is lent as before", () => {
+    const host = fakeDeviceHost();
+    assert.equal(host.run(["init"], "kept=yes\nahead=0\n").status, 0);
+    assert.equal(host.run(["open"], OPEN).status, 0);
+    assert.equal(host.machine(["init"]).status, 0);
+    const made = host.machine(["slot", "make"], "install=inst_a\n");
+    const slot = lines(made.stdout).get("slot")!;
+    assert.match(readFileSync(join(slotFolder(host, slot), "user-made"), "utf8"), /^generated_uid=[0-9A-F-]{36}$/m, "a new slot records its user's GeneratedUID");
+    asAnOlderSlotHelperMadeIt(host, slot);
+
+    const claim = host.machine(["slot", "claim", slot], SLOT_CLAIM("box_a"));
+
+    assert.equal(claim.status, 0, claim.stderr);
+    assert.equal(host.slot(slot)!.is, "held");
+    for (const args of [["take", `slot-${slot}`, "snaaaaaaaaaaaa"], ["stop", `slot-${slot}`]]) {
+      const refused = snapshot(host, args);
+      assert.equal(refused.status, MACHINE_EXIT.dirty, refused.stderr);
+      assert.match(refused.stderr, /made by an older slot helper, which kept no record of its user's GeneratedUID, so it has no snapshots\. It lends as before/);
+    }
+    const direct = host.run(["stop", slot], BOX("box_a"));
+    assert.equal(direct.status, EXIT.notReady);
+    assert.match(direct.stderr, /made by an older slot helper/);
+    assert.ok(!existsSync(join(host.root, STORES, `bbd-${slot}`)));
+    assert.equal(host.slot(slot)!.booted, true, "its device runs on");
+    assert.deepEqual(parseHostStatus(host.run(["status"]).stdout)!.stopped, []);
+  });
+});
+
+describe("A slot's stop and start check and change its session under the slot's lock, so a release waits for them (090 unit 3)", () => {
+  test("a release while a stop is between its check and its changes waits, then deletes the store, and nothing is made again", async () => {
+    const { host, slot } = slotMac();
+    const lock = join(slotFolder(host, slot), "lock");
+    const barrier = pausedAt(host, "end_slot_session");
+    const stop = started(host, ["snapshot", "stop", `slot-${slot}`], BOX("box_a"));
+    await host.until("the stop checked the slot is the box's", () => existsSync(barrier.reached));
+
+    assert.ok(lockHeldElsewhere(lock), "the stop holds the slot's lock from its check on");
+    const release = started(host, ["slot", "release", slot], BOX("box_a"));
+    await host.until("the release marked the slot", () => stateOf(host, slot) === "releasing");
+    assert.ok(host.user(`bbd-${slot}`), "the release waits for the stop before it removes the user");
+    writeFileSync(barrier.go, "");
+    const [stopped, released] = await Promise.all([stop.ended, release.ended]);
+
+    assert.equal(stopped.code, MACHINE_EXIT.notOurs, stopped.output);
+    assert.match(stopped.output, /no box holds it/);
+    assert.equal(released.code, 0, released.output);
+    assert.equal(host.user(`bbd-${slot}`), null);
+    assert.ok(!existsSync(join(host.root, STORES, `bbd-${slot}`, ".session")), "no session file is left");
+    assert.ok(!existsSync(join(host.root, STORES, `bbd-${slot}`)), "no store is left");
+  });
+
+  test("a start removes the session file under the slot's lock", async () => {
+    const { host, slot } = slotMac();
+    ok(host, ["stop", `slot-${slot}`]);
+    const barrier = pausedAt(host, "start_slot_session");
+    const start = started(host, ["snapshot", "start", `slot-${slot}`], BOX("box_a"));
+    await host.until("the start checked the slot is the box's", () => existsSync(barrier.reached));
+
+    const heldDuringStart = lockHeldElsewhere(join(slotFolder(host, slot), "lock"));
+    writeFileSync(barrier.go, "");
+    const ended = await start.ended;
+
+    assert.equal(heldDuringStart, true, "the start holds the slot's lock from its check on");
+    assert.equal(ended.code, 0, ended.output);
+    assert.ok(!existsSync(join(host.root, STORES, `bbd-${slot}`, ".session")));
+    assert.equal(host.slot(slot)!.booted, true);
+  });
+});
+
 describe("The proof of home snapshots on a Mac that lends iOS slots (090 unit 3)", () => {
   test("makes a scratch slot user and device, takes with the device booted, restores with an undo, finds the device as at the take, boots it, and removes what it made", () => {
     const host = fakeDeviceHost();
@@ -310,7 +477,52 @@ describe("The proof of home snapshots on a Mac that lends iOS slots (090 unit 3)
     assert.match(proof.stdout, /^ok: the device boots after the restore, in \d+ s$/m);
     assert.match(proof.stdout, /^result: passed/m);
     assert.deepEqual(host.users(), usersBefore, "every scratch user is gone");
+    assert.deepEqual(readdirSync(join(host.root, "private/var/tmp")).filter((name) => name.startsWith("com.apple.CoreSimulator.SimDevice.")), [], "no device's folder is left outside the home");
     assert.ok(!existsSync(join(host.root, STORES, slotUser[1]!)));
+    assert.ok(!existsSync(join(host.root, "var/db/bb-box/proof-made")));
+  });
+
+  test("a proof ended during its scratch device's first boot leaves nothing of the device once the next proof recovers", async () => {
+    const host = fakeDeviceHost();
+    assert.equal(host.run(["init"], "kept=yes\nahead=0\n").status, 0);
+    assert.equal(host.run(["open"], OPEN).status, 0);
+    assert.equal(host.machine(["init"]).status, 0);
+    host.flag("sims-in-home");
+    host.flag("sudo-processes");
+    host.flag("boot-waits");
+    const usersBefore = host.users();
+    const proof = started(host, ["snapshot", "proof"], "");
+    const waiting = join(host.state, "flags", "boot-waiting");
+    await host.until("the scratch device's first boot began", () => existsSync(waiting));
+
+    proof.child.kill("SIGKILL");
+    const killed = await proof.ended;
+    const udid = /^ok: simctl made device (\S+),/m.exec(killed.output)![1]!;
+    const slotUser = /for an iOS slot, (\S+) \(UID/.exec(killed.output)![1]!;
+    const deviceStore = join(host.root, "private/var/tmp", `com.apple.CoreSimulator.SimDevice.${udid}`);
+    assert.ok(existsSync(deviceStore), "the boot had made the device's folder");
+    rmSync(join(host.state, "flags", "boot-waits"));
+    const booting = Number(readFileSync(waiting, "utf8"));
+    host.flag("boot-go");
+    await host.until("the cut-short boot ended", () => {
+      try {
+        process.kill(booting, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+
+    const recovered = host.machine(["snapshot", "proof"]);
+
+    assert.equal(killed.code, null);
+    assert.equal(recovered.status, 0, recovered.stdout + recovered.stderr);
+    assert.match(recovered.stdout, /^note: removed what the earlier proof made$/m);
+    assert.match(recovered.stdout, /^result: passed/m);
+    assert.ok(!existsSync(deviceStore), "the device's folder outside the home is gone");
+    assert.ok(!existsSync(join(host.root, "Users", slotUser)), "and so is the home that held its registry entry");
+    assert.equal(host.user(slotUser), null);
+    assert.deepEqual(host.users(), usersBefore);
     assert.ok(!existsSync(join(host.root, "var/db/bb-box/proof-made")));
   });
 

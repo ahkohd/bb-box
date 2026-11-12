@@ -26,10 +26,10 @@ function slotWorld(): SlotWorld {
   return { pool, state, backend: () => made.at(-1)! };
 }
 
-async function slotBox(slots: SlotWorld, thread = THREAD): Promise<BoxRecord> {
+async function slotBox(slots: SlotWorld, thread = THREAD, kind = "ios"): Promise<BoxRecord> {
   await slots.state.backend.doctor();
   await slots.state.backend.members?.();
-  const acquired = await slots.state.boxes.acquire({ threadId: thread, projectId: null, kind: "ios", shared: true, who: BY_COMMAND });
+  const acquired = await slots.state.boxes.acquire({ threadId: thread, projectId: null, kind, shared: true, who: BY_COMMAND });
   const box = (await slots.state.boxes.settled(acquired))!;
   assert.equal(box.state, "ready", box.error ?? "");
   return box;
@@ -95,6 +95,25 @@ describe("Home snapshots of a box in an iOS slot on a pool Mac, through BB Box's
 
     for (const record of state.store.records({ box: box.id })) await state.snapshots.delete(COMMAND, standing(box), record.id);
     assert.deepEqual((await slots.backend().heldSnapshots()).filter((held) => held.box === box.id), []);
+  });
+
+  it("tells of a macOS box in a slot, which has no device, that its daemons start again, and names no device", async () => {
+    const slots = slotWorld();
+    const { state } = slots;
+    const box = await slotBox(slots, THREAD, "macos");
+    write(slots, box, "app/data.txt", "at the take\n");
+    await state.snapshots.take(COMMAND, box, standing(box), { name: "before" });
+    write(slots, box, "app/data.txt", "after the take\n");
+
+    const check = await state.snapshots.checkRestore(COMMAND, await fresh(state, box), standing(box), "before");
+    const restored = await state.snapshots.restore(COMMAND, await fresh(state, box), standing(box), "before");
+
+    assert.equal(read(slots, box, "app/data.txt"), "at the take\n");
+    assert.match(restoreCheckText(check), /- stop its daemons, then end every process of its user;/);
+    assert.match(restoreCheckText(check), /- put a clone of the snapshot in its home folder's place, and start its daemons again;/);
+    assert.doesNotMatch(restoreCheckText(check), /device|automatic login/);
+    assert.match(restoredText(restored, box.name), /Everything in its home folder since then went\. Every process of its user ended, and its daemons started again\./);
+    assert.doesNotMatch(restoredText(restored, box.name), /device/);
   });
 
   it("says before a take that it holds the home folder, on the pool Mac's /Users", async () => {

@@ -855,11 +855,15 @@ slot_folder() { printf '%s\n' "$SLOTS_STATE/slots/$1"; }
 
 a_slot_number() { number "${1:-}" && [ "$1" -gt 0 ] && [ "$1" -lt "$SLOT_UID_SPAN" ]; }
 
+recorded_generated_uid_of_slot() { field "$(slot_folder "$1")/user-made" generated_uid; }
+
 slot_user_the_device_host_made() {
   made_slot=$1 made_name=$2 made_uid=$3
   a_slot_number "$made_slot" && [ "$made_name" = "$SLOT_PREFIX$made_slot" ] && [ "$made_uid" = $((SLOT_UID_BASE + made_slot)) ] &&
     [ -e "$(slot_folder "$made_slot")/user-made" ] && [ "$(field "$(slot_folder "$made_slot")/slot" user)" = "$made_name" ] &&
-    [ "$(field "$(slot_folder "$made_slot")/slot" uid)" = "$made_uid" ] && [ "$(attribute "$made_name" UniqueID)" = "$made_uid" ]
+    [ "$(field "$(slot_folder "$made_slot")/slot" uid)" = "$made_uid" ] || return 1
+  made_guid=$(recorded_generated_uid_of_slot "$made_slot")
+  [ -n "$made_guid" ] && [ "$(identity_now account "$made_name")" = "$made_uid:$made_guid" ]
 }
 
 a_slot_user_the_device_host_made() {
@@ -882,7 +886,9 @@ slot_lent_to_the_box() {
   [ "$(field "$folder/state" is)" = held ] || quit 4 "No box holds iOS slot $1."
   [ "$(field "$folder/claim" install)" = "$install" ] && [ "$(field "$folder/claim" box)" = "$box" ] || quit 4 "Another box holds iOS slot $1."
   user=$(field "$folder/slot" user) uid=$(field "$folder/slot" uid)
-  slot_user_the_device_host_made "$1" "$user" "$uid" || fail "iOS slot $1's user is not the one the device host made, so the helper takes no snapshot of it and ends none of its processes."
+  [ -n "$(recorded_generated_uid_of_slot "$1")" ] ||
+    quit "$EXIT_REFUSED" "iOS slot $1 was made by an older slot helper, which kept no record of its user's GeneratedUID, so it has no snapshots. It lends as before. Slots made after the update have snapshots."
+  slot_user_the_device_host_made "$1" "$user" "$uid" || fail "iOS slot $1's user is not the one the device host made: its UID or GeneratedUID differs from the record, so the helper takes no snapshot of it and ends none of its processes."
   holder_record=$folder/claim
 }
 
@@ -914,8 +920,8 @@ stopped_for_the_restore() {
   [ -z "$lent_slot" ] || [ -e "$(slot_folder "$lent_slot")/stopped" ]
 }
 
-device_host_for_the_box() {
-  printf 'install=%s\nbox=%s\n' "$install" "$box" | /bin/sh "$DEVICE_HOST" "$@" 5>&- 6>&- 8>&- 9>&-
+device_host_under_the_slots_lock() {
+  printf 'install=%s\nbox=%s\n' "$install" "$box" | /bin/sh "$DEVICE_HOST" "$@" 8>&5 5>&- 6>&- 9>&-
 }
 
 session_file() { printf '%s\n' "$(store_of "$1")/.session"; }
@@ -983,7 +989,7 @@ end_slot_session() {
   session=$(session_file "$user")
   [ -f "$session" ] || printf 'console=no\nautologin=no\nslot=%s\nsince=%s\n' "$lent_slot" "$(now)" | put "$session"
   resume_user "$user"
-  said=$(device_host_for_the_box stop "$lent_slot" 2>&1)
+  said=$(device_host_under_the_slots_lock stop "$lent_slot" 2>&1)
   case $? in
     0) ;;
     4) quit 4 "$(printf '%s\n' "$said" | tail -n 1)" ;;
@@ -995,7 +1001,7 @@ end_slot_session() {
 
 start_slot_session() {
   user=$1
-  said=$(device_host_for_the_box start "$lent_slot" 2>&1)
+  said=$(device_host_under_the_slots_lock start "$lent_slot" 2>&1)
   code=$?
   [ -e "$(slot_folder "$lent_slot")/stopped" ] || rm -f "$(session_file "$user")"
   case $code in
@@ -1931,8 +1937,11 @@ boot_proof_device() {
   within "$PROOF_DEVICE_BOOT_SECONDS" sudo -n -H -u "$proof_slot_user" -- xcrun simctl bootstatus "$1" -b >/dev/null 2>&1 </dev/null
 }
 
-record_the_devices_store() {
-  record_dir "$proof_slot_user" "$SIM_STORES/com.apple.CoreSimulator.SimDevice.$1"
+make_and_record_the_devices_store() {
+  devices_store=$SIM_STORES/com.apple.CoreSimulator.SimDevice.$1
+  mkdir "$devices_store" 2>/dev/null || return 1
+  record_dir "$proof_slot_user" "$devices_store"
+  chown "$proof_slot_uid:0" "$devices_store" && chmod 700 "$devices_store"
 }
 
 proof_device_line() { grep -v '^#' "$IOS_SHARE/$1" 2>/dev/null | head -n 1; }
@@ -1962,10 +1971,13 @@ prove_slot_snapshots() {
     return 0
   fi
   proof_line ok "simctl made device $proof_device, a $proof_device_type on $proof_runtime, for $proof_slot_user"
+  if ! make_and_record_the_devices_store "$proof_device"; then
+    proof_line FAILED "made and recorded the device's folder in ${SIM_STORES#"$ROOT"} before its first boot"
+    return 0
+  fi
   began=$(now_ms)
   boot_proof_device "$proof_device"
   proof_check "the device booted, in $(( ($(now_ms) - began) / 1000 )) s" proof_device_booted "$proof_device"
-  record_the_devices_store "$proof_device"
   set_proof_setting one
   proof_check "a setting inside the device reads one" test "$(proof_setting)" = one
 
@@ -1977,7 +1989,7 @@ prove_slot_snapshots() {
   set_proof_setting two
   echo after >"$slot_home/app-data.txt"
   proof_later=$(slot_probe_simctl create bb-box-proof-later "$proof_device_type" "$proof_runtime" | tail -n 1)
-  a_device_id "$proof_later" && record_the_devices_store "$proof_later"
+  a_device_id "$proof_later" && make_and_record_the_devices_store "$proof_later"
   proof_check "a device made after the take is listed" proof_device_listed "$proof_later"
 
   began=$(now_ms)
@@ -2212,7 +2224,7 @@ snapshot() {
     stop | start)
       [ $# -eq 1 ] || quit 2 "usage: machine snapshot $verb <generation | slot-<n>>"
       read_input
-      slot_of_holder "$1" >/dev/null || lock 60
+      hold_for "$1" 60
       lent_user "$1"
       if [ "$verb" = stop ]; then end_session "$user" "$uid"; else start_session "$user" "$uid"; fi
       ;;

@@ -88,11 +88,19 @@ background() {
   if command -v taskpolicy >/dev/null 2>&1; then taskpolicy -b "$@"; else "$@"; fi
 }
 
+open_on() {
+  perl -e 'open(my $f, ">&=", $ARGV[0]) or exit 1; my @open = stat($f) or exit 1; my @file = stat($ARGV[1]) or exit 1; exit($open[0] == $file[0] && $open[1] == $file[1] ? 0 : 1)' "$1" "$2"
+}
+
+lock_open_descriptor() {
+  perl -e 'use Fcntl ":flock"; open(my $f, ">&=", $ARGV[0]) or exit 1; $SIG{ALRM} = sub { exit 3 }; alarm $ARGV[1]; flock($f, $ARGV[1] ? LOCK_EX : LOCK_EX | LOCK_NB) or exit 3' "$1" "$2"
+}
+
 take_lock() {
   fd=$1 file=$2 wait=$3
   mkdir -p "$(dirname "$file")"
   eval "exec $fd>>\"\$file\""
-  perl -e 'use Fcntl ":flock"; open(my $f, ">&=", $ARGV[0]) or exit 1; $SIG{ALRM} = sub { exit 3 }; alarm $ARGV[1]; flock($f, $ARGV[1] ? LOCK_EX : LOCK_EX | LOCK_NB) or exit 3' "$fd" "$wait"
+  lock_open_descriptor "$fd" "$wait"
 }
 
 lock_host() { take_lock 9 "$HOST/lock" "$1" || quit "$EXIT_LOST" "Another bb-box command holds this host's lock."; }
@@ -266,10 +274,20 @@ simctl() {
 runtime_line() { grep -v '^#' "$IOS_SHARE/runtimes.tsv" 2>/dev/null | head -n 1; }
 default_model() { head -n 1 "$IOS_SHARE/devices.tsv" 2>/dev/null; }
 
+recorded_generated_uid() { field "$(slot_dir "$1")/user-made" generated_uid; }
+
 user_made() {
   id=$1
   user=$(slot_user "$id") uid=$(slot_uid "$id")
-  [ "$(attribute "$user" UniqueID)" = "$uid" ] && [ -e "$(slot_dir "$id")/user-made" ]
+  [ "$(attribute "$user" UniqueID)" = "$uid" ] && [ -e "$(slot_dir "$id")/user-made" ] || return 1
+  recorded=$(recorded_generated_uid "$id")
+  [ -z "$recorded" ] || [ "$(attribute "$user" GeneratedUID)" = "$recorded" ]
+}
+
+user_made_and_recorded_or_quit() {
+  [ -n "$(recorded_generated_uid "$1")" ] ||
+    quit "$EXIT_NOT_READY" "Slot $1 was made by an older slot helper, which kept no record of its user's GeneratedUID, so the helper does not stop or start it for a restore. The slot lends as before; slots made from now on can be restored."
+  user_made "$1" || fail "Slot $1's user is not the one this host made: its UID or GeneratedUID differs from the record, so the helper ends and starts none of its processes."
 }
 
 remove_from_groups() {
@@ -311,6 +329,8 @@ make_user() {
     echo "sysadminctl did not make $user${reason:+: $reason}." >&2
     return 1
   fi
+  generated_uid=$(attribute "$user" GeneratedUID)
+  [ -n "$generated_uid" ] || { echo "The Mac's directory service gave $user no GeneratedUID." >&2; return 1; }
   dscl . -create "/Users/$user" IsHidden 1 || return 1
   for group in $JOINS; do
     [ "$group" = _developer ] || dscl . -read "/Groups/$group" >/dev/null 2>&1 || continue
@@ -328,7 +348,7 @@ make_user() {
   printf '%s\n' "$id" >"$home/.bb-box/device/host-managed" || return 1
   chown -R "$uid:20" "$home" || return 1
   chmod 700 "$home" "$home/.bb-box" "$home/.bb-box/device" || return 1
-  : >"$(slot_dir "$id")/user-made"
+  printf 'generated_uid=%s\n' "$generated_uid" | put "$(slot_dir "$id")/user-made"
 }
 
 seed() {
@@ -1055,7 +1075,12 @@ refuse_while_stopped_for_a_restore() {
 
 take_the_slots_lock_or_quit() {
   [ -f "$(slot_dir "$1")/slot" ] || quit "$EXIT_NOT_OURS" "This host has no slot $1."
-  take_lock 8 "$(slot_dir "$1")/lock" "$2" || quit "$EXIT_LOST" "Another bb-box command is working on slot $1; ask again."
+  slot_lock=$(slot_dir "$1")/lock
+  if open_on 8 "$slot_lock"; then
+    lock_open_descriptor 8 "$2" || quit "$EXIT_LOST" "Another bb-box command is working on slot $1; ask again."
+    return 0
+  fi
+  take_lock 8 "$slot_lock" "$2" || quit "$EXIT_LOST" "Another bb-box command is working on slot $1; ask again."
 }
 
 keep_slot_daemons_loaded() {
@@ -1074,7 +1099,7 @@ stop_for_a_restore() {
   take_the_slots_lock_or_quit "$id" 60
   lock_host 60
   held_by_the_box_or_quit "$id"
-  user_made "$id" || fail "Slot $id's user is not the one this host made, so the helper ends none of its processes."
+  user_made_and_recorded_or_quit "$id"
   stopped_for_a_restore "$id" || printf 'since=%s\n' "$(now)" | put "$(slot_dir "$id")/stopped"
   unlock_host
   words=$(stop_slot "$id" 2>&1) || fail "Could not stop slot $id: ${words:-it failed.}"
@@ -1090,6 +1115,7 @@ start_after_a_restore() {
   take_the_slots_lock_or_quit "$id" 60
   lock_host 60
   held_by_the_box_or_quit "$id"
+  user_made_and_recorded_or_quit "$id"
   unlock_host
   booted=none why=''
   if [ -n "$(device_udid "$id")" ]; then

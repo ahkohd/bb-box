@@ -599,13 +599,29 @@ box is left.
 ### Home snapshots in iOS slots
 
 A box in an iOS slot is the slot's user, `bbd-<n>`, and its Simulator
-device lives in its home, so its snapshots hold the device too. A take or a
-restore of a slot holds the slot's lock, which the iOS slots' helper,
-`device-host`, holds for the slot's claim, release and reset, so none of
-those runs in the middle. For a restore, the slots' helper's `stop <slot>`
-unloads the slot's device server and BB's daemon, shuts its device down and
-ends every process of the slot's user, once it has checked that the slot's
-user is the one it made, with the slot's UID. It marks the slot as stopped,
+device lives in its home, so its snapshots hold the device too. Each take,
+stop, restore and start of a slot holds the slot's lock, which the iOS
+slots' helper, `device-host`, holds for the slot's claim, release and reset,
+from its check that this install's box holds the slot to its last change, so
+none of those runs in the middle of it. A stop and a start hand the lock to
+`device-host`, which uses it rather than taking it again. A restore is
+several of these commands, and the lock is let go between them: a release
+that comes between two makes the next refuse, as no box holds the slot, and
+the release deletes the slot's snapshots.
+
+When `device-host` makes a slot's user, it records the account's
+`GeneratedUID`. Each take, stop, restore and start checks, just before it
+acts, that the account named `bbd-<n>` still has the slot's UID and that
+`GeneratedUID`, and refuses one that does not, ending none of its
+processes. A slot made by a slots' helper before version 8 has no
+`GeneratedUID` on record: its snapshots are refused with that reason, and it
+is lent as before. Slots are made again after each release, so new ones have
+the record.
+
+For a restore, the slots' helper's `stop <slot>` unloads the slot's device
+server and BB's daemon, shuts its device down and ends every process of the
+slot's user, once it has checked that the slot's user is the account it
+made. It marks the slot as stopped,
 so its box reads as stopped and BB's daemon is not taken over there. Its
 `start <slot>` boots the device and starts the daemons again, as when the
 slot was lent. Neither touches another slot or the Mac's own box user.
@@ -635,7 +651,16 @@ second device, then stops the user, restores with an undo, and checks that
 `simctl` lists the device as at the take and not the second, that the device
 boots and that its setting is as at the take. It then restores the undo,
 checks the second device and the changed setting are back, and deletes what
-it made by its record.
+it made by its record. Before each device's first boot, it makes and
+records the device's folder in `/private/var/tmp`,
+`com.apple.CoreSimulator.SimDevice.<UUID>`, so a run cut short during the
+boot leaves nothing of the device that the next run cannot remove.
+
+The scratch slot user is made as a whole box's user is, and it is stopped
+and started as a whole box's user is, not through the slots' helper. So the
+proof shows that a clone of a home restores a Simulator device's data on
+that Mac. It does not prove the slots' helper's stop and start, the slot's
+lock or the slot's daemons: the tests and a test Mac prove those.
 
 It takes about 2 to 3 minutes. It notes the user at the console before it
 starts and fails if another is there before its last step. It takes the
