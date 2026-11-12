@@ -19,7 +19,7 @@ import { COMMAND, THREAD, readyBox, standing, untilHeld, world, type World } fro
 
 const RESTORED = /^bbbox-bx[0-9a-z]+-[0-9a-f]{8}$/;
 const MAKES_FAKE_DOCKER_BACKEND = fileURLToPath(new URL("./fake-docker-elsewhere.ts", import.meta.url));
-const COPY_CREATE_SENT = "copy-landing.json";
+const ENGINE_HOLDS_THE_COPY_CREATE = "copy-landing.json";
 const COPY_MAY_LAND = "copy-may-land";
 const COPY_LANDED = "copy-landed";
 
@@ -191,18 +191,52 @@ async function untilTheEngineFinishedTheCopyCreate(fake: FakeDockerHost): Promis
   for (let i = 0; i < 1000 && !existsSync(join(fake.root, COPY_LANDED)); i++) await new Promise((resolve) => setTimeout(resolve, 10));
 }
 
+interface EngineHoldingTheCopyCreate {
+  readonly target: string;
+  readonly engine: number;
+}
+
+function engineHoldingTheCopyCreate(fake: FakeDockerHost): EngineHoldingTheCopyCreate | null {
+  const marker = join(fake.root, ENGINE_HOLDS_THE_COPY_CREATE);
+  return existsSync(marker) ? JSON.parse(readFileSync(marker, "utf8")) : null;
+}
+
+function running(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function untilEnded(pid: number): Promise<boolean> {
+  for (let i = 0; i < 1000 && running(pid); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  return !running(pid);
+}
+
+function letTheCopyLandThenCheckTheEngineEnded(t: TestContext, fake: FakeDockerHost): void {
+  t.after(async () => {
+    writeFileSync(join(fake.root, COPY_MAY_LAND), "");
+    const holding = engineHoldingTheCopyCreate(fake);
+    if (holding) assert.equal(await untilEnded(holding.engine), true, "the engine's late create ended, and left no process behind");
+  });
+}
+
 async function restoreKilledWhileTheEngineMakesItsCopy(t: TestContext) {
   const fake = fakeDockerHost();
   const { box } = await boxWithSnapshotOfA(fake);
   const ref = await snapshotRefOf(fake);
   fake.set({ restoreCopyLandsLate: true });
-  t.after(() => writeFileSync(join(fake.root, COPY_MAY_LAND), ""));
+  letTheCopyLandThenCheckTheEngineEnded(t, fake);
   const storage = join(tempDir("docker-restore"), "storage.json");
 
   const step = { step: "restore" as const, guest: box.guest!, ref, box: identity(box, box.size!) };
-  const copyCreateSent = async () => existsSync(join(fake.root, COPY_CREATE_SENT));
-  const seen = await interruptStep({ module: MAKES_FAKE_DOCKER_BACKEND, args: [fake.binary] }, storage, "test", step, copyCreateSent, 30_000);
+  const theEngineHoldsTheCopyCreate = async () => engineHoldingTheCopyCreate(fake) !== null;
+  const seen = await interruptStep({ module: MAKES_FAKE_DOCKER_BACKEND, args: [fake.binary] }, storage, "test", step, theEngineHoldsTheCopyCreate, 30_000);
+
   assert.ok(seen.claimed, "the restore named its new guest");
+  assert.ok(running(engineHoldingTheCopyCreate(fake)!.engine), "the engine still holds the copy's create after the restore's processes were killed");
   const volume = `${seen.claimed.ref}-docker`;
   assert.ok(volume in volumesOn(fake), "the killed restore left its new guest's Docker volume");
   return { fake, claimed: seen.claimed, storage, volume };

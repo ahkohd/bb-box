@@ -191,13 +191,13 @@ function registerCopyContainer(rest, status) {
 }
 
 function engineFinishesTheCreateLater(rest) {
-  write(COPY_LANDING, { target: copyVolumes(rest).target });
   spawn(process.execPath, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], { detached: true, stdio: "ignore", env: { ...process.env, FAKE_DOCKER_FINISHES_CREATE: "1" } }).unref();
   waitFor(join(root, COPY_LANDED));
   return find(copyNameOf(rest)) ?? fail(`Error response from daemon: No such container: ${copyNameOf(rest)}`);
 }
 
 function finishTheCreateOnceAllowed(rest) {
+  write(COPY_LANDING, { target: copyVolumes(rest).target, engine: process.pid });
   waitFor(join(root, COPY_MAY_LAND));
   registerCopyContainer(rest, "created");
   writeFileSync(join(root, COPY_LANDED), "");
