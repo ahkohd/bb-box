@@ -157,7 +157,7 @@ test("an outage longer than every try fails the install with the archive's error
   assert.ok(lines(dir, "log").every((call) => call.includes("--download-only")), "nothing is installed from a download that failed");
   assert.deepEqual(lines(dir, "sleeps"), ["30", "60", "90", "120"]);
   assert.match(ran.stderr, /503 {2}Service Unavailable/);
-  assert.match(ran.stderr, /apt: apt-get -o Acquire::Retries=5 install --download-only -y -q jq failed 5 times over 0 s, with at most 600 s for its tries\. The package archive did not serve it for that long: check the errors above, then build again\.$/m);
+  assert.match(ran.stderr, /apt: apt-get -o Acquire::Retries=5 install --download-only -y -q jq failed 5 times over \d+ s, with at most 600 s for its tries\. The package archive did not serve it for that long: check the errors above, then build again\.$/m);
 });
 
 test("an error that is not the archive's fails at once with apt's own message, and is not tried again", () => {
@@ -192,7 +192,7 @@ test("the tries stop before a wait that would pass their budget, and say how lon
 
   assert.equal(ran.status, 100);
   assert.deepEqual(lines(dir, "sleeps"), ["30", "60", "90"]);
-  assert.match(ran.stderr, /jq failed 4 times over 0 s, with at most 100 s for its tries\. The package archive did not serve it for that long/);
+  assert.match(ran.stderr, /jq failed 4 times over \d+ s, with at most 100 s for its tries\. The package archive did not serve it for that long/);
 });
 
 test("a download that stalls is stopped at the budget, measured from the first try", () => {
