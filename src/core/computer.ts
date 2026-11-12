@@ -15,7 +15,7 @@ import { inSlot, sharedBoxWords } from "./device-host.ts";
 import { driverCommand } from "./in-box.ts";
 import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
 import { typingKeptSecret, type ActedInput, type InputArea, type TypedField } from "./record-input.ts";
-import { fieldSecrecy, maskSecrets, readSecretFile, removeSecretFile, type FieldSecrecy, type RunInBox } from "./secret-file.ts";
+import { fieldSecrecy, holdsSecret, maskSecrets, readBackOf, readSecretFile, removeSecretFile, type FieldSecrecy, type RunInBox } from "./secret-file.ts";
 import { PRODUCT } from "../brand.ts";
 
 export const PAUSED =
@@ -116,6 +116,11 @@ export interface ComputerResult {
 }
 
 export const UNCONFIRMED_HIDDEN_WORDS = `${PRODUCT} could not confirm that the field hides what it shows, so the text may show on the screen and in recordings.`;
+export const CONFIRMED_HIDDEN_WORDS = `The field does not show what was typed, so ${PRODUCT} treats it as a password field.`;
+const SHOWN_AND_CLEARED_WORDS = `The field shows what is typed, so it is not a password field: ${PRODUCT} cleared it.`;
+const SHOWN_NOT_CLEARED_WORDS = `The field shows what is typed, so it is not a password field, and ${PRODUCT} could not clear it: the secret is still in it, on the screen.`;
+
+export type FieldCheck = "hides" | "unknown" | "cleared" | "not-cleared";
 
 export function checkFileTyping(input: TypeInput): void {
   if (input.textFile !== undefined && (input.text !== undefined || input.keys !== undefined)) {
@@ -169,6 +174,21 @@ export interface FileTyping {
   readonly typing: string[];
   readonly signal?: AbortSignal;
   type(secret: string): Promise<ComputerResult>;
+  checkTyped?(secret: string): Promise<FieldCheck>;
+}
+
+async function checkedField(file: FileTyping, secret: string): Promise<FieldCheck> {
+  if (file.secrecy !== "unknown" || !file.checkTyped) return file.secrecy === "hides" ? "hides" : "unknown";
+  return file.checkTyped(secret).catch((): FieldCheck => "unknown");
+}
+
+function shownFieldRefusal(check: "cleared" | "not-cleared", removal: string | null): ComputerError {
+  const said = [check === "cleared" ? SHOWN_AND_CLEARED_WORDS : SHOWN_NOT_CLEARED_WORDS, removal].filter((part) => part !== null).join(" ");
+  const hint =
+    check === "cleared"
+      ? "Give the password field's ref."
+      : "Clear the field now, such as with computer_act's set_value and an empty value, then give the password field's ref.";
+  return new ComputerError("refused", said, hint);
 }
 
 export async function typeFromFile(file: FileTyping): Promise<ComputerResult> {
@@ -186,7 +206,10 @@ export async function typeFromFile(file: FileTyping): Promise<ComputerResult> {
       const masked = maskedError(error, secrets);
       throw removal ? withSentence(masked, removal) : masked;
     }
-    const notes = [file.secrecy === "unknown" ? UNCONFIRMED_HIDDEN_WORDS : null, await remove()].filter((note) => note !== null);
+    const check = await checkedField(file, read.secret);
+    if (check === "cleared" || check === "not-cleared") throw shownFieldRefusal(check, await remove());
+    const confirmed = file.secrecy === "unknown" ? (check === "hides" ? CONFIRMED_HIDDEN_WORDS : UNCONFIRMED_HIDDEN_WORDS) : null;
+    const notes = [confirmed, await remove()].filter((note) => note !== null);
     return maskedResult(notes.length ? { ...typed, text: `${typed.text}\n\n${notes.join(" ")}` } : typed, secrets);
   } finally {
     file.typing.splice(file.typing.indexOf(read.secret), 1);
@@ -314,6 +337,7 @@ interface Element {
   readonly place: string | null;
   /** Where it is on the screen, when the driver says. */
   readonly frame: Rect | null;
+  readonly value: string | null;
 }
 
 /** A line of the tree text. An element's line carries its reference. */
@@ -1308,9 +1332,11 @@ export class Computer {
     const run = this.#runner(use.box);
     const os = use.box.capabilities.os;
     let secrecy: FieldSecrecy = "unknown";
+    let before: string | null = null;
     if (input.ref !== undefined) {
       const { snapshot, element } = await this.#element(use, input.ref);
       secrecy = fieldSecrecy(os, element.role);
+      before = element.value;
       if (secrecy === "shows") {
         const hiding = snapshot.elements.filter((each) => fieldSecrecy(os, each.role) === "hides").map((each) => `${each.ref} (${describe(each.role, each.label)})`);
         throw plainFieldRefusal(`${refName(input.ref)} (${describe(element.role, element.label)})`, path, hiding);
@@ -1327,7 +1353,40 @@ export class Computer {
       typing: this.#typing,
       signal: use.signal,
       type: (secret) => this.#type(use, { ref: input.ref, window: input.window, text: secret }, path),
+      ...(input.ref === undefined ? {} : { checkTyped: (secret: string) => this.#checkTyped(use, input.ref!, before, secret) }),
     });
+  }
+
+  async #checkTyped(use: Use, ref: string, before: string | null, secret: string): Promise<FieldCheck> {
+    const field = await this.#freshField(use, ref);
+    if (!field) return "unknown";
+    const readBack = readBackOf(field.element.value, secret);
+    if (readBack !== "shows") return readBack;
+    for (const value of new Set([before ?? "", ""])) {
+      const now = await this.#setField(use, ref, field.args, value);
+      if (now && !holdsSecret(now.element.value, secret)) return "cleared";
+    }
+    return "not-cleared";
+  }
+
+  async #setField(use: Use, ref: string, args: Json, value: string): Promise<{ element: Element; args: Json } | null> {
+    try {
+      await this.#deliver(use, "set_value", { ...args, value }, false);
+      return await this.#freshField(use, ref);
+    } catch (error) {
+      if (use.signal?.aborted) throw error;
+      return null;
+    }
+  }
+
+  async #freshField(use: Use, ref: string): Promise<{ element: Element; args: Json } | null> {
+    const name = refName(ref);
+    const entry = use.state.refs.get(name);
+    if (!entry) return null;
+    const { snapshot } = await this.#read(use, entry.windowId, false);
+    const element = snapshot.byRef.get(name);
+    if (!element) return null;
+    return { element, args: { pid: snapshot.window.pid, window_id: snapshot.window.id, ...this.#token(snapshot, element) } };
   }
 
   #runner(box: BoxRecord): RunInBox {
@@ -2369,6 +2428,7 @@ export class Computer {
         unique,
         place: counts.get(`p${place}`) === 1 ? place : null,
         frame: frames.get(index) ?? null,
+        value: str(entry.value) ?? null,
       };
       elements.push(element);
       byRef.set(ref, element);

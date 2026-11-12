@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { SECRET_MASK, fieldSecrecy, maskSecret, readSecretFile, removeSecretFile, withoutTrailingNewline, type RunInBox } from "../src/core/secret-file.ts";
+import { SECRET_MASK, fieldSecrecy, maskSecret, readBackOf, readSecretFile, removeSecretFile, withoutTrailingNewline, type RunInBox } from "../src/core/secret-file.ts";
 import { tempDir } from "./helpers.ts";
 
 const SECRET = "Vq7#mZ2!pL9$wR4xT8kN";
@@ -23,6 +23,14 @@ test("a field's role says whether it hides what is typed: password fields do, te
   assert.equal(fieldSecrecy("windows", "Document"), "shows");
   assert.equal(fieldSecrecy("windows", "PasswordBox"), "hides");
   assert.equal(fieldSecrecy("linux", "group"), "unknown");
+});
+
+test("a field read back after typing shows the secret, hides it behind a mask or empty, or cannot say", () => {
+  assert.equal(readBackOf(`tester@example.com${SECRET}`, SECRET), "shows");
+  assert.equal(readBackOf("\u2022".repeat(20), SECRET), "hides");
+  assert.equal(readBackOf("", SECRET), "hides");
+  assert.equal(readBackOf(null, SECRET), "unknown");
+  assert.equal(readBackOf(SECRET.slice(0, 10), SECRET), "unknown");
 });
 
 test("one line break at a file's end is left out, as op read > file adds one", () => {

@@ -111,6 +111,20 @@ export function maskSecret(text: string, secret: string): string {
   return masked;
 }
 
+export type ReadBack = "shows" | "hides" | "unknown";
+
+const ONLY_MASK_CHARACTERS = /^[\u2022\u25cf\u2217*]*$/;
+
+export function holdsSecret(value: string | null, secret: string): boolean {
+  return value !== null && maskSecret(value, secret) !== value;
+}
+
+export function readBackOf(value: string | null, secret: string): ReadBack {
+  if (value === null) return "unknown";
+  if (holdsSecret(value, secret)) return "shows";
+  return ONLY_MASK_CHARACTERS.test(value) ? "hides" : "unknown";
+}
+
 export function maskSecrets(text: string, secrets: Iterable<string>): string {
   let masked = text;
   for (const secret of secrets) masked = maskSecret(masked, secret);

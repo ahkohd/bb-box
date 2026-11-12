@@ -379,9 +379,10 @@ Open an app or a URL with `computer_launch`, then read a window with
   `box_run`, then call `computer_type` with the password field's `ref`,
   `text_file: "/tmp/pw"` and `delete: true`. BB Box refuses a field it can
   tell would show the text, and a missing, empty or larger than 4 KiB file.
-  On macOS and Windows a browser's password field can read as a plain text
-  field: BB Box types into it and says it could not confirm the field hides
-  the text, so give the right `ref`. Type the email and an authenticator
+  On macOS and Windows a browser's password field reads as a plain text
+  field: BB Box types, reads the field back, and clears and refuses one that
+  shows the text. If it says it could not clear the field, clear it with
+  `computer_act`'s `set_value` and an empty value. Type the email and an authenticator
   code as `text`. This works on device boxes too, with the file on the
   device's host.
 - On a Wayland desktop, text that goes through the real keyboard is typed

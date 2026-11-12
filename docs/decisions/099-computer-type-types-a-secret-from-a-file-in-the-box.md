@@ -41,12 +41,18 @@ of `text` or `keys`, and `delete`, to delete the file after typing.
   document, is refused before the file is read, naming the window's
   password fields, and the file is left as it was.
 - Some platforms do not say. On macOS, Cua gives a password input in Chrome
-  the role `AXTextField`, as it gives an email or search input, so a plain
-  text field there is typed into with a warning. On Windows, UI Automation
-  marks a password box with a property, not a role, so an edit field there
-  is typed into with a warning too, as is any role that says neither.
-  macOS's search fields, text areas, combo boxes and web areas are still
-  refused.
+  the role `AXTextField`, as it gives an email or search input, with no
+  subrole. On Windows, Edge gives every input `Edit`: UI Automation marks a
+  password box with a property, not a role. For such a field BB Box types,
+  then reads the field's value back from the driver's tree, never into a
+  result. A value that holds the secret is a plain field: BB Box sets the
+  field back to the value it read before typing, or to empty, checks the
+  secret is gone, and refuses, saying it cleared the field. If the secret is
+  still there, the refusal says so, for the agent to clear it. A value of
+  only mask characters, or empty, is taken as a password field, and the
+  result says so. A field with no value, or another value, gets the
+  warning. macOS's search fields, text areas, combo boxes and web areas are
+  still refused by role.
 - With `window` instead of `ref`, BB Box cannot see the field, so it types
   and says it could not confirm the field hides what it shows.
 - The result says only "Typed N characters from <path> into <target>",

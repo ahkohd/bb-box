@@ -165,7 +165,7 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
       "On a device box, text a US keyboard has goes as keys and the rest as one paste; cmd is the Command key on iOS, and ctrl+a selects all on Android, where ctrl+v pastes nothing in Chrome: send the text instead. On a device, text into an element waits after the tap that focuses it, up to 5 s, until a field has the focus and its keyboard shows. " +
       'For an open menu or popup, give its window ID, or window "desktop" for whatever has the focus. Says what the element reads afterwards. ' +
       "For a password, give text_file instead of text: the path of a file in the box that holds it, written with box_run without printing it, such as op read \"op://vault/item/password\" > /tmp/pw. Give delete true to delete the file after. " +
-      `${PRODUCT} reads the file itself, so the password is not in your call, its result or the logs. Give the password field's ref: ${PRODUCT} refuses a field it can tell would show the text, and says so when it cannot tell. Type the email and an authenticator code as text.`,
+      `${PRODUCT} reads the file itself, so the password is not in your call, its result or the logs. Give the password field's ref: ${PRODUCT} refuses a field whose role shows the text, and where the role cannot say, clears and refuses a field that reads back the text. Type the email and an authenticator code as text.`,
     presentation: { label: { pending: "Typing", completed: "Typed" } },
     parameters: z.object({
       box: boxParam,

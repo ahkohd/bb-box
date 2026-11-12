@@ -135,6 +135,7 @@ export interface FakeDesktop {
   signInFocus?: Record<string, string>;
   showsPasswords?: boolean;
   typingFailsEchoingText?: boolean;
+  setValueIgnored?: boolean;
 }
 
 const desktopPause = new Int32Array(new SharedArrayBuffer(4));
@@ -338,8 +339,8 @@ function shape(desktop: FakeDesktop, window: FakeWindow): Node {
       actions: [],
       frame: whole,
       children: [
-        { key: "email", role: "text", label: "Email", value: desktop.fields[window.id] ?? "", actions: [], frame: frame(20, 40, 400, 40), children: [] },
-        { key: "password", role: desktop.mac ? "AXSecureTextField" : "password text", label: "Password", value: shown, actions: [], frame: frame(20, 100, 400, 40), children: [] },
+        { key: "email", role: desktop.mac ? "AXTextField" : "text", label: "Email", value: desktop.fields[window.id] ?? "", actions: [], frame: frame(20, 40, 400, 40), children: [] },
+        { key: "password", role: desktop.mac ? "AXTextField" : "password text", label: "Password", value: shown, actions: [], frame: frame(20, 100, 400, 40), children: [] },
         { key: "signin", role: "push button", label: "Sign in", actions: ["click"], frame: frame(20, 160, 120, 40), children: [] },
       ],
     };
@@ -845,8 +846,10 @@ export class FakeCua {
       if (!("id" in window)) return window;
       const node = this.#element(desktop, window, args.element_token);
       if (!("key" in node)) return node;
-      if (node.key !== "field") return text(`${node.role} "${node.label}" has no value to set.`, { code: "not_settable" }, true);
-      desktop.fields[window.id] = String(args.value);
+      if (node.key !== "field" && node.key !== "email" && node.key !== "password") return text(`${node.role} "${node.label}" has no value to set.`, { code: "not_settable" }, true);
+      if (desktop.setValueIgnored) return text("Set the value.", { verified: false });
+      if (node.key === "password") desktop.passwords = { ...desktop.passwords, [window.id]: String(args.value) };
+      else desktop.fields[window.id] = String(args.value);
       return text("Set the value.", { verified: true });
     });
   }

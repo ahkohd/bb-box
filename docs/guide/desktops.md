@@ -146,7 +146,9 @@ BB Box reads the file in the box itself and sends what it holds to the field, so
 
 - The file holds at most 4 KiB. One line break at its end is left out, as `op read` adds one.
 - BB Box refuses a missing file, a folder, a file the box user cannot read and an empty file, and says nothing of what the file holds.
-- BB Box refuses a field that would show the text, such as an email or search field, and names the window's password fields. On macOS a browser's password field reads as a plain text field, on Windows a password box may read as an edit field, and with `window` instead of `ref` BB Box cannot see the field: in each case it types and says it could not confirm the field hides the text.
+- BB Box refuses a field that would show the text, such as an email or search field, and names the window's password fields.
+- On macOS a browser's password field reads as a plain text field, and on Windows as an edit field, so the role cannot say. There BB Box types, then reads the field back without showing it. A field that shows the password is cleared back to what it held, and the typing is refused: "The field shows what is typed, so it is not a password field: BB Box cleared it." A field that reads back dots, or nothing, is taken as a password field, and the result says so. If BB Box cannot clear the field, it says so, and the agent clears it.
+- With `window` instead of `ref`, BB Box cannot see the field: it types and says it could not confirm the field hides the text.
 - `delete` deletes the file once BB Box has read it, whether the typing works or not.
 - The email and an authenticator code are not secret in the same way: type them as `text`.
 

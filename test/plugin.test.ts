@@ -5601,10 +5601,13 @@ test("on Sway, text goes in with the image's US keyboard where it has one, and i
 
 const TEST_PASSWORD = "Vq7#mZ2!pL9$wR4xT8kN";
 
-async function signInBox(edit: (desktop: FakeDesktop) => void = () => {}) {
-  const started = await desktopBox();
+const MAC_DESKTOP_KIND: BoxKind = { ...FAKE_KINDS[1]!, id: "macos-desktop", label: "macOS desktop", capabilities: { ...FAKE_KINDS[1]!.capabilities, os: "macos" } };
+
+async function signInBox(edit: (desktop: FakeDesktop) => void = () => {}, options: { mac?: boolean } = {}) {
+  const started = await desktopBox(options.mac ? { kind: MAC_DESKTOP_KIND } : {});
   let signIn = 0;
   editDesktop(started.file, (desktop) => {
+    desktop.mac = options.mac === true;
     signIn = openSignIn(desktop).id;
     edit(desktop);
   });
@@ -5704,6 +5707,46 @@ test("computer_type types a secret from a file into a window's focused element, 
   assert.match(typed, new RegExp(`^Typed 20 characters from ${passwordFile} into window ${signIn}`));
   assert.match(typed, /BB Box could not confirm that the field hides what it shows, so the text may show on the screen and in recordings\./);
   assert.equal(typedPassword(), TEST_PASSWORD);
+});
+
+test("where a field's role cannot say, as Chrome's inputs on macOS, a field that reads back masked after typing from a file is taken as a password field", async (t) => {
+  const { harness, box, tool, password, passwordFile, typedPassword } = await signInBox(() => {}, { mac: true });
+  t.after(() => harness.lifecycle.dispose());
+
+  const typed = text(await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile }));
+
+  assert.equal(typedPassword(), TEST_PASSWORD);
+  assert.match(typed, new RegExp(`^Typed 20 characters from ${passwordFile} into ${password} \\(AXTextField 'Password'\\)`));
+  assert.match(typed, /The field does not show what was typed, so BB Box treats it as a password field\./);
+  assert.doesNotMatch(typed, /could not confirm/);
+});
+
+test("where a field's role cannot say, a field that shows the secret after typing from a file is cleared back to what it held, and the typing refused", async (t) => {
+  const { harness, box, tool, file, signIn, email, passwordFile, logs } = await signInBox(() => {}, { mac: true });
+  t.after(() => harness.lifecycle.dispose());
+  await tool("computer_type", { box: box.name, ref: email, text: "tester@example.com" });
+
+  const refused = await tool("computer_type", { box: box.name, ref: email, text_file: passwordFile, delete: true });
+
+  assert.equal(isError(refused), true);
+  assert.match(text(refused), new RegExp(`^The field shows what is typed, so it is not a password field: BB Box cleared it\\. BB Box deleted ${passwordFile}\\.\\n\\nNext: Give the password field's ref\\.$`));
+  assert.equal(readDesktop(file).fields[signIn], "tester@example.com", "the field holds what it held before");
+  assert.equal(existsSync(passwordFile), false);
+  assert.ok(!text(refused).includes(TEST_PASSWORD) && !logs().includes(TEST_PASSWORD));
+});
+
+test("where a field shows the secret and clearing it fails, the refusal says the secret is still on the screen, without showing it", async (t) => {
+  const { harness, box, tool, file, signIn, email, passwordFile, logs } = await signInBox((desktop) => {
+    desktop.setValueIgnored = true;
+  }, { mac: true });
+  t.after(() => harness.lifecycle.dispose());
+
+  const refused = await tool("computer_type", { box: box.name, ref: email, text_file: passwordFile });
+
+  assert.equal(isError(refused), true);
+  assert.match(text(refused), /^The field shows what is typed, so it is not a password field, and BB Box could not clear it: the secret is still in it, on the screen\.\n\nNext: Clear the field now, such as with computer_act's set_value and an empty value, then give the password field's ref\.$/);
+  assert.equal(readDesktop(file).fields[signIn], TEST_PASSWORD, "the fake kept it, as the field would");
+  assert.ok(!text(refused).includes(TEST_PASSWORD) && !logs().includes(TEST_PASSWORD));
 });
 
 test("while a desktop box records, typing from a file is logged as secret typing of 0 characters", async (t) => {
