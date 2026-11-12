@@ -208,10 +208,8 @@ import appIcon from "../assets/app-icon.png";
         <div class="install">
           <BoxFrame title="setup prompt" class="prompt-frame">
             <CopyButton slot="action" source="setup-prompt" class="frame-button" label="Copy" />
-            <div class="prompt-field">
-              <CopyField source="setup-prompt" quiet />
-              <pre id="setup-prompt" class="prompt">{data.prompt}</pre>
-            </div>
+            <CopyField source="setup-prompt" quiet />
+            <pre id="setup-prompt" class="prompt">{data.prompt}</pre>
           </BoxFrame>
           <div class="by-hand">
             <h3>Or by hand</h3>
@@ -549,6 +547,10 @@ import appIcon from "../assets/app-icon.png";
     .dither-screen::before {
       animation: none;
     }
+
+    :global(:is(.button, .frame-button, main button, main label.option))::after {
+      animation: none !important;
+    }
   }
 
   :global([data-motion="paused"]) .typed,
@@ -625,6 +627,61 @@ import appIcon from "../assets/app-icon.png";
 
   :global(.frame-button:hover) {
     color: var(--foreground);
+  }
+
+  :global(:where(.button, .frame-button, main button, main label.option)) {
+    position: relative;
+    isolation: isolate;
+  }
+
+  :global(:is(.button, .frame-button, main button, main label.option))::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-size: 2px 2px;
+    background-image: none;
+  }
+
+  :global(:where(.button, .frame-button, main button, main label.option)) {
+    --button-dither: color-mix(in srgb, var(--accent) 26%, transparent);
+  }
+
+  :global(:where(.button, main button.create)) {
+    --button-dither: color-mix(in srgb, var(--background) 34%, transparent);
+  }
+
+  :global(:where(.frame-button, main .demo-button))::after {
+    inset: -0.2em -0.35em;
+  }
+
+  :global(:is(.button, .frame-button, main button, main label.option):is(:hover, :focus-visible, :has(input:focus-visible)))::after {
+    background-image:
+      conic-gradient(var(--button-dither) 0 25%, transparent 0),
+      conic-gradient(from 180deg, var(--button-dither) 0 25%, transparent 0);
+    animation: button-dither-dissolve-in 120ms steps(1, end);
+  }
+
+  @keyframes button-dither-dissolve-in {
+    0% {
+      background-image: none;
+    }
+
+    34% {
+      background-image: conic-gradient(var(--button-dither) 0 25%, transparent 0);
+    }
+
+    67%,
+    100% {
+      background-image:
+        conic-gradient(var(--button-dither) 0 25%, transparent 0),
+        conic-gradient(from 180deg, var(--button-dither) 0 25%, transparent 0);
+    }
+  }
+
+  :global([data-motion="paused"] :is(.button, .frame-button, main button, main label.option))::after {
+    animation: none;
   }
 
   :global(.frame-button .copy-label)::before {
@@ -952,9 +1009,18 @@ import appIcon from "../assets/app-icon.png";
     margin-top: 2.5rem;
   }
 
-  .prompt-field {
-    position: relative;
+  .prompt-frame {
     isolation: isolate;
+  }
+
+  .prompt-frame :global(.frame-body) {
+    position: static;
+  }
+
+  .prompt-frame :global(.copy-field) {
+    inset: 1rem auto auto calc(0.3em + 2px);
+    width: calc(100% - 2 * (0.3em + 2px));
+    height: calc(100% - 2rem);
   }
 
   .prompt {

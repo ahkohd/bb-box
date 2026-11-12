@@ -122,7 +122,18 @@ const formId = "sample-new-box";
       firstWords.textContent = `Any of the ${shown} below, in order`;
     };
 
-    form.addEventListener("change", fit);
+    const providers = form.querySelector<HTMLElement>(".providers")!;
+    const showWhatIsHidden = () => {
+      providers.toggleAttribute("data-scrolled", providers.scrollTop > 0);
+      providers.toggleAttribute("data-more-below", providers.scrollTop + providers.clientHeight < providers.scrollHeight - 1);
+    };
+    providers.addEventListener("scroll", showWhatIsHidden, { passive: true });
+    new ResizeObserver(showWhatIsHidden).observe(providers);
+
+    form.addEventListener("change", () => {
+      fit();
+      showWhatIsHidden();
+    });
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const system = chosen("system").value;
@@ -132,6 +143,7 @@ const formId = "sample-new-box";
       note.textContent = `In BB, this makes a ${sizeWords[chosen("size").value]} ${type} ${where}.`;
     });
     fit();
+    showWhatIsHidden();
   }
 
   for (const form of document.querySelectorAll<HTMLFormElement>("[data-new-box-form]")) startForm(form);
@@ -172,8 +184,43 @@ const formId = "sample-new-box";
   }
 
   .providers {
+    --providers-fade-top: 0rem;
+    --providers-fade-bottom: 0rem;
     max-height: 12.5rem;
     overflow-y: auto;
+    mask-image:
+      linear-gradient(to bottom, transparent, #000 var(--providers-fade-top), #000 calc(100% - var(--providers-fade-bottom)), transparent),
+      linear-gradient(to left, #000 var(--scrollbar-room), transparent var(--scrollbar-room));
+    transition:
+      --providers-fade-top 160ms ease,
+      --providers-fade-bottom 160ms ease;
+    --scrollbar-room: 0.625rem;
+  }
+
+  .providers[data-scrolled] {
+    --providers-fade-top: 1.5rem;
+  }
+
+  .providers[data-more-below] {
+    --providers-fade-bottom: 1.5rem;
+  }
+
+  @property --providers-fade-top {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0rem;
+  }
+
+  @property --providers-fade-bottom {
+    syntax: "<length>";
+    inherits: false;
+    initial-value: 0rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .providers {
+      transition: none;
+    }
   }
 
   .option {
