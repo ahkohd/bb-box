@@ -274,8 +274,7 @@ export class ImageJobs {
     return found;
   }
 
-  /** What an image is built from now: its pins, BB's app, the versions a rebuild takes, the program that builds it, and its current build. */
-  #from(build: ImageBuild, pins: string | null, app: string | null, versions: Versions | null, program: string | null): string {
+  #builtFromNow(build: ImageBuild, pins: string | null, app: string | null, versions: Versions | null, program: string | null): string {
     // A Windows image takes its pins alone, and Windows' updates, which come monthly (054).
     if (osOf(build.kind) === "windows") return createHash("sha256").update(JSON.stringify({ pins, month: new Date(this.#now()).toISOString().slice(0, 7), current: build.build })).digest("hex").slice(0, 16);
     const tools = versions?.tools.filter((tool) => tool.arch === (build.record?.arch === "arm64" ? "arm64" : "x86_64")).map((tool) => `${tool.name}@${tool.version}`) ?? [];
@@ -465,7 +464,7 @@ export class ImageJobs {
         }
         const backend = this.#deps.backends().find((candidate) => candidate.id === view.backend)!;
         const pins = await this.#deps.facts.pins(pinSet(view.build.kind)).catch(() => null);
-        const from = this.#from(view.build, pins, app, versions, await this.#program(view.build, view.backend));
+        const from = this.#builtFromNow(view.build, pins, app, versions, await this.#program(view.build, view.backend));
         if (!options.image && view.last && !view.last.ok && !view.last.waiting && view.last.from === from) {
           note({ name: view.name, outcome: "skipped", detail: `its last rebuild failed and nothing it is built from has changed; bb box images build ${view.name} tries again` });
           continue;
@@ -570,7 +569,7 @@ export class ImageJobs {
       pinned: !!options.pinned,
       replace: !options.try,
       signal: options.signal,
-      from: this.#from(view.build, pins, app, versions, await this.#program(view.build, view.backend)),
+      from: this.#builtFromNow(view.build, pins, app, versions, await this.#program(view.build, view.backend)),
       log: options.log ?? (() => {}),
     });
   }
