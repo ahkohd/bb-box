@@ -3,16 +3,18 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { SECRET_MASK, fieldSecrecy, maskSecret, readBackOf, readSecretFile, removeSecretFile, withoutTrailingNewline, type RunInBox } from "../src/core/secret-file.ts";
+import { SECRET_MASK, fieldSecrecy, maskSecret, parseSecureProbe, readSecretFile, removeSecretFile, secureFieldScript, secureVerdict, withoutTrailingNewline, type RunInBox } from "../src/core/secret-file.ts";
 import { tempDir } from "./helpers.ts";
 
 const SECRET = "Vq7#mZ2!pL9$wR4xT8kN";
 
-const runHere: RunInBox = async (script, options) => {
-  const done = spawnSync("sh", ["-c", script], { encoding: "utf8", timeout: options.timeoutMs });
+const runIn = (cwd: string): RunInBox => async (script, options) => {
+  const done = spawnSync("sh", ["-c", script], { encoding: "utf8", timeout: options.timeoutMs, cwd });
   const stdout = done.stdout ?? "";
   return { exitCode: done.status, stdout: stdout.slice(0, options.maxOutputBytes), stderr: done.stderr ?? "", timedOut: false, truncated: stdout.length > options.maxOutputBytes, durationMs: 1 };
 };
+
+const runHere = runIn(process.cwd());
 
 test("a field's role says whether it hides what is typed: password fields do, text fields and documents show it, and macOS's and Windows' plain text fields may be either", () => {
   for (const role of ["password text", "AXSecureTextField", "secure text field"]) assert.equal(fieldSecrecy("linux", role), "hides", role);
@@ -25,12 +27,21 @@ test("a field's role says whether it hides what is typed: password fields do, te
   assert.equal(fieldSecrecy("linux", "group"), "unknown");
 });
 
-test("a field read back after typing shows the secret, hides it behind a mask or empty, or cannot say", () => {
-  assert.equal(readBackOf(`tester@example.com${SECRET}`, SECRET), "shows");
-  assert.equal(readBackOf("\u2022".repeat(20), SECRET), "hides");
-  assert.equal(readBackOf("", SECRET), "hides");
-  assert.equal(readBackOf(null, SECRET), "unknown");
-  assert.equal(readBackOf(SECRET.slice(0, 10), SECRET), "unknown");
+test("on macOS and Windows a field is confirmed secure only when the element at its point is it, by role and name, and the platform says it hides its text", () => {
+  const password = { role: "AXTextField", label: "Password" };
+  assert.equal(secureVerdict({ trusted: true, role: "AXTextField", name: "Password", secure: true }, password), "secure");
+  assert.equal(secureVerdict({ trusted: true, role: "AXTextField", name: "Password", secure: false }, password), "plain");
+  assert.equal(secureVerdict({ trusted: true, role: "AXTextField", name: "Search", secure: true }, password), "unknown", "another element at its point");
+  assert.equal(secureVerdict({ trusted: true, role: "AXButton", name: "Password", secure: true }, password), "unknown");
+  assert.equal(secureVerdict({ trusted: false, role: null, name: null, secure: false }, password), "unknown", "no Accessibility grant");
+  assert.equal(secureVerdict({ trusted: false, role: "AXTextField", name: "Password", secure: true }, password), "unknown", "an answer without the grant is not trusted, whatever it says");
+  assert.equal(secureVerdict(null, password), "unknown");
+  assert.equal(secureVerdict({ trusted: true, role: "Edit", name: " Password ", secure: true }, { role: "Edit", label: "Password" }), "secure");
+  assert.deepEqual(parseSecureProbe('noise\n{"trusted":true,"role":"Edit","name":"Password","secure":true}\n'), { trusted: true, role: "Edit", name: "Password", secure: true });
+  assert.equal(parseSecureProbe("not json"), null);
+  assert.equal(secureFieldScript("linux", { x: 1, y: 2 }), null, "AT-SPI's role says it on Linux");
+  assert.match(secureFieldScript("macos", { x: 169, y: 268 })!, /AXUIElementCopyElementAtPosition\(\$\.AXUIElementCreateSystemWide\(\), 169, 268, found\)[\s\S]*AXSubrole/);
+  assert.match(secureFieldScript("windows", { x: 184, y: 217 })!, /FromPoint\(\[System\.Windows\.Point\]::new\(184, 217\)\)[\s\S]*IsPassword/);
 });
 
 test("one line break at a file's end is left out, as op read > file adds one", () => {
@@ -78,4 +89,8 @@ test("a secret's file is read in the box, refused when missing, not a file, unre
 
   assert.equal(await removeSecretFile(runHere, "linux", join(dir, "pw")), true);
   assert.equal(existsSync(join(dir, "pw")), false);
+
+  writeFileSync(join(dir, "-dash"), SECRET);
+  assert.deepEqual(await readSecretFile(runIn(dir), "linux", "-dash"), { ok: true, secret: SECRET }, "a name that starts with a dash is a file, not an option");
+  assert.equal(await removeSecretFile(runIn(dir), "linux", "-dash"), true);
 });

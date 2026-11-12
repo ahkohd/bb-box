@@ -135,7 +135,7 @@ export interface FakeDesktop {
   signInFocus?: Record<string, string>;
   showsPasswords?: boolean;
   typingFailsEchoingText?: boolean;
-  setValueIgnored?: boolean;
+  typedTextLowercased?: boolean;
 }
 
 const desktopPause = new Int32Array(new SharedArrayBuffer(4));
@@ -791,8 +791,9 @@ export class FakeCua {
           escalation: { recommended: "foreground" },
         }, true);
       }
+      const typed = desktop.typedTextLowercased ? String(args.text).toLowerCase() : String(args.text);
       if (window.app === "signin" && (desktop.signInFocus?.[window.id] ?? "password") === "password") {
-        desktop.passwords = { ...desktop.passwords, [window.id]: `${desktop.passwords?.[window.id] ?? ""}${String(args.text)}` };
+        desktop.passwords = { ...desktop.passwords, [window.id]: `${desktop.passwords?.[window.id] ?? ""}${typed}` };
         return text(`Typed ${String(args.text).length} characters.`, { delivery_mode: String(args.delivery_mode ?? "background") });
       }
       desktop.fields[window.id] = `${desktop.fields[window.id] ?? ""}${String(args.text)}`;
@@ -846,10 +847,8 @@ export class FakeCua {
       if (!("id" in window)) return window;
       const node = this.#element(desktop, window, args.element_token);
       if (!("key" in node)) return node;
-      if (node.key !== "field" && node.key !== "email" && node.key !== "password") return text(`${node.role} "${node.label}" has no value to set.`, { code: "not_settable" }, true);
-      if (desktop.setValueIgnored) return text("Set the value.", { verified: false });
-      if (node.key === "password") desktop.passwords = { ...desktop.passwords, [window.id]: String(args.value) };
-      else desktop.fields[window.id] = String(args.value);
+      if (node.key !== "field") return text(`${node.role} "${node.label}" has no value to set.`, { code: "not_settable" }, true);
+      desktop.fields[window.id] = String(args.value);
       return text("Set the value.", { verified: true });
     });
   }

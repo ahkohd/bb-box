@@ -163,16 +163,16 @@ export function registerComputerTools(bb: BbPluginApi, app: BbBox): void {
     description:
       "Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. " +
       "On a device box, text a US keyboard has goes as keys and the rest as one paste; cmd is the Command key on iOS, and ctrl+a selects all on Android, where ctrl+v pastes nothing in Chrome: send the text instead. On a device, text into an element waits after the tap that focuses it, up to 5 s, until a field has the focus and its keyboard shows. " +
-      'For an open menu or popup, give its window ID, or window "desktop" for whatever has the focus. Says what the element reads afterwards. ' +
-      "For a password, give text_file instead of text: the path of a file in the box that holds it, written with box_run without printing it, such as op read \"op://vault/item/password\" > /tmp/pw. Give delete true to delete the file after. " +
-      `${PRODUCT} reads the file itself, so the password is not in your call, its result or the logs. Give the password field's ref: ${PRODUCT} refuses a field whose role shows the text, and where the role cannot say, clears and refuses a field that reads back the text. Type the email and an authenticator code as text.`,
+      'For an open menu or popup, give its window ID, or window "desktop" for whatever has the focus. Says what the element reads afterwards. Give one of text, keys or text_file; on a device box text may come with keys, such as Return, pressed once the field holds the text. ' +
+      "For a password, give text_file instead of text: the path of a file in the box that holds it, written with box_run without printing it, such as op read \"op://vault/item/password\" > /tmp/pw, and the password field's ref. Give delete true to delete the file after. " +
+      `${PRODUCT} reads the file itself and types it only into a field it confirms is a password field, refusing any other field, a window without ref, and an app where it cannot tell. The password is then not in your call, the result, the thread or the logs, and the field shows only dots, which still show its length; a recording shows what the screen shows. Type the email and an authenticator code as text.`,
     presentation: { label: { pending: "Typing", completed: "Typed" } },
     parameters: z.object({
       box: boxParam,
       text: z.string().optional().describe("Characters to type."),
       keys: keysParam.optional(),
-      text_file: z.string().min(1).optional().describe("Instead of text: the path of a file in the box whose contents to type, such as a password. At most 4 KiB; one line break at its end is left out."),
-      delete: z.boolean().optional().describe("With text_file: delete the file after typing, whether the typing worked or not. Defaults to false."),
+      text_file: z.string().min(1).optional().describe("Instead of text: the path of a file in the box whose contents to type into the password field given by ref. At most 4 KiB; one line break at its end is left out."),
+      delete: z.boolean().optional().describe(`With text_file: delete the file once ${PRODUCT} has read it, whether the typing then worked or not. Defaults to false.`),
       ref: z.string().min(1).optional().describe("The element's reference from computer_observe, such as e12."),
       window: windowOrDesktop
         .optional()

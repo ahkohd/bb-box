@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import type { BoxRecord } from "../src/core/boxes.ts";
-import { ComputerError } from "../src/core/computer.ts";
+import { ComputerError, type TypeInput } from "../src/core/computer.ts";
 import { DeviceComputer, KEYBOARD_NEVER_CAME_WORDS, KEYBOARD_WAIT, deviceKey, scrollSwipe, type DeviceComputerDeps } from "../src/core/device-computer.ts";
 import { KEYBOARD_KEY_ROLE, PERSON_HAS_CONTROL_WORDS, type DeviceAgentRequest, type DeviceAnswer, type DeviceElement, type DeviceInput, type DeviceRead, type DeviceState } from "../src/core/device.ts";
 import { rgbaPng } from "../src/core/png.ts";
@@ -547,10 +547,11 @@ describe("the computer tools on a device (063, 7.1)", () => {
     assert.match(done.text, new RegExp(`^Typed "example\\.com" and pressed Return into ${ref}, text field "Address"\\. ${ref} reads "example\\.com" now\\.`));
   });
 
-  test("types a password from a file on the device's host into a secure text field, says only how many characters, masks it where the screen shows it, and deletes the file", async () => {
+  test("types a password from a file on the device's host only into a secure text field given by ref, says only how many characters, from where and into which ref, and deletes the file", async () => {
     const secret = "Vq7#mZ2!pL9$wR4xT8kN";
     const dir = tempDir("device-secret");
     const passwordFile = join(dir, "pw");
+    const missing = join(dir, "missing");
     writeFileSync(passwordFile, `${secret}\n`);
     const email = element("text field", "Email", { x: 60, y: 400, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
     const password = element("secure text field", "Password", { x: 60, y: 600, width: 1000, height: 120 }, { can: { tap: true, edit: true, scroll: false } });
@@ -564,23 +565,25 @@ describe("the computer tools on a device (063, 7.1)", () => {
     const tree = (await computer.observe(BOX, { window: 1 })).text;
     const passwordRef = refOf(tree, /"Password"/);
     const emailRef = refOf(tree, /"Email"/);
+    const refusal = async (input: TypeInput, said: string) =>
+      assert.rejects(computer.type(BOX, input), (error: unknown) => {
+        assert.ok(error instanceof ComputerError);
+        assert.equal(error.message, said);
+        return true;
+      });
 
-    await assert.rejects(computer.type(BOX, { ref: emailRef, textFile: passwordFile }), (error: unknown) => {
-      assert.ok(error instanceof ComputerError && error.code === "refused");
-      assert.match(error.message, new RegExp(`^${emailRef}, text field "Email", is not a password field, so a secret typed into it would show on the screen and in recordings\\.`));
-      assert.match(error.hint ?? "", new RegExp(`Give the password field's reference instead: ${passwordRef}, secure text field "Password"\\.`));
-      return true;
-    });
-    assert.equal(device.inputs.length, 0, "nothing typed into the plain field");
+    await refusal({ ref: emailRef, textFile: missing }, `${emailRef} is not a password field, so BB Box types no secret into it. It typed nothing and left ${missing} as it was.`);
+    await refusal({ textFile: missing }, `A secret goes only into a password field given by ref. BB Box typed nothing and left ${missing} as it was.`);
+    await refusal({ ref: passwordRef, textFile: passwordFile, keys: "Return" }, "Give text, keys or text_file. text may come with keys, such as Return; text_file goes alone.");
+    await refusal({ ref: passwordRef }, "Give text, keys or text_file. text may come with keys, such as Return; text_file goes alone.");
+    assert.equal(device.inputs.length, 0, "nothing typed");
 
     const done = await computer.type(BOX, { ref: passwordRef, textFile: passwordFile, deleteFile: true });
 
     assert.deepEqual(device.inputs.map((input) => input.type), ["tap", "text"]);
     assert.deepEqual(device.inputs.at(-1), { type: "text", text: secret });
-    assert.match(done.text, new RegExp(`^Typed 20 characters from ${passwordFile} into ${passwordRef}, secure text field "Password"\\.`));
-    assert.match(done.text, new RegExp(`BB Box deleted ${passwordFile}\\.`));
-    assert.ok(!done.text.includes(secret), done.text);
-    assert.match(done.text, /\[hidden\]/, "the screen showed it, and the mask took its place");
+    assert.equal(done.text, `Typed 20 characters from ${passwordFile} into ${passwordRef}. BB Box deleted ${passwordFile}.`);
+    assert.deepEqual(done.hints, ["Call computer_observe with window 1 to see it."]);
     assert.equal(existsSync(passwordFile), false);
   });
 

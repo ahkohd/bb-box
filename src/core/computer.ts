@@ -15,7 +15,7 @@ import { inSlot, sharedBoxWords } from "./device-host.ts";
 import { driverCommand } from "./in-box.ts";
 import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
 import { typingKeptSecret, type ActedInput, type InputArea, type TypedField } from "./record-input.ts";
-import { fieldSecrecy, holdsSecret, maskSecrets, readBackOf, readSecretFile, removeSecretFile, type FieldSecrecy, type RunInBox } from "./secret-file.ts";
+import { SECURE_FIELD_TIMEOUT_MS, fieldSecrecy, maskSecrets, parseSecureProbe, readSecretFile, removeSecretFile, secureFieldScript, secureVerdict, type RunInBox } from "./secret-file.ts";
 import { PRODUCT } from "../brand.ts";
 
 export const PAUSED =
@@ -115,35 +115,38 @@ export interface ComputerResult {
   readonly hints: readonly string[];
 }
 
-export const UNCONFIRMED_HIDDEN_WORDS = `${PRODUCT} could not confirm that the field hides what it shows, so the text may show on the screen and in recordings.`;
-export const CONFIRMED_HIDDEN_WORDS = `The field does not show what was typed, so ${PRODUCT} treats it as a password field.`;
-const SHOWN_AND_CLEARED_WORDS = `The field shows what is typed, so it is not a password field: ${PRODUCT} cleared it.`;
-const SHOWN_NOT_CLEARED_WORDS = `The field shows what is typed, so it is not a password field, and ${PRODUCT} could not clear it: the secret is still in it, on the screen.`;
+export type SecureVerdict = "secure" | "plain" | "unknown";
 
-export type FieldCheck = "hides" | "unknown" | "cleared" | "not-cleared";
-
-export function checkFileTyping(input: TypeInput): void {
-  if (input.textFile !== undefined && (input.text !== undefined || input.keys !== undefined)) {
-    throw new ComputerError("input", "Give one of text, keys or text_file.", "text_file types a secret from a file in the box, such as a password; text types characters; keys presses one chord.");
+export function checkTypeInput(input: TypeInput, textWithKeys: boolean): void {
+  const given = [input.text, input.keys, input.textFile].filter((part) => part !== undefined).length;
+  const allowedTogether = textWithKeys && given === 2 && input.textFile === undefined;
+  if (given === 0 || (given > 1 && !allowedTogether)) {
+    throw new ComputerError(
+      "input",
+      textWithKeys ? "Give text, keys or text_file. text may come with keys, such as Return; text_file goes alone." : "Give one of text, keys or text_file.",
+      "text types characters; keys presses one chord; text_file types a secret from a file in the box, such as a password.",
+    );
   }
   if (input.deleteFile !== undefined && input.textFile === undefined) {
     throw new ComputerError("input", "delete goes with text_file only.", "Give text_file, the path of the file in the box that holds the secret.");
   }
 }
 
-export function plainFieldRefusal(target: string, path: string, passwordFields: readonly string[]): ComputerError {
-  const hint = passwordFields.length
-    ? `Give the password field's reference instead: ${passwordFields.slice(0, 3).join(", ")}.`
-    : "Give the password field's reference from computer_observe instead.";
-  return new ComputerError("refused", `${target} is not a password field, so a secret typed into it would show on the screen and in recordings. ${PRODUCT} typed nothing and left ${path} as it was.`, hint);
+export function secretNeedsRef(path: string): ComputerError {
+  return new ComputerError("input", `A secret goes only into a password field given by ref. ${PRODUCT} typed nothing and left ${path} as it was.`, "Give ref, the password field's reference from computer_observe.");
+}
+
+export function unconfirmedFieldRefusal(verdict: Exclude<SecureVerdict, "secure">, ref: string, path: string): ComputerError {
+  const said =
+    verdict === "plain"
+      ? `${ref} is not a password field, so ${PRODUCT} types no secret into it.`
+      : `${PRODUCT} cannot tell a password field from a plain one here, so it types no secret into ${ref}.`;
+  const hint = verdict === "plain" ? "Give the password field's reference from computer_observe." : `${PRODUCT} types a secret only into a field it can confirm is a password field.`;
+  return new ComputerError("refused", `${said} It typed nothing and left ${path} as it was.`, hint);
 }
 
 function removalWords(path: string, removed: boolean): string {
   return removed ? `${PRODUCT} deleted ${path}.` : `${PRODUCT} could not delete ${path}: delete it with box_run.`;
-}
-
-export function maskedResult(result: ComputerResult, secrets: readonly string[]): ComputerResult {
-  return { ...result, text: maskSecrets(result.text, secrets), hints: result.hints.map((hint) => maskSecrets(hint, secrets)) };
 }
 
 export function maskedError(error: unknown, secrets: readonly string[]): unknown {
@@ -156,61 +159,39 @@ export function maskedError(error: unknown, secrets: readonly string[]): unknown
   return new ComputerError("driver", masked, "Try again.");
 }
 
-function withSentence(error: unknown, sentence: string): unknown {
-  if (error instanceof ComputerError) return new ComputerError(error.code, `${error.message} ${sentence}`, error.hint);
-  if (error instanceof Error) {
-    error.message = `${error.message} ${sentence}`;
-    return error;
-  }
-  return error;
+function typingFailed(error: unknown, ref: string, removal: string | null): ComputerError {
+  const code = error instanceof ComputerError ? error.code : "driver";
+  const said = [`Typing into ${ref} failed, and the field may hold part of the password.`, removal].filter((part) => part !== null).join(" ");
+  return new ComputerError(code, said, "Look at the field with computer_observe, which shows a password field's dots, and clear it before you try again.");
 }
 
 export interface FileTyping {
   readonly run: RunInBox;
   readonly os: GuestOs;
   readonly path: string;
+  readonly ref: string;
   readonly deleteFile: boolean;
-  readonly secrecy: FieldSecrecy;
   readonly typing: string[];
+  readonly seeHint: string;
   readonly signal?: AbortSignal;
-  type(secret: string): Promise<ComputerResult>;
-  checkTyped?(secret: string): Promise<FieldCheck>;
-}
-
-async function checkedField(file: FileTyping, secret: string): Promise<FieldCheck> {
-  if (file.secrecy !== "unknown" || !file.checkTyped) return file.secrecy === "hides" ? "hides" : "unknown";
-  return file.checkTyped(secret).catch((): FieldCheck => "unknown");
-}
-
-function shownFieldRefusal(check: "cleared" | "not-cleared", removal: string | null): ComputerError {
-  const said = [check === "cleared" ? SHOWN_AND_CLEARED_WORDS : SHOWN_NOT_CLEARED_WORDS, removal].filter((part) => part !== null).join(" ");
-  const hint =
-    check === "cleared"
-      ? "Give the password field's ref."
-      : "Clear the field now, such as with computer_act's set_value and an empty value, then give the password field's ref.";
-  return new ComputerError("refused", said, hint);
+  type(secret: string): Promise<void>;
 }
 
 export async function typeFromFile(file: FileTyping): Promise<ComputerResult> {
   const read = await readSecretFile(file.run, file.os, file.path, file.signal);
   if (!read.ok) throw new ComputerError("refused", read.reason, read.hint);
-  const secrets = [read.secret];
   const remove = async () => (file.deleteFile ? removalWords(file.path, await removeSecretFile(file.run, file.os, file.path)) : null);
   file.typing.push(read.secret);
   try {
-    let typed: ComputerResult;
     try {
-      typed = await file.type(read.secret);
+      await file.type(read.secret);
     } catch (error) {
-      const removal = await remove();
-      const masked = maskedError(error, secrets);
-      throw removal ? withSentence(masked, removal) : masked;
+      throw typingFailed(error, file.ref, await remove());
     }
-    const check = await checkedField(file, read.secret);
-    if (check === "cleared" || check === "not-cleared") throw shownFieldRefusal(check, await remove());
-    const confirmed = file.secrecy === "unknown" ? (check === "hides" ? CONFIRMED_HIDDEN_WORDS : UNCONFIRMED_HIDDEN_WORDS) : null;
-    const notes = [confirmed, await remove()].filter((note) => note !== null);
-    return maskedResult(notes.length ? { ...typed, text: `${typed.text}\n\n${notes.join(" ")}` } : typed, secrets);
+    const count = [...read.secret].length;
+    const typed = `Typed ${count} character${count === 1 ? "" : "s"} from ${file.path} into ${file.ref}.`;
+    const said = [typed, await remove()].filter((part) => part !== null).join(" ");
+    return { text: maskSecrets(said, [read.secret]), hints: [file.seeHint] };
   } finally {
     file.typing.splice(file.typing.indexOf(read.secret), 1);
   }
@@ -243,7 +224,7 @@ export interface ComputerDeps {
   keyText?(box: BoxRecord, input: { readonly windowId: number; readonly text: string }, signal?: AbortSignal): Promise<"typed" | "unsupported">;
   /** Puts back the clipboard's text that stageText saved (swayRestoreScript). */
   restoreClipboard?(box: BoxRecord, signal?: AbortSignal): Promise<void>;
-  runOwn?(box: BoxRecord, script: string, options: { readonly timeoutMs: number; readonly maxOutputBytes: number; readonly signal?: AbortSignal }): Promise<RunResult>;
+  runOwn?(box: BoxRecord, script: string, options: { readonly timeoutMs: number; readonly maxOutputBytes: number; readonly signal?: AbortSignal; readonly session?: "desktop" }): Promise<RunResult>;
   /** Who controls the box's desktop now. */
   owner(boxId: string): Owner;
   /** Takes control of the box's desktop back from a person (038). False when the agent had it already. */
@@ -337,7 +318,6 @@ interface Element {
   readonly place: string | null;
   /** Where it is on the screen, when the driver says. */
   readonly frame: Rect | null;
-  readonly value: string | null;
 }
 
 /** A line of the tree text. An element's line carries its reference. */
@@ -938,6 +918,10 @@ export function windowLine(window: WindowInfo): string {
   return `window ${window.id}: ${window.app || "an app"}${title}, ${window.width} by ${window.height}${window.onScreen ? "" : ", not on screen"}`;
 }
 
+function centreOf(rect: Rect): Point {
+  return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+}
+
 function toArea(rect: Rect): InputArea {
   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 }
@@ -1324,69 +1308,45 @@ export class Computer {
 
   /** Types text, or presses a key chord, into a reference, a window's focused element, or whatever has the focus. */
   type(box: BoxRecord, input: TypeInput, signal?: AbortSignal): Promise<ComputerResult> {
-    checkFileTyping(input);
+    checkTypeInput(input, false);
     return this.#run(box, signal, (use) => (input.textFile === undefined ? this.#type(use, input) : this.#typeFile(use, input, input.textFile)));
   }
 
   async #typeFile(use: Use, input: TypeInput, path: string): Promise<ComputerResult> {
+    if (input.ref === undefined) throw secretNeedsRef(path);
     const run = this.#runner(use.box);
-    const os = use.box.capabilities.os;
-    let secrecy: FieldSecrecy = "unknown";
-    let before: string | null = null;
-    if (input.ref !== undefined) {
-      const { snapshot, element } = await this.#element(use, input.ref);
-      secrecy = fieldSecrecy(os, element.role);
-      before = element.value;
-      if (secrecy === "shows") {
-        const hiding = snapshot.elements.filter((each) => fieldSecrecy(os, each.role) === "hides").map((each) => `${each.ref} (${describe(each.role, each.label)})`);
-        throw plainFieldRefusal(`${refName(input.ref)} (${describe(element.role, element.label)})`, path, hiding);
-      }
-    } else if (input.window === undefined) {
-      throw new ComputerError("input", 'Give ref, or window to type into its focused element, or window "desktop".', "Get both from computer_observe.");
-    }
+    const { snapshot, element } = await this.#element(use, input.ref);
+    const verdict = await this.#secureVerdict(use, run, element);
+    if (verdict !== "secure") throw unconfirmedFieldRefusal(verdict, element.ref, path);
     return typeFromFile({
       run,
-      os,
+      os: use.box.capabilities.os,
       path,
+      ref: element.ref,
       deleteFile: input.deleteFile === true,
-      secrecy,
       typing: this.#typing,
+      seeHint: `Call computer_observe with window ${snapshot.window.id} to see it.`,
       signal: use.signal,
-      type: (secret) => this.#type(use, { ref: input.ref, window: input.window, text: secret }, path),
-      ...(input.ref === undefined ? {} : { checkTyped: (secret: string) => this.#checkTyped(use, input.ref!, before, secret) }),
+      type: async (secret) => {
+        await this.#type(use, { ref: input.ref, text: secret }, path);
+      },
     });
   }
 
-  async #checkTyped(use: Use, ref: string, before: string | null, secret: string): Promise<FieldCheck> {
-    const field = await this.#freshField(use, ref);
-    if (!field) return "unknown";
-    const readBack = readBackOf(field.element.value, secret);
-    if (readBack !== "shows") return readBack;
-    for (const value of new Set([before ?? "", ""])) {
-      const now = await this.#setField(use, ref, field.args, value);
-      if (now && !holdsSecret(now.element.value, secret)) return "cleared";
-    }
-    return "not-cleared";
-  }
-
-  async #setField(use: Use, ref: string, args: Json, value: string): Promise<{ element: Element; args: Json } | null> {
+  async #secureVerdict(use: Use, run: RunInBox, element: Element): Promise<SecureVerdict> {
+    const os = use.box.capabilities.os;
+    const byRole = fieldSecrecy(os, element.role);
+    if (byRole === "hides") return "secure";
+    if (byRole === "shows") return "plain";
+    const script = element.frame ? secureFieldScript(os, centreOf(element.frame)) : null;
+    if (!script) return os === "linux" ? "plain" : "unknown";
     try {
-      await this.#deliver(use, "set_value", { ...args, value }, false);
-      return await this.#freshField(use, ref);
+      const probed = await run(script, { timeoutMs: SECURE_FIELD_TIMEOUT_MS, maxOutputBytes: 4096, signal: use.signal, ...(os === "windows" ? { session: "desktop" as const } : {}) });
+      return secureVerdict(probed.exitCode === 0 ? parseSecureProbe(probed.stdout) : null, { role: element.role, label: element.label });
     } catch (error) {
       if (use.signal?.aborted) throw error;
-      return null;
+      return "unknown";
     }
-  }
-
-  async #freshField(use: Use, ref: string): Promise<{ element: Element; args: Json } | null> {
-    const name = refName(ref);
-    const entry = use.state.refs.get(name);
-    if (!entry) return null;
-    const { snapshot } = await this.#read(use, entry.windowId, false);
-    const element = snapshot.byRef.get(name);
-    if (!element) return null;
-    return { element, args: { pid: snapshot.window.pid, window_id: snapshot.window.id, ...this.#token(snapshot, element) } };
   }
 
   #runner(box: BoxRecord): RunInBox {
@@ -2428,7 +2388,6 @@ export class Computer {
         unique,
         place: counts.get(`p${place}`) === 1 ? place : null,
         frame: frames.get(index) ?? null,
-        value: str(entry.value) ?? null,
       };
       elements.push(element);
       byRef.set(ref, element);

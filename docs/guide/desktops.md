@@ -128,6 +128,8 @@ Agents see and use a desktop through computer tools, such as taking a screenshot
 
 On a box with a device, the agent's computer tools drive the device: see [agents and the device](devices.md#agents-and-the-device).
 
+An agent can record a desktop with `box_record` and show you the clip in the thread, with each step it tests and its result captioned. See [recordings](recording.md).
+
 ### Signing in with a password
 
 An agent types a password without seeing it. It writes the password to a file in the box, such as with 1Password's command-line tool in `box_run`, without printing it:
@@ -142,14 +144,37 @@ Then it gives `computer_type` the file's path as `text_file`, the password field
 computer_type(box, ref: "e12", text_file: "/tmp/pw", delete: true)
 ```
 
-BB Box reads the file in the box itself and sends what it holds to the field, so the password is not in the agent's call, its result, the thread, BB's logs or BB Box's records. The result says only how many characters it typed, what changed on the screen and whether the file was deleted. It never reads the field back, and any text of the password that the screen shows in the result is replaced with `[hidden]`.
+BB Box reads the file in the box itself and types what it holds only into a field it has confirmed is a password field. The result says only how many characters it typed, from which file, into which reference, and whether it deleted the file: never anything read from the screen.
 
-- The file holds at most 4 KiB. One line break at its end is left out, as `op read` adds one.
-- BB Box refuses a missing file, a folder, a file the box user cannot read and an empty file, and says nothing of what the file holds.
-- BB Box refuses a field that would show the text, such as an email or search field, and names the window's password fields.
-- On macOS a browser's password field reads as a plain text field, and on Windows as an edit field, so the role cannot say. There BB Box types, then reads the field back without showing it. A field that shows the password is cleared back to what it held, and the typing is refused: "The field shows what is typed, so it is not a password field: BB Box cleared it." A field that reads back dots, or nothing, is taken as a password field, and the result says so. If BB Box cannot clear the field, it says so, and the agent clears it.
-- With `window` instead of `ref`, BB Box cannot see the field: it types and says it could not confirm the field hides the text.
-- `delete` deletes the file once BB Box has read it, whether the typing works or not.
-- The email and an authenticator code are not secret in the same way: type them as `text`.
+What this protects:
 
-An agent can record a desktop with `box_record` and show you the clip in the thread, with each step it tests and its result captioned. See [recordings](recording.md).
+- The password is not in the agent's call, the tool's result, the thread, BB's logs or BB Box's records.
+- It never shows as text on the screen: BB Box types it only into a password field, which shows dots.
+
+What it does not:
+
+- A password field's dots still show the password's length, on the screen and in screenshots.
+- A recording shows what the screen shows, so the dots too.
+- The box itself holds the password while the file is there, and the app holds it once typed.
+
+How BB Box confirms a password field:
+
+| Desktop | How it knows |
+| --- | --- |
+| Linux | The field's role in AT-SPI is `password text` |
+| macOS | The field's Accessibility subrole is `AXSecureTextField`, read at the field's point by a script in the box. It needs Accessibility access for scripts run over SSH: Namespace's Macs have it, and the SSH host pool's setup grants it. Without it BB Box refuses |
+| Windows | UI Automation says `IsPassword` for the field, read at the field's point in the desktop session |
+| iOS and Android | The field's role is `secure text field` |
+
+BB Box refuses, before it reads the file:
+
+- a field that is not a password field, such as an email or search field
+- a field where it cannot tell, such as a macOS box without that Accessibility access: "BB Box cannot tell a password field from a plain one here, so it types no secret into e12."
+- a window, or the desktop, without `ref`
+
+It also refuses a missing file, a folder, a file the box user cannot read, an empty file and one over 4 KiB, without saying anything of what the file holds. One line break at the file's end is left out, as `op read` adds one.
+
+`delete` deletes the file once BB Box has read it, whether the typing then works or not. If the typing fails, the error says the field may hold part of the password: look at it with `computer_observe` and clear it before trying again.
+
+Type the email and an authenticator code as `text`: they are not secret in the same way.
+

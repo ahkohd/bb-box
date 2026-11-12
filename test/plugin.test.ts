@@ -5618,32 +5618,55 @@ async function signInBox(edit: (desktop: FakeDesktop) => void = () => {}, option
   const passwordFile = join(home, "pw");
   writeFileSync(passwordFile, `${TEST_PASSWORD}\n`);
   const typedPassword = () => readDesktop(started.file).passwords?.[signIn] ?? "";
+  const typeTextCalls = () => readDesktop(started.file).calls.filter((call) => call.tool === "type_text").length;
   const logs = () => started.harness.inspection.logEntries.map((entry) => entry.message).join("\n");
-  return { ...started, signIn, home, password, email, passwordFile, typedPassword, logs };
+  return { ...started, signIn, home, password, email, passwordFile, typedPassword, typeTextCalls, logs };
 }
 
-test("computer_type types a password from a file in the box into a password field, and says only how many characters it typed", async (t) => {
-  const { harness, box, tool, file, password, passwordFile, typedPassword, logs } = await signInBox();
+function osascriptAnswersFromHome(t: TestContext): void {
+  const bin = tempDir("osascript");
+  writeFileSync(join(bin, "osascript"), '#!/bin/sh\ncat > /dev/null\ncat "$HOME/ax-answer.json"\n');
+  chmodSync(join(bin, "osascript"), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+}
+
+test("computer_type types a password from a file into a confirmed password field, and says only how many characters it typed, from where and into which ref", async (t) => {
+  const { harness, box, tool, file, signIn, password, passwordFile, typedPassword, logs } = await signInBox();
   t.after(() => harness.lifecycle.dispose());
 
   const typed = await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile });
 
   assert.equal(isError(typed), false, text(typed));
-  assert.match(text(typed), new RegExp(`^Typed 20 characters from ${passwordFile} into ${password} \\(password text 'Password'\\)`));
-  assert.doesNotMatch(text(typed), /could not confirm/);
-  assert.doesNotMatch(text(typed), /now reads/, "no read-back of the field");
+  assert.equal(text(typed), `Typed 20 characters from ${passwordFile} into ${password}.\n\nNext: Call computer_observe with window ${signIn} to see it.`);
   assert.equal(typedPassword(), TEST_PASSWORD, "the file's contents without its line break went to the driver");
-  assert.ok(!text(typed).includes(TEST_PASSWORD) && !logs().includes(TEST_PASSWORD));
+  assert.ok(!logs().includes(TEST_PASSWORD));
   assert.equal(existsSync(passwordFile), true, "the file stays without delete");
   assert.ok(readDesktop(file).calls.some((call) => call.tool === "type_text" && call.args.text === TEST_PASSWORD));
 });
 
-test("computer_type with delete deletes the secret's file after typing, and after typing that failed", async (t) => {
+test("computer_type's result for a secret holds no screen text, so a field that shows the password, even changed, cannot leak it", async (t) => {
+  const { harness, box, tool, signIn, password, passwordFile, typedPassword } = await signInBox((desktop) => {
+    desktop.showsPasswords = true;
+    desktop.typedTextLowercased = true;
+  });
+  t.after(() => harness.lifecycle.dispose());
+
+  const typed = text(await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile }));
+
+  assert.equal(typedPassword(), TEST_PASSWORD.toLowerCase(), "the app changed what it got and shows it");
+  assert.equal(typed, `Typed 20 characters from ${passwordFile} into ${password}.\n\nNext: Call computer_observe with window ${signIn} to see it.`);
+});
+
+test("computer_type with delete deletes the secret's file after typing, and after typing that failed, which says in fixed words that the field may hold part of it", async (t) => {
   const { harness, box, tool, file, password, passwordFile, logs } = await signInBox();
   t.after(() => harness.lifecycle.dispose());
 
   const typed = text(await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile, delete: true }));
-  assert.match(typed, new RegExp(`BB Box deleted ${passwordFile}\\.`));
+  assert.equal(typed.split("\n")[0], `Typed 20 characters from ${passwordFile} into ${password}. BB Box deleted ${passwordFile}.`);
   assert.equal(existsSync(passwordFile), false);
 
   writeFileSync(passwordFile, TEST_PASSWORD);
@@ -5652,26 +5675,33 @@ test("computer_type with delete deletes the secret's file after typing, and afte
   });
   const failed = await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile, delete: true });
   assert.equal(isError(failed), true);
-  assert.match(text(failed), new RegExp(`BB Box deleted ${passwordFile}\\.`));
+  assert.equal(
+    text(failed),
+    `Typing into ${password} failed, and the field may hold part of the password. BB Box deleted ${passwordFile}.\n\nNext: Look at the field with computer_observe, which shows a password field's dots, and clear it before you try again.`,
+  );
   assert.equal(existsSync(passwordFile), false);
-  assert.ok(!text(failed).includes(TEST_PASSWORD) && !logs().includes(TEST_PASSWORD), "the driver's failure repeated the secret, and BB Box masked it");
+  assert.ok(!logs().includes(TEST_PASSWORD), "the driver's failure repeated the secret, and the log line is masked");
 });
 
-test("computer_type masks the secret wherever the screen shows it in the result, as an app that shows a password field's text would", async (t) => {
-  const { harness, box, tool, password, passwordFile, typedPassword } = await signInBox((desktop) => {
-    desktop.showsPasswords = true;
-  });
+test("computer_type refuses a secret for a field that is not a password field, and for a window or the desktop without ref, before it reads the file", async (t) => {
+  const { harness, box, tool, signIn, home, email, typeTextCalls } = await signInBox();
   t.after(() => harness.lifecycle.dispose());
+  const missing = join(home, "missing");
 
-  const typed = text(await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile }));
+  const plain = await tool("computer_type", { box: box.name, ref: email, text_file: missing, delete: true });
+  const window = await tool("computer_type", { box: box.name, window: signIn, text_file: missing });
+  const desktop = await tool("computer_type", { box: box.name, window: "desktop", text_file: missing });
 
-  assert.equal(typedPassword(), TEST_PASSWORD);
-  assert.ok(!typed.includes(TEST_PASSWORD), typed);
-  assert.match(typed, /value="\[hidden\]"/, "the tree's change shows the mask in its place");
+  assert.equal(text(plain), `${email} is not a password field, so BB Box types no secret into it. It typed nothing and left ${missing} as it was.\n\nNext: Give the password field's reference from computer_observe.`);
+  for (const refused of [window, desktop]) {
+    assert.equal(isError(refused), true);
+    assert.equal(text(refused), `A secret goes only into a password field given by ref. BB Box typed nothing and left ${missing} as it was.\n\nNext: Give ref, the password field's reference from computer_observe.`);
+  }
+  assert.equal(typeTextCalls(), 0, "nothing typed");
 });
 
-test("computer_type refuses to type a secret from a file into a field that would show it, or from a file it cannot use, and says nothing of what the file holds", async (t) => {
-  const { harness, box, tool, file, home, password, email, passwordFile, typedPassword } = await signInBox();
+test("computer_type refuses a secret's file it cannot use, says nothing of what it holds, and reads a name that starts with a dash as a file", async (t) => {
+  const { harness, box, tool, home, password, passwordFile, typedPassword, typeTextCalls } = await signInBox();
   t.after(() => harness.lifecycle.dispose());
   const marker = "MARKER-OF-THE-FILE";
   const refused = async (input: Record<string, unknown>, said: RegExp) => {
@@ -5681,8 +5711,6 @@ test("computer_type refuses to type a secret from a file into a field that would
     assert.ok(!text(result).includes(TEST_PASSWORD) && !text(result).includes(marker), text(result));
   };
 
-  await refused({ ref: email, text_file: passwordFile, delete: true }, new RegExp(`^${email} \\(text 'Email'\\) is not a password field, so a secret typed into it would show on the screen and in recordings\\. BB Box typed nothing and left ${passwordFile} as it was\\.\\n\\nNext: Give the password field's reference instead: ${password} \\(password text 'Password'\\)\\.`));
-  assert.equal(existsSync(passwordFile), true);
   await refused({ ref: password, text_file: join(home, "missing") }, /missing does not exist in the box\. BB Box typed nothing\./);
   mkdirSync(join(home, "folder"));
   await refused({ ref: password, text_file: join(home, "folder"), delete: true }, /folder is not a regular file, such as a folder\./);
@@ -5692,61 +5720,34 @@ test("computer_type refuses to type a secret from a file into a field that would
   writeFileSync(join(home, "large"), marker.repeat(Math.ceil(5 * 1024 / marker.length)));
   await refused({ ref: password, text_file: join(home, "large") }, /large is larger than 4 KiB, the most BB Box types from a file\. BB Box typed nothing\./);
   await refused({ ref: password, text_file: passwordFile, text: "x" }, /^Give one of text, keys or text_file\./);
+  await refused({ ref: password, text_file: passwordFile, keys: "Return" }, /^Give one of text, keys or text_file\./);
+  await refused({ ref: password, text: "x", keys: "Return" }, /^Give one of text, keys or text_file\./);
   await refused({ ref: password, text: "x", delete: true }, /^delete goes with text_file only\./);
+  assert.equal(typeTextCalls(), 0, "nothing typed");
 
-  assert.equal(typedPassword(), "");
-  assert.equal(readDesktop(file).calls.filter((call) => call.tool === "type_text").length, 0, "nothing typed");
-});
-
-test("computer_type types a secret from a file into a window's focused element, and says BB Box could not confirm the field hides it", async (t) => {
-  const { harness, box, tool, signIn, passwordFile, typedPassword } = await signInBox();
-  t.after(() => harness.lifecycle.dispose());
-
-  const typed = text(await tool("computer_type", { box: box.name, window: signIn, text_file: passwordFile }));
-
-  assert.match(typed, new RegExp(`^Typed 20 characters from ${passwordFile} into window ${signIn}`));
-  assert.match(typed, /BB Box could not confirm that the field hides what it shows, so the text may show on the screen and in recordings\./);
+  writeFileSync(join(home, "-pw"), TEST_PASSWORD);
+  assert.match(text(await tool("computer_type", { box: box.name, ref: password, text_file: "-pw" })), /^Typed 20 characters from -pw into /);
   assert.equal(typedPassword(), TEST_PASSWORD);
 });
 
-test("where a field's role cannot say, as Chrome's inputs on macOS, a field that reads back masked after typing from a file is taken as a password field", async (t) => {
-  const { harness, box, tool, password, passwordFile, typedPassword } = await signInBox(() => {}, { mac: true });
+test("on macOS, where Chrome gives every input one role, BB Box types a secret only where the Accessibility subrole says secure text field, and refuses where it says otherwise or cannot say", async (t) => {
+  osascriptAnswersFromHome(t);
+  const { harness, box, tool, home, email, password, passwordFile, typedPassword, typeTextCalls } = await signInBox(() => {}, { mac: true });
   t.after(() => harness.lifecycle.dispose());
+  const answer = (said: Record<string, unknown>) => writeFileSync(join(home, "ax-answer.json"), JSON.stringify(said));
+  const missing = join(home, "missing");
 
-  const typed = text(await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile }));
+  answer({ trusted: true, role: "AXTextField", name: "Email", secure: false });
+  assert.equal(text(await tool("computer_type", { box: box.name, ref: email, text_file: missing })).split("\n")[0], `${email} is not a password field, so BB Box types no secret into it. It typed nothing and left ${missing} as it was.`);
+  answer({ trusted: false });
+  assert.equal(text(await tool("computer_type", { box: box.name, ref: password, text_file: missing })).split("\n")[0], `BB Box cannot tell a password field from a plain one here, so it types no secret into ${password}. It typed nothing and left ${missing} as it was.`);
+  answer({ trusted: true, role: "AXTextField", name: "Search", secure: true });
+  assert.match(text(await tool("computer_type", { box: box.name, ref: password, text_file: missing })), /^BB Box cannot tell a password field from a plain one here/, "another element at the field's point");
+  assert.equal(typeTextCalls(), 0, "nothing typed");
 
+  answer({ trusted: true, role: "AXTextField", name: "Password", secure: true });
+  assert.match(text(await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile })), new RegExp(`^Typed 20 characters from ${passwordFile} into ${password}\\.`));
   assert.equal(typedPassword(), TEST_PASSWORD);
-  assert.match(typed, new RegExp(`^Typed 20 characters from ${passwordFile} into ${password} \\(AXTextField 'Password'\\)`));
-  assert.match(typed, /The field does not show what was typed, so BB Box treats it as a password field\./);
-  assert.doesNotMatch(typed, /could not confirm/);
-});
-
-test("where a field's role cannot say, a field that shows the secret after typing from a file is cleared back to what it held, and the typing refused", async (t) => {
-  const { harness, box, tool, file, signIn, email, passwordFile, logs } = await signInBox(() => {}, { mac: true });
-  t.after(() => harness.lifecycle.dispose());
-  await tool("computer_type", { box: box.name, ref: email, text: "tester@example.com" });
-
-  const refused = await tool("computer_type", { box: box.name, ref: email, text_file: passwordFile, delete: true });
-
-  assert.equal(isError(refused), true);
-  assert.match(text(refused), new RegExp(`^The field shows what is typed, so it is not a password field: BB Box cleared it\\. BB Box deleted ${passwordFile}\\.\\n\\nNext: Give the password field's ref\\.$`));
-  assert.equal(readDesktop(file).fields[signIn], "tester@example.com", "the field holds what it held before");
-  assert.equal(existsSync(passwordFile), false);
-  assert.ok(!text(refused).includes(TEST_PASSWORD) && !logs().includes(TEST_PASSWORD));
-});
-
-test("where a field shows the secret and clearing it fails, the refusal says the secret is still on the screen, without showing it", async (t) => {
-  const { harness, box, tool, file, signIn, email, passwordFile, logs } = await signInBox((desktop) => {
-    desktop.setValueIgnored = true;
-  }, { mac: true });
-  t.after(() => harness.lifecycle.dispose());
-
-  const refused = await tool("computer_type", { box: box.name, ref: email, text_file: passwordFile });
-
-  assert.equal(isError(refused), true);
-  assert.match(text(refused), /^The field shows what is typed, so it is not a password field, and BB Box could not clear it: the secret is still in it, on the screen\.\n\nNext: Clear the field now, such as with computer_act's set_value and an empty value, then give the password field's ref\.$/);
-  assert.equal(readDesktop(file).fields[signIn], TEST_PASSWORD, "the fake kept it, as the field would");
-  assert.ok(!text(refused).includes(TEST_PASSWORD) && !logs().includes(TEST_PASSWORD));
 });
 
 test("while a desktop box records, typing from a file is logged as secret typing of 0 characters", async (t) => {
