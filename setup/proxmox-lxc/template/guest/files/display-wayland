@@ -19,7 +19,7 @@
 # Each command exits 0 when it worked, and otherwise non-zero with the reason
 # on stderr.
 set -u
-run=/run/bb-box
+run=${BBBOX_RUN_DIR:-/run/bb-box}
 output=HEADLESS-1
 export SWAYSOCK=$run/sway.sock
 

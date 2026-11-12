@@ -825,7 +825,11 @@ The XFCE desktops add:
 - Cua Driver, as a daemon in the desktop session, with its telemetry and
   update check off;
 - `bb-box-check-desktop`, which checks the display, VNC, Selkies, the GPU,
-  Chrome, the fonts, Mousepad and Cua Driver.
+  Chrome, the fonts, Mousepad and Cua Driver. On the Wayland desktop it
+  first waits up to 10 s for Sway to answer and write
+  `/run/bb-box/display.env`, as `bb-box-display` does at its start, so a
+  check run just after boot reads Sway's socket. Its first line, "Sway
+  ready", fails when Sway does not.
 
 The Docker and microsandbox images, made from the same scripts, carry both
 checks. There, with no systemd, the lines for systemd and its units say
