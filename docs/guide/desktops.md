@@ -128,4 +128,26 @@ Agents see and use a desktop through computer tools, such as taking a screenshot
 
 On a box with a device, the agent's computer tools drive the device: see [agents and the device](devices.md#agents-and-the-device).
 
+### Signing in with a password
+
+An agent types a password without seeing it. It writes the password to a file in the box, such as with 1Password's command-line tool in `box_run`, without printing it:
+
+```sh
+op read "op://vault/item/password" > /tmp/pw
+```
+
+Then it gives `computer_type` the file's path as `text_file`, the password field's reference as `ref`, and `delete` to delete the file after:
+
+```text
+computer_type(box, ref: "e12", text_file: "/tmp/pw", delete: true)
+```
+
+BB Box reads the file in the box itself and sends what it holds to the field, so the password is not in the agent's call, its result, the thread, BB's logs or BB Box's records. The result says only how many characters it typed, what changed on the screen and whether the file was deleted. It never reads the field back, and any text of the password that the screen shows in the result is replaced with `[hidden]`.
+
+- The file holds at most 4 KiB. One line break at its end is left out, as `op read` adds one.
+- BB Box refuses a missing file, a folder, a file the box user cannot read and an empty file, and says nothing of what the file holds.
+- BB Box refuses a field that would show the text, such as an email or search field, and names the window's password fields. On macOS a browser's password field reads as a plain text field, on Windows a password box may read as an edit field, and with `window` instead of `ref` BB Box cannot see the field: in each case it types and says it could not confirm the field hides the text.
+- `delete` deletes the file once BB Box has read it, whether the typing works or not.
+- The email and an authenticator code are not secret in the same way: type them as `text`.
+
 An agent can record a desktop with `box_record` and show you the clip in the thread, with each step it tests and its result captioned. See [recordings](recording.md).

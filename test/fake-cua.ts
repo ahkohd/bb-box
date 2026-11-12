@@ -131,6 +131,10 @@ export interface FakeDesktop {
    * Cua on Windows then says the click failed its foreground check (#484).
    */
   trayMenus?: boolean;
+  passwords?: Record<string, string>;
+  signInFocus?: Record<string, string>;
+  showsPasswords?: boolean;
+  typingFailsEchoingText?: boolean;
 }
 
 const desktopPause = new Int32Array(new SharedArrayBuffer(4));
@@ -179,6 +183,14 @@ export function openTasks(desktop: FakeDesktop, tasks: string[]): FakeWindow {
   desktop.windows.push(window);
   desktop.tasks[window.id] = tasks;
   desktop.fields[window.id] = "";
+  return window;
+}
+
+export function openSignIn(desktop: FakeDesktop): FakeWindow {
+  const window: FakeWindow = { id: desktop.nextWindow++, pid: desktop.nextPid++, app: "signin", title: "Sign in", x: 100, y: 100, width: 600, height: 400, onScreen: true };
+  desktop.windows.push(window);
+  desktop.fields[window.id] = "";
+  desktop.passwords = { ...desktop.passwords, [window.id]: "" };
   return window;
 }
 
@@ -315,6 +327,22 @@ function shape(desktop: FakeDesktop, window: FakeWindow): Node {
       ],
     };
     return { key: "frame", role: "frame", label: window.title, actions: [], frame: whole, children: [page] };
+  }
+  if (window.app === "signin") {
+    const password = desktop.passwords?.[window.id] ?? "";
+    const shown = desktop.showsPasswords ? password : "\u2022".repeat([...password].length);
+    return {
+      key: "frame",
+      role: "frame",
+      label: window.title,
+      actions: [],
+      frame: whole,
+      children: [
+        { key: "email", role: "text", label: "Email", value: desktop.fields[window.id] ?? "", actions: [], frame: frame(20, 40, 400, 40), children: [] },
+        { key: "password", role: desktop.mac ? "AXSecureTextField" : "password text", label: "Password", value: shown, actions: [], frame: frame(20, 100, 400, 40), children: [] },
+        { key: "signin", role: "push button", label: "Sign in", actions: ["click"], frame: frame(20, 160, 120, 40), children: [] },
+      ],
+    };
   }
   if (window.app !== "tasks") {
     return { key: "frame", role: "frame", label: window.title, actions: [], frame: whole, children: [] };
@@ -721,6 +749,7 @@ export class FakeCua {
     }
     // Any other click closes a context menu.
     desktop.windows = desktop.windows.filter((other) => other.menuOf === undefined || (other.menuOf !== window.id && other.id !== window.id));
+    if (window.app === "signin" && (node.key === "email" || node.key === "password")) desktop.signInFocus = { ...desktop.signInFocus, [window.id]: node.key };
     const tasks = desktop.tasks[window.id];
     if (node.key.startsWith("delete:") && tasks) {
       desktop.tasks[window.id] = tasks.filter((task) => `delete:${task}` !== node.key);
@@ -750,14 +779,20 @@ export class FakeCua {
       if (args.element_token !== undefined) {
         const node = this.#element(desktop, window, args.element_token);
         if (!("key" in node)) return node;
-        if (node.key !== "field" && node.key !== "document") return text(`${node.role} "${node.label}" does not take text.`, { code: "not_editable" }, true);
+        if (node.key !== "field" && node.key !== "document" && node.key !== "email" && node.key !== "password") return text(`${node.role} "${node.label}" does not take text.`, { code: "not_editable" }, true);
+        if (window.app === "signin") desktop.signInFocus = { ...desktop.signInFocus, [window.id]: node.key };
       }
+      if (desktop.typingFailsEchoingText) return text(`Could not type "${String(args.text)}": the app is not responding.`, undefined, true);
       if (args.delivery_mode !== "foreground" && (!isEditor(window) || desktop.wayland)) {
         return text('Background delivery is not available for this target; retry with delivery_mode:"foreground".', {
           code: "background_unavailable",
           effect: "none",
           escalation: { recommended: "foreground" },
         }, true);
+      }
+      if (window.app === "signin" && (desktop.signInFocus?.[window.id] ?? "password") === "password") {
+        desktop.passwords = { ...desktop.passwords, [window.id]: `${desktop.passwords?.[window.id] ?? ""}${String(args.text)}` };
+        return text(`Typed ${String(args.text).length} characters.`, { delivery_mode: String(args.delivery_mode ?? "background") });
       }
       desktop.fields[window.id] = `${desktop.fields[window.id] ?? ""}${String(args.text)}`;
       if (window.app === "editor") window.title = "*Untitled 1 - Editor";

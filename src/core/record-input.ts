@@ -27,7 +27,8 @@ export type ActedInput =
   | { readonly type: "click"; readonly button: MouseButton; readonly count: 1 | 2; readonly point: InputPoint; readonly area: InputArea | null; readonly role?: string | null; readonly window?: InputArea | null }
   | { readonly type: "scroll"; readonly point: InputPoint; readonly window?: InputArea | null }
   | { readonly type: "keys"; readonly key: string; readonly modifiers: readonly string[] }
-  | { readonly type: "typing"; readonly characters: number; readonly area: InputArea | null; readonly secret: boolean; readonly role?: string | null; readonly window?: InputArea | null };
+  | { readonly type: "typing"; readonly characters: number; readonly area: InputArea | null; readonly secret: boolean; readonly role?: string | null; readonly window?: InputArea | null }
+  | { readonly type: "secret_typing"; readonly area: InputArea | null; readonly role: string | null; readonly window: InputArea | null };
 
 export type PersonInput =
   | { readonly type: "pointer"; readonly x: number; readonly y: number; readonly buttons: number }
@@ -362,6 +363,12 @@ export class RecordingInputs {
         const press = composing || started ? TYPING : agentPress(input.key, input.modifiers, recording.os);
         if (press.type === "typing") this.#push(recording, { at, by: "agent", type: "typing", characters: 1, space: "screen", area: null, secret: true });
         else this.#push(recording, { at, by: "agent", type: "keys", chord: press.chord });
+        return;
+      }
+      case "secret_typing": {
+        const started = { secret: true, window: input.window, call: ++recording.calls };
+        recording.typing = started;
+        this.#push(recording, { at, by: "agent", type: "typing", characters: 0, space: "screen", area: input.area, secret: true, role: input.role, window: started.window, call: started.call });
         return;
       }
       case "typing": {

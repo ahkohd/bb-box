@@ -1,5 +1,7 @@
 import type { BoxRecord } from "./boxes.ts";
-import { ComputerError, IMAGE_MAX_EDGE, TREE_LIMIT, chord, pngSize, type ActInput, type ComputerResult, type Direction, type TypeInput, type WindowRef } from "./computer.ts";
+import { ComputerError, IMAGE_MAX_EDGE, TREE_LIMIT, checkFileTyping, chord, plainFieldRefusal, pngSize, typeFromFile, type ActInput, type ComputerResult, type Direction, type TypeInput, type WindowRef } from "./computer.ts";
+import { fieldSecrecy, type FieldSecrecy, type RunInBox } from "./secret-file.ts";
+import type { RunResult } from "../transports/types.ts";
 import {
   KEYBOARD_KEY_ROLE,
   PERSON_HAS_CONTROL_WORDS,
@@ -59,6 +61,7 @@ export interface DeviceComputerDeps {
   personHasControl(boxId: string): boolean;
   takeBack(boxId: string): Promise<boolean>;
   sleep?(ms: number, signal?: AbortSignal): Promise<void>;
+  runOwn?(box: BoxRecord, script: string, options: { readonly timeoutMs: number; readonly maxOutputBytes: number; readonly signal?: AbortSignal }): Promise<RunResult>;
 }
 
 interface Shown {
@@ -651,15 +654,47 @@ export class DeviceComputer {
   }
 
   async type(box: BoxRecord, input: TypeInput, signal?: AbortSignal): Promise<ComputerResult> {
+    checkFileTyping(input);
     this.#window(input.window);
     this.#gate(box);
     return this.#run(box, (state) => {
       this.#gate(box);
-      return this.#typed(box, state, input, signal);
+      return input.textFile === undefined ? this.#typed(box, state, input, signal) : this.#typeFile(box, state, input, input.textFile, signal);
     });
   }
 
-  async #typed(box: BoxRecord, state: BoxState, input: { readonly text?: string; readonly keys?: string; readonly ref?: string }, _signal?: AbortSignal): Promise<ComputerResult> {
+  async #typeFile(box: BoxRecord, state: BoxState, input: TypeInput, path: string, signal?: AbortSignal): Promise<ComputerResult> {
+    const run = this.#runner(box);
+    const os = box.capabilities.os;
+    let secrecy: FieldSecrecy = "unknown";
+    if (input.ref !== undefined) {
+      const before = await this.#read(box, state);
+      const shown = this.#found(state, before, input.ref);
+      secrecy = fieldSecrecy(os, shown.element.role);
+      if (secrecy === "shows") {
+        const hiding = before.shown.filter((each) => fieldSecrecy(os, each.element.role) === "hides").map((each) => `${each.ref}, ${elementWords(each.element)}`);
+        throw plainFieldRefusal(`${shown.ref}, ${elementWords(shown.element)},`, path, hiding);
+      }
+    }
+    return typeFromFile({
+      run,
+      os,
+      path,
+      deleteFile: input.deleteFile === true,
+      secrecy,
+      typing: [],
+      signal,
+      type: (secret) => this.#typed(box, state, { ref: input.ref, text: secret }, signal, path),
+    });
+  }
+
+  #runner(box: BoxRecord): RunInBox {
+    const runOwn = this.#deps.runOwn;
+    if (!runOwn) throw new ComputerError("unsupported", `${PRODUCT} cannot read files for box ${box.name}.`, "Give the text with text instead.");
+    return (script, options) => runOwn(box, script, options);
+  }
+
+  async #typed(box: BoxRecord, state: BoxState, input: { readonly text?: string; readonly keys?: string; readonly ref?: string }, _signal?: AbortSignal, fromFile: string | null = null): Promise<ComputerResult> {
     if (input.text === undefined && input.keys === undefined) throw new ComputerError("input", "Give text to type, keys to press, or both.", "Such as text \"hello\", or keys \"Enter\".");
     const key = input.keys === undefined ? null : deviceKey(input.keys);
     let before: Snapshot;
@@ -691,8 +726,9 @@ export class DeviceComputer {
     }
     if (key) await this.#send(box, { type: "key", key: key.key, modifiers: key.modifiers }, `Pressing ${input.keys} failed`);
     const seen = await this.#after(box, state, before, frames);
-    const typed = [input.text ? `Typed ${quoted(input.text)}` : null, key ? `pressed ${input.keys}` : null].filter(Boolean).join(" and ");
-    const reads = ref ? readBack(seen.after, ref) : focusedReads(seen.after);
+    const typedText = fromFile === null ? `Typed ${quoted(input.text ?? "")}` : `Typed ${input.text!.length} character${input.text!.length === 1 ? "" : "s"} from ${fromFile}`;
+    const typed = [input.text ? typedText : null, key ? `pressed ${input.keys}` : null].filter(Boolean).join(" and ");
+    const reads = fromFile !== null ? "" : ref ? readBack(seen.after, ref) : focusedReads(seen.after);
     return { text: [`${typed[0]!.toUpperCase()}${typed.slice(1)} into ${words}.${reads}${keyboardNote}`, ...seen.parts].join("\n\n"), hints: [] };
   }
 

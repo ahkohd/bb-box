@@ -374,6 +374,16 @@ Open an app or a URL with `computer_launch`, then read a window with
   the tool says so: observe the window again.
 - When an app refuses input in the background, BB Box uses the real pointer
   or keyboard, and says so. The desktop's focus may then have moved.
+- Type a password from a file, never as `text`. Write it in the box without
+  printing it, such as `op read "op://vault/item/password" > /tmp/pw` in
+  `box_run`, then call `computer_type` with the password field's `ref`,
+  `text_file: "/tmp/pw"` and `delete: true`. BB Box refuses a field it can
+  tell would show the text, and a missing, empty or larger than 4 KiB file.
+  On macOS and Windows a browser's password field can read as a plain text
+  field: BB Box types into it and says it could not confirm the field hides
+  the text, so give the right `ref`. Type the email and an authenticator
+  code as `text`. This works on device boxes too, with the file on the
+  device's host.
 - On a Wayland desktop, text that goes through the real keyboard is typed
   with a US keyboard layout. Text with a character that layout lacks, such
   as `é`, is pasted instead: BB Box puts it on the box's clipboard, presses

@@ -7,7 +7,7 @@
 // The agent never sees Cua's own words for what went wrong.
 
 import { createHash, randomBytes } from "node:crypto";
-import type { ByteChannel, GuestOs } from "../transports/types.ts";
+import type { ByteChannel, GuestOs, RunResult } from "../transports/types.ts";
 import { currentKindId, kindInfo } from "../backends/kinds.ts";
 import { BoxError, type BoxRecord } from "./boxes.ts";
 import type { Owner } from "./control.ts";
@@ -15,6 +15,7 @@ import { inSlot, sharedBoxWords } from "./device-host.ts";
 import { driverCommand } from "./in-box.ts";
 import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
 import { typingKeptSecret, type ActedInput, type InputArea, type TypedField } from "./record-input.ts";
+import { fieldSecrecy, maskSecrets, readSecretFile, removeSecretFile, type FieldSecrecy, type RunInBox } from "./secret-file.ts";
 import { PRODUCT } from "../brand.ts";
 
 export const PAUSED =
@@ -114,6 +115,84 @@ export interface ComputerResult {
   readonly hints: readonly string[];
 }
 
+export const UNCONFIRMED_HIDDEN_WORDS = `${PRODUCT} could not confirm that the field hides what it shows, so the text may show on the screen and in recordings.`;
+
+export function checkFileTyping(input: TypeInput): void {
+  if (input.textFile !== undefined && (input.text !== undefined || input.keys !== undefined)) {
+    throw new ComputerError("input", "Give one of text, keys or text_file.", "text_file types a secret from a file in the box, such as a password; text types characters; keys presses one chord.");
+  }
+  if (input.deleteFile !== undefined && input.textFile === undefined) {
+    throw new ComputerError("input", "delete goes with text_file only.", "Give text_file, the path of the file in the box that holds the secret.");
+  }
+}
+
+export function plainFieldRefusal(target: string, path: string, passwordFields: readonly string[]): ComputerError {
+  const hint = passwordFields.length
+    ? `Give the password field's reference instead: ${passwordFields.slice(0, 3).join(", ")}.`
+    : "Give the password field's reference from computer_observe instead.";
+  return new ComputerError("refused", `${target} is not a password field, so a secret typed into it would show on the screen and in recordings. ${PRODUCT} typed nothing and left ${path} as it was.`, hint);
+}
+
+function removalWords(path: string, removed: boolean): string {
+  return removed ? `${PRODUCT} deleted ${path}.` : `${PRODUCT} could not delete ${path}: delete it with box_run.`;
+}
+
+export function maskedResult(result: ComputerResult, secrets: readonly string[]): ComputerResult {
+  return { ...result, text: maskSecrets(result.text, secrets), hints: result.hints.map((hint) => maskSecrets(hint, secrets)) };
+}
+
+export function maskedError(error: unknown, secrets: readonly string[]): unknown {
+  if (!secrets.length) return error;
+  if (error instanceof ComputerError) return new ComputerError(error.code, maskSecrets(error.message, secrets), error.hint === null ? null : maskSecrets(error.hint, secrets));
+  const message = error instanceof Error ? error.message : String(error);
+  const masked = maskSecrets(message, secrets);
+  const stack = error instanceof Error ? (error.stack ?? "") : "";
+  if (masked === message && maskSecrets(stack, secrets) === stack) return error;
+  return new ComputerError("driver", masked, "Try again.");
+}
+
+function withSentence(error: unknown, sentence: string): unknown {
+  if (error instanceof ComputerError) return new ComputerError(error.code, `${error.message} ${sentence}`, error.hint);
+  if (error instanceof Error) {
+    error.message = `${error.message} ${sentence}`;
+    return error;
+  }
+  return error;
+}
+
+export interface FileTyping {
+  readonly run: RunInBox;
+  readonly os: GuestOs;
+  readonly path: string;
+  readonly deleteFile: boolean;
+  readonly secrecy: FieldSecrecy;
+  readonly typing: string[];
+  readonly signal?: AbortSignal;
+  type(secret: string): Promise<ComputerResult>;
+}
+
+export async function typeFromFile(file: FileTyping): Promise<ComputerResult> {
+  const read = await readSecretFile(file.run, file.os, file.path, file.signal);
+  if (!read.ok) throw new ComputerError("refused", read.reason, read.hint);
+  const secrets = [read.secret];
+  const remove = async () => (file.deleteFile ? removalWords(file.path, await removeSecretFile(file.run, file.os, file.path)) : null);
+  file.typing.push(read.secret);
+  try {
+    let typed: ComputerResult;
+    try {
+      typed = await file.type(read.secret);
+    } catch (error) {
+      const removal = await remove();
+      const masked = maskedError(error, secrets);
+      throw removal ? withSentence(masked, removal) : masked;
+    }
+    const notes = [file.secrecy === "unknown" ? UNCONFIRMED_HIDDEN_WORDS : null, await remove()].filter((note) => note !== null);
+    return maskedResult(notes.length ? { ...typed, text: `${typed.text}\n\n${notes.join(" ")}` } : typed, secrets);
+  } finally {
+    file.typing.splice(file.typing.indexOf(read.secret), 1);
+  }
+}
+
 export interface ComputerDeps {
   onInput?(box: BoxRecord, input: ActedInput, sentAt: number): void;
   /** Starts `script` in the box through its command transport's spawn. */
@@ -141,6 +220,7 @@ export interface ComputerDeps {
   keyText?(box: BoxRecord, input: { readonly windowId: number; readonly text: string }, signal?: AbortSignal): Promise<"typed" | "unsupported">;
   /** Puts back the clipboard's text that stageText saved (swayRestoreScript). */
   restoreClipboard?(box: BoxRecord, signal?: AbortSignal): Promise<void>;
+  runOwn?(box: BoxRecord, script: string, options: { readonly timeoutMs: number; readonly maxOutputBytes: number; readonly signal?: AbortSignal }): Promise<RunResult>;
   /** Who controls the box's desktop now. */
   owner(boxId: string): Owner;
   /** Takes control of the box's desktop back from a person (038). False when the agent had it already. */
@@ -179,6 +259,8 @@ export interface ActInput {
 export interface TypeInput {
   readonly text?: string;
   readonly keys?: string;
+  readonly textFile?: string;
+  readonly deleteFile?: boolean;
   readonly ref?: string;
   /** Without ref: the window whose focused element gets the input, or the desktop, for whatever has the focus. */
   readonly window?: WindowRef;
@@ -879,18 +961,17 @@ const TERMINALS = "foot|footclient|kitty|Alacritty|alacritty|org.wezfurlong.wezt
  * none or no Sway, or where the text has a character the US layout lacks,
  * which bb-box-type types none of (#707).
  */
-export function swayKeyboardScript(windowId: number, text: string): string {
-  const encoded = Buffer.from(text, "utf8").toString("base64");
+export function swayKeyboardScript(windowId: number): string {
   return `set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
 tool=$(command -v bb-box-type || echo /usr/local/libexec/bb-box/type)
-[ -x "$tool" ] && tree=$(swaymsg -t get_tree 2>/dev/null) || exit 3
+[ -x "$tool" ] && tree=$(swaymsg -t get_tree 2>/dev/null </dev/null) || exit 3
 focused=$(printf %s "$tree" | python3 -c 'import json,sys
 def walk(n):
     if n.get("focused"): print(n["id"]); return True
     return any(walk(c) for c in n.get("nodes",[])+n.get("floating_nodes",[]))
 walk(json.load(sys.stdin))')
-[ "$focused" = ${windowId} ] || swaymsg "[con_id=${windowId}] focus" >/dev/null || exit 4
-printf %s ${encoded} | base64 -d | "$tool"`;
+[ "$focused" = ${windowId} ] || swaymsg "[con_id=${windowId}] focus" >/dev/null </dev/null || exit 4
+"$tool"`;
 }
 
 const CLIPBOARD_ENV = `set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
@@ -910,15 +991,14 @@ saved="\${XDG_RUNTIME_DIR:-$HOME}/.bb-box-clipboard"`;
  * longer text. The paste key is Cua's, with its US keymap: GTK apps ignore
  * a Ctrl+V from wtype's (#707).
  */
-export function swayStageScript(windowId: number, text: string): string {
-  const encoded = Buffer.from(text, "utf8").toString("base64");
+export function swayStageScript(windowId: number): string {
   return `${CLIPBOARD_ENV}
-command -v wl-copy >/dev/null && tree=$(swaymsg -t get_tree 2>/dev/null) || exit 3
+command -v wl-copy >/dev/null && tree=$(swaymsg -t get_tree 2>/dev/null </dev/null) || exit 3
 umask 077; rm -f "$saved"
-if timeout 2 wl-paste -l 2>/dev/null | grep -qx -e 'text/plain;charset=utf-8' -e text/plain -e UTF8_STRING; then
-  timeout 2 wl-paste -n -t text > "$saved.new" 2>/dev/null && mv "$saved.new" "$saved"
+if timeout 2 wl-paste -l 2>/dev/null </dev/null | grep -qx -e 'text/plain;charset=utf-8' -e text/plain -e UTF8_STRING; then
+  timeout 2 wl-paste -n -t text > "$saved.new" 2>/dev/null </dev/null && mv "$saved.new" "$saved"
 fi
-printf %s ${encoded} | base64 -d | wl-copy >/dev/null 2>&1 || exit 5
+wl-copy >/dev/null 2>&1 || exit 5
 app=$(printf %s "$tree" | python3 -c 'import json,sys
 def walk(n):
     if n["id"]==${windowId}: print(n.get("app_id") or (n.get("window_properties") or {}).get("class") or "-"); return True
@@ -990,9 +1070,10 @@ function toolsTakingSession(listed: unknown): ReadonlySet<string> {
 export class Computer {
   readonly #deps: ComputerDeps;
   readonly #boxes = new Map<string, BoxState>();
+  readonly #typing: string[] = [];
 
   constructor(deps: ComputerDeps) {
-    this.#deps = deps;
+    this.#deps = { ...deps, logError: (operation, error) => deps.logError(operation, maskedError(error, this.#typing)) };
   }
 
   /** Lists the desktop's windows. */
@@ -1195,12 +1276,17 @@ export class Computer {
     return { x: window.x + x * scaleX, y: window.y + y * scaleY };
   }
 
-  #noteTyping(use: Use, keys: { key: string; modifiers: string[] } | null, text: string | null, element: Element | null, window: Rect | null): void {
+  #noteTyping(use: Use, keys: { key: string; modifiers: string[] } | null, text: string | null, element: Element | null, window: Rect | null, fromFile: boolean): void {
     if (!this.#deps.onInput) return;
     const typed = text ?? "";
+    const area = element?.frame ? toArea(element.frame) : null;
+    const role = element?.role ?? null;
+    const typedWindow = window ? toArea(window) : null;
     const input: ActedInput = keys
       ? { type: "keys", key: keys.key, modifiers: keys.modifiers }
-      : { type: "typing", characters: typed.length, area: element?.frame ? toArea(element.frame) : null, secret: typingKeptSecret(typedField(element), typed), role: element?.role ?? null, window: window ? toArea(window) : null };
+      : fromFile
+        ? { type: "secret_typing", area, role, window: typedWindow }
+        : { type: "typing", characters: typed.length, area, secret: typingKeptSecret(typedField(element), typed), role, window: typedWindow };
     use.typedInput = { input, sentAt: Date.now() };
   }
 
@@ -1209,15 +1295,48 @@ export class Computer {
     use.typedInput = null;
     if (!pending || !this.#deps.onInput) return;
     this.#deps.onInput(use.box, pending.input, pending.sentAt);
-    if (pending.input.type === "typing") this.#deps.onInput(use.box, { type: "typing", characters: 0, area: null, secret: pending.input.secret }, Date.now());
+    if (pending.input.type === "typing" || pending.input.type === "secret_typing") this.#deps.onInput(use.box, { type: "typing", characters: 0, area: null, secret: pending.input.type === "secret_typing" || pending.input.secret }, Date.now());
   }
 
   /** Types text, or presses a key chord, into a reference, a window's focused element, or whatever has the focus. */
   type(box: BoxRecord, input: TypeInput, signal?: AbortSignal): Promise<ComputerResult> {
-    return this.#run(box, signal, (use) => this.#type(use, input));
+    checkFileTyping(input);
+    return this.#run(box, signal, (use) => (input.textFile === undefined ? this.#type(use, input) : this.#typeFile(use, input, input.textFile)));
   }
 
-  async #type(use: Use, input: TypeInput): Promise<ComputerResult> {
+  async #typeFile(use: Use, input: TypeInput, path: string): Promise<ComputerResult> {
+    const run = this.#runner(use.box);
+    const os = use.box.capabilities.os;
+    let secrecy: FieldSecrecy = "unknown";
+    if (input.ref !== undefined) {
+      const { snapshot, element } = await this.#element(use, input.ref);
+      secrecy = fieldSecrecy(os, element.role);
+      if (secrecy === "shows") {
+        const hiding = snapshot.elements.filter((each) => fieldSecrecy(os, each.role) === "hides").map((each) => `${each.ref} (${describe(each.role, each.label)})`);
+        throw plainFieldRefusal(`${refName(input.ref)} (${describe(element.role, element.label)})`, path, hiding);
+      }
+    } else if (input.window === undefined) {
+      throw new ComputerError("input", 'Give ref, or window to type into its focused element, or window "desktop".', "Get both from computer_observe.");
+    }
+    return typeFromFile({
+      run,
+      os,
+      path,
+      deleteFile: input.deleteFile === true,
+      secrecy,
+      typing: this.#typing,
+      signal: use.signal,
+      type: (secret) => this.#type(use, { ref: input.ref, window: input.window, text: secret }, path),
+    });
+  }
+
+  #runner(box: BoxRecord): RunInBox {
+    const runOwn = this.#deps.runOwn;
+    if (!runOwn) throw new ComputerError("unsupported", `${PRODUCT} cannot read files in box ${box.name}.`, "Give the text with text instead.");
+    return (script, options) => runOwn(box, script, options);
+  }
+
+  async #type(use: Use, input: TypeInput, fromFile: string | null = null): Promise<ComputerResult> {
     if ((input.text === undefined) === (input.keys === undefined)) {
       throw new ComputerError("input", "Give text or keys, not both and not neither.", 'text types characters; keys presses one chord, such as "ctrl+a" or "Return".');
     }
@@ -1236,7 +1355,7 @@ export class Computer {
       args = { pid: snapshot.window.pid, window_id: snapshot.window.id, ...this.#token(snapshot, element) };
       label = `${element.ref} (${describe(element.role, element.label)})`;
       before = snapshot;
-      readBack = element.ref;
+      readBack = fromFile === null ? element.ref : null;
       target = { args, label, snapshot, element };
     } else if (input.window === "desktop") {
       args = {};
@@ -1251,9 +1370,10 @@ export class Computer {
     } else {
       throw new ComputerError("input", 'Give ref, or window to type into its focused element, or window "desktop".', "Get both from computer_observe.");
     }
-    this.#noteTyping(use, keys, input.text ?? null, target?.element ?? null, typedWindow);
+    this.#noteTyping(use, keys, input.text ?? null, target?.element ?? null, typedWindow, fromFile !== null);
     const count = input.text?.length ?? 0;
-    const what = keys ? `Pressed ${input.keys!.trim()}` : `Typed ${count} character${count === 1 ? "" : "s"}`;
+    const characters = `${count} character${count === 1 ? "" : "s"}`;
+    const what = keys ? `Pressed ${input.keys!.trim()}` : fromFile === null ? `Typed ${characters}` : `Typed ${characters} from ${fromFile}`;
     const tool = keys ? "press_key" : "type_text";
     const typed: Json = keys ? { key: keys.key, modifiers: keys.modifiers } : { text: input.text };
     // A menu or popup never becomes the active window, so its keys go to the desktop, where it holds the focus.

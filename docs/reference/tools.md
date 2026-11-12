@@ -352,13 +352,15 @@ Take control of a desktop box's desktop, or a device box's device, back from a p
 
 ## computer_type
 
-Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. On a device box, text a US keyboard has goes as keys and the rest as one paste; cmd is the Command key on iOS, and ctrl+a selects all on Android, where ctrl+v pastes nothing in Chrome: send the text instead. On a device, text into an element waits after the tap that focuses it, up to 5 s, until a field has the focus and its keyboard shows. For an open menu or popup, give its window ID, or window "desktop" for whatever has the focus. Says what the element reads afterwards.
+Type text, or press a key or chord such as Escape, Return, Tab, ctrl+a or ctrl+shift+t, into an element by its reference, or into the focused element of a window. On a device box, text a US keyboard has goes as keys and the rest as one paste; cmd is the Command key on iOS, and ctrl+a selects all on Android, where ctrl+v pastes nothing in Chrome: send the text instead. On a device, text into an element waits after the tap that focuses it, up to 5 s, until a field has the focus and its keyboard shows. For an open menu or popup, give its window ID, or window "desktop" for whatever has the focus. Says what the element reads afterwards. For a password, give text_file instead of text: the path of a file in the box that holds it, written with box_run without printing it, such as op read "op://vault/item/password" > /tmp/pw. Give delete true to delete the file after. BB Box reads the file itself, so the password is not in your call, its result or the logs. Give the password field's ref: BB Box refuses a field it can tell would show the text, and says so when it cannot tell. Type the email and an authenticator code as text.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `box` | string | yes | The box's name or ID, from box_acquire or box_list. |
 | `text` | string | no | Characters to type. |
 | `keys` | string | no | One key or chord to press, such as Escape, Return, Tab, ctrl+a or ctrl+shift+t: modifiers and a key joined by "+". Write ctrl++ for ctrl and the + key. |
+| `text_file` | string | no | Instead of text: the path of a file in the box whose contents to type, such as a password. At most 4 KiB; one line break at its end is left out. |
+| `delete` | boolean | no | With text_file: delete the file after typing, whether the typing worked or not. Defaults to false. |
 | `ref` | string | no | The element's reference from computer_observe, such as e12. |
 | `window` | integer or string or string | no | Without ref: the window whose focused element gets the input, a menu or popup by its window ID, or "desktop" for whatever has the focus. |
 

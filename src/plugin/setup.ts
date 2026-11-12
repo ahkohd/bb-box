@@ -1071,18 +1071,19 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     // Text on a Sway desktop goes in with the image's US keyboard, or by paste, as Cua's typing loses characters (#707).
     async keyText(box, input, signal) {
       if (box.capabilities.os !== "linux") return "unsupported";
-      const result = await boxes.runOwn(box, swayKeyboardScript(input.windowId, input.text), { timeoutMs: 120_000, signal, maxOutputBytes: 4096 });
+      const result = await boxes.runOwn(box, swayKeyboardScript(input.windowId), { stdin: input.text, timeoutMs: 120_000, signal, maxOutputBytes: 4096 });
       if (result.exitCode === 3) return "unsupported";
       if (result.exitCode !== 0) throw new Error(`Typing on the desktop failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
       return "typed";
     },
     async stageText(box, input, signal) {
       if (box.capabilities.os !== "linux") return "unsupported";
-      const result = await boxes.runOwn(box, swayStageScript(input.windowId, input.text), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
+      const result = await boxes.runOwn(box, swayStageScript(input.windowId), { stdin: input.text, timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
       if (result.exitCode === 3) return "unsupported";
       if (result.exitCode !== 0) throw new Error(`Putting the text on the clipboard failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
       return result.stdout.trim() === "terminal" ? "terminal" : "app";
     },
+    runOwn: (box, script, options) => boxes.runOwn(box, script, options),
     async restoreClipboard(box, signal) {
       const result = await boxes.runOwn(box, swayRestoreScript(), { timeoutMs: 30_000, signal, maxOutputBytes: 4096 });
       if (result.exitCode !== 0) throw new Error(`Putting the clipboard back failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
@@ -1112,6 +1113,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     agentRequest: (box, request) => devices.agentRequest(box, request),
     personHasControl: (boxId) => desktops?.control.view(boxId).owner === "human",
     takeBack: (boxId) => desktops?.control.takeBack(boxId) ?? Promise.resolve(false),
+    runOwn: (box, script, options) => boxes.runOwn(box, script, options),
   });
   deviceComputer = deviceComputing;
   const desktop = registerDesktop(bb, {

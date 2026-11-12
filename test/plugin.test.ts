@@ -44,7 +44,7 @@ import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { waylandPointerScript } from "../src/backends/wayvnc.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, loseLastByteOfCopies, type FakeBackendOptions } from "./fake-backend.ts";
 import { FakeSnapshots } from "./fake-snapshots.ts";
-import { readDesktopFile, tasksDesktop, writeDesktopFile, type FakeDesktop } from "./fake-cua.ts";
+import { openSignIn, readDesktopFile, tasksDesktop, writeDesktopFile, type FakeDesktop } from "./fake-cua.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
 import { fakeDaemon, fakeFfmpeg, joined, tempDir, testContext } from "./helpers.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
@@ -5597,6 +5597,127 @@ test("on Sway, text goes in with the image's US keyboard where it has one, and i
   const accented = text(await tool("computer_type", { box: box.name, window: 100, text: "café" }));
   assert.match(accented, /pasting it with the real keyboard's Ctrl\+V/, "é is not on a US keyboard");
   assert.equal(readFileSync(join(home, "copies"), "utf8"), "café\nold\n");
+});
+
+const TEST_PASSWORD = "Vq7#mZ2!pL9$wR4xT8kN";
+
+async function signInBox(edit: (desktop: FakeDesktop) => void = () => {}) {
+  const started = await desktopBox();
+  let signIn = 0;
+  editDesktop(started.file, (desktop) => {
+    signIn = openSignIn(desktop).id;
+    edit(desktop);
+  });
+  const home = /stdout:\n(.*)\n/.exec(text(await started.tool("box_run", { box: started.box.name, command: "pwd" })))![1]!;
+  const tree = text(await started.tool("computer_observe", { box: started.box.name, window: signIn }));
+  const password = refOf(tree, '"Password"');
+  const email = refOf(tree, '"Email"');
+  const passwordFile = join(home, "pw");
+  writeFileSync(passwordFile, `${TEST_PASSWORD}\n`);
+  const typedPassword = () => readDesktop(started.file).passwords?.[signIn] ?? "";
+  const logs = () => started.harness.inspection.logEntries.map((entry) => entry.message).join("\n");
+  return { ...started, signIn, home, password, email, passwordFile, typedPassword, logs };
+}
+
+test("computer_type types a password from a file in the box into a password field, and says only how many characters it typed", async (t) => {
+  const { harness, box, tool, file, password, passwordFile, typedPassword, logs } = await signInBox();
+  t.after(() => harness.lifecycle.dispose());
+
+  const typed = await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile });
+
+  assert.equal(isError(typed), false, text(typed));
+  assert.match(text(typed), new RegExp(`^Typed 20 characters from ${passwordFile} into ${password} \\(password text 'Password'\\)`));
+  assert.doesNotMatch(text(typed), /could not confirm/);
+  assert.doesNotMatch(text(typed), /now reads/, "no read-back of the field");
+  assert.equal(typedPassword(), TEST_PASSWORD, "the file's contents without its line break went to the driver");
+  assert.ok(!text(typed).includes(TEST_PASSWORD) && !logs().includes(TEST_PASSWORD));
+  assert.equal(existsSync(passwordFile), true, "the file stays without delete");
+  assert.ok(readDesktop(file).calls.some((call) => call.tool === "type_text" && call.args.text === TEST_PASSWORD));
+});
+
+test("computer_type with delete deletes the secret's file after typing, and after typing that failed", async (t) => {
+  const { harness, box, tool, file, password, passwordFile, logs } = await signInBox();
+  t.after(() => harness.lifecycle.dispose());
+
+  const typed = text(await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile, delete: true }));
+  assert.match(typed, new RegExp(`BB Box deleted ${passwordFile}\\.`));
+  assert.equal(existsSync(passwordFile), false);
+
+  writeFileSync(passwordFile, TEST_PASSWORD);
+  editDesktop(file, (desktop) => {
+    desktop.typingFailsEchoingText = true;
+  });
+  const failed = await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile, delete: true });
+  assert.equal(isError(failed), true);
+  assert.match(text(failed), new RegExp(`BB Box deleted ${passwordFile}\\.`));
+  assert.equal(existsSync(passwordFile), false);
+  assert.ok(!text(failed).includes(TEST_PASSWORD) && !logs().includes(TEST_PASSWORD), "the driver's failure repeated the secret, and BB Box masked it");
+});
+
+test("computer_type masks the secret wherever the screen shows it in the result, as an app that shows a password field's text would", async (t) => {
+  const { harness, box, tool, password, passwordFile, typedPassword } = await signInBox((desktop) => {
+    desktop.showsPasswords = true;
+  });
+  t.after(() => harness.lifecycle.dispose());
+
+  const typed = text(await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile }));
+
+  assert.equal(typedPassword(), TEST_PASSWORD);
+  assert.ok(!typed.includes(TEST_PASSWORD), typed);
+  assert.match(typed, /value="\[hidden\]"/, "the tree's change shows the mask in its place");
+});
+
+test("computer_type refuses to type a secret from a file into a field that would show it, or from a file it cannot use, and says nothing of what the file holds", async (t) => {
+  const { harness, box, tool, file, home, password, email, passwordFile, typedPassword } = await signInBox();
+  t.after(() => harness.lifecycle.dispose());
+  const marker = "MARKER-OF-THE-FILE";
+  const refused = async (input: Record<string, unknown>, said: RegExp) => {
+    const result = await tool("computer_type", { box: box.name, ...input });
+    assert.equal(isError(result), true, text(result));
+    assert.match(text(result), said);
+    assert.ok(!text(result).includes(TEST_PASSWORD) && !text(result).includes(marker), text(result));
+  };
+
+  await refused({ ref: email, text_file: passwordFile, delete: true }, new RegExp(`^${email} \\(text 'Email'\\) is not a password field, so a secret typed into it would show on the screen and in recordings\\. BB Box typed nothing and left ${passwordFile} as it was\\.\\n\\nNext: Give the password field's reference instead: ${password} \\(password text 'Password'\\)\\.`));
+  assert.equal(existsSync(passwordFile), true);
+  await refused({ ref: password, text_file: join(home, "missing") }, /missing does not exist in the box\. BB Box typed nothing\./);
+  mkdirSync(join(home, "folder"));
+  await refused({ ref: password, text_file: join(home, "folder"), delete: true }, /folder is not a regular file, such as a folder\./);
+  assert.equal(existsSync(join(home, "folder")), true);
+  writeFileSync(join(home, "empty"), "");
+  await refused({ ref: password, text_file: join(home, "empty") }, /empty is empty\. BB Box typed nothing\./);
+  writeFileSync(join(home, "large"), marker.repeat(Math.ceil(5 * 1024 / marker.length)));
+  await refused({ ref: password, text_file: join(home, "large") }, /large is larger than 4 KiB, the most BB Box types from a file\. BB Box typed nothing\./);
+  await refused({ ref: password, text_file: passwordFile, text: "x" }, /^Give one of text, keys or text_file\./);
+  await refused({ ref: password, text: "x", delete: true }, /^delete goes with text_file only\./);
+
+  assert.equal(typedPassword(), "");
+  assert.equal(readDesktop(file).calls.filter((call) => call.tool === "type_text").length, 0, "nothing typed");
+});
+
+test("computer_type types a secret from a file into a window's focused element, and says BB Box could not confirm the field hides it", async (t) => {
+  const { harness, box, tool, signIn, passwordFile, typedPassword } = await signInBox();
+  t.after(() => harness.lifecycle.dispose());
+
+  const typed = text(await tool("computer_type", { box: box.name, window: signIn, text_file: passwordFile }));
+
+  assert.match(typed, new RegExp(`^Typed 20 characters from ${passwordFile} into window ${signIn}`));
+  assert.match(typed, /BB Box could not confirm that the field hides what it shows, so the text may show on the screen and in recordings\./);
+  assert.equal(typedPassword(), TEST_PASSWORD);
+});
+
+test("while a desktop box records, typing from a file is logged as secret typing of 0 characters", async (t) => {
+  const { harness, app, box, tool, password, passwordFile } = await signInBox();
+  t.after(() => harness.lifecycle.dispose());
+  app.recordings.begin(box.id, 0, "linux");
+
+  await tool("computer_type", { box: box.name, ref: password, text_file: passwordFile });
+
+  const events = app.recordings.end(box.id)!;
+  assert.deepEqual(
+    events.map((event) => (event.type === "typing" ? `typing ${event.characters}${event.secret ? " secret" : ""}` : event.type)),
+    ["typing 0 secret", "typing 0 secret"],
+  );
 });
 
 test("an agent reads a desktop box's window, acts on references and is told what changed", async (t) => {

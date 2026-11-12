@@ -128,6 +128,8 @@ On a box with a device, the agent's computer tools drive the device and never th
 
 On a device, a click is a tap, a right-click a long press, a scroll a swipe, and a drag drags, as across a slider. The agent's `box_device` tool uses the device's controls, as the bar does: Home, Back and Recents, lock and wake, turning, folding, appearance, text size, location, the status bar, battery, network, installing an app, switching device and rebooting. See [agent tools](../reference/tools.md#box_device).
 
+An agent types a password into a device's secure text field from a file, as on a desktop, with the file on the device's host: see [signing in with a password](desktops.md#signing-in-with-a-password).
+
 ## Recording a device
 
 An agent records a device box as it records a desktop, with `box_record`. The clip shows the device in its frame, with each touch and the captions around it. See [recording a device](recording.md#recording-a-device).
