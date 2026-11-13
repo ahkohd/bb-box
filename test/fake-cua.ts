@@ -131,6 +131,16 @@ export interface FakeDesktop {
    * Cua on Windows then says the click failed its foreground check (#484).
    */
   trayMenus?: boolean;
+  /** What each sign-in window's password field holds, by window ID. */
+  passwords?: Record<string, string>;
+  /**
+   * How a sign-in window's password field reads: by its name; nameless, so its
+   * dots stand in for a name, as AT-SPI gives Chrome's and GTK's; or showing
+   * its text as a value, as an app that leaks it does.
+   */
+  passwordReads?: "named" | "nameless" | "showing";
+  /** The password field is disabled, so Cua gives it no index, as it does a disabled element. */
+  passwordDisabled?: boolean;
 }
 
 const desktopPause = new Int32Array(new SharedArrayBuffer(4));
@@ -180,6 +190,25 @@ export function openTasks(desktop: FakeDesktop, tasks: string[]): FakeWindow {
   desktop.tasks[window.id] = tasks;
   desktop.fields[window.id] = "";
   return window;
+}
+
+export function openSignIn(desktop: FakeDesktop): FakeWindow {
+  const window: FakeWindow = { id: desktop.nextWindow++, pid: desktop.nextPid++, app: "signin", title: "Sign in", x: 100, y: 100, width: 600, height: 300, onScreen: true };
+  desktop.windows.push(window);
+  desktop.fields[window.id] = "";
+  desktop.passwords = { ...desktop.passwords, [window.id]: "" };
+  return window;
+}
+
+function passwordNode(desktop: FakeDesktop, window: FakeWindow, frame: Node["frame"]): Node {
+  const held = desktop.passwords?.[window.id] ?? "";
+  const reads = desktop.passwordReads ?? "named";
+  const label = reads === "nameless" ? "\u2022".repeat(held.length) : "Password";
+  return { key: "password", role: "password text", label, ...(reads === "showing" ? { value: held } : {}), ...(desktop.passwordDisabled ? { text: true } : {}), actions: ["activate"], frame, children: [] };
+}
+
+function takesTextInBackground(window: FakeWindow): boolean {
+  return isEditor(window) || window.app === "signin";
 }
 
 /** A solid PNG of the size. */
@@ -285,6 +314,10 @@ function shape(desktop: FakeDesktop, window: FakeWindow): Node {
     const pane: Node = { key: "pane", role: "scroll pane", label: "", actions: [], frame: area.frame, children: [area] };
     const tab: Node = { key: "tab", role: "page tab", label: `${edited}Untitled 1`, actions: ["click"], frame: frame(0, 30, 120, 30), children: [pane] };
     return { key: "frame", role: "frame", label: window.title, actions: [], frame: whole, children: [tab] };
+  }
+  if (window.app === "signin") {
+    const email: Node = { key: "field", role: "text", label: "Email", value: desktop.fields[window.id] ?? "", actions: ["activate"], frame: frame(20, 40, 400, 40), children: [] };
+    return { key: "frame", role: "frame", label: window.title, actions: [], frame: whole, children: [email, passwordNode(desktop, window, frame(20, 100, 400, 40))] };
   }
   if (window.app === "browser") {
     const url = desktop.pages?.[window.id] ?? "about:blank";
@@ -750,16 +783,19 @@ export class FakeCua {
       if (args.element_token !== undefined) {
         const node = this.#element(desktop, window, args.element_token);
         if (!("key" in node)) return node;
-        if (node.key !== "field" && node.key !== "document") return text(`${node.role} "${node.label}" does not take text.`, { code: "not_editable" }, true);
+        if (node.key !== "field" && node.key !== "document" && node.key !== "password") return text(`${node.role} "${node.label}" does not take text.`, { code: "not_editable" }, true);
       }
-      if (args.delivery_mode !== "foreground" && (!isEditor(window) || desktop.wayland)) {
+      if (args.delivery_mode !== "foreground" && (!takesTextInBackground(window) || desktop.wayland)) {
         return text('Background delivery is not available for this target; retry with delivery_mode:"foreground".', {
           code: "background_unavailable",
           effect: "none",
           escalation: { recommended: "foreground" },
         }, true);
       }
-      desktop.fields[window.id] = `${desktop.fields[window.id] ?? ""}${String(args.text)}`;
+      const target = args.element_token === undefined ? null : this.#element(desktop, window, args.element_token);
+      const intoPassword = target !== null && "key" in target && target.key === "password";
+      if (intoPassword) desktop.passwords = { ...desktop.passwords, [window.id]: `${desktop.passwords?.[window.id] ?? ""}${String(args.text)}` };
+      else desktop.fields[window.id] = `${desktop.fields[window.id] ?? ""}${String(args.text)}`;
       if (window.app === "editor") window.title = "*Untitled 1 - Editor";
       return text(`Typed ${String(args.text).length} characters.`, { delivery_mode: String(args.delivery_mode ?? "background") });
     });

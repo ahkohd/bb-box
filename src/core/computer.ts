@@ -15,6 +15,7 @@ import { inSlot, sharedBoxWords } from "./device-host.ts";
 import { driverCommand } from "./in-box.ts";
 import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
 import { typingKeptSecret, type ActedInput, type InputArea, type TypedField } from "./record-input.ts";
+import { isSecureRole, secureElementLine, secureLabel, secureUnreferencedLine } from "./secure-fields.ts";
 import { PRODUCT } from "../brand.ts";
 
 export const PAUSED =
@@ -2158,7 +2159,7 @@ export class Computer {
       if (index !== undefined) byIndex.set(index, entry);
     }
     const roleOf = (index: number) => str(byIndex.get(index)!.role) ?? "";
-    const labelOf = (index: number) => clean(str(byIndex.get(index)!.label) ?? "");
+    const labelOf = (index: number) => secureLabel(roleOf(index), clean(str(byIndex.get(index)!.label) ?? ""));
     const parentOf = (index: number) => {
       const parent = num(byIndex.get(index)!.parent_index);
       return parent !== undefined && byIndex.has(parent) ? parent : null;
@@ -2268,10 +2269,11 @@ export class Computer {
       const indexed = /^(\s*)- \[(\d+)\] (.*)$/.exec(text);
       if (indexed) {
         const element = elementAt.get(Number(indexed[2])) ?? null;
-        const rest = indexed[3]!.replace(" [actions=[]]", "");
+        const shown = indexed[3]!.replace(" [actions=[]]", "");
+        const rest = element && isSecureRole(element.role) ? secureElementLine(shown) : shown;
         read.push({ text: `${indexed[1]}- ${element ? `[${element.ref}] ` : ""}${rest}`, depth: indexed[1]!.length / 2, element });
       } else if (/^\s*- /.test(text) || !read.length) {
-        read.push({ text, depth: (/^\s*/.exec(text)![0].length) / 2, element: null });
+        read.push({ text: secureUnreferencedLine(text), depth: (/^\s*/.exec(text)![0].length) / 2, element: null });
       } else {
         // A name with a line break goes on over several lines.
         const last = read[read.length - 1]!;

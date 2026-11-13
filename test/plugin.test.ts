@@ -44,7 +44,7 @@ import { PAUSED, RETURNED } from "../src/core/computer.ts";
 import { waylandPointerScript } from "../src/backends/wayvnc.ts";
 import { FAKE_KINDS, FAKE_PWSH, FAKE_SELKIES_KIND, FAKE_WAYLAND_KIND, FAKE_WINDOWS_KIND, FakeBackend, fakeDriver, loseLastByteOfCopies, type FakeBackendOptions } from "./fake-backend.ts";
 import { FakeSnapshots } from "./fake-snapshots.ts";
-import { readDesktopFile, tasksDesktop, writeDesktopFile, type FakeDesktop } from "./fake-cua.ts";
+import { openSignIn, readDesktopFile, tasksDesktop, writeDesktopFile, type FakeDesktop } from "./fake-cua.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
 import { fakeDaemon, fakeFfmpeg, joined, tempDir, testContext } from "./helpers.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
@@ -5358,6 +5358,63 @@ test("a click that opened another process's panel, which Cua on Windows calls a 
   const onDesktop = await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 1500, y: 870 });
   assert.equal(isError(onDesktop), false, text(onDesktop));
   assert.match(text(onDesktop), /\n\nThe click landed, and window \d+: explorer "Notification overflow", 200 by 120 came in front/);
+});
+
+const TEST_PASSWORD = "Kd8rTq2Lm5Xw";
+
+async function signInBox(reads: NonNullable<FakeDesktop["passwordReads"]>, held: string, disabled = false) {
+  const started = await desktopBox();
+  let signIn = 0;
+  editDesktop(started.file, (desktop) => {
+    signIn = openSignIn(desktop).id;
+    desktop.passwordReads = reads;
+    desktop.passwordDisabled = disabled;
+    desktop.passwords = { ...desktop.passwords, [signIn]: held };
+  });
+  const observe = async () => text(await started.tool("computer_observe", { box: started.box.name, window: signIn }));
+  return { ...started, signIn, observe };
+}
+
+test("a Linux password field's value reads as (hidden) in every read, with no length, whether the app gives its dots as its name or its text as its value", async (t) => {
+  const named = await signInBox("showing", TEST_PASSWORD);
+  t.after(() => named.harness.lifecycle.dispose());
+  const nameless = await signInBox("nameless", TEST_PASSWORD);
+  t.after(() => nameless.harness.lifecycle.dispose());
+  const disabled = await signInBox("nameless", TEST_PASSWORD, true);
+  t.after(() => disabled.harness.lifecycle.dispose());
+
+  const reads = [await named.observe(), await named.observe(), await nameless.observe(), await nameless.observe(), await disabled.observe()];
+
+  for (const seen of reads) {
+    assert.ok(!seen.includes(TEST_PASSWORD), seen);
+    assert.ok(!seen.includes("\u2022"), seen);
+  }
+  assert.match(reads[0]!, /\[e\d+\] password text "Password" value="\(hidden\)"/);
+  assert.match(reads[1]!, /\[e\d+\] password text "Password" value="\(hidden\)"/);
+  assert.match(reads[2]!, /\[e\d+\] password text "\(hidden\)"/);
+  assert.match(reads[3]!, /\[e\d+\] password text "\(hidden\)"/);
+  assert.match(reads[4]!, /- password text = "\(hidden\)"/, "a disabled field, with no reference");
+  assert.match(reads[0]!, /text "Email"/, "a plain field keeps its value");
+});
+
+test("typing into a Linux password field says what changed with its value as (hidden), and keeps its reference as its dots grow", async (t) => {
+  for (const reads of ["showing", "nameless"] as const) {
+    const { harness, box, tool, file, signIn, observe } = await signInBox(reads, "a");
+    t.after(() => harness.lifecycle.dispose());
+    const password = refOf(await observe(), "password text");
+
+    const typed = text(await tool("computer_type", { box: box.name, ref: password, text: TEST_PASSWORD }));
+    const later = await observe();
+
+    assert.equal(readDesktop(file).passwords?.[signIn], `a${TEST_PASSWORD}`, `${reads}: the text went into the password field`);
+    for (const seen of [typed, later]) {
+      assert.ok(!seen.includes(TEST_PASSWORD), `${reads}: ${seen}`);
+      assert.ok(!seen.includes("\u2022"), `${reads}: ${seen}`);
+    }
+    assert.match(typed, new RegExp(`^Typed ${TEST_PASSWORD.length} characters into ${password} `), `${reads}: ${typed}`);
+    assert.match(typed, new RegExp(`${password} now reads: \\[${password}\\] password text "[^"]*"( value="\\(hidden\\)")?`), `${reads}: ${typed}`);
+    assert.equal(refOf(later, "password text"), password, `${reads}: the field keeps its reference`);
+  }
 });
 
 test("computer_type still reads the window when the call is cancelled after the text is in", async (t) => {

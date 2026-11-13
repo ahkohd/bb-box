@@ -374,6 +374,11 @@ Open an app or a URL with `computer_launch`, then read a window with
   the tool says so: observe the window again.
 - When an app refuses input in the background, BB Box uses the real pointer
   or keyboard, and says so. The desktop's focus may then have moved.
+- A password field's value reads as `(hidden)`, with no length, where the
+  platform marks the field: `password text` on Linux, and `secure text
+  field` on a device. On macOS and Windows nothing marks it, so a password
+  field reads as a text field, with its value as the app gives it, such as
+  a dot for each character.
 - On a Wayland desktop, text that goes through the real keyboard is typed
   with a US keyboard layout. Text with a character that layout lacks, such
   as `é`, is pasted instead: BB Box puts it on the box's clipboard, presses
@@ -399,7 +404,7 @@ host: use `box_run` for the host.
   shows inside it. Elements below or above the screen say so: scroll to
   them first. On Android the app in front comes first, then the status
   bar, then the keyboard as one element: type into a field rather than
-  tapping keys.
+  tapping keys. A secure text field's value reads as `(hidden)`.
 - `computer_act` taps for a click and long-presses for a right click.
   Before a tap by reference it checks what is at that point, and refuses
   when something else covers the element, such as a title bar or the

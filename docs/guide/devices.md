@@ -126,6 +126,8 @@ Control changes hands cleanly. When you take control, the agent's input stops at
 
 On a box with a device, the agent's computer tools drive the device and never the box's desktop. The agent reads the device's screen as a list of its elements, taps, swipes, types, and opens apps and links. While you have control, the agent can still read the screen and take screenshots, but every touch, key and launch of its own is refused, so it cannot change what you are testing.
 
+The agent never reads what a password field holds: Android and iOS mark it as a secure text field, and its value reads as (hidden), with no length. See [password fields](desktops.md#password-fields).
+
 On a device, a click is a tap, a right-click a long press, a scroll a swipe, and a drag drags, as across a slider. The agent's `box_device` tool uses the device's controls, as the bar does: Home, Back and Recents, lock and wake, turning, folding, appearance, text size, location, the status bar, battery, network, installing an app, switching device and rebooting. See [agent tools](../reference/tools.md#box_device).
 
 ## Recording a device

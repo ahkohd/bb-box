@@ -129,3 +129,14 @@ Agents see and use a desktop through computer tools, such as taking a screenshot
 On a box with a device, the agent's computer tools drive the device: see [agents and the device](devices.md#agents-and-the-device).
 
 An agent can record a desktop with `box_record` and show you the clip in the thread, with each step it tests and its result captioned. See [recordings](recording.md).
+
+### Password fields
+
+Where the platform marks a field as a password field, the agent never reads what it holds. Its value reads as (hidden), with no length, in each read of the window or the device's screen, in what changed after an action, and in what the field reads after typing. This holds whoever filled the field: the agent, you or a password manager.
+
+| Platform | A password field reads as |
+| --- | --- |
+| Android and iOS | `secure text field "Password" = "(hidden)"` |
+| Linux, on X11 and Wayland | `password text "Password"`, with no value. A field with no name, whose dots would stand in for one, reads as `password text "(hidden)"` |
+| macOS | an ordinary text field, `AXTextField`: nothing marks it as a password field, so BB Box cannot hide its value |
+| Windows | an ordinary text field, `Edit`: nothing marks it as a password field, so its value shows as the app gives it. Edge gives a dot for each character, so the length shows |
