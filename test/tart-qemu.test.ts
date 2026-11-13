@@ -14,7 +14,7 @@ import { parseQemuState, qemuStartScript } from "../src/backends/tart/qemu.ts";
 import type { AcquireHooks, BoxIdentity, MachineSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { CUA_PIPE, NAME_WINDOWS_SCRIPT, parseNamed } from "../src/backends/windows.ts";
 import { FAKE_DISK_GIB, FAKE_MAC, FAKE_WINDOWS_IMAGE, WINDOWS_TOOLS, addImage, addWindowsImage, fakeMacTools, fakeQemu, fakeSwift, imageRecord, tartConfig } from "./fake-mac.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext } from "./helpers.ts";
+import { EXPIRED_ON, FAKE_SSH_BINARY, MemoryStorage, fakeSsh, testContext, windowsWithExpiringPassword } from "./helpers.ts";
 
 const MAC = FAKE_MAC;
 /** Where the fake ssh runs what BB Box sends a Windows VM, which it reaches at 127.0.0.1 through the Mac. */
@@ -715,6 +715,24 @@ test("an acquire whose Windows desktop does not come up removes its VM, and says
   });
   assert.equal(existsSync(join(qemu, "vms", vm)), false);
   assert.equal(existsSync(join(owners, vm)), false);
+});
+
+test("an acquire from an image whose box user's password has expired sets it never to expire, restarts Windows once, and waits for its desktop", async () => {
+  const { backend, ssh, context } = setup();
+  const home = ssh.home(GUEST);
+  mkdirSync(home, { recursive: true });
+  ssh.powershell(GUEST, windowsWithExpiringPassword());
+  writeFileSync(join(home, "no-desktop"), "");
+  writeFileSync(join(home, "password-expired"), "");
+  const box = identity();
+
+  await backend.acquire(box, null, hooks().hooks, signal());
+
+  assert.equal(readFileSync(join(home, "restarts"), "utf8"), "restarted\n");
+  assert.equal(existsSync(join(home, "no-desktop")), false);
+  assert.deepEqual(context.logs.filter((line) => line.includes("password")), [
+    `bb-box-${box.boxId} on mac1: ${EXPIRED_ON} Windows did not log the box user in to the desktop, so BB Box set the password never to expire and restarted Windows.`,
+  ]);
 });
 
 test("a running Windows VM counts its memory and 2 GiB for QEMU, and not against the two macOS VMs", async () => {

@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { BuildLog } from "./build-log.ts";
-import { IMAGE_CONTRACT, WINDOWS_HARDWARE_CURSOR, identityResetFor, parseImageRecord, pinsDigest, type ImageRecord } from "../backends/images.ts";
+import { IMAGE_CONTRACT, WINDOWS_HARDWARE_CURSOR, WINDOWS_PASSWORD_NEVER_EXPIRES, identityResetFor, parseImageRecord, pinsDigest, type ImageRecord } from "../backends/images.ts";
 import { KIND_INFO } from "../backends/kinds.ts";
 import { BackendError, type BackendImages, type ImageBox, type ImageBuild } from "../backends/types.ts";
 import { compareVersions, resolveVersions, stageSetup } from "../backends/versions.ts";
@@ -208,7 +208,7 @@ export function windowsRecord(current: ImageBuild, pins: readonly WindowsPin[], 
     aptSnapshot: null,
     pins: digest,
     bbApp: null,
-    tools: { ...current.record?.tools, ...Object.fromEntries(pins.map((pin) => [pin.name, pin.version])), ...(stream ? { [WINDOWS_HARDWARE_CURSOR]: "1" } : {}) },
+    tools: { ...current.record?.tools, ...Object.fromEntries(pins.map((pin) => [pin.name, pin.version])), ...(stream ? { [WINDOWS_HARDWARE_CURSOR]: "1" } : {}), [WINDOWS_PASSWORD_NEVER_EXPIRES]: "1" },
     nvidia: null,
     layer: null,
     sizeGiB: null,

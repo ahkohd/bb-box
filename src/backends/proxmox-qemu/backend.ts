@@ -120,7 +120,7 @@ import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
-import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUp, extendC, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
+import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, checkDesktopOrRepairExpiredPassword, desktopUpOrRepairExpiredPassword, extendC, PASSWORD_REPAIR_BY_HAND, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
 import type { OpenStream } from "../../core/selkies.ts";
 import { openRoute } from "../../transports/route.ts";
 import type { QemuConfig } from "./config.ts";
@@ -1227,6 +1227,7 @@ export class ProxmoxQemuBackend implements Backend {
         display = await step("display", () => this.#linuxDisplay(id, Math.max(1_000, deadline - Date.now()), signal));
       }
       if (!linux) {
+        await step("password", () => this.#repairExpiredPasswordAfterBoot(id, Math.max(1_000, deadline - Date.now()), signal));
         // A resumed acquire may have grown the disk before it stopped.
         if (grew || (resumed && box.size.diskGiB !== null)) await step("extend", () => this.#extend(id, signal));
         this.#compileDisplay(id);
@@ -1279,7 +1280,9 @@ export class ProxmoxQemuBackend implements Backend {
     const resumed = status.status !== "running" && status.lock === "suspended";
     if (status.status !== "running") await step(resumed ? "resume" : "boot", () => api.start(vmid, signal));
     const os = this.#osOf(guest.data?.template);
-    await this.#waitReady(vmid, this.#options.readyTimeoutMs ?? readyWithinMs ?? READY_TIMEOUT_MS, signal, step, os);
+    const readyWithin = this.#options.readyTimeoutMs ?? readyWithinMs ?? READY_TIMEOUT_MS;
+    await this.#waitReady(vmid, readyWithin, signal, step, os);
+    if (os === "windows") await step("password", () => this.#repairExpiredPasswordAfterBoot(vmid, readyWithin, signal));
     const kind = this.#kindOf(guest.data?.template);
     if (isLinuxVmKind(kind.id)) {
       const name = (await api.config(vmid, signal)).name;
@@ -2623,12 +2626,21 @@ export class ProxmoxQemuBackend implements Backend {
   /** Waits until Windows' desktop is up. */
   async #desktopUp(vmid: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
     const command = await this.#command(vmid);
-    const up = { probe: (signal?: AbortSignal) => desktopUp(command, signal) };
+    const repairs: string[] = [];
+    const up = desktopUpOrRepairExpiredPassword(command, (said) => {
+      repairs.push(said);
+      this.#context.log?.(`VM ${vmid}: ${said}`);
+    });
     if (!(await waitUntilAnswers(up, { timeoutMs, intervalMs: DESKTOP_POLL_MS, signal, sleep: this.#options.sleep }))) {
-      throw new Error(
-        `Windows' desktop in warm VM ${vmid} was not up within ${Math.round(timeoutMs / 1000)} s: Explorer did not run in a desktop session, ` +
-          `or Cua's daemon did not listen on ${CUA_DRIVER.socket}. Check the VM's console in Proxmox, and that the template signs the box user in.`,
-      );
+      const why = `Explorer did not run in a desktop session, or Cua's daemon did not listen on ${CUA_DRIVER.socket}.`;
+      const next = `Check the VM's console in Proxmox, and that the template signs the box user in. ${PASSWORD_REPAIR_BY_HAND}`;
+      throw new Error([`Windows' desktop in VM ${vmid} was not up within ${Math.round(timeoutMs / 1000)} s:`, why, ...repairs, next].join(" "));
     }
+  }
+
+  async #repairExpiredPasswordAfterBoot(vmid: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+    const checked = await checkDesktopOrRepairExpiredPassword(await this.#command(vmid), signal);
+    if (checked.said) this.#context.log?.(`VM ${vmid}: ${checked.said}`);
+    if (checked.restarting) await this.#desktopUp(vmid, timeoutMs, signal);
   }
 }

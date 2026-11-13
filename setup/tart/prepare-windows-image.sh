@@ -155,7 +155,7 @@ free=$(kib)
 
 build=build.$(date -u +%Y%m%d-%H%M%S)
 # The image's record (049). The pins' SHA-256 is of this script's pin lines.
-record=$(printf '{"contract":1,"image":"standard","kind":"windows-arm64-desktop","arch":"arm64","build":"%s","built":"%s","base":null,"os":"%s","aptSnapshot":null,"pins":"%s","bbApp":null,"tools":{"pwsh":"%s","git":"%s","gh":"%s","cua-driver":"%s","vs-buildtools":"%s","llvm":"%s","rustup":"%s","node":"%s","claude-code":"%s","codex":"%s","pi":"%s","ffmpeg":"%s","openh264":"%s","hardware-cursor":"1","virtio-win":"%s"},"nvidia":null,"layer":null,"sizeGiB":null}' \
+record=$(printf '{"contract":1,"image":"standard","kind":"windows-arm64-desktop","arch":"arm64","build":"%s","built":"%s","base":null,"os":"%s","aptSnapshot":null,"pins":"%s","bbApp":null,"tools":{"pwsh":"%s","git":"%s","gh":"%s","cua-driver":"%s","vs-buildtools":"%s","llvm":"%s","rustup":"%s","node":"%s","claude-code":"%s","codex":"%s","pi":"%s","ffmpeg":"%s","openh264":"%s","hardware-cursor":"1","password-never-expires":"1","virtio-win":"%s"},"nvidia":null,"layer":null,"sizeGiB":null}' \
   "$build" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$edition" "$(grep -E '^[A-Z0-9_]+_(VERSION|SHA256|URL)=' "$here/prepare-windows-image.sh" | shasum -a 256 | cut -d' ' -f1)" \
   "$PWSH_VERSION" "$GIT_VERSION" "$GH_VERSION" "$CUA_VERSION" "$VS_VERSION" "$LLVM_VERSION" "$RUSTUP_VERSION" "$NODE_VERSION" "$CLAUDE_VERSION" "$CODEX_VERSION" "$PI_VERSION" "$FFMPEG_VERSION" "$OPENH264_VERSION" "$VIRTIO_VERSION")
 d=$images/$build.new

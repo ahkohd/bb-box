@@ -117,7 +117,7 @@ record=$(jq -cn --arg build "$build" --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)
   --arg vs "$VS_VERSION" --arg llvm "$LLVM_VERSION" --arg rustup "$RUSTUP_VERSION" --arg node "$NODE_VERSION" --arg claude "$CLAUDE_VERSION" --arg codex "$CODEX_VERSION" --arg pi "$PI_VERSION" --arg ffmpeg "$FFMPEG_VERSION" --arg openh264 "$OPENH264_VERSION" \
   '{contract: 1, image: "standard", kind: "windows-desktop", arch: "x86_64", build: $build, built: $built, base: null, os: $os,
     aptSnapshot: null, pins: $pins, bbApp: null,
-    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup, node: $node, "claude-code": $claude, codex: $codex, pi: $pi, ffmpeg: $ffmpeg, openh264: $openh264, "hardware-cursor": "1"},
+    tools: {pwsh: $pwsh, git: $git, gh: $gh, "cua-driver": $cua, "vs-buildtools": $vs, llvm: $llvm, rustup: $rustup, node: $node, "claude-code": $claude, codex: $codex, pi: $pi, ffmpeg: $ffmpeg, openh264: $openh264, "hardware-cursor": "1", "password-never-expires": "1"},
     nvidia: null, layer: null, sizeGiB: null}')
 linked_clones() { # vmid
   { grep -lE ":base-$1-disk-[0-9]+/" /etc/pve/nodes/*/lxc/*.conf /etc/pve/nodes/*/qemu-server/*.conf 2>/dev/null ||

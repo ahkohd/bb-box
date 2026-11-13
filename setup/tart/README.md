@@ -393,7 +393,12 @@ and disk free. For each image it:
   has another build of BB's app than BB's server gives (not on Windows), or
   was built with other pins than this bb-box's copy of its script;
 - warns, for a Windows image whose boxes join BB, when it has no Node.js
-  22.19 or later, or none of the agent CLIs.
+  22.19 or later, or none of the agent CLIs;
+- warns, for a Windows image, when its box user's password can expire, as in
+  images built before BB Box set it never to expire. Windows stops logging
+  such a box in to its desktop 42 days after the password was set. BB Box
+  repairs each such box as it starts, with one more restart, about a minute,
+  until you build the image again.
 
 A Windows box takes about 2 minutes to join BB on a Mac, most of it BB's
 installer. What it needs, and what its machine can and cannot do, is in the

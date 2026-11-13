@@ -9,6 +9,7 @@ import { desktopScript } from "../transports/powershell.ts";
 import { POINTER_VERB } from "../core/pointer.ts";
 import { BoxWebSocket } from "../core/websocket.ts";
 import { pause } from "../transports/ready.ts";
+import { PRODUCT } from "../brand.ts";
 import type { BoxPointer, CommandTransport, DisplayInput, DisplaySize } from "../transports/types.ts";
 
 /** The named pipe Cua's daemon listens on. A task at logon starts it, elevated, as SSH is (039). */
@@ -331,13 +332,32 @@ function clockScript(ms: number): string {
 Set-Date -Date $bbNow -ErrorAction Stop | Out-Null`;
 }
 
+const DESKTOP_LOGGED_IN = "(Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0)";
 /**
  * Exits 0 once Windows' desktop is up: Explorer runs in a desktop session
  * and Cua's daemon listens on its pipe. A warm VM is saved then, so a claim
  * resumes a desktop that is ready for computer use.
  */
-const DESKTOP_UP = `if ((Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -gt 0) -and (Test-Path -LiteralPath '${CUA_PIPE}')) { exit 0 }
-exit 1`;
+const EXIT_0_WHEN_DESKTOP_UP = `if (${DESKTOP_LOGGED_IN} -and (Test-Path -LiteralPath '${CUA_PIPE}')) { exit 0 }`;
+
+const PASSWORD_REPAIRED_AND_RESTARTING = 3;
+const PASSWORD_REPAIR_FAILED = 4;
+
+const SET_BOX_USER_PASSWORD_NEVER_EXPIRES = `Set-LocalUser -Name $bbUser.Name -PasswordNeverExpires $true
+net.exe accounts /maxpwage:unlimited | Out-Null`;
+
+const DESKTOP_UP_OR_REPAIR = `${EXIT_0_WHEN_DESKTOP_UP}
+$bbUser = Get-LocalUser -Name ([Environment]::UserName)
+if ($null -eq $bbUser.PasswordExpires -or $bbUser.PasswordExpires -gt (Get-Date)) { exit 1 }
+if (${DESKTOP_LOGGED_IN}) { exit 1 }
+${SET_BOX_USER_PASSWORD_NEVER_EXPIRES}
+if ($null -ne (Get-LocalUser -Name $bbUser.Name).PasswordExpires) {
+  [Console]::Error.WriteLine("The password of $($bbUser.Name) expired on $($bbUser.PasswordExpires.ToString('u')), and Windows did not set it never to expire.")
+  exit ${PASSWORD_REPAIR_FAILED}
+}
+[Console]::Out.WriteLine("The password of $($bbUser.Name) expired on $($bbUser.PasswordExpires.ToString('u')).")
+shutdown.exe /r /t 0 /c 'bb-box: the box user password no longer expires'
+exit ${PASSWORD_REPAIRED_AND_RESTARTING}`;
 
 /** Extends C: over the space its disk grew by. */
 export async function extendC(command: CommandTransport, signal?: AbortSignal): Promise<void> {
@@ -502,7 +522,30 @@ export async function setClock(command: CommandTransport, signal?: AbortSignal):
   }
 }
 
-/** Whether Windows' desktop is up (DESKTOP_UP). False when Windows does not answer. */
-export async function desktopUp(command: CommandTransport, signal?: AbortSignal): Promise<boolean> {
-  return (await command.run(DESKTOP_UP, { timeoutMs: 10_000, signal, maxOutputBytes: 4096 }).catch(() => null))?.exitCode === 0;
+export interface DesktopChecked {
+  readonly up: boolean;
+  readonly restarting: boolean;
+  readonly said: string | null;
 }
+
+export async function checkDesktopOrRepairExpiredPassword(command: CommandTransport, signal?: AbortSignal): Promise<DesktopChecked> {
+  const result = await command.run(DESKTOP_UP_OR_REPAIR, { timeoutMs: 10_000, signal, maxOutputBytes: 4096 }).catch(() => null);
+  const restarting = result?.exitCode === PASSWORD_REPAIRED_AND_RESTARTING;
+  const said = restarting ? `${result.stdout.trim()} ${PASSWORD_REPAIRED_SAYS}` : result?.exitCode === PASSWORD_REPAIR_FAILED ? result.stderr.trim() : null;
+  return { up: result?.exitCode === 0, restarting, said };
+}
+
+export function desktopUpOrRepairExpiredPassword(command: CommandTransport, heard: (said: string) => void): { probe: (signal?: AbortSignal) => Promise<boolean> } {
+  return {
+    async probe(signal) {
+      const checked = await checkDesktopOrRepairExpiredPassword(command, signal);
+      if (checked.said) heard(checked.said);
+      return checked.up;
+    },
+  };
+}
+
+const PASSWORD_REPAIRED_SAYS = `Windows did not log the box user in to the desktop, so ${PRODUCT} set the password never to expire and restarted Windows.`;
+
+export const PASSWORD_REPAIR_BY_HAND =
+  "If the box user's password has expired, run Set-LocalUser -Name box -PasswordNeverExpires $true; net accounts /maxpwage:unlimited in the box, then restart it.";

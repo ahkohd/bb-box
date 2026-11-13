@@ -20,7 +20,7 @@ import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { driverFields } from "../src/plugin/configuration.ts";
 import { generateKeyPair } from "../src/transports/ssh.ts";
 import { FAKE_TOKEN, FakeProxmox, TOKEN_ROLE } from "./fake-proxmox.ts";
-import { FAKE_SSH_BINARY, KEY, MemoryStorage, fakeSsh, lxcConfig, tempDir, testContext } from "./helpers.ts";
+import { EXPIRED_ON, FAKE_SSH_BINARY, KEY, MemoryStorage, NOT_SET_NEVER_TO_EXPIRE, fakeSsh, lxcConfig, tempDir, testContext, windowsWithExpiringPassword } from "./helpers.ts";
 
 const GiB = 2 ** 30;
 const KIND = "windows-desktop";
@@ -285,7 +285,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   });
   assert.deepEqual(hook.claimed[0]?.data, { template: 9104, box: box.boxId }, "the claim records the box");
   assert.deepEqual(hook.events, ["claim 9700", "clone 9700", "starting"]);
-  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "network", "ssh", "start", "tags", "warm"], "with no warm VM to claim");
+  assert.deepEqual(Object.keys(hook.timings).sort(), ["clone", "configure", "network", "password", "ssh", "start", "tags", "warm"], "with no warm VM to claim");
   const clone = proxmox.calls.find((call) => call.path.endsWith("/clone"))!;
   assert.equal(clone.path, "/nodes/pve/qemu/9104/clone");
   assert.equal(clone.params.full, "0", "a linked clone");
@@ -313,7 +313,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
 
   // The ready check opened the box's shared SSH connection, for its first commands.
   const dials = ssh.log().filter((entry) => entry.target === "box@192.0.2.150");
-  assert.deepEqual(dials.map((entry) => entry.control ?? "command"), ["master", "command"]);
+  assert.deepEqual(dials.map((entry) => entry.control ?? "command"), ["master", "command", "command"]);
 
   const transports = await backend.transports(guest);
   const result = await transports.command!.run("echo hi from $USER", { timeoutMs: 10_000 });
@@ -466,7 +466,7 @@ test("a stop hibernates the VM, and a start resumes it and sets Windows' clock, 
   await backend.start(guest, signal(), (step, ms) => steps.push(`${step} ${Number.isInteger(ms) && ms >= 0}`));
   const after = Date.now();
   assert.deepEqual([vm.status, vm.config.lock, vm.config.vmstate], ["running", undefined, undefined], "resumed");
-  assert.deepEqual(steps, ["resume true", "network true", "ssh true", "clock true"], "with the time each step took");
+  assert.deepEqual(steps, ["resume true", "network true", "ssh true", "password true", "clock true"], "with the time each step took");
   const clock = readFileSync(join(home, "clock"), "utf8");
   const ms = Number(/FromUnixTimeMilliseconds\((\d+)\)/.exec(clock)?.[1]);
   assert.ok(ms >= before && ms <= after, "set to BB's server's time");
@@ -476,7 +476,7 @@ test("a stop hibernates the VM, and a start resumes it and sets Windows' clock, 
   vm.status = "stopped";
   steps.length = 0;
   await backend.start(guest, signal(), (step) => steps.push(step));
-  assert.deepEqual(steps, ["boot", "network", "ssh", "clock"]);
+  assert.deepEqual(steps, ["boot", "network", "ssh", "password", "clock"]);
 
   writeFileSync(join(home, "exit"), `echo "Set-Date: A required privilege is not held by the client." >&2; exit 1\n`);
   await backend.stop(guest, signal());
@@ -813,7 +813,7 @@ test("doctor judges each Windows template's image by the record in its descripti
   const record = (days: number, changes: Record<string, unknown> = {}) =>
     JSON.stringify({ contract: 1, image: "standard", kind: "windows-desktop", arch: "x86_64", build: "build.20261003-021500-3f9c", built: new Date(Date.now() - days * day).toISOString(), os: "Windows 11 Pro", pins, bbApp: null, tools: { pwsh: "7.6.6" }, ...changes });
   // Its boxes join BB, so it carries Node.js and the agent CLIs (#539, #581).
-  const tools = { pwsh: "7.6.6", node: "24.21.0", "claude-code": "2.1.283", codex: "0.157.1", pi: "0.87.1" };
+  const tools = { pwsh: "7.6.6", node: "24.21.0", "claude-code": "2.1.283", codex: "0.157.1", pi: "0.87.1", "password-never-expires": "1" };
   proxmox.guests.get(9104)!.config.description = `bb-box windows template, built 2026-10-03 from win11.iso: Windows 11 Pro.\n${record(2, { tools })}`;
   proxmox.guests.get(9106)!.config.description = `bb-box windows template, built 2026-10-03 from win11.iso: Windows 11 Pro.\n${record(2, { tools: { pwsh: "7.6.6", node: "20.11.0" } })}`;
   proxmox.guests.get(9105)!.config.description = `bb-box windows template, built 2026-08-01 from win11.iso: Windows 11 Pro.\n${record(61, { pins: "o".repeat(64) })}`;
@@ -1107,9 +1107,100 @@ test("a fill whose desktop never comes up is deleted, with the reason", async ()
   writeFileSync(join(ssh.home("192.0.2.150"), "no-desktop"), "");
   await assert.rejects(
     backend.maintain(signal()),
-    /^Error: Windows' desktop in warm VM 9700 was not up within 1 s: Explorer did not run in a desktop session, or Cua's daemon did not listen on \\\\\.\\pipe\\cua-driver\./,
+    /^Error: Windows' desktop in VM 9700 was not up within 1 s: Explorer did not run in a desktop session, or Cua's daemon did not listen on \\\\\.\\pipe\\cua-driver\./,
   );
   assert.equal(proxmox.guests.has(9700), false);
+  assert.deepEqual(warmVms(proxmox), []);
+});
+
+const REPAIRED = `${EXPIRED_ON} Windows did not log the box user in to the desktop, so BB Box set the password never to expire and restarted Windows.`;
+
+function expiringPassword(ssh: ReturnType<typeof fakeSsh>, host: string, ...state: ("no-desktop" | "password-expired" | "password-stuck")[]): string {
+  const home = ssh.home(host);
+  mkdirSync(home, { recursive: true });
+  ssh.powershell(host, windowsWithExpiringPassword());
+  for (const file of state) writeFileSync(join(home, file), "");
+  return home;
+}
+
+const restarts = (home: string) => (existsSync(join(home, "restarts")) ? readFileSync(join(home, "restarts"), "utf8").split("\n").filter(Boolean).length : 0);
+
+test("a box cloned from a template whose box user's password has expired never expires again, and restarts once into its desktop", async () => {
+  const { backend, ssh, context } = setup();
+  const home = expiringPassword(ssh, "192.0.2.150", "no-desktop", "password-expired");
+
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+
+  assert.equal(guest.ref, "9700");
+  assert.equal(restarts(home), 1);
+  assert.equal(existsSync(join(home, "no-desktop")), false, "its desktop is up");
+  assert.deepEqual(context.logs, [`VM 9700: ${REPAIRED}`]);
+  assert.deepEqual(context.errors, []);
+});
+
+test("a box whose desktop is not up yet, with a password that has not expired, starts without a restart", async () => {
+  const { backend, ssh, context } = setup();
+  const home = expiringPassword(ssh, "192.0.2.150", "no-desktop");
+
+  await backend.acquire(identity(), null, hooks().value, signal());
+
+  assert.equal(restarts(home), 0);
+  assert.deepEqual(context.logs, []);
+});
+
+test("a stopped box whose password has expired is repaired as it starts again, whether it resumes or boots", async () => {
+  const { backend, ssh, proxmox, context } = setup();
+  const home = expiringPassword(ssh, "192.0.2.150");
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  const vm = proxmox.guests.get(9700)!;
+  const expire = () => {
+    writeFileSync(join(home, "no-desktop"), "");
+    writeFileSync(join(home, "password-expired"), "");
+  };
+
+  await backend.stop(guest, signal());
+  await backend.start(guest, signal());
+
+  assert.equal(restarts(home), 0, "a box that resumes to its desktop is not restarted");
+
+  await backend.stop(guest, signal());
+  expire();
+  const resumed: string[] = [];
+  await backend.start(guest, signal(), (step) => resumed.push(step));
+
+  assert.deepEqual(resumed, ["resume", "network", "ssh", "password", "clock"]);
+  assert.equal(restarts(home), 1);
+
+  vm.status = "stopped";
+  expire();
+  const booted: string[] = [];
+  await backend.start(guest, signal(), (step) => booted.push(step));
+
+  assert.deepEqual(booted, ["boot", "network", "ssh", "password", "clock"]);
+  assert.equal(restarts(home), 2);
+  assert.deepEqual(context.logs, [`VM 9700: ${REPAIRED}`, `VM 9700: ${REPAIRED}`]);
+});
+
+test("a warm fill from a template whose password has expired is repaired, and waits warm with its desktop up", async () => {
+  const { backend, proxmox, ssh, context } = warmSetup(1);
+  const home = expiringPassword(ssh, "192.0.2.150", "no-desktop", "password-expired");
+
+  await backend.maintain(signal());
+
+  assert.deepEqual(warmVms(proxmox), [9700]);
+  assert.equal(restarts(home), 1);
+  assert.deepEqual(context.logs, [`VM 9700: ${REPAIRED}`]);
+});
+
+test("a fill whose password cannot be set never to expire says so, and what to run by hand", async () => {
+  const { backend, proxmox, ssh } = warmSetup(1);
+  const home = expiringPassword(ssh, "192.0.2.150", "no-desktop", "password-expired", "password-stuck");
+
+  const failed = await backend.maintain(signal()).then(() => "no error", (error: Error) => error.message);
+
+  assert.ok(failed.includes(NOT_SET_NEVER_TO_EXPIRE), failed);
+  assert.ok(failed.endsWith("If the box user's password has expired, run Set-LocalUser -Name box -PasswordNeverExpires $true; net accounts /maxpwage:unlimited in the box, then restart it."), failed);
+  assert.equal(restarts(home), 0, "no restart that would not help");
   assert.deepEqual(warmVms(proxmox), []);
 });
 
