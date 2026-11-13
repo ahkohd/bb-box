@@ -356,7 +356,7 @@ if ($null -ne (Get-LocalUser -Name $bbUser.Name).PasswordExpires) {
   exit ${PASSWORD_REPAIR_FAILED}
 }
 [Console]::Out.WriteLine("The password of $($bbUser.Name) expired on $($bbUser.PasswordExpires.ToString('u')).")
-shutdown.exe /r /t 0 /c 'bb-box: the box user password no longer expires'
+shutdown.exe /r /t 0 /c "${PRODUCT} set the box user's password never to expire"
 exit ${PASSWORD_REPAIRED_AND_RESTARTING}`;
 
 /** Extends C: over the space its disk grew by. */
