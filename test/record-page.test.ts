@@ -67,8 +67,8 @@ for (const dark of [false, true]) {
   }
 }
 
-test("an upright clip and its steps fit the chat of a 1280 by 800 window, about 550 px above the message box, and a desktop's clip keeps its height (059)", () => {
-  assert.equal(UPRIGHT_FRAME_MOST, 520);
+test("an upright clip and its steps fit the chat of a 1280 by 800 window, 570 px above the message box with a row of the agent's under the clip, and a desktop's clip keeps its height (059)", () => {
+  assert.equal(UPRIGHT_FRAME_MOST, 460);
   for (const steps of [0, 2, 20]) assert.equal(previewFrameHeight(PHONE_CLIP, steps), UPRIGHT_FRAME_MOST, `a phone's clip with ${steps} steps`);
   assert.equal(previewFrameHeight("1600x1080", 2), 440 + 16 + 2 * 46, "a phone turned sideways is not capped");
   assert.equal(previewFrameHeight(DESKTOP_CLIP, 2), 425 + 16 + 2 * 46);

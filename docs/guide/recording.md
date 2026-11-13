@@ -100,7 +100,7 @@ Agents record with the `box_record` tool. See [agent tools](../reference/tools.m
 
 A clip is an MP4 file in the thread's storage folder. The captions and marks are part of the video, so they stay when you share the file. The list of steps is only on the page in the thread.
 
-The page fits the clip whole into its frame, in the chat and in the side panel. A phone's or tablet's upright clip and its steps take at most 520 pixels in the chat, which fits above the message box of a window 800 pixels tall, and the clip is as wide as that height allows. A desktop's clip fills the width as before. The list of steps under it shows up to 4 steps in the chat, and scrolls for more. However many steps there are, the video keeps at least 55% of the page's height.
+The page fits the clip whole into its frame, in the chat and in the side panel. A phone's or tablet's upright clip and its steps take at most 460 pixels in the chat, which fits above the message box of a window 800 pixels tall with a row of the agent's under it, and the clip is as wide as that height allows. A desktop's clip fills the width as before. The list of steps under it shows up to 4 steps in the chat, and scrolls for more. However many steps there are, the video keeps at least 55% of the page's height.
 
 ## Limits
 

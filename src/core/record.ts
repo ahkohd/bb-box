@@ -1242,7 +1242,7 @@ export const STEP_ROWS_SHOWN = 4;
 const STEP_ROW_PX = 46;
 const STEP_LIST_PAD_PX = 16;
 
-export const UPRIGHT_FRAME_MOST = 520;
+export const UPRIGHT_FRAME_MOST = 460;
 
 function upright(size: string): boolean {
   const [width, height] = size.split("x").map(Number);
