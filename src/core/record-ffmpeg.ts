@@ -145,16 +145,20 @@ works() {
   return $ok
 }
 sum256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d ' ' -f 1; else shasum -a 256 "$1" | cut -d ' ' -f 1; fi; }
-private_dir() { [ -d "$1" ] && [ ! -L "$1" ] && [ -O "$1" ]; }
+owned_alone() { perl -e '@s = lstat($ARGV[1]) or exit 1; exit !(($ARGV[0] eq "dir" ? -d _ : (-f _ && $s[3] == 1)) && $s[4] == $< && !($s[2] & 022))' "$1" "$2"; }
+private_dir() { owned_alone dir "$1"; }
+private_file() { owned_alone file "$1"; }
+safe_build() { private_dir "$1" && private_file "$1/ffmpeg" && private_file "$1/ffprobe" && private_file "$1/sums"; }
 sums_hold() { [ -s "$1/sums" ] && [ "$(sum256 "$1/ffmpeg") $(sum256 "$1/ffprobe")" = "$(cat "$1/sums")" ]; }
-cached_works() { private_dir "$1" && [ ! -L "$1/ffmpeg" ] && [ ! -L "$1/ffprobe" ] && sums_hold "$1" && works "$1/ffmpeg" "$1/ffprobe"; }`;
+cached_works() { safe_build "$1" && sums_hold "$1" && works "$1/ffmpeg" "$1/ffprobe"; }
+discard_unsafe_builds() { for build in $(find "$1" -mindepth 1 -maxdepth 1 ! -name 'fetch.*' 2>/dev/null); do safe_build "$build" || rm -rf "$build"; done; }`;
 }
 
 const PUBLISH = String.raw`  work=$(mktemp -d "$base/fetch.XXXXXX") || exit ${CLIP_FFMPEG_EXITS.publishFailed}
   trap 'rm -rf "$work"' EXIT
   mkdir "$work/bin" || exit ${CLIP_FFMPEG_EXITS.publishFailed}
   download
-  chmod 755 "$work/bin/ffmpeg" "$work/bin/ffprobe" || exit ${CLIP_FFMPEG_EXITS.broken}
+  chmod 700 "$work/bin/ffmpeg" "$work/bin/ffprobe" || exit ${CLIP_FFMPEG_EXITS.broken}
   works "$work/bin/ffmpeg" "$work/bin/ffprobe" || { echo "ffmpeg $version from ${PRODUCT}'s pinned build does not make a clip there: it lacks $(missing_in "$work/bin/ffmpeg"), or it or its ffprobe did not run." >&2; exit ${CLIP_FFMPEG_EXITS.broken}; }
   printf '%s %s\n' "$(sum256 "$work/bin/ffmpeg")" "$(sum256 "$work/bin/ffprobe")" >"$work/bin/sums" || { echo "${PRODUCT} could not write ffmpeg's checksums in $base." >&2; exit ${CLIP_FFMPEG_EXITS.publishFailed}; }
   target="$base/$id"; aside="$base/$id.old.$$"
@@ -193,11 +197,15 @@ id=
 case "$(uname -s)/$(uname -m)" in
 ${builds.map(buildBranch).join("\n")}
 esac
+umask 077
 mkdir -p "$base" 2>/dev/null
-if ! private_dir "$HOME/.bb-box" || ! private_dir "$base" || ! chmod 700 "$base"; then
-  echo "$base is a link, or not the box user's, so ${PRODUCT} does not keep ffmpeg there. Remove it, then start again." >&2
+[ ! -O "$HOME/.bb-box" ] || [ -L "$HOME/.bb-box" ] || chmod go-w "$HOME/.bb-box"
+[ ! -O "$base" ] || [ -L "$base" ] || chmod 700 "$base"
+if ! private_dir "$HOME/.bb-box" || ! private_dir "$base"; then
+  echo "$base is a link, or not the box user's alone, so ${PRODUCT} does not keep ffmpeg there. Remove it, then start again." >&2
   exit ${CLIP_FFMPEG_EXITS.untrusted}
 fi
+discard_unsafe_builds "$base"
 if [ -n "$id" ] && cached_works "$base/$id"; then said kept "$base/$id/ffmpeg" "$base/$id/ffprobe" ""; exit 0; fi
 code=${CLIP_FFMPEG_EXITS.noBuild}
 [ ${mode} = fetch ] || code=${CLIP_FFMPEG_EXITS.noneFit}

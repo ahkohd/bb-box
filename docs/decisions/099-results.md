@@ -1,6 +1,6 @@
 # 099 results: ffmpeg for clips on every kind
 
-Measured on 13 November 2026, on real boxes, with BB Box 0.2.0's tool for the start, the captions and the device's actions, and this decision's code for the stop.
+Measured on 13 November 2026, on real boxes. The first measurements used BB Box 0.2.0's tool for the start, the captions and the device's actions, and this decision's code for the stop. The live gate at the end ran this decision's code whole, through the tool, in a separate BB.
 
 ## What each kind had, and what 0.2.0 made
 
@@ -33,3 +33,16 @@ On both Macs, the caption script ended on `NSInvalidArgumentException: -[__NSArr
 | linux-desktop-cpu, Docker, 4 cores | its own 6.1.1 | none | 1.2 s | 7.8 s | 6.5 s of 38.3 s, 1280x758, 2 steps captioned |
 
 A second recording on the Android box found the fetched build kept, in 0.04 s. A slot user on a shared Mac fetched with no root.
+
+## Live gate in a separate BB
+
+A fresh BB with no account, in a Linux desktop box, with this branch's BB Box installed and a scripted ACP agent calling the tools. Each clip played in that BB's thread.
+
+| Kind and where | Clip | In the chat |
+| --- | --- | --- |
+| linux-desktop-cpu, boat.dev | 2 steps captioned | 712 by 495 frame, the video 384 px |
+| android, Pixel 8, boat.dev | 2 steps captioned | 460 px frame, whole above the message box at 1440 by 900 and 1280 by 800 |
+| macos-desktop, Namespace, macOS 26.3.1 | 2 steps captioned, 9.6 s stop | 712 by 533 frame |
+| ios, shared slot on Namespace, iPhone 17 | 2 steps captioned; the start fetched ffmpeg 9.0.2 in 2.7 to 3.6 s, with no root | 460 px frame, whole above the message box at 1440 by 900 and 1280 by 800 |
+
+In the side panel the phone clips showed at 705 px tall in a 1440 by 900 window and 605 px in a 1280 by 800 one. On the same Pixel, a read of the screen took 2.35 s without recording and 2.23 s while recording, and a tap 6.5 s and 3.4 s, as the emulator had just booted. On the iPhone slot, a read took 219 and 220 ms, and a tap 1.3 and 1.1 s.

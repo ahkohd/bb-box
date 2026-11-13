@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { CLIP_FFMPEG_DIR, CLIP_FFMPEG_EXITS, FFMPEG_BUILDS, clipFfmpegScript, parseClipFfmpeg, useClipFfmpeg, type FfmpegBuild } from "../src/core/record-ffmpeg.ts";
@@ -298,8 +298,38 @@ test("a cached build is checked against the checksums taken when it was put in p
   const refused = run(linked, clipFfmpegScript("linux", [linuxBuild(linuxArchive(linked, FOLDER, EVERY_FILTER))]));
 
   assert.equal(refused.status, CLIP_FFMPEG_EXITS.untrusted);
-  assert.match(refused.stderr, /is a link, or not the box user's, so BB Box does not keep ffmpeg there\. Remove it, then start again\./);
+  assert.match(refused.stderr, /is a link, or not the box user's alone, so BB Box does not keep ffmpeg there\. Remove it, then start again\./);
   assert.deepEqual(fetches(linked), []);
+});
+
+test("a cached ffmpeg that another path can change, through a hard link, a linked checksum file or write access for others, is discarded and fetched afresh, never run (063)", { skip }, () => {
+  const box = fakeBox("Linux", "x86_64", null);
+  const build = linuxBuild(linuxArchive(box, FOLDER, EVERY_FILTER));
+  const said = parseClipFfmpeg(run(box, clipFfmpegScript("linux", [build])).stdout)!;
+  const cached = dirname(said.pair.ffmpeg);
+  const outside = tempDir("clip-ffmpeg-outside");
+  executable(join(outside, "ffmpeg"), fakeFfmpegScript("99.0", EVERY_FILTER, "a replacement from outside the cache"));
+  rmSync(join(cached, "ffmpeg"));
+  linkSync(join(outside, "ffmpeg"), join(cached, "ffmpeg"));
+  writeFileSync(join(outside, "sums"), `${sha256(join(outside, "ffmpeg"))} ${sha256(join(cached, "ffprobe"))}\n`);
+  rmSync(join(cached, "sums"));
+  symlinkSync(join(outside, "sums"), join(cached, "sums"));
+
+  const aliased = run(box, clipFfmpegScript("linux", [build]));
+
+  assert.equal(aliased.status, CLIP_FFMPEG_EXITS.ready, aliased.stderr);
+  assert.equal(parseClipFfmpeg(aliased.stdout)?.ffmpeg, "fetched", "the aliased build is not kept");
+  assert.equal(clipRuns(box, aliased.stdout), "the fetched ffmpeg");
+  assert.equal(lstatSync(join(cached, "ffmpeg")).nlink, 1);
+  assert.equal(lstatSync(join(cached, "sums")).isSymbolicLink(), false);
+  assert.match(readFileSync(join(outside, "ffmpeg"), "utf8"), /a replacement from outside the cache/, "nothing outside the cache is touched");
+
+  chmodSync(join(cached, "ffmpeg"), 0o777);
+  const shared = run(box, clipFfmpegScript("linux", [build]));
+
+  assert.equal(parseClipFfmpeg(shared.stdout)?.ffmpeg, "fetched", "a build others can write is not kept");
+  assert.equal(lstatSync(join(cached, "ffmpeg")).mode & 0o077, 0, "a fresh build is the box user's alone");
+  assert.equal(fetches(box).length, 3);
 });
 
 test("at a recording's stop, readiness chooses among the box's own and cached pairs and never fetches (063)", { skip }, () => {
