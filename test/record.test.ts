@@ -9,8 +9,11 @@ import { test } from "node:test";
 import { pngPixels } from "../src/core/png.ts";
 import { textRuns } from "../src/core/record-font.ts";
 import { markArt, markRgb } from "../src/core/record-icons.ts";
-import { CHANGES_MOST, chipSpacing, RECORD_DIR, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, analysisGraph, captionText, chaptersOf, clipGraph, parsePrepared, parseRecordResult, planClip, previewHeight, readingSeconds, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, type Prepared } from "../src/core/record.ts";
+import { CHANGES_MOST, MAC_PILL, PREVIEW_VIDEO_MOST, chipSpacing, RECORD_DIR, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, analysisGraph, captionText, chaptersOf, clipGraph, parsePrepared, parseRecordResult, planClip, previewHeight, readingSeconds, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, type Prepared } from "../src/core/record.ts";
 import { fakeFfmpeg, tempDir } from "./helpers.ts";
+import { readPill, runJxa } from "./fake-jxa.ts";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const skip = process.platform === "linux" ? false : "needs GNU stat and setsid";
 
@@ -324,10 +327,9 @@ test("on Windows box_record runs ffmpeg's gdigrab hidden, and stop closes its co
 test("box_record's page plays the clip beside it by its name, and its height follows the clip's shape (059)", () => {
   const page = recordPage(`Box "a" <b>`, "box a&b.mp4");
   assert.ok(page.includes(`<video id="clip" src="box%20a%26b.mp4" autoplay muted loop controls playsinline`), page);
-  assert.ok(page.length < 400, "a tiny page");
+  assert.ok(page.length < 600, "a tiny page");
   assert.ok(page.includes("<title>Box &#34;a&#34; &#60;b&#62;</title>"));
   assert.equal(previewHeight("1280x720"), 368);
-  assert.equal(previewHeight("960x1600"), 1075);
   assert.equal(previewHeight("odd"), 400);
   assert.equal(parseRecordResult("no json"), null);
   const listed = recordPage("Box a", "a.mp4", [{ at: 65.5, real: 125, text: "Open <it>", result: { passed: false, text: "It failed" } }]);
@@ -415,4 +417,43 @@ test("a clip's marks are the owner's icons, tinted, and its words are Inter, wit
   const windows = recordMakeScript(plan, "windows");
   assert.match(windows, /Inter-Medium\.ttf/);
   assert.match(windows, /mark-warn-/);
+});
+
+test("a portrait clip's preview is capped to a screen's height, and a landscape clip keeps its height (059)", () => {
+  assert.equal(previewHeight("1080x1600"), PREVIEW_VIDEO_MOST + 8, "a phone's clip is capped to a screen's height");
+  assert.equal(previewHeight("1280x1600"), PREVIEW_VIDEO_MOST + 8, "a tablet's too");
+  assert.equal(previewHeight("1280x834"), 425, "a desktop's is as before");
+  assert.equal(previewHeight("1280x720"), 368);
+});
+
+const FONTS = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "core", "fonts");
+
+function macPillInputs(home: string, runs: readonly (readonly [string, string])[]): string[] {
+  const listed = runs.map(([font, text], index) => {
+    writeFileSync(join(home, `pill-0-${index}.txt`), text);
+    return `${font}\t${join(home, `pill-0-${index}.txt`)}\n`;
+  });
+  writeFileSync(join(home, "pill-0.runs"), listed.join(""));
+  writeFileSync(join(home, "mark-play-15.png"), markArt("play", 14, markRgb("4f8df5")).png);
+  return [join(home, "pill-0.runs"), join(home, "mark-play-15.png"), "15", "5f6368", "0.82", "14", "29", "10", "6", join(home, "pill-0.png")];
+}
+
+test("a Mac draws a caption's words in Inter, read from the files the make script writes, as macOS 26 and 27 give osascript an NSString that String() only names (081)", () => {
+  const home = tempDir("mac-pill");
+
+  const size = runJxa(MAC_PILL, macPillInputs(home, [[join(FONTS, "Inter-Regular.ttf"), "Open Settings"], ["", " ⌘"]]));
+
+  const pill = readPill(join(home, "pill-0.png"));
+  assert.deepEqual(pill.words.map((words) => [words.text, words.font]), [["Open Settings", "Inter-Regular"], [" ⌘", "system"]], "each run in its own font");
+  assert.equal(pill.icon, true);
+  assert.equal(size, `${10 + 15 + 6 + 13 * 7 + 2 * 7 + 10}x29`, "sides, mark, gap and the words' widths");
+});
+
+test("a Mac caption whose Inter file is missing falls back to the system font rather than ending osascript (081)", () => {
+  const home = tempDir("mac-pill-nofont");
+
+  const size = runJxa(MAC_PILL, macPillInputs(home, [[join(home, "Inter-Regular.ttf"), "Settings is open"]]));
+
+  assert.deepEqual(readPill(join(home, "pill-0.png")).words.map((words) => words.font), ["system"]);
+  assert.match(size, /^\d+x29$/);
 });

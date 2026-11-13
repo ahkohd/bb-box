@@ -13,6 +13,7 @@
 import type { GuestOs } from "../transports/types.ts";
 import { RECORD_DIR, RECORD_LIMIT_S, type CaptionPosition, type StepKind } from "./device-recording.ts";
 import { fontName, textRuns, type FontWeight } from "./record-font.ts";
+import { useClipFfmpeg, type ClipFfmpegPair } from "./record-ffmpeg.ts";
 import { markArt, markRgb, type MarkKind } from "./record-icons.ts";
 import type { InputEvent } from "./record-input.ts";
 import { END_HOLD_S, FADE_OUT_S, unionOfCuts } from "./record-edit.ts";
@@ -183,9 +184,10 @@ printf '%s\t%s\t%s\n' "$(perl -MTime::HiRes=time -e 'printf "%.3f", time')" ${ki
 `;
 }
 
-export function recordPrepareScript(stills: "cut" | "keep", os: GuestOs = "linux"): string {
+export function recordPrepareScript(stills: "cut" | "keep", os: GuestOs = "linux", pair: ClipFfmpegPair | null = null): string {
   if (os === "windows") return windowsPrepare(stills);
   return String.raw`d="$HOME/${RECORD_DIR}"
+${useClipFfmpeg(pair)}
 [ -s "$d/pid" ] || [ -s "$d/capture.mkv" ] || exit ${RECORD_STOP_EXITS.none}
 ended=limit
 if [ -s "$d/pid" ]; then
@@ -681,30 +683,36 @@ export function clipGraph(plan: ClipPlan, withOverlays: boolean): string {
   return scene ? parts.join(";\n") : parts.join(";").replace(/\[p(\d+)\]/g, "[v$1]");
 }
 
-const MAC_PILL = String.raw`ObjC.import("AppKit");
+export const MAC_PILL = String.raw`ObjC.import("AppKit");
 ObjC.import("CoreText");
 function run(argv) {
   const [runsFile, iconPath, iconWidth, fillHex, alpha, size, chipHeight, chipSide, chipIconGap, out] = argv;
   const fs = Number(size);
   const color = (hex, a) => $.NSColor.colorWithSRGBRedGreenBlueAlpha(parseInt(hex.slice(0, 2), 16) / 255, parseInt(hex.slice(2, 4), 16) / 255, parseInt(hex.slice(4, 6), 16) / 255, a);
   const seen = {};
+  const system = $.NSFont.systemFontOfSizeWeight(fs, $.NSFontWeightMedium);
+  const present = (object) => (object && !object.isNil() ? object : null);
+  const read = (path) => present($.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null));
   const face = (path) => {
-    if (!path) return $.NSFont.systemFontOfSizeWeight(fs, $.NSFontWeightMedium);
+    if (!path) return system;
     if (!seen[path]) {
       $.CTFontManagerRegisterFontsForURL($.NSURL.fileURLWithPath(path), 1, null);
       seen[path] = true;
     }
     const name = path.indexOf("Medium") >= 0 ? "Inter-Medium" : "Inter-Regular";
-    return $.NSFont.fontWithNameSize(name, fs) || $.NSFont.systemFontOfSizeWeight(fs, $.NSFontWeightMedium);
+    return present($.NSFont.fontWithNameSize(name, fs)) || system;
   };
-  const lines = String($.NSString.stringWithContentsOfFileEncodingError(runsFile, $.NSUTF8StringEncoding, null)).split("\n").filter((line) => line);
-  const runs = lines.map((line) => {
+  const listed = read(runsFile);
+  const lines = (listed ? listed.js : "").split("\n").filter((line) => line.indexOf("\t") >= 0);
+  const runs = lines.flatMap((line) => {
     const tab = line.indexOf("\t");
-    const text = $.NSString.stringWithContentsOfFileEncodingError(line.slice(tab + 1), $.NSUTF8StringEncoding, null);
+    const text = read(line.slice(tab + 1));
+    if (!text) return [];
     const font = face(line.slice(0, tab));
     const attrs = $.NSDictionary.dictionaryWithObjectsForKeys($([font, color("ffffff", 1)]), $([$.NSFontAttributeName, $.NSForegroundColorAttributeName]));
-    return { text, font, attrs, width: Math.ceil(Number(text.sizeWithAttributes(attrs).width)) };
+    return [{ text, font, attrs, width: Math.ceil(Number(text.sizeWithAttributes(attrs).width)) }];
   });
+  if (!runs.length) throw new Error("The pill has no words to draw.");
   const asked = Number(iconWidth);
   const image = $.NSImage.alloc.initWithContentsOfFile(iconPath);
   const iw = image && asked > 0 ? asked : 0;
@@ -786,12 +794,13 @@ function markInstalls(plan: ClipPlan): string {
     .join("\n");
 }
 
-export function recordMakeScript(plan: ClipPlan, os: GuestOs = "linux"): string {
+export function recordMakeScript(plan: ClipPlan, os: GuestOs = "linux", pair: ClipFfmpegPair | null = null): string {
   if (os === "windows") return windowsMake(plan);
   const pills = pillCalls(plan, "pill", "linux");
   const inputs = pillInputs(plan, (file) => `"$d/pill-${file}.png"`);
   const marks = markInstalls(plan);
   return String.raw`d="$HOME/${RECORD_DIR}"
+${useClipFfmpeg(pair)}
 [ -s "$d/capture.mkv" ] || exit ${RECORD_STOP_EXITS.none}
 decode() { perl -MMIME::Base64 -e 'print decode_base64($ARGV[0])' "$1"; }
 font_regular="$d/${fontName("regular")}"
@@ -1197,12 +1206,21 @@ function clock(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
+export const VIDEO_SHARE_LEAST = 55;
+
+const CLIP_FITS_ITS_FRAME = `html,body{height:100%}body{margin:0;background:#111;display:flex;flex-direction:column}video{display:block;flex:1 1 0;min-height:${VIDEO_SHARE_LEAST}%;width:100%;object-fit:contain}`;
+
+const STEPS_SCROLL = `ol{flex:0 1 auto;min-height:0;max-height:${100 - VIDEO_SHARE_LEAST}%;overflow-y:auto;list-style:none;margin:0;padding:8px 10px}`;
+
+export const PREVIEW_VIDEO_MOST = 560;
+
 export function recordPage(title: string, mp4: string, chapters: readonly Chapter[] = []): string {
   const escape = (text: string) => text.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
-  const video = `<video id="clip" src="${escape(encodeURIComponent(mp4))}" autoplay muted loop controls playsinline style="display:block;width:100%;height:auto"></video>`;
+  const video = `<video id="clip" src="${escape(encodeURIComponent(mp4))}" autoplay muted loop controls playsinline></video>`;
   if (!chapters.length) {
     return `<!doctype html><meta charset="utf-8"><title>${escape(title)}</title>
-<body style="margin:0;background:#111">${video}</body>
+<style>${CLIP_FITS_ITS_FRAME}</style>
+<body>${video}</body>
 `;
   }
   const rows = chapters
@@ -1213,17 +1231,33 @@ export function recordPage(title: string, mp4: string, chapters: readonly Chapte
     })
     .join("");
   return `<!doctype html><meta charset="utf-8"><title>${escape(title)}</title>
-<style>body{margin:0;background:#111;color:#e8e8e8;font:13px/1.45 -apple-system,system-ui,sans-serif}ol{list-style:none;margin:0;padding:8px 10px}li a{display:flex;gap:10px;padding:5px 6px;border-radius:6px;color:inherit;text-decoration:none}li a:hover{background:#222}.at{color:#9a9a9a;font-variant-numeric:tabular-nums;min-width:2.6em}</style>
+<style>${CLIP_FITS_ITS_FRAME}body{color:#e8e8e8;font:13px/1.45 -apple-system,system-ui,sans-serif}${STEPS_SCROLL}li a{display:flex;gap:10px;padding:5px 6px;border-radius:6px;color:inherit;text-decoration:none}li a:hover{background:#222}.at{color:#9a9a9a;font-variant-numeric:tabular-nums;min-width:2.6em}</style>
 <body>${video}<ol>${rows}</ol>
 <script>document.querySelectorAll("a[data-at]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); const v = document.getElementById("clip"); v.currentTime = Number(a.dataset.at); v.play(); }));</script></body>
 `;
 }
 
 /** The preview's height in BB, for a clip of `size` (WxH) shown about 640 wide. */
+export const STEP_ROWS_SHOWN = 4;
+const STEP_ROW_PX = 46;
+const STEP_LIST_PAD_PX = 16;
+
+export const UPRIGHT_FRAME_MOST = 460;
+
+function upright(size: string): boolean {
+  const [width, height] = size.split("x").map(Number);
+  return !!width && !!height && height > width;
+}
+
+export function previewFrameHeight(size: string, steps: number): number {
+  const natural = previewHeight(size) + (steps ? STEP_LIST_PAD_PX + Math.min(steps, STEP_ROWS_SHOWN) * STEP_ROW_PX : 0);
+  return upright(size) ? Math.min(natural, UPRIGHT_FRAME_MOST) : natural;
+}
+
 export function previewHeight(size: string): number {
   const [width, height] = size.split("x").map(Number);
   if (!width || !height) return 400;
-  return Math.max(120, Math.min(1200, Math.round((640 * height) / width) + 8));
+  return Math.max(120, Math.min(PREVIEW_VIDEO_MOST, Math.round((640 * height) / width)) + 8);
 }
 
 export function boxClockScript(os: GuestOs): string {
