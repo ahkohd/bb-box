@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { crc32 } from "node:zlib";
 import { test } from "node:test";
 import { CLIP_FFMPEG_DIR, CLIP_FFMPEG_EXITS, FFMPEG_BUILDS, clipFfmpegScript, parseClipFfmpeg, useClipFfmpeg, type FfmpegBuild } from "../src/core/record-ffmpeg.ts";
 import { tempDir } from "./helpers.ts";
@@ -85,16 +86,63 @@ function linuxArchive(box: FakeBox, folder: string, filters: readonly string[], 
   executable(join(staging, folder, "bin", "ffmpeg"), fakeFfmpegScript("9.0.2", filters, "the fetched ffmpeg"));
   executable(join(staging, folder, "bin", "ffprobe"), ffprobe);
   const name = `${folder}.tar.xz`;
-  assert.equal(spawnSync("tar", ["-cJf", join(box.net, name), "-C", staging, folder]).status, 0);
+  ranTool("tar", ["-cJf", join(box.net, name), "-C", staging, folder]);
   return { name, sha256: sha256(join(box.net, name)) };
 }
 
+const ZIP_STORED = 0;
+const ZIP_VERSION = 20;
+const ZIP_MADE_ON_UNIX = 3 << 8;
+const ZIP_DATE_1980 = 0x21;
+
+function storedZip(name: string, data: Buffer, mode: number): Buffer {
+  const fileName = Buffer.from(name);
+  const crc = crc32(data);
+
+  const local = Buffer.alloc(30);
+  local.writeUInt32LE(0x04034b50, 0);
+  local.writeUInt16LE(ZIP_VERSION, 4);
+  local.writeUInt16LE(ZIP_STORED, 8);
+  local.writeUInt16LE(ZIP_DATE_1980, 12);
+  local.writeUInt32LE(crc, 14);
+  local.writeUInt32LE(data.length, 18);
+  local.writeUInt32LE(data.length, 22);
+  local.writeUInt16LE(fileName.length, 26);
+
+  const central = Buffer.alloc(46);
+  central.writeUInt32LE(0x02014b50, 0);
+  central.writeUInt16LE(ZIP_MADE_ON_UNIX | ZIP_VERSION, 4);
+  central.writeUInt16LE(ZIP_VERSION, 6);
+  central.writeUInt16LE(ZIP_STORED, 10);
+  central.writeUInt16LE(ZIP_DATE_1980, 14);
+  central.writeUInt32LE(crc, 16);
+  central.writeUInt32LE(data.length, 20);
+  central.writeUInt32LE(data.length, 24);
+  central.writeUInt16LE(fileName.length, 28);
+  central.writeUInt32LE(((0o100000 | mode) << 16) >>> 0, 38);
+
+  const entry = Buffer.concat([local, fileName, data]);
+  const directory = Buffer.concat([central, fileName]);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(1, 8);
+  end.writeUInt16LE(1, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(entry.length, 16);
+  return Buffer.concat([entry, directory, end]);
+}
+
 function macArchive(box: FakeBox, member: "ffmpeg" | "ffprobe"): { readonly name: string; readonly sha256: string } {
-  const staging = tempDir("clip-ffmpeg-zip");
-  executable(join(staging, member), member === "ffmpeg" ? fakeFfmpegScript("9.0.2", EVERY_FILTER, "the fetched ffmpeg") : WORKING_FFPROBE);
+  const body = member === "ffmpeg" ? fakeFfmpegScript("9.0.2", EVERY_FILTER, "the fetched ffmpeg") : WORKING_FFPROBE;
   const name = `${member}.zip`;
-  assert.equal(spawnSync("zip", ["-q", "-j", join(box.net, name), join(staging, member)]).status, 0);
+  writeFileSync(join(box.net, name), storedZip(member, Buffer.from(body), 0o755));
   return { name, sha256: sha256(join(box.net, name)) };
+}
+
+function ranTool(tool: string, args: readonly string[]): void {
+  const result = spawnSync(tool, args, { encoding: "utf8" });
+  assert.equal(result.error, undefined, `${tool} is needed for this test's archive: ${result.error?.message}`);
+  assert.equal(result.status, 0, `${tool} failed: ${result.stderr}`);
 }
 
 const FOLDER = "ffmpeg-n9.0.2-linux64-gpl-9.0";
