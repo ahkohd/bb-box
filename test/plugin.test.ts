@@ -911,6 +911,43 @@ test("box_record on an ios box records its device, not the host's desktop: frame
   assert.match(text(await tool("box_record", { box: phone.name, action: "step", text: "Late" })), /is not recording\./);
 });
 
+function hostWithoutFitFfmpeg(): string {
+  const bin = tempDir("no-fit-ffmpeg");
+  writeFileSync(join(bin, "ffmpeg"), "#!/bin/sh\ncase \"$*\" in *-filters*) printf ' TS overlay V->V\\n TS geq V->V\\n .. freezedetect V->V\\n .. tpad V->V\\n' ;; *-encoders*) printf ' V....D libx264 H.264\\n' ;; esac\n");
+  writeFileSync(join(bin, "ffprobe"), "#!/bin/sh\n");
+  writeFileSync(join(bin, "curl"), "#!/bin/sh\necho 'curl: (6) Could not resolve host: github.com' >&2\nexit 6\n");
+  for (const tool of ["ffmpeg", "ffprobe", "curl"]) chmodSync(join(bin, tool), 0o755);
+  return bin;
+}
+
+test("box_record on a device box whose host cannot get an ffmpeg fit for a clip says so at the start, with the reason, before it records, and the doctor says it for the kind (063)", { skip: process.platform !== "linux" && "needs a Linux host to stand in for an Android one" }, async (t) => {
+  const offer = testDeviceOffer("android");
+  const kind: BoxKind = { ...FAKE_KINDS[0]!, id: "android", label: "Android emulator", capabilities: { ...FAKE_KINDS[0]!.capabilities, os: "linux", arch: "x86_64", displays: [DEVICE_DISPLAY], device: offer as never } };
+  const { harness, app, tool } = await start(undefined, { kinds: [kind] });
+  t.after(() => harness.lifecycle.dispose());
+  const path = process.env.PATH;
+  process.env.PATH = `${hostWithoutFitFfmpeg()}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+  assert.ok(!isError(await tool("box_acquire", { kind: "android", device: "Pixel 8" })));
+  const phone = await only(app);
+  let recordings = 0;
+  Object.assign(app.devices, { recorded: () => undefined, record: async () => ({ ok: true, state: null, id: String(++recordings) }) });
+
+  const started = await tool("box_record", { box: phone.name, action: "start" });
+
+  assert.ok(isError(started));
+  assert.match(text(started), new RegExp(`^Box ${phone.name} cannot make a recording's clip yet: BB Box could not fetch https://github\\.com/BtbN/FFmpeg-Builds/\\S+linux64-gpl-9\\.0\\.tar\\.xz: curl: \\(6\\) Could not resolve host: github\\.com\\. Check that the box can reach the internet, then start again\\.`), text(started));
+  assert.equal(recordings, 0, "the device was not asked to record");
+
+  const doctor = (await harness.behavior.callRpc("doctor", null)) as { sections: { title: string; report: { checks: { id: string; status: string; detail: string }[] } }[] };
+  const check = doctor.sections.find((section) => section.title === "Recordings")?.report.checks.find((each) => each.id === "recording.android");
+  assert.equal(check?.status, "warn");
+  assert.match(check?.detail ?? "", /records the device's own screen, in its frame, with captioned steps and a step list\. It needs ffmpeg and ffprobe with libx264 and the overlay, geq, freezedetect, tpad, drawtext filters\. When the box has none fit, BB Box fetches ffmpeg 9\.0\.2 into the box user's home at its first recording, about 151 MB, and checks its SHA-256\./);
+  assert.match(check?.detail ?? "", new RegExp(`In box ${phone.name}, at \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d UTC: Box ${phone.name} cannot make a recording's clip yet`));
+});
+
 test("box_copy takes files in the thread's storage folder both ways, by its variable or its path (#482)", async (t) => {
   const { harness, app, world, tool } = await start({ "fake-enabled": true, "enrol-boxes": false });
   t.after(() => harness.lifecycle.dispose());
@@ -3871,7 +3908,7 @@ test("the panel lists, acquires, stops, starts and releases boxes over RPC", asy
   const backends = (await harness.behavior.callRpc("backends")) as { type: string; state: string }[];
   assert.deepEqual(backends.map((backend) => [backend.type, backend.state]), [["fake", "active"]]);
   const doctor = (await harness.behavior.callRpc("doctor")) as { ok: boolean; sections: { title: string }[] };
-  assert.deepEqual([doctor.ok, doctor.sections.map((section) => section.title)], [true, ["Fake host", "Monitor", "Snapshots", "Box log"]]);
+  assert.deepEqual([doctor.ok, doctor.sections.map((section) => section.title)], [true, ["Fake host", "Recordings", "Monitor", "Snapshots", "Box log"]]);
 });
 
 /** Everything the plugin sent a desktop viewer, joined. */

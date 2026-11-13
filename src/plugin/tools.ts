@@ -26,7 +26,7 @@ import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
 import { ANDROID_ID_FIRST_BOOT_WORDS } from "../core/device-settings.ts";
 import { wantsDevice, type ClaimSwitch } from "./devices.ts";
-import { captionDeviceRecording, deviceClipWords, recordsDevice, startDeviceRecording, stopDeviceRecording, type DeviceRecordDeps } from "./record-device.ts";
+import { captionDeviceRecording, deviceClipWords, fetchedWords, readyClipFfmpeg, recordsDevice, startDeviceRecording, stopDeviceRecording, type DeviceRecordDeps } from "./record-device.ts";
 import type { BbBox } from "./setup.ts";
 import { snapshotStatusLine } from "./snapshot-words.ts";
 import { adminText, boxDetail, deviceLines, devicesText, joinAgainWords, placementText, kindResizeText, kindSnapshotText, resizeText, dockerText, boxLine, boxSize, draftText, idleWords, imagesText, next, startingWords, tryText, type KindView } from "./views.ts";
@@ -972,7 +972,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
   registerTool({
     name: "box_record",
     description:
-      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A step whose captions would cover more of what changes during it than the other side would has them on the other side. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. The clip draws a larger pointer that glides to each click, a ring where each click lands, a pill for each shortcut or special key and one "Typing" pill for typing into an element by its ref, never the text typed; nothing shows for a password, or for typing whose field ${PRODUCT} cannot tell, as into a window, single keys, or a person's typing. It zooms in gently where you click, drag and type by ref, and shows the screen inset on a plain background (073): zoom false or frame false at stop turns either off. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Idle stretches, where nothing moves but a blinking caret or a clock, are cut to half a second unless stills is "keep", so do not pause between steps for the viewer. A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops. On an ios or android box it records the device's own screen, not the host's: the device in its frame, turning as it turns, with touches shown as circles and the captions in a band above or below it; a stretch the device or its server lost is captioned in the clip.`,
+      `Record a desktop box's screen, to show your work in the thread as a short video (059). start begins recording and returns at once: then do what the video should show, with the computer tools and box_run. While recording, step captions what you test next ("It keeps the draft when saving fails"), and result gives its outcome with passed true or false ("Draft kept; no error toast"); both are burned into the clip and listed as chapters, at the top of the video, or at the bottom with position "bottom" at start, which suits a check near the top of the screen, such as a menu bar or a window's title. A step whose captions would cover more of what changes during it than the other side would has them on the other side. A cut still stretch shows "▶▶ 18 s later" in a corner, and a faster clip its speed. The clip draws a larger pointer that glides to each click, a ring where each click lands, a pill for each shortcut or special key and one "Typing" pill for typing into an element by its ref, never the text typed; nothing shows for a password, or for typing whose field ${PRODUCT} cannot tell, as into a window, single keys, or a person's typing. It zooms in gently where you click, drag and type by ref, and shows the screen inset on a plain background (073): zoom false or frame false at stop turns either off. stop ends it and makes the clip in this thread's storage folder, with a page that plays it in the thread. Idle stretches, where nothing moves but a blinking caret or a clock, are cut to half a second unless stills is "keep", so do not pause between steps for the viewer. A recording ends by itself after ${RECORD_LIMIT_S / 60} minutes, and stop still gives its clip. Linux desktops, on X11 and Wayland, macOS and Windows desktops. On an ios or android box it records the device's own screen, not the host's: the device in its frame, turning as it turns, with touches shown as circles and the captions in a band above or below it; a stretch the device or its server lost is captioned in the clip. The clip is made in the box with ffmpeg: where the box has none fit for a clip, as on an Android box or an iOS box on a shared Namespace Mac, start first fetches ${PRODUCT}'s pinned ffmpeg into the box user's home, about 10 s once per box, or says why it cannot.`,
     presentation: { label: { pending: "Recording the screen", completed: "Recorded the screen" } },
     parameters: z.object({
       box: boxParam,
@@ -1002,8 +1002,13 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           record: (request) => app.devices.record(found, request),
           run: async (script, timeoutMs) => (await boxes.run(owner, found.id, script, { timeoutMs, signal, session, maxOutputBytes: 1024 * 1024, waitForEnrolment: false })).result,
         };
+        const desktopClipWords = async (box: BoxRecord): Promise<string> => {
+          const ready = await readyClipFfmpeg(device.run, box);
+          app.clipFfmpeg.note(box, ready);
+          return ready.ok ? fetchedWords(ready.said) : ` Its clip will have no step captions: ${ready.text}`;
+        };
         if (onDevice && action === "start") {
-          const said = await startDeviceRecording(device, found, position ?? "top");
+          const said = await startDeviceRecording(device, found, position ?? "top", (ready) => app.clipFfmpeg.note(found, ready));
           if (!said.ok) return { content: [{ type: "text", text: said.text }], isError: true };
           return `${said.text}${next(`Do what the video should show, then call box_record with box "${found.name}" and action "stop".`)}`;
         }
@@ -1029,7 +1034,8 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           const said = refused[result.exitCode ?? -1];
           if (said) return { content: [{ type: "text", text: said }], isError: true };
           if (result.exitCode !== 0) throw new BoxError("unreachable", `Recording box ${found.name} did not start: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
-          return `Recording box ${found.name}'s desktop, for at most ${RECORD_LIMIT_S / 60} minutes.${next(`Do what the video should show, then call box_record with box "${found.name}" and action "stop".`)}`;
+          const clipWords = os === "windows" ? "" : await desktopClipWords(found);
+          return `Recording box ${found.name}'s desktop, for at most ${RECORD_LIMIT_S / 60} minutes.${clipWords}${next(`Do what the video should show, then call box_record with box "${found.name}" and action "stop".`)}`;
         }
         if (action === "step" || action === "result") {
           if (!text) return { content: [{ type: "text", text: `Give text with ${action}: ${action === "step" ? "what you check next" : "what you saw"}, in one short line.` }], isError: true };

@@ -68,6 +68,21 @@ On an iOS or Android box, a recording shows the device's own screen, not the hos
 - The clip is at most 1280 pixels wide and 1600 pixels tall. When the device turns during a recording, the clip is sized for both shapes, so the device keeps one size throughout.
 - If the device restarts, or BB Box's device server in the box restarts, the clip holds the last picture across the gap and says what happened there, such as "The device restarted here". If the box stops, the recording ends there.
 
+## What a box needs to record
+
+BB Box makes the clip in the box, with ffmpeg. When a recording starts, it checks the box's own ffmpeg. It serves when it has what a clip needs: H.264 encoding with libx264, and on Linux the drawtext filter, which draws the captions there. A Mac draws its captions itself, so Homebrew's ffmpeg serves there.
+
+When the box has no ffmpeg fit for a clip, as on an Android box or an iOS box on a shared Namespace Mac, BB Box fetches its own copy of ffmpeg 9.0.2 into the box user's home at the first recording. It checks the download against its SHA-256, needs no root, and keeps it for later recordings. That makes the first start slower:
+
+| Box | Download | Fetch at the first start |
+| --- | --- | --- |
+| Linux, such as an Android box, on x86_64 or arm64 | about 151 MB, or 127 MB on arm64 | 9 to 11 seconds on an Android box on Proxmox |
+| macOS on arm64, such as an iOS box | about 57 MB | 1.4 to 2 seconds on a Namespace Mac |
+
+Each new iOS box on a shared host fetches again, as its macOS user goes when it is released. The box must reach github.com for Linux, or ffmpeg.martin-riedl.de for macOS. Where these builds come from, and their licences, are on the [Third-party software](../../THIRD-PARTY.md) page.
+
+If a device box cannot get an ffmpeg fit for a clip, the agent is told why when it starts recording, and the device does not record. A desktop records anyway, and the agent is told that its clip will have no step captions. `bb box doctor` says, for each kind, what a recording makes there, what it needs, and what the last recording's start found.
+
 ## Asking an agent for a recording
 
 Ask in your own words. For example:
@@ -84,6 +99,8 @@ Agents record with the `box_record` tool. See [agent tools](../reference/tools.m
 ## Sharing a clip
 
 A clip is an MP4 file in the thread's storage folder. The captions and marks are part of the video, so they stay when you share the file. The list of steps is only on the page in the thread.
+
+The page fits the clip whole into its frame, in the chat and in the side panel. A phone's or tablet's upright clip is at most 560 pixels tall in the chat, and as wide as that height allows. A desktop's clip fills the width as before.
 
 ## Limits
 

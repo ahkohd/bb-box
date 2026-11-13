@@ -5,6 +5,7 @@ bb-box's own code is in this repository. This page lists the software of others 
 - what the plugin bundles
 - what the documentation site serves
 - what it installs on a host
+- what it fetches into a box to make a recording's clip
 - what its setup scripts put in box images
 
 bb-box does not redistribute the software it installs on hosts or puts in images. Each piece is downloaded from its publisher when you set up a host or build an image, and most are checked against a SHA-256 pinned in this repository. Each is under its own licence, which applies to whoever builds the image.
@@ -59,6 +60,15 @@ The site in `site/` is built from these packages. Its pages carry their code, st
 | Software | Licence | Where |
 | --- | --- | --- |
 | [microsandbox](https://github.com/superradcompany/microsandbox)'s `msb` | Apache 2.0 | The microsandbox backend installs it on its host. |
+
+## Fetched into boxes
+
+`box_record` fetches one of these into a box whose own ffmpeg cannot make a clip, at the box's first recording (099). The box downloads it from its publisher and checks it against a SHA-256 pinned in `src/core/record-ffmpeg.ts`. bb-box does not redistribute it.
+
+| Software | Licence | For |
+| --- | --- | --- |
+| [FFmpeg](https://ffmpeg.org) 9.0.2, built by [BtbN's FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds), release `autobuild-2026-09-30-13-08`, the `gpl` builds | GNU GPL 3.0, as built with x264 and other GPL libraries | Linux on x86_64 and arm64 |
+| [FFmpeg](https://ffmpeg.org) 9.0.2, built by [Martin Riedl](https://ffmpeg.martin-riedl.de), release `1789931890_9.0.2` | GNU GPL 3.0, as built with x264 and other GPL libraries | macOS on arm64 |
 
 ## In box images
 

@@ -537,6 +537,12 @@ steps for the viewer.
   or below it with `position: "bottom"`, so they never cover the app. No
   viewer needs to be open. Where the device restarts or its server restarts
   during a recording, the clip holds the last picture and says so.
+- The clip is made in the box with ffmpeg. Where the box has none fit for a
+  clip, such as an Android box or an iOS box on a shared Namespace Mac,
+  `start` first fetches BB Box's own ffmpeg into the box user's home: about
+  10 seconds on Android and 2 on a Mac, once per box. If it cannot, `start`
+  says why and the device does not record; on a desktop it records but says
+  the clip will have no step captions.
 
 ## BB machines
 

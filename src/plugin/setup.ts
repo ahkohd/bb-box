@@ -97,6 +97,8 @@ import { TurnHold } from "./turn-hold.ts";
 import { ReachCheck } from "../core/reach.ts";
 import { byBbBox, type Actor } from "../core/box-log.ts";
 import { RecordingInputs } from "../core/record-input.ts";
+import { recordingChecks } from "../core/record-support.ts";
+import { ClipFfmpegLedger } from "./record-device.ts";
 
 /** Realtime channel: a thread's boxes, the kinds or the backends changed. The panel refetches. */
 import { PRODUCT } from "../brand.ts";
@@ -175,6 +177,7 @@ export interface BbBox {
   readonly desktops: Desktops;
   readonly devices: DeviceServers;
   readonly recordings: RecordingInputs;
+  readonly clipFfmpeg: ClipFfmpegLedger;
   readonly terminals: Terminals;
   /** The agent's computer use of desktop boxes (015). */
   readonly computer: Computer;
@@ -1054,6 +1057,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     bootstrap: (request) => bb.experimental_machines.bootstrap(request),
   });
   const recordings = new RecordingInputs();
+  const clipFfmpeg = new ClipFfmpegLedger();
   const computing = new Computer({
     onInput: (box, input, sentAt) => recordings.acted(box.id, input, sentAt),
     async spawn(box, script, signal) {
@@ -1553,6 +1557,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
     desktops: desktop,
     devices,
     recordings,
+    clipFfmpeg,
     terminals: terminal,
     computer: computing,
     deviceComputer: deviceComputing,
@@ -1780,6 +1785,13 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
         sections.push({
           title: "Device servers",
           report: { ok: deviceChecks.every((check) => check.status !== "fail"), summary: `The device server each device box runs, against version ${deviceServers?.version} that this ${PRODUCT} delivers.`, checks: deviceChecks, notes: [] },
+        });
+      }
+      const recordingKinds = recordingChecks(backends.kinds().map((offer) => offer.kind), clipFfmpeg.measured);
+      if (recordingKinds.length) {
+        sections.push({
+          title: "Recordings",
+          report: { ok: true, summary: "What box_record makes on each kind, what it needs there, and what the last recording's start found.", checks: recordingKinds, notes: [] },
         });
       }
       const small = presetMemoryChecks((await general()).sizes);

@@ -66,6 +66,11 @@ export const CHECKS = {
     what: "An ios box's macOS host has no Device Hub running (063): it takes the device's pasteboard, and quitting it shuts the device down, so the device server kills it within 5 s of its start. Says how often it has.",
   },
   "device.<box>": { name: "Device server of <box>", from: ["bb-box"], what: `A device box's server (063): the version it runs against the one this ${PRODUCT} delivers, a delivery waiting for a person or a recording, a version marked bad after it did not answer, and a server its service manager gave up on.` },
+  "recording.<kind>": {
+    name: "Recordings on <kind>",
+    from: ["bb-box"],
+    what: `What box_record makes on a kind (059, 063): a desktop's or a device's screen with captioned steps, or nothing; the ffmpeg it needs there, which ${PRODUCT} fetches into a box that has none fit; and what the kind's last recording start found.`,
+  },
   "devices.<mac>": {
     name: "iOS devices on <mac>",
     from: ["ssh-pool", "tart", "namespace"],
