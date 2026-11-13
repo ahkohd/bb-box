@@ -59,14 +59,14 @@ describe("Pool machines report whether they can snapshot (090)", () => {
 
     const { checks } = await backend.doctor();
 
-    assert.match(check(checks, "machine.build-1.snapshots").detail, /^Home snapshots: none: ext4 under \/home, which neither clones nor snapshots\. Machine snapshots: none: no snapshot hook is installed\. Probed just now\. BB Box takes no snapshots on the SSH host pool yet\.$/);
+    assert.match(check(checks, "machine.build-1.snapshots").detail, /^Home snapshots: none: ext4 under \/home, which neither clones nor snapshots\. Machine snapshots: none: no snapshot hook is installed\. Probed just now\. BB Box takes no snapshots on the pool's Linux machines yet\.$/);
     assert.match(check(checks, "machine.build-2.snapshots").detail, /^Home snapshots: btrfs subvolumes available under \/home, 40 GiB free\. Machine snapshots: none: no snapshot hook is installed\./);
     assert.match(check(checks, "machine.build-3.snapshots").detail, /^Home snapshots: none: its boxes have root through its whole-machine reset, .*\. Machine snapshots: hook found: machine scope, LVM thin \(bbvg\/thinpool, 12% full\)\./);
-    assert.match(check(checks, "machine.mac-1.snapshots").detail, /^Home snapshots: APFS clones available under \/Users, 40 GiB free\./);
+    assert.match(check(checks, "machine.mac-1.snapshots").detail, /^Home snapshots: APFS clones available under \/Users, 40 GiB free\..* Boxes lent it whole take home snapshots\.$/);
     assert.ok(["build-1", "build-2", "build-3", "mac-1"].every((name) => check(checks, `machine.${name}.snapshots`).status === "ok"));
     assert.equal(
       check(checks, "snapshot-offers").detail,
-      "2 of 4 machines could offer home snapshots (build-2, mac-1); 1 of 4 machines could offer machine snapshots by a hook (build-3). BB Box takes no snapshots on the SSH host pool yet.",
+      "2 of 4 machines could offer home snapshots (build-2, mac-1); 1 of 4 machines could offer machine snapshots by a hook (build-3). Boxes lent a Mac whole take home snapshots there; BB Box takes no snapshots on the pool's Linux machines yet, nor machine snapshots by a hook.",
     );
   });
 
@@ -133,7 +133,7 @@ describe("Pool machines report whether they can snapshot (090)", () => {
     const later = pool("build-8 192.0.2.78 linux", storage);
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    assert.match(surveyed.noSnapshotsWhy(guestOn("build-8")) ?? "", /reports home snapshots: btrfs subvolumes available under \/home, but BB Box takes no snapshots on the SSH host pool yet/);
+    assert.match(surveyed.noSnapshotsWhy(guestOn("build-8")) ?? "", /reports home snapshots: btrfs subvolumes available under \/home, but BB Box takes no snapshots on the pool's Linux machines yet/);
     assert.match(later.noSnapshotsWhy(guestOn("build-8")) ?? "", /^its machine, build-8, takes no snapshots: for a home snapshot, xfs under \/home, which neither clones nor snapshots; for a machine snapshot, no snapshot hook is installed$/);
   });
 

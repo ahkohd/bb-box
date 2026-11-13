@@ -1,3 +1,4 @@
+import type { SnapshotScope } from "../backends/types.ts";
 import type { RestoreCheck } from "../core/snapshots.ts";
 import { describeSize } from "../core/sizes.ts";
 
@@ -6,7 +7,7 @@ export const RESTORE_FORM_TIMEOUT_MS = 10 * 60_000;
 
 export interface RestoreFormPayload {
   readonly box: { readonly id: string; readonly name: string };
-  readonly snapshot: { readonly id: string; readonly name: string; readonly takenAt: number; readonly holds: string };
+  readonly snapshot: { readonly id: string; readonly name: string; readonly takenAt: number; readonly holds: string; readonly scope: SnapshotScope };
   readonly undo: { readonly name: string; readonly aboutSeconds: number; readonly heldCopy: boolean };
   readonly asks: "machine" | "settings";
   readonly losses: readonly string[];
@@ -28,7 +29,7 @@ export function restoreFormPayload(check: RestoreCheck, asks: "machine" | "setti
   const undo = check.undo!;
   return {
     box: { id: check.box.id, name: check.box.name },
-    snapshot: { id: check.snapshot.id, name: check.snapshot.name, takenAt: check.snapshot.takenAt, holds: check.snapshot.holds },
+    snapshot: { id: check.snapshot.id, name: check.snapshot.name, takenAt: check.snapshot.takenAt, holds: check.snapshot.holds, scope: check.snapshot.scope },
     undo: { name: undo.name, aboutSeconds: Math.max(1, Math.round(undo.aboutMs / 1000)), heldCopy: undo.kind === "held-copy" },
     asks,
     losses: check.anyway,

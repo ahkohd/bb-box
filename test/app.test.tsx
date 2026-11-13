@@ -740,7 +740,7 @@ function server(initial: BoxView[], options: { projects?: { id: string; name: st
     },
     "snapshot.takeCheck": ({ memory }) =>
       options.takeCheck ?? {
-        check: { holds: memory ? "disk-and-memory" : "disk", aboutMs: memory ? 9_000 : 700, pause: memory ? { pauses: true, aboutMs: 2_000, basis: { bytes: 8e9, of: "memory" } } : { pauses: false }, addsBytes: null, storage: "fast", host: "pve-1", memory: { aboutMs: 9_000, addsBytes: 8 * 1024 ** 3, storage: "fast" }, memoryWhy: null },
+        check: { holds: memory ? "disk-and-memory" : "disk", scope: "box", aboutMs: memory ? 9_000 : 700, pause: memory ? { pauses: true, aboutMs: 2_000, basis: { bytes: 8e9, of: "memory" } } : { pauses: false }, addsBytes: null, storage: "fast", host: "pve-1", memory: { aboutMs: 9_000, addsBytes: 8 * 1024 ** 3, storage: "fast" }, memoryWhy: null },
         refusal: null,
       },
     "snapshot.take": (input) => {
@@ -10762,11 +10762,34 @@ test("070 unit 5: the agents' two switches are on the Snapshots page and save at
   expect(labelsFor(entries, "agent restore")).toContain("Agents may restore their own boxes | Options › Snapshots");
 });
 
+test("090 unit 2: the restore form of a home snapshot says the home folder goes back and the user signs in again, not the disk", async () => {
+  const { restoreFormWords } = await import("../src/app/restore-form.tsx");
+  const payload = {
+    box: { id: "bxpoolmac", name: "pool-mac" },
+    snapshot: { id: "sn1", name: "before", takenAt: Date.now() - 3_600_000, holds: "disk", scope: "home" as const },
+    undo: { name: "before the restore at 11:02", aboutSeconds: 2, heldCopy: false },
+    asks: "settings" as const,
+    losses: [],
+    sizeBack: null,
+    excludes: "apps installed on the Mac",
+    runsOnIt: false,
+    changed: false,
+    plan: "abc123",
+    gpuStay: null,
+    userspaceNote: null,
+  };
+
+  const words = restoreFormWords(payload, Date.now());
+
+  expect(words.goes).toMatch(/^Everything in pool-mac's home folder since then goes: its files, settings and keychain items\. Its session ends and signs in again where it was/);
+  expect(words.goes).not.toMatch(/on its disk|installed apps and settings/);
+});
+
 test("070 unit 5: the restore form says what goes, that an undo is always taken and that an answer is a yes given in the thread, and submits its plan", async () => {
   const { RestoreForm, restoreFormWords } = await import("../src/app/restore-form.tsx");
   const payload = {
     box: { id: "bxdevdesk", name: "dev-desk" },
-    snapshot: { id: "sn1", name: "before the upgrade", takenAt: Date.now() - 2 * 3_600_000, holds: "disk" },
+    snapshot: { id: "sn1", name: "before the upgrade", takenAt: Date.now() - 2 * 3_600_000, holds: "disk", scope: "box" as const },
     undo: { name: "before the restore at 11:02", aboutSeconds: 1, heldCopy: false },
     asks: "machine" as const,
     losses: ['"Fix the sign-in flow" runs on it: its worktree, uncommitted files and session there go'],
@@ -11053,7 +11076,7 @@ test("the take dialog lists Holds, Leaves out, Takes, Snapshots and Cost in that
 });
 
 test("the take dialog says how long the take pauses the box and what that is based on, before the take, and the row says how long it paused it after", async () => {
-  const takeCheck = { check: { holds: "disk" as const, aboutMs: 5_400, pause: { pauses: true as const, aboutMs: 5_200, basis: { bytes: 1.1e9, of: "disk" as const } }, addsBytes: 1.1e9, storage: "Docker's disk", host: null, memory: null, memoryWhy: null }, refusal: null };
+  const takeCheck = { check: { holds: "disk" as const, scope: "box" as const, aboutMs: 5_400, pause: { pauses: true as const, aboutMs: 5_200, basis: { bytes: 1.1e9, of: "disk" as const } }, addsBytes: 1.1e9, storage: "Docker's disk", host: null, memory: null, memoryWhy: null }, refusal: null };
   const { handlers } = server([box()], { takeCheck, snapshots: snapshotsView({ records: [snapshotRow({ pausedMs: 3_240 })] }) });
   const slot = boxPageAt(handlers, "box/box_1");
   const card = await slot.findByRole("region", { name: "Snapshots" });

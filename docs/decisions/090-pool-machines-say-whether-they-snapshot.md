@@ -1,8 +1,9 @@
 # 090: Pool machines say whether they snapshot
 
 Status: accepted, 11 November 2026, with the owner's build order (see
-Build order). Unit 1 is built: each machine reports whether it can
-snapshot, and BB Box takes no pool snapshots yet.
+Build order). Units 1 and 2 are built: each machine reports whether it can
+snapshot, and boxes lent a Mac whole take home snapshots and restore them
+with an undo. Forks of them are refused for now (see Unit 2 as built).
 Extends [070](070-snapshots.md), whose table says the SSH host pool takes
 no snapshots, and follows [065](065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md)'s
 pattern: each machine says what it offers, measured on the machine.
@@ -174,9 +175,13 @@ machine snapshot hook <operation> <command> ...    runs the operator's hook, sec
   3. Take the undo, a snapshot of the stopped home.
   4. Move the home aside, put a writable clone of the target in its place,
      put back the ACLs kept at the take, and delete the old home.
-  5. Clear the user's temporary and cache folders outside the home
-     (`/private/var/folders/<xx>/<user>/T` and `C` on a Mac), which may
-     not match the restored home.
+  5. Clear what the user made in its temporary and cache folders outside
+     the home (`/private/var/folders/<xx>/<user>/T` and `C` on a Mac),
+     which may not match the restored home. On a Mac, the helper clears
+     only entries the user owns, in folders the user owns, all made after
+     the second macOS made the account (its `creationTime`), so a file
+     older than the user stays. It lists each with its device and inode,
+     and removes it only while they still match.
   6. Start the user again: on a Mac, set the automatic login and restart
      loginwindow; on Linux, start `user@<uid>.service`, whose units come
      back from the home.
@@ -304,7 +309,7 @@ project only. No cloud was called in the spike.
   what the machine found, and the words say both.
 - **The proof** runs before a machine's offer goes live, and again when
   the helper or hook changes: a take, a change, a restore and a delete on a
-  scratch user, `bbbox-probe`, made and removed by the helper. It runs only
+  scratch user made and removed by the helper. It runs only
   while no box holds the machine, during the reset, before the generation
   moves on. For a hook, the proof is
   `check-hook.sh`'s checks on a scratch snapshot. A machine whose proof
@@ -392,7 +397,8 @@ It needs:
 - **Room.** Snapshots grow as the home changes and share the machine's
   disk with the next boxes. 070's room rule applies to the homes' volume,
   and 064's disk reserve for slots counts snapshots.
-- **Stale state outside the home** after a restore: caches are cleared;
+- **Stale state outside the home** after a restore: what the user made in
+  its temporary and cache folders is cleared;
   daemons' per-user state is not, and has not been seen to matter.
 - **Hooks are root code BB Box does not write.** One froze a filesystem in
   the spike. The contract check runs before a hook goes live, and a hook
@@ -412,7 +418,8 @@ The owner chose this order on 11 November 2026. Each is a unit:
    reset's clean-up and the proof. Forks only where no other user shares
    the Mac. First proved on a real pool Mac. The snapshot store accepts
    the new scopes in this unit, as its records' check allows only `box`
-   and `device` today.
+   and `device` today. Built; forks are refused in BB Box for now (see
+   Unit 2 as built).
 3. **Shared iOS slots.** Take and restore. Forks stay off until a user can
    be signed in without a userspace restart, which ends every SSH session
    on the Mac.
@@ -424,6 +431,197 @@ The owner chose this order on 11 November 2026. Each is a unit:
 
 Later: ZFS homes, a sample cloud hook, and Keep past release where no box
 on the machine has root.
+
+### Unit 2 as built
+
+Built on 11 November 2026, for Macs lent whole. Where it differs from
+section 2, this is what stands:
+
+- **The helper's commands follow the core's restore.** The core stops the
+  box, takes the undo with the take it uses for any snapshot, rolls back
+  and starts the box. So the helper has `stop`, `take`, `restore` and
+  `start` in place of one `restore <snapshot> <undo> <operation>`:
+  `machine snapshot stop <generation>` clears the automatic login when it
+  names the user, notes whether the user was at the console, and ends the
+  session; `take` clones a stopped home without a pause; `restore
+  <generation> <snapshot> <operation>` swaps the home and is safe to ask
+  again with the same operation; `start <generation>` signs the user in
+  again where it was signed in, exiting 10 until it is. `list` and
+  `delete <user> <snapshot>` take no generation, so a sweep can find
+  snapshots of any box of the install. A delete names the box user whose
+  store holds the snapshot, and looks nowhere else. It deletes a snapshot,
+  or a take's unfinished clone of it, only where its record names this
+  install and that user. Where either folder has no record, or a record
+  for another install or user, it refuses with exit 4 and deletes nothing.
+- **The swap clones first, then renames twice.** The snapshot's clone and
+  its ACLs go to a staging folder in the store, the home moves aside, the
+  clone moves in, and the old home is deleted. A home moved aside with no
+  home in its place means the clone was complete, so asking again moves it
+  in. A staging folder alone is discarded and made again.
+- **One point in time by SIGSTOP, undone exactly.** Before a take stops
+  anything, it writes a pause record in the user's store. The record names
+  each of the box user's running processes, and each running process above
+  them that is not the box user's, such as a root `sudo`, by process ID and
+  start time. The take then stops only the box user's processes in the
+  record, in up to 5 rounds to catch processes started meanwhile. It
+  resumes only what the record names: the box user's processes, and each
+  process above them that is stopped, as `sudo` stops itself when its
+  command stops. It checks again every 0.2 s for 1 s, resuming each
+  recorded process that is stopped, and strikes a process from the record
+  once it runs again after its resume, or has gone. A process above that
+  has not stopped yet stays in the record for a minute after the resume,
+  as `sudo` may stop itself later than the take's last check. Each helper
+  command in that minute resumes it if it has stopped. A process found
+  stopped stays in the record, written before it is sent the signal to
+  resume, until a later check sees it running or gone, even after that
+  minute, so a helper cut short between the two leaves it to the next
+  command. A second take keeps what the record still names and adds its
+  own, so a process above the first take's that stops late is still
+  resumed. The record goes once it names nothing. A process stopped
+  before the take stays stopped, and a process ID now held by a process
+  with another start time is left alone. A process that the record names
+  and that someone else stops during the pause, or within that minute, is
+  resumed with the rest: the helper cannot tell that stop from one the
+  pause caused. The take holds a lock of its own for the pause. At the
+  start of every helper command except the proof, a record whose take no
+  longer holds that lock is resumed in the same way, so a helper killed
+  mid-take does not leave the box, or a `sudo` above it, stopped. A take
+  ended by a signal resumes its record before it exits.
+- **ACLs** are read after the resume, so an ACL changed in that moment is
+  kept as it is then, not as at the pause. They are kept as `find -acl` and
+  `ls -le` read them, and put back
+  with `chmod +a`, or `chmod +ai` for an inherited entry, which
+  `chmod -E` refuses.
+- **The clone** is one `clonefile(2)` call by `clone-tree`, which
+  `setup-mac.sh` builds with `clang`; without it the helper uses
+  `ditto --clone`. Helper version 3 has the commands; an older helper is
+  refused with what to run.
+- **Signing in again** restarts the login window and waits 30 s, then
+  restarts userspace, which ends every SSH session on the Mac, and fails
+  after 180 s more.
+- **Release.** The reset deletes the user's store before its sweep, and its
+  "nothing left" check counts any store entry of another user, so a Mac
+  with an earlier box's snapshot is not lent again.
+- **Forks stay refused in BB Box** for every pool Mac, with the reason:
+  signing a fork's new user in needs a userspace restart, which ends the
+  source box's session and every SSH session on the Mac. The lead chose
+  this over a fork beside its source without a console session, which
+  would change the helper's one-owner model; that is a later unit. The
+  helper's `fork <source user> <snapshot> <user> <uid>` is built and
+  proved. It reads the snapshot only from the source user's store, and
+  only where its record names this install and that user. It refuses
+  while another user shares the Mac, and resets the fork's home as the
+  spike lists, plists naming the source's home included. Before any
+  change, it refuses a user that is not one the helper reserves for box
+  users (`bbx-<n>` with UID 70000 plus n modulo 10000, or the fork
+  user the running proof picked), a user, home or UID already on the Mac, and the
+  user at the console. It never repairs or replaces an account to make a
+  fork.
+- **The proof** is `machine snapshot proof`. Each run makes new scratch
+  users, `bbbox-probe-` and 8 random hexadecimal digits, with UIDs from
+  90000 to 99999 that no account has at that moment, outside the box
+  users' 70000 to 79999 and the iOS slot users' 80000 to 89999. It picks
+  a name and a UID that no account has, and a UID no process runs as, at
+  that moment, so it never has to decide whether an existing account is
+  its own. A later run may pick a UID an earlier run used. It makes no
+  scan of the Data volume.
+  - **Admission.** It takes the helper's lock, then the device host's own
+    lock, waiting up to 60 s, and holds both until it ends. Every iOS slot
+    claim, promise, make and top-up changes a slot's state only under the
+    device host's lock, so a slot command dispatched before the proof
+    either changed its state first, which the proof then sees, or waits
+    for the lock. A command that waits is not refused: it goes on once the
+    proof lets go of the lock, or ends with its own refusal if its wait
+    runs out first. This needs no change to the device host, so it holds
+    with the one already installed. Under both locks it refuses with exit
+    3, changing nothing, while a box holds the Mac, its reset runs, a slot
+    is promised or its user is being removed, the device host's lock stays
+    held, or a take's pause record is left; it runs no take's recovery of
+    its own. It refuses too unless every iOS slot is completely idle: its
+    folder has its slot and state records, its state says ready, and it
+    holds no claim, unfinished claim record, released claim or last-slot
+    record. So a claim cut short between linking its claim and writing its
+    held state, which leaves a ready slot with a claim, is refused. It
+    refuses with exit 5 when it cannot list the Mac's users.
+  - **The record.** Before it makes anything, it writes
+    `/var/db/bb-box/proof-made`, and it adds each thing as it makes it:
+    each user with its UID and `GeneratedUID`, marked as picked while no
+    process ran as its UID, each folder and file with its device and inode
+    (homes, snapshot stores, each snapshot it takes, password files and
+    its own work folder, and the files it makes in a scratch user's
+    temporary and cache folders), and each process with its start time. It
+    follows a home through its own restores and fork. A record from an
+    earlier version, with no such mark, is one it does not read.
+  - **One checked path.** Every process the proof or a take signals,
+    every account the proof deletes, every file or folder the proof
+    deletes by its record, and every file a restore clears from the
+    user's temporary and cache folders goes through one function. It is given each
+    object's identity as recorded: a process's ID and start time, an
+    account's UID and `GeneratedUID`, a file's or folder's device and
+    inode. It reads accounts and files again one at a time, just before it
+    acts on each. For processes it reads one process table for each batch,
+    then signals each process in the batch whose ID and start time match
+    that table; a process that ends and whose ID is taken again within
+    that moment is the window it leaves. It acts only where the identity
+    matches, and skips and reports anything else. The proof's own
+    stopping and ending of its scratch processes, at its normal exit and
+    in recovery alike, takes this path, and a process it means to stop
+    during a take stops itself, so the proof sends it no signal. The proof
+    deletes its snapshots by their record, in its own store, through this
+    function.
+  - **The one exception: every process of a UID.** Ending every process
+    of an account by its UID (a TERM to its clients, `launchctl bootout`,
+    then `pkill -KILL -u`) is the one thing chosen by UID alone. The
+    helper does it only in `end_every_process_of_the_uid`, reached in two
+    ways. For a box user it lends, `log_out` does it, as release and reset
+    always have. In the proof, it does it only through
+    `end_every_process_of_an_account_this_proof_made`: for an account this
+    run made, whose UID and `GeneratedUID` match the record at that
+    moment, and whose UID no process used when the proof picked it. Where
+    the account no longer matches, at a stop, a restore or in recovery,
+    it ends nothing, says so, and never falls back to the UID alone: the
+    stop fails, the restore refuses with exit 5 and changes nothing, and
+    recovery leaves the account with the record. The proof prints this
+    rule at its start.
+  - **Timeouts end only the helper's own child.** A command the helper
+    runs with a time limit runs as the child of a small Perl program,
+    which sends it TERM at the limit only while it has not reaped it, so
+    the signal cannot reach a process that later took its ID.
+  - **Removing a tree changes no file outside it.** The helper clears the
+    flags and ACLs that stop a delete only on folders and on files with
+    one link. A file with more than one link, which shares its flags and
+    ACLs with a name outside the tree, is unlinked as it is. Where that
+    fails, the helper leaves it, names it, and the removal fails, with
+    nothing outside it changed.
+  - **Still removed by their path.** The helper's own working folders
+    inside the snapshot store, which only root can write, are removed by
+    their path: a take's unfinished clone, a restore's staged and
+    replaced homes and a fork's staged home.
+  - **Clean-up** deletes only by the record, through that function. It
+    logs a user out only where the account at that name still has the
+    recorded UID and `GeneratedUID`; that ends the processes of a UID that
+    no process ran as when the proof picked it. It never sweeps a UID's
+    files. Its restores clear only the temporary and cache files the proof
+    recorded making, and of those only what a restore would clear for a
+    box: the proof checks that one older than its user stays, and that one
+    it did not give the restore stays. What macOS made for a scratch user
+    outside the record, such as its temporary folders, stays. Anything it
+    cannot prove is its own stays, with the record and a note on how to
+    check it, and the run fails.
+  - **A run cut short** leaves the record. The next run first checks the
+    whole record, and that it can list the Mac's users. Where it cannot
+    list them, where anything in the record cannot be proved, or where
+    the record is in a form it does not read, it refuses with exit 5,
+    changing nothing, and keeps the record for a person to check. Only
+    once every check passes does it clean what the record proves, in the
+    same way, and go on. A window of a moment between making a thing and
+    recording it can leave something unrecorded: that stays, never
+    deleted.
+  - It notes the user at the console before it starts, and checks that
+    the same user is there before it deletes its snapshots, failing where
+    it changed. Its results go in [090-results.md](090-results.md).
+- **The snapshot store** takes the new scopes by rebuilding its table with
+  the wider check, keeping every record.
 
 ### History: the spike's fork rule
 

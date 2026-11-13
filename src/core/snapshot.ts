@@ -489,6 +489,12 @@ export function scopeFootnote(scope: Exclude<SnapshotScope, "box">, boxName: str
   }
 }
 
+export function homeRestoreGoesWords(boxName: string): string {
+  return `Everything in ${boxName}'s home folder since then goes: its files, settings and keychain items. Its session ends and signs in again where it was, so every process of its user ends. Apps installed on the Mac and files outside the home stay as they are.`;
+}
+
+export const HOME_RESTORE_WENT = "Everything in its home folder since then went. Every process of its user ended, and it signed in again where it was.";
+
 export function notKeptForScope(scope: SnapshotScope, boxName: string): string | null {
   switch (scope) {
     case "box":
@@ -509,7 +515,7 @@ export function notForkedForScope(scope: SnapshotScope, boxName: string): string
     case "device":
       return `it holds ${boxName}'s device only`;
     case "home":
-      return `it holds ${boxName}'s home folder only, and ${PRODUCT} does not fork home folders`;
+      return null;
     case "machine":
       return `it holds the whole machine ${boxName} holds alone, which no other box can share`;
   }

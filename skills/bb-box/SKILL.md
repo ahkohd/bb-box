@@ -289,9 +289,18 @@ memory, so a restore brings its device back booted, with the device, apps
 and data it had when the snapshot was taken. A fork boots the device
 afresh. A shared iOS box takes no snapshots: it has no VM of its own.
 
-A box on the SSH host pool takes no snapshots yet. A take is refused with
-its machine's own reason, such as its box homes being on a filesystem that
-neither clones nor snapshots. Tell the person that reason; do not try
+A box lent a Mac whole on the SSH host pool takes snapshots of its home
+folder only: its files, settings, keychain and browser profiles, not apps
+installed on the Mac or anything running. A take pauses the box for a
+moment, then resumes only what it paused, with any process above them,
+such as `sudo`, that stopped with them: a process you stopped yourself
+before the take stays stopped, but one of the box's processes, or a
+process above one, that you stop during the pause or in the minute after
+it is resumed with the rest. A restore ends the box user's session and signs it in again, so its
+desktop goes for a few seconds. These snapshots do not fork or Keep, and go
+when the box is released. Other pool boxes take none yet: a take is refused
+with the machine's own reason, such as its box homes being on a filesystem
+that neither clones nor snapshots. Tell the person that reason; do not try
 again on the same box.
 
 BB Box starts an Android model cold when its unsaved marker is present. A snapshot taken while that model runs keeps the marker, as does an undo taken after a hard stop. A clean emulator save removes the marker, so a matching quick-boot save can still load after a host restart. New boxes can use the image's quick-boot saves. Wait for Android to finish booting before running adb commands.

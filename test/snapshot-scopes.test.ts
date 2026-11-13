@@ -19,10 +19,10 @@ test("a home snapshot and a machine snapshot each say what they hold", () => {
   assert.match(footerWords({ ...offered("machine"), noneWhy: null } as BoxSnapshotsView, "amber-fox"), /^Snapshots hold the whole machine's disk, by its operator's snapshot hook\./);
 });
 
-test("neither a home snapshot nor a machine snapshot is kept past release or forked, each with its own reason", () => {
+test("neither a home snapshot nor a machine snapshot is kept past release, and a home snapshot's fork is its backend's to refuse", () => {
   assert.match(notKeptForScope("home", "amber-fox") ?? "", /home folder only, on a machine BB Box lends to other boxes after the release/);
   assert.match(notKeptForScope("machine", "amber-fox") ?? "", /whole machine box amber-fox was lent/);
-  assert.match(notForkedForScope("home", "amber-fox") ?? "", /BB Box does not fork home folders/);
+  assert.equal(notForkedForScope("home", "amber-fox"), null, "its backend's offer says whether and why not");
   assert.match(notForkedForScope("machine", "amber-fox") ?? "", /holds alone/);
 });
 
