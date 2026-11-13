@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { STEP_ROWS_SHOWN, VIDEO_SHARE_LEAST, previewFrameHeight, recordPage, type Chapter } from "../src/core/record.ts";
+import { STEP_ROWS_SHOWN, UPRIGHT_FRAME_MOST, VIDEO_SHARE_LEAST, previewFrameHeight, recordPage, type Chapter } from "../src/core/record.ts";
 import { tempDir } from "./helpers.ts";
 
 const CHROMES = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"];
@@ -62,13 +62,15 @@ for (const dark of [false, true]) {
 
       assert.ok(two.list.whole <= two.list.shown + 1, "two steps show whole");
       assert.ok(two.video >= two.viewport - two.list.shown - 1, "and the video takes the rest");
+      assert.ok(two.page <= two.viewport + 1, "within its frame");
     });
   }
 }
 
-test("a phone's preview is capped to a screen's height, steps past four scroll, and a desktop's keeps its height (059)", () => {
-  assert.equal(previewFrameHeight(PHONE_CLIP, 0), 568);
-  assert.equal(previewFrameHeight(PHONE_CLIP, 2), 568 + 16 + 2 * 46);
-  assert.equal(previewFrameHeight(PHONE_CLIP, 20), 568 + 16 + STEP_ROWS_SHOWN * 46);
+test("an upright clip and its steps fit the chat of a 1280 by 800 window, about 550 px above the message box, and a desktop's clip keeps its height (059)", () => {
+  assert.equal(UPRIGHT_FRAME_MOST, 520);
+  for (const steps of [0, 2, 20]) assert.equal(previewFrameHeight(PHONE_CLIP, steps), UPRIGHT_FRAME_MOST, `a phone's clip with ${steps} steps`);
+  assert.equal(previewFrameHeight("1600x1080", 2), 440 + 16 + 2 * 46, "a phone turned sideways is not capped");
   assert.equal(previewFrameHeight(DESKTOP_CLIP, 2), 425 + 16 + 2 * 46);
+  assert.equal(previewFrameHeight(DESKTOP_CLIP, 20), 425 + 16 + STEP_ROWS_SHOWN * 46);
 });

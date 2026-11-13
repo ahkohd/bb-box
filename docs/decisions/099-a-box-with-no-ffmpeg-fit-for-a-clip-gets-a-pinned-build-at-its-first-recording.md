@@ -26,7 +26,7 @@ A recording must work on every kind, with no image rebuild and no root on a shar
 - A device box that cannot get a fit ffmpeg refuses the start, with the reason and what to do, before the device records. A desktop whose ffmpeg cannot draw the captions starts anyway, as its capture works, and its answer says the clip will have no step captions, and why. A desktop with no ffmpeg at all is refused at the start, as before: it has nothing to capture its screen with, and its image brings ffmpeg.
 - The Mac's caption script reads its words with `.js`, and treats a nil font as missing, falling back to the system font.
 - The doctor reports recordings for each kind: what `box_record` makes there, what it needs, and what the kind's last recording start found, including a Windows desktop's, which uses its image's ffmpeg.
-- The clip's page in the thread fits its frame: the video keeps at least 55% of its height, with its shape, and the step list scrolls in the rest. A preview's video is at most 560 pixels tall, and its step list shows 4 steps, so a phone's portrait clip shows whole in the chat and in the side panel. A landscape desktop clip keeps its height.
+- The clip's page in the thread fits its frame: the video keeps at least 55% of its height, with its shape, and the step list scrolls in the rest. An upright clip's frame, its steps included, is at most 520 pixels tall, which fits the chat of a window 800 pixels tall, about 550 pixels above the message box; so a phone's clip shows whole in the chat and in the side panel. A landscape clip keeps its height, and its step list shows up to 4 steps.
 
 ## Consequences
 

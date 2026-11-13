@@ -1242,8 +1242,16 @@ export const STEP_ROWS_SHOWN = 4;
 const STEP_ROW_PX = 46;
 const STEP_LIST_PAD_PX = 16;
 
+export const UPRIGHT_FRAME_MOST = 520;
+
+function upright(size: string): boolean {
+  const [width, height] = size.split("x").map(Number);
+  return !!width && !!height && height > width;
+}
+
 export function previewFrameHeight(size: string, steps: number): number {
-  return previewHeight(size) + (steps ? STEP_LIST_PAD_PX + Math.min(steps, STEP_ROWS_SHOWN) * STEP_ROW_PX : 0);
+  const natural = previewHeight(size) + (steps ? STEP_LIST_PAD_PX + Math.min(steps, STEP_ROWS_SHOWN) * STEP_ROW_PX : 0);
+  return upright(size) ? Math.min(natural, UPRIGHT_FRAME_MOST) : natural;
 }
 
 export function previewHeight(size: string): number {
