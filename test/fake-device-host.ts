@@ -10,8 +10,8 @@ const IOS = fileURLToPath(new URL("../setup/tart/ios/", import.meta.url));
 const POOL_HOME = fileURLToPath(new URL("../setup/ssh-pool/mac-home/", import.meta.url));
 const MACOS_TOOLS = fileURLToPath(new URL("./fake-macos.sh", import.meta.url));
 const DEVICE_TOOLS = fileURLToPath(new URL("./fake-device-host.sh", import.meta.url));
-const DEVICE_TOOL_NAMES = ["sudo", "xcrun", "launchctl", "ps", "top", "pkill", "memory_pressure", "df", "taskpolicy"];
-const DELEGATED = ["launchctl", "plutil", "pkill"];
+const DEVICE_TOOL_NAMES = ["sudo", "xcrun", "launchctl", "ps", "top", "pkill", "memory_pressure", "df", "taskpolicy", "ln"];
+const DELEGATED = ["launchctl", "plutil", "pkill", "ps"];
 export const RUNTIME = "com.apple.CoreSimulator.SimRuntime.iOS-27-0";
 export const LIST = "ios-27.0-24A434";
 
@@ -80,6 +80,7 @@ export function fakeDeviceHost(options: { slim?: boolean; template?: boolean } =
   mkdirSync(libexec, { recursive: true });
   copyFileSync(helper, join(libexec, "device-host"));
   const machineHelper = join(dir, "pool", "machine-mac.sh");
+  copyFileSync(machineHelper, join(libexec, "machine"));
 
   const share = join(mac.data, "usr/local/share/bb-box");
   mkdirSync(join(share, "ios"), { recursive: true });

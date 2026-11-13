@@ -20,7 +20,7 @@ import { useThreadTitles } from "./desktop.tsx";
 import { CameraGlyph, ForkGlyph } from "./glyphs.tsx";
 import { useBoxesNav } from "./box-nav.tsx";
 import { isMachineName } from "../core/names.ts";
-import { measuredWords, pauseWords } from "../core/snapshot.ts";
+import { homeRestoreGoesWords, measuredWords, pauseWords } from "../core/snapshot.ts";
 import { PRODUCT } from "./product.ts";
 import {
   aboutWords,
@@ -648,7 +648,7 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
         if (!cancelled) show(answer);
       })
       .catch((error: unknown) => {
-        if (!cancelled) setPreview({ refusal: message(error), threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "", undoUnflushed: null });
+        if (!cancelled) setPreview({ refusal: message(error), threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "", undoUnflushed: null, homeUser: "signed-in" });
       });
     return () => {
       cancelled = true;
@@ -723,6 +723,10 @@ export function RestoreDialog({ box, snapshotId, perBox, now, onClose, onChanged
           {row && device ? (
             <p>
               Its device goes back to {whenInSentence(row.takenAt, now)}, {ago(row.takenAt, now)}, with the apps that were open then. Only the device: the rest of {box.name}'s disk stays as it is.
+            </p>
+          ) : row && row.scope === "home" ? (
+            <p>
+              It goes back to {whenInSentence(row.takenAt, now)}, {ago(row.takenAt, now)}. {homeRestoreGoesWords(box.name, preview?.homeUser)} What it did to the world since stays done.
             </p>
           ) : row ? (
             <p>

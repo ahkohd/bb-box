@@ -48,13 +48,22 @@ kcpassword_of() {
     $password =~ s/\0.*//s;
     print $password;' <"$R/etc/kcpassword"
 }
+acls_of_inodes_removed() {
+  inodes=$(for path; do /usr/bin/stat -c %d:%i "$path" 2>/dev/null; done)
+  touch "$F/acls"
+  while IFS= read -r line; do
+    inode=$(/usr/bin/stat -c %d:%i "${line%%	*}" 2>/dev/null || echo none)
+    printf '%s\n' "$inodes" | grep -qxF "$inode" || printf '%s\n' "$line"
+  done <"$F/acls" >"$F/acls.new.$$"
+  /bin/mv -f "$F/acls.new.$$" "$F/acls"
+}
 # Rewrites a state file through a filter.
 edit() {
   file=$1
   shift
   touch "$file"
   "$@" <"$file" >"$file.new.$$" || :
-  mv -f "$file.new.$$" "$file"
+  /bin/mv -f "$file.new.$$" "$file"
 }
 # Records that a UID owns paths: with -R, each path and everything under it.
 own() {
@@ -182,6 +191,8 @@ case $tool in
         echo "$full" >"$F/users/$user/RealName"
         echo "$home" >"$F/users/$user/NFSHomeDirectory"
         echo /bin/zsh >"$F/users/$user/UserShell"
+        tr a-z A-Z </proc/sys/kernel/random/uuid >"$F/users/$user/GeneratedUID"
+        printf '<plist><dict><key>creationTime</key><real>%s.25</real></dict></plist>\n' "$(/bin/date +%s)" >"$F/users/$user/accountPolicyData"
         printf '%s\n' "$password" >"$F/secrets/$user"
         ;;
       -deleteUser)
@@ -284,16 +295,22 @@ case $tool in
     ;;
 
   sudo)
+    as=''
     while [ $# -gt 0 ]; do
       case $1 in
         -n | -H) shift ;;
-        -u) shift 2 ;;
+        -u) as=$2 && shift 2 ;;
         --) shift && break ;;
         *) break ;;
       esac
     done
     command=$1
     shift
+    [ -z "$as" ] || uid_of "$as" >"$F/getconf-uid"
+    if [ -n "$as" ] && flag sudo-processes; then
+      echo "$$ $(uid_of "$as") ${command##*/} 1" >>"$F/processes"
+      echo "$$ $(uid_of "$as")" >>"$F/process-uids"
+    fi
     if [ -x "$FAKE_MAC_BIN/${command##*/}" ]; then exec "$FAKE_MAC_BIN/${command##*/}" "$@"; fi
     if [ -x "$R$command" ]; then exec "$R$command" "$@"; fi
     exec "$command" "$@"
@@ -309,6 +326,9 @@ case $tool in
     # stat -f %Lp <path>: its permission bits, as macOS gives them; stat -f %g: staff's GID, 20, as a home's group is.
     if [ "$2" = %Lp ]; then exec /usr/bin/stat -c %a "$3"; fi
     if [ "$2" = %g ]; then echo 20; exit 0; fi
+    if [ "$2" = %i ]; then exec /usr/bin/stat -c %i "$3"; fi
+    if [ "$2" = %d:%i ]; then exec /usr/bin/stat -c %d:%i "$3"; fi
+    if [ "$2" = %B ]; then exec /usr/bin/stat -c %Y "$3"; fi
     # stat -f %u <path>: the UID owners says owns it, else root's.
     if [ "$2" = %u ]; then
       real=$(readlink -f "$3")
@@ -335,7 +355,26 @@ case $tool in
   fdesetup) if flag filevault-on; then echo "FileVault is On."; else echo "FileVault is Off."; fi ;;
   ioreg) echo '  |   "IOPlatformUUID" = "0A1B2C3D-0000-4000-8000-000000000001"' ;;
   visudo) ! flag visudo-refuses && grep -q NOPASSWD "$2" ;;
-  chflags) ;;
+  chflags)
+    deep=no
+    while [ "${1#-}" != "$1" ]; do
+      [ "$1" != -R ] || deep=yes
+      shift
+    done
+    changes=$1
+    shift
+    for given; do
+      if [ "$deep" = yes ]; then /usr/bin/find "$given"; else printf '%s\n' "$given"; fi
+    done | while IFS= read -r path; do
+      inode=$(/usr/bin/stat -c %d:%i "$path" 2>/dev/null) || continue
+      for change in $(printf '%s' "$changes" | tr ',' ' '); do
+        case $change in
+          no*) edit "$F/inode-flags" awk -v i="$inode" -v f="${change#no}" '!($1 == i && $2 == f)' ;;
+          *) printf '%s %s\n' "$inode" "$change" >>"$F/inode-flags" ;;
+        esac
+      done
+    done
+    ;;
 
   chown)
     deep=no
@@ -353,6 +392,8 @@ case $tool in
     # find with -uid: the paths owners says the UID owns. Each argument is moved to the end once. flags/mds: once
     # a sweep of the Data volume has run, as Spotlight's mds does, a process of the user runs again and has made
     # its temporary folders again.
+    given=${1:-}
+    case $given in /*) resolved=$(readlink -f "$1") && shift && set -- "$resolved" "$@" ;; esac
     start=${1:-} uid=''
     count=$#
     while [ "$count" -gt 0 ]; do
@@ -372,6 +413,13 @@ case $tool in
         set -- "$@" "$argument"
       fi
     done
+    case " $* " in
+      *" -acl "*)
+        real=$(readlink -f "$start")
+        awk -F '\t' -v r="$real" -v s="$given" '!seen[$1]++ && ($1 == r || index($1, r "/") == 1) { print s substr($1, length(r) + 1) }' "$F/acls" 2>/dev/null
+        exit 0
+        ;;
+    esac
     case $start in
       */private/var/folders) exec /usr/bin/find "$@" ;;
     esac
@@ -423,7 +471,7 @@ case $tool in
     if [ "$1" = -create ]; then printf '<plist><dict>\n</dict></plist>\n' >"$3"; exit; fi
     if [ "$1" = -replace ]; then
       [ -f "$5" ] || exit 1
-      grep -v "<key>$2</key>" "$5" | sed "s:^</dict></plist>$:<key>$2</key><bool>$4</bool>\n&:" >"$5.new" && mv -f "$5.new" "$5"
+      grep -v "<key>$2</key>" "$5" | sed "s:^</dict></plist>$:<key>$2</key><bool>$4</bool>\n&:" >"$5.new" && /bin/mv -f "$5.new" "$5"
       exit
     fi
     sed -n "s:.*<key>$2</key><string>\([^<]*\)</string>.*:\1:p" "$4" | head -n 1
@@ -444,6 +492,10 @@ case $tool in
     # csreq -r- -b <out>: the requirement's text, as its compiled form.
     cat
     ;;
+  od)
+    /usr/bin/od "$@" || exit 1
+    echo
+    ;;
   xxd)
     [ "$1" = -p ] || exit 2
     od -An -v -tx1 | tr -d ' \n'
@@ -454,7 +506,7 @@ case $tool in
     flag no-clang && exit 1
     out=''
     while [ $# -gt 0 ]; do [ "$1" != -o ] || out=$2; shift; done
-    printf '#!/bin/sh\n' >"$out" && chmod 755 "$out"
+    printf '#!/bin/sh\n' >"$out" && /bin/chmod 755 "$out"
     ;;
   security)
     # security create-keychain makes the keychain's file, import -k <keychain> puts the identity in it
@@ -462,7 +514,11 @@ case $tool in
     # [-s <keychains>] keeps the user's search list in keychains/<uid>, and gives it as security does,
     # each quoted on a line.
     case $1 in
-      create-keychain) path=$(eval "echo \${$#}"); mkdir -p "$(dirname "$R$path")" && : >"$R$path" ;;
+      create-keychain)
+        path=$(eval "echo \${$#}")
+        case $path in "$R"/*) ;; *) path=$R$path ;; esac
+        mkdir -p "$(dirname "$path")" && : >"$path"
+        ;;
       import)
         flag no-import && exit 1
         [ -r "$2" ] || { echo "security: Error reading infile $2: Permission denied" >&2; exit 1; }
@@ -476,8 +532,15 @@ case $tool in
         ;;
     esac
     ;;
+  ps)
+    if [ "$*" = "-A -o pid=,ppid=,uid=,stat=,lstart=" ]; then
+      touch "$F/process-uids"
+      /bin/ps "$@" | awk 'FILENAME == ARGV[1] { box[$1] = $2; next } ($1 in box) { $3 = box[$1] } { print }' "$F/process-uids" -
+      exit 0
+    fi
+    exec /bin/ps "$@"
+    ;;
   pkill)
-    # pkill -KILL -u <uid>: each process loses a kill.
     if [ "${4:-}" = -x ]; then
       edit "$F/processes" awk -v u="$(uid_of "$3")" -v n="$5" '$2 == u && $3 == n { $4 -= 1; if ($4 <= 0) next } { print }'
       exit 0
@@ -485,6 +548,13 @@ case $tool in
     edit "$F/processes" awk -v u="$3" '$2 == u { $4 -= 1; if ($4 <= 0) next } { print }'
     ;;
 
+  getconf)
+    case ${1:-} in DARWIN_USER_TEMP_DIR) kind=T ;; DARWIN_USER_CACHE_DIR) kind=C ;; *) exec /usr/bin/getconf "$@" ;; esac
+    uid=$(cat "$F/getconf-uid" 2>/dev/null) || exit 1
+    folder=$R/private/var/folders/zz/user$uid
+    [ -d "$folder/$kind" ] || { mkdir -p "$folder/$kind" && own "$uid" no "$folder" "$folder/$kind"; }
+    echo "$folder/$kind/"
+    ;;
   date) if [ "${1:-}" = +%s ] && [ -e "$F/clock" ]; then cat "$F/clock"; else exec /bin/date "$@"; fi ;;
   shutdown) ;;
   node) echo v24.9.0 ;;
@@ -515,7 +585,7 @@ case $tool in
     done
     fixture=$F/flags/${url##*/}
     [ -n "$url" ] && [ -f "$fixture" ] || fixture=$F/flags/cua.tgz
-    if [ -n "$out" ]; then cp "$fixture" "$out"; else cat "$F/flags/install.sh"; fi
+    if [ -n "$out" ]; then /bin/cp "$fixture" "$out"; else cat "$F/flags/install.sh"; fi
     ;;
   shasum)
     cat >/dev/null
@@ -528,7 +598,66 @@ case $tool in
       tar -xf "$1" -C "$dir"
     fi
     ;;
-  ditto) cp -R "$1" "$2" ;;
+  ditto)
+    [ "$1" != --clone ] || shift
+    flag no-clone && { echo "ditto: $2: Operation not supported" >&2; exit 1; }
+    if flag clone-records-states; then
+      while read -r pid uid; do echo "$pid $(/bin/ps -o stat= -p "$pid")"; done <"$F/process-uids" >"$F/states-at-clone"
+    fi
+    if [ -s "$F/flags/stop-during-clone" ]; then kill -STOP $(cat "$F/flags/stop-during-clone"); fi
+    if [ -s "$F/flags/during-clone" ] && F=$F R=$R sh "$F/flags/during-clone" "$1" "$2"; then rm -f "$F/flags/during-clone"; fi
+    if [ -s "$F/flags/clone-waits" ]; then : >"$F/cloning" && sleep "$(cat "$F/flags/clone-waits")"; fi
+    /bin/cp -R "$1" "$2" || exit 1
+    from=$(readlink -f "$1") to=$(readlink -f "$2")
+    awk -v f="$from" -v t="$to" '{ p = substr($0, index($0, " ") + 1); if (p == f || index(p, f "/") == 1) print $1 " " t substr(p, length(f) + 1) }' "$F/owners" >>"$F/owners.copied"
+    cat "$F/owners.copied" >>"$F/owners" && rm -f "$F/owners.copied"
+    ;;
+  mv)
+    /bin/mv "$@" || exit 1
+    while [ "${1#-}" != "$1" ]; do shift; done
+    if [ -s "$F/flags/die-after-moving" ]; then
+      case $2 in
+        $(cat "$F/flags/die-after-moving"))
+          rm -f "$F/flags/die-after-moving"
+          kill -KILL "-$(ps -o pgid= -p $$ | tr -d ' ')"
+          ;;
+      esac
+    fi
+    [ ! -e "$1" ] && [ -e "$2" ] || exit 0
+    from=$(readlink -m "$1") to=$(readlink -f "$2")
+    awk -v f="$from" -v t="$to" '{ p = substr($0, index($0, " ") + 1); if (p == f || index(p, f "/") == 1) print $1 " " t substr(p, length(f) + 1) }' "$F/owners" >"$F/owners.moved"
+    cat "$F/owners.moved" >>"$F/owners" && rm -f "$F/owners.moved"
+    edit "$F/acls" awk -v f="$from" -v t="$to" -F '\t' -v OFS='\t' '{ if ($1 == f || index($1, f "/") == 1) $1 = t substr($1, length(f) + 1); print }'
+    ;;
+  ls)
+    if [ "${1:-}" = -led ]; then
+      real=$(readlink -f "$2")
+      echo "drwx------+ 1 box staff 0 Jan 1 00:00 $2"
+      awk -v p="$real" -F '\t' '$1 == p { printf " %d: %s\n", n++, $2 }' "$F/acls" 2>/dev/null
+      exit 0
+    fi
+    exec /bin/ls "$@"
+    ;;
+  chmod)
+    [ "${1:-}" != -h ] || shift
+    case ${1:-} in
+      -N)
+        shift
+        acls_of_inodes_removed "$@"
+        ;;
+      -R)
+        [ "$2" = -N ] || exec /bin/chmod "$@"
+        /usr/bin/find "$3" | {
+          set --
+          while IFS= read -r path; do set -- "$@" "$path"; done
+          acls_of_inodes_removed "$@"
+        }
+        ;;
+      +a) printf '%s\t%s\n' "$(readlink -f "$3")" "$2" >>"$F/acls" ;;
+      +ai) printf '%s\t%s\n' "$(readlink -f "$3")" "$(printf '%s' "$2" | sed 's/:\([a-z]*\) \(allow\|deny\)/:\1 inherited \2/')" >>"$F/acls" ;;
+      *) exec /bin/chmod "$@" ;;
+    esac
+    ;;
   diskutil) printf '   Device Node:              %s\n   Type (Bundle):             %s\n' "${2:-}" "$(cat "$F/flags/homes-fs" 2>/dev/null || echo apfs)" ;;
   cp)
     if [ "${1:-}" = -c ]; then

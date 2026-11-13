@@ -30,6 +30,7 @@ next_number() {
 }
 
 sims=$F/sims/$as
+! flag sims-in-home || [ "$as" = root ] || sims=$R/Users/$as/Library/Developer/CoreSimulator/Devices
 device_value() { sed -n "s/^$2=//p" "$sims/$1" 2>/dev/null; }
 set_device_value() { edit "$sims/$1" sed "s/^$2=.*/$2=$3/"; }
 make_device() {
@@ -38,9 +39,23 @@ make_device() {
   printf 'name=%s\ntype=%s\nruntime=%s\nstate=Shutdown\n' "$1" "$2" "$3" >"$sims/$udid"
   echo "$udid"
 }
+make_the_devices_store() {
+  store=$R/private/var/tmp/com.apple.CoreSimulator.SimDevice.$1
+  if [ ! -d "$store" ]; then
+    mkdir -p "$store" && echo "$(uid_of "$as") $(readlink -f "$store")" >>"$F/owners"
+  fi
+  : >>"$store/launchd.log"
+}
+wait_mid_boot_if_asked() {
+  flag boot-waits || return 0
+  echo "$$" >"$F/flags/boot-waiting"
+  while ! flag boot-go; do sleep 0.05; done
+}
 boot_device() {
   [ -f "$sims/$1" ] || { echo "Invalid device: $1" >&2; exit 164; }
   [ "$(device_value "$1" state)" = Shutdown ] || { echo "Unable to boot device in current state: Booted" >&2; exit 149; }
+  make_the_devices_store "$1"
+  wait_mid_boot_if_asked
   set_device_value "$1" state Booted
   mkdir -p "$R/Users/$as/Library/Developer/CoreSimulator/Devices/$1/data/Library/Preferences"
   pid=$(next_number pids 20000)
@@ -87,6 +102,10 @@ case $tool in
     command=$1
     shift
     export FAKE_AS=$as
+    if [ "$as" != root ] && flag sudo-processes; then
+      echo "$$ $(uid_of "$as") ${command##*/} 1" >>"$F/processes"
+      echo "$$ $(uid_of "$as")" >>"$F/process-uids"
+    fi
     if [ -x "$FAKE_MAC_BIN/${command##*/}" ]; then exec "$FAKE_MAC_BIN/${command##*/}" "$@"; fi
     exec "$command" "$@"
     ;;
@@ -170,8 +189,12 @@ case $tool in
         [ "$(device_value "$2" state)" = Booted ] || { echo "Device is not booted." >&2; exit 149; }
         if [ "$3 $4" = "defaults write" ]; then
           flag defaults-write-fails && exit 1
-          printf '%s %s %s %s\n' "$5" "$6" "$7" "$8" >>"$sims/.$2.defaults"
+          printf '%s %s %s %s\n' "$5" "$6" "$7" "${8:-}" >>"$sims/.$2.defaults"
           exit 0
+        fi
+        if [ "$3 $4" = "defaults read" ]; then
+          awk -v d="$5" -v k="$6" '$1 == d && $2 == k { v = ($3 ~ /^-/ ? $4 : $3) } END { if (v == "") exit 1; print v }' "$sims/.$2.defaults" 2>/dev/null
+          exit
         fi
         [ "$3 $4" = "launchctl disable" ] || exit 1
         flag spawn-skips && exit 0
@@ -260,6 +283,7 @@ case $tool in
           echo "$uid ${load##* }"
         done <"$F/processes"
         ;;
+      "-A -o pid=,ppid=,uid=,stat=,lstart=" | "-o stat= -p "*) exec "$FAKE_MACOS_BIN/ps" "$@" ;;
       *) exit 1 ;;
     esac
     ;;
@@ -284,6 +308,11 @@ case $tool in
     exec "$@"
     ;;
   plutil) exec "$FAKE_MACOS_BIN/plutil" "$@" ;;
+  ln)
+    /bin/ln "$@" || exit 1
+    eval "linked=\${$#}"
+    case $linked in */claim) ! flag killed-after-linking-a-claim || kill -KILL "$PPID" ;; esac
+    ;;
   *)
     echo "fake-device-host.sh: no fake $tool" >&2
     exit 127

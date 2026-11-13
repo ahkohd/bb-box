@@ -142,7 +142,7 @@ test("init keeps the settings the host was made with, and status gives them with
   const { values, slots } = host.status();
   assert.deepEqual(
     ["helper", "deleting", "most", "ahead", "generation", "cores", "memory", "disk", "memory_free", "runtime", "model", "counted", "sweeping"].map((key) => values.get(key)),
-    ["7", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
+    ["8", "", "6", "2", "0", "8", "16384", "100", "60", RUNTIME, "iPhone 18 Pro", "0", "0"],
   );
   assert.deepEqual(slots, []);
   assert.deepEqual(host.run(["init"], "most=many\n").status, 0, "settings are written once");
@@ -836,8 +836,8 @@ test("init loads the held ports' daemon and the helper's, keeps them across the 
 
 test("the helper refuses to run as anyone but root, and its usage names its commands", () => {
   const host = fakeDeviceHost();
-  assert.match(host.run(["bogus"]).stderr, /^usage: device-host status \| summary \| init \| install \| open \| close \| make \| carry \| promise \| unpromise \| vacate \| claim <slot> \| release <slot> \| restart <slot> \| reset \| daemon <slot> \| resume \| keep-app \| version\n$/);
-  assert.equal(host.run(["version"]).stdout, "7\n");
+  assert.match(host.run(["bogus"]).stderr, /^usage: device-host status \| summary \| init \| install \| open \| close \| make \| carry \| promise \| unpromise \| vacate \| claim <slot> \| release <slot> \| restart <slot> \| stop <slot> \| start <slot> \| reset \| daemon <slot> \| resume \| keep-app \| version\n$/);
+  assert.equal(host.run(["version"]).stdout, "8\n");
   const text = readFileSync(new URL("../setup/tart/ios/device-host.sh", import.meta.url), "utf8");
   assert.match(text, /\[ "\$\(id -u\)" = 0 \] \|\| quit 2 "Run it as root, through sudo\."/);
   assert.doesNotMatch(text, /^\s*#(?!!)/m, "no comments: names carry intent");
@@ -857,8 +857,8 @@ test("BB Box reads the helper's status whole: settings, promises, every slot, a 
   assert.deepEqual(
     { ...status, boot: "", promises: status.promises.map((promise) => promise.box), claims: status.claims.map((claim) => [claim.slot, claim.box]), slots: status.slots.map((slot) => [slot.id, slot.is, slot.box, slot.portBase, slot.booted, slot.daemonsLoaded]), sweeps: status.sweeps.map((sweep) => [sweep.uid, sweep.uidsInPass]) },
     {
-      helper: 7, boot: "", deletingSince: null, kept: false, closedSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 10, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60, bbApp: null, bbAppKept: false,
-      runtime: RUNTIME, model: "iPhone 18 Pro", counted: 1, promises: ["box_p"], claims: [["1", "box_a"]], slots: [["1", "held", "box_a", 20000, true, true]], secondDevices: [], deviceWords: [], sweeping: 0, sweeps: [[80002, 1]],
+      helper: 8, boot: "", deletingSince: null, kept: false, closedSince: null, most: 4, ahead: 0, resettingMost: 4, diskReserveGiB: 10, generation: 2, cores: 8, memoryMiB: 16384, diskGiB: 100, memoryFreePercent: 60, bbApp: null, bbAppKept: false,
+      runtime: RUNTIME, model: "iPhone 18 Pro", counted: 1, promises: ["box_p"], claims: [["1", "box_a"]], slots: [["1", "held", "box_a", 20000, true, true]], secondDevices: [], deviceWords: [], stopped: [], sweeping: 0, sweeps: [[80002, 1]],
     },
   );
   assert.equal(parseHostStatus("helper=1\n"), null, "no settings, no status");

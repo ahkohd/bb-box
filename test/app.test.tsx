@@ -740,14 +740,14 @@ function server(initial: BoxView[], options: { projects?: { id: string; name: st
     },
     "snapshot.takeCheck": ({ memory }) =>
       options.takeCheck ?? {
-        check: { holds: memory ? "disk-and-memory" : "disk", aboutMs: memory ? 9_000 : 700, pause: memory ? { pauses: true, aboutMs: 2_000, basis: { bytes: 8e9, of: "memory" } } : { pauses: false }, addsBytes: null, storage: "fast", host: "pve-1", memory: { aboutMs: 9_000, addsBytes: 8 * 1024 ** 3, storage: "fast" }, memoryWhy: null },
+        check: { holds: memory ? "disk-and-memory" : "disk", scope: "box", aboutMs: memory ? 9_000 : 700, pause: memory ? { pauses: true, aboutMs: 2_000, basis: { bytes: 8e9, of: "memory" } } : { pauses: false }, addsBytes: null, storage: "fast", host: "pve-1", memory: { aboutMs: 9_000, addsBytes: 8 * 1024 ** 3, storage: "fast" }, memoryWhy: null },
         refusal: null,
       },
     "snapshot.take": (input) => {
       changes.push(`snapshot.take ${JSON.stringify({ ...input, request: undefined })}`);
       return { error: options.failWith ?? null, pending: false };
     },
-    "snapshot.restoreCheck": () => options.restorePreview ?? { refusal: "No preview.", threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "none", undoUnflushed: null },
+    "snapshot.restoreCheck": () => options.restorePreview ?? { refusal: "No preview.", threads: [], threadsUnread: null, control: false, terminals: 0, check: null, snapshot: null, token: "none", undoUnflushed: null, homeUser: "signed-in" as const },
     "snapshot.restore": (input) => {
       changes.push(`snapshot.restore ${JSON.stringify({ ...input, request: undefined })}`);
       const answer = options.restoreAnswers?.shift();
@@ -10762,11 +10762,62 @@ test("070 unit 5: the agents' two switches are on the Snapshots page and save at
   expect(labelsFor(entries, "agent restore")).toContain("Agents may restore their own boxes | Options › Snapshots");
 });
 
+test("090 unit 2: the restore form of a home snapshot says the home folder goes back and the user signs in again, not the disk", async () => {
+  const { restoreFormWords } = await import("../src/app/restore-form.tsx");
+  const payload = {
+    box: { id: "bxpoolmac", name: "pool-mac" },
+    snapshot: { id: "sn1", name: "before", takenAt: Date.now() - 3_600_000, holds: "disk", scope: "home" as const },
+    undo: { name: "before the restore at 11:02", aboutSeconds: 2, heldCopy: false },
+    asks: "settings" as const,
+    losses: [],
+    sizeBack: null,
+    excludes: "apps installed on the Mac",
+    runsOnIt: false,
+    changed: false,
+    plan: "abc123",
+    gpuStay: null,
+    userspaceNote: null,
+    homeUser: "signed-in" as const,
+  };
+
+  const words = restoreFormWords(payload, Date.now());
+
+  expect(words.goes).toMatch(/^Everything in pool-mac's home folder since then goes: its files, settings and keychain items\. Its session ends and signs in again where it was/);
+  expect(words.goes).not.toMatch(/on its disk|installed apps and settings/);
+});
+
+test("090 unit 3: the restore form of an iOS slot's home snapshot says its device shuts down and boots again, and a macOS slot's names no device, and neither says it signs in", async () => {
+  const { restoreFormWords } = await import("../src/app/restore-form.tsx");
+  const payload = {
+    box: { id: "bxslot", name: "ios-slot" },
+    snapshot: { id: "sn1", name: "before", takenAt: Date.now() - 3_600_000, holds: "disk", scope: "home" as const },
+    undo: { name: "before the restore at 11:02", aboutSeconds: 5, heldCopy: false },
+    asks: "settings" as const,
+    losses: [],
+    sizeBack: null,
+    excludes: null,
+    runsOnIt: false,
+    changed: false,
+    plan: "abc123",
+    gpuStay: null,
+    userspaceNote: null,
+    homeUser: "slot-with-device" as const,
+  };
+
+  const words = restoreFormWords(payload, Date.now());
+  const macosWords = restoreFormWords({ ...payload, box: { id: "bxmacslot", name: "mac-slot" }, homeUser: "slot" }, Date.now());
+
+  expect(words.goes).toMatch(/^Everything in ios-slot's home folder since then goes: its files, settings, keychain items, and its device's apps, data and settings\. Its device shuts down and every process of its user ends, then the device boots again\./);
+  expect(words.goes).not.toMatch(/signs in/);
+  expect(macosWords.goes).toMatch(/^Everything in mac-slot's home folder since then goes: its files, settings and keychain items\. Every process of its user ends, then its daemons start again\./);
+  expect(macosWords.goes).not.toMatch(/device|signs in/);
+});
+
 test("070 unit 5: the restore form says what goes, that an undo is always taken and that an answer is a yes given in the thread, and submits its plan", async () => {
   const { RestoreForm, restoreFormWords } = await import("../src/app/restore-form.tsx");
   const payload = {
     box: { id: "bxdevdesk", name: "dev-desk" },
-    snapshot: { id: "sn1", name: "before the upgrade", takenAt: Date.now() - 2 * 3_600_000, holds: "disk" },
+    snapshot: { id: "sn1", name: "before the upgrade", takenAt: Date.now() - 2 * 3_600_000, holds: "disk", scope: "box" as const },
     undo: { name: "before the restore at 11:02", aboutSeconds: 1, heldCopy: false },
     asks: "machine" as const,
     losses: ['"Fix the sign-in flow" runs on it: its worktree, uncommitted files and session there go'],
@@ -10777,6 +10828,7 @@ test("070 unit 5: the restore form says what goes, that an undo is always taken 
     plan: "abc123",
     gpuStay: "Its GPU stays as it is now: shared, card 1.",
     userspaceNote: null,
+    homeUser: "signed-in" as const,
   };
   const words = restoreFormWords(payload, Date.now());
   expect(words.lead).toMatch(/^An agent in this thread asks to restore dev-desk to "before the upgrade", taken (?:today|yesterday) at \d{2}:\d{2}, 2 h ago\. dev-desk is a box threads run on, so an agent restores it only on a yes given here\.$/);
@@ -10886,6 +10938,7 @@ function restorePreviewOf(overrides: Partial<RestorePreview> = {}): RestorePrevi
     snapshot: snapshotRow(),
     token: "tokenone",
     undoUnflushed: null,
+    homeUser: "signed-in" as const,
     ...overrides,
   };
 }
@@ -11053,7 +11106,7 @@ test("the take dialog lists Holds, Leaves out, Takes, Snapshots and Cost in that
 });
 
 test("the take dialog says how long the take pauses the box and what that is based on, before the take, and the row says how long it paused it after", async () => {
-  const takeCheck = { check: { holds: "disk" as const, aboutMs: 5_400, pause: { pauses: true as const, aboutMs: 5_200, basis: { bytes: 1.1e9, of: "disk" as const } }, addsBytes: 1.1e9, storage: "Docker's disk", host: null, memory: null, memoryWhy: null }, refusal: null };
+  const takeCheck = { check: { holds: "disk" as const, scope: "box" as const, aboutMs: 5_400, pause: { pauses: true as const, aboutMs: 5_200, basis: { bytes: 1.1e9, of: "disk" as const } }, addsBytes: 1.1e9, storage: "Docker's disk", host: null, memory: null, memoryWhy: null }, refusal: null };
   const { handlers } = server([box()], { takeCheck, snapshots: snapshotsView({ records: [snapshotRow({ pausedMs: 3_240 })] }) });
   const slot = boxPageAt(handlers, "box/box_1");
   const card = await slot.findByRole("region", { name: "Snapshots" });

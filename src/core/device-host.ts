@@ -1,6 +1,7 @@
 import { displayShows, type BoxIdentity, type Guest, type KindCapabilities } from "../backends/types.ts";
 import { deviceModels, listWords, type DeviceOffer, type IosModelName, type IosRuntime } from "./device.ts";
 import { PRODUCT } from "../brand.ts";
+import type { HomeUser } from "./snapshot.ts";
 
 export const HOST_KINDS = ["pool-mac", "tart", "namespace"] as const;
 export type HostKind = (typeof HOST_KINDS)[number];
@@ -498,6 +499,11 @@ export function placementOf(box: { readonly guest: Guest | null }): Placement {
 
 export function inSlot(box: { readonly guest: Guest | null }): boolean {
   return placementOf(box).on === "slot";
+}
+
+export function homeUserOf(box: { readonly guest: Guest | null; readonly kind: string }): HomeUser {
+  if (!inSlot(box)) return "signed-in";
+  return box.kind === "ios" ? "slot-with-device" : "slot";
 }
 
 export const NAMESPACE_MAC_WORDS = "its Namespace Mac";

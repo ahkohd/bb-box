@@ -7,7 +7,7 @@ export PATH LC_ALL
 
 ROOT=
 
-VERSION=7
+VERSION=8
 HOST=$ROOT/var/db/bb-box/host
 SHARE=$ROOT/usr/local/share/bb-box
 IOS_SHARE=$SHARE/ios
@@ -17,6 +17,8 @@ DATA=$ROOT/System/Volumes/Data
 SIM_STORE=$ROOT/private/var/tmp
 SLOT_LOGS=$ROOT/private/var/log/bb-box-slots
 INSTALLED=/usr/local/libexec/bb-box/device-host
+POOL_HELPER=$ROOT/usr/local/libexec/bb-box/machine
+SNAPSHOT_STORES=$ROOT/var/db/bb-box/home-snapshots
 PORTS_PROGRAM=/usr/local/libexec/bb-box/device-host-ports
 HOST_LABEL=app.bb-box.device-host
 PORTS_LABEL=app.bb-box.device-host.ports
@@ -86,11 +88,19 @@ background() {
   if command -v taskpolicy >/dev/null 2>&1; then taskpolicy -b "$@"; else "$@"; fi
 }
 
+open_on() {
+  perl -e 'open(my $f, ">&=", $ARGV[0]) or exit 1; my @open = stat($f) or exit 1; my @file = stat($ARGV[1]) or exit 1; exit($open[0] == $file[0] && $open[1] == $file[1] ? 0 : 1)' "$1" "$2"
+}
+
+lock_open_descriptor() {
+  perl -e 'use Fcntl ":flock"; open(my $f, ">&=", $ARGV[0]) or exit 1; $SIG{ALRM} = sub { exit 3 }; alarm $ARGV[1]; flock($f, $ARGV[1] ? LOCK_EX : LOCK_EX | LOCK_NB) or exit 3' "$1" "$2"
+}
+
 take_lock() {
   fd=$1 file=$2 wait=$3
   mkdir -p "$(dirname "$file")"
   eval "exec $fd>>\"\$file\""
-  perl -e 'use Fcntl ":flock"; open(my $f, ">&=", $ARGV[0]) or exit 1; $SIG{ALRM} = sub { exit 3 }; alarm $ARGV[1]; flock($f, $ARGV[1] ? LOCK_EX : LOCK_EX | LOCK_NB) or exit 3' "$fd" "$wait"
+  lock_open_descriptor "$fd" "$wait"
 }
 
 lock_host() { take_lock 9 "$HOST/lock" "$1" || quit "$EXIT_LOST" "Another bb-box command holds this host's lock."; }
@@ -264,10 +274,20 @@ simctl() {
 runtime_line() { grep -v '^#' "$IOS_SHARE/runtimes.tsv" 2>/dev/null | head -n 1; }
 default_model() { head -n 1 "$IOS_SHARE/devices.tsv" 2>/dev/null; }
 
+recorded_generated_uid() { field "$(slot_dir "$1")/user-made" generated_uid; }
+
 user_made() {
   id=$1
   user=$(slot_user "$id") uid=$(slot_uid "$id")
-  [ "$(attribute "$user" UniqueID)" = "$uid" ] && [ -e "$(slot_dir "$id")/user-made" ]
+  [ "$(attribute "$user" UniqueID)" = "$uid" ] && [ -e "$(slot_dir "$id")/user-made" ] || return 1
+  recorded=$(recorded_generated_uid "$id")
+  [ -z "$recorded" ] || [ "$(attribute "$user" GeneratedUID)" = "$recorded" ]
+}
+
+user_made_and_recorded_or_quit() {
+  [ -n "$(recorded_generated_uid "$1")" ] ||
+    quit "$EXIT_NOT_READY" "Slot $1 was made by an older slot helper, which kept no record of its user's GeneratedUID, so the helper does not stop or start it for a restore. The slot lends as before; slots made from now on can be restored."
+  user_made "$1" || fail "Slot $1's user is not the one this host made: its UID or GeneratedUID differs from the record, so the helper ends and starts none of its processes."
 }
 
 remove_from_groups() {
@@ -309,6 +329,8 @@ make_user() {
     echo "sysadminctl did not make $user${reason:+: $reason}." >&2
     return 1
   fi
+  generated_uid=$(attribute "$user" GeneratedUID)
+  [ -n "$generated_uid" ] || { echo "The Mac's directory service gave $user no GeneratedUID." >&2; return 1; }
   dscl . -create "/Users/$user" IsHidden 1 || return 1
   for group in $JOINS; do
     [ "$group" = _developer ] || dscl . -read "/Groups/$group" >/dev/null 2>&1 || continue
@@ -326,7 +348,7 @@ make_user() {
   printf '%s\n' "$id" >"$home/.bb-box/device/host-managed" || return 1
   chown -R "$uid:20" "$home" || return 1
   chmod 700 "$home" "$home/.bb-box" "$home/.bb-box/device" || return 1
-  : >"$(slot_dir "$id")/user-made"
+  printf 'generated_uid=%s\n' "$generated_uid" | put "$(slot_dir "$id")/user-made"
 }
 
 seed() {
@@ -617,10 +639,18 @@ stop_slot() {
   done
 }
 
+forget_slot_snapshots() {
+  store=$SNAPSHOT_STORES/$(slot_user "$1")
+  [ -e "$store" ] || [ -L "$store" ] || return 0
+  [ -f "$POOL_HELPER" ] || { echo "Slot $1 has home snapshots in ${store#"$ROOT"}, and this host has no pool helper to delete them by their records." >&2; return 1; }
+  /bin/sh "$POOL_HELPER" snapshot forget-slot "$1" </dev/null >/dev/null 7>&- 8>&- 9>&-
+}
+
 remove_slot_user() {
   id=$1
   user=$(slot_user "$id") uid=$(slot_uid "$id")
   dscl . -read /Groups/staff >/dev/null 2>&1 || { echo "The Mac's directory service did not answer, so user $user is not removed yet." >&2; return 1; }
+  forget_slot_snapshots "$id" || return 1
   crontab -u "$user" -r >/dev/null 2>&1
   rm -f "$ROOT/private/var/at/tabs/$user" "$ROOT/etc/sudoers.d/$user"
   remove_from_groups "$user"
@@ -1031,6 +1061,74 @@ vacate() {
   decide_empty ''
 }
 
+held_by_the_box_or_quit() {
+  [ -f "$(slot_dir "$1")/slot" ] || quit "$EXIT_NOT_OURS" "This host has no slot $1."
+  [ "$(state "$1" is)" = held ] || quit "$EXIT_NOT_OURS" "Slot $1 is $(state "$1" is): no box holds it."
+  [ "$(field "$(slot_dir "$1")/claim" install)" = "$install" ] && [ "$(field "$(slot_dir "$1")/claim" box)" = "$box" ] || quit "$EXIT_NOT_OURS" "Another box holds slot $1."
+}
+
+stopped_for_a_restore() { [ -e "$(slot_dir "$1")/stopped" ]; }
+
+refuse_while_stopped_for_a_restore() {
+  ! stopped_for_a_restore "$1" || quit "$EXIT_NOT_READY" "Slot $1 is stopped while its box is restored; ask again once the restore ends."
+}
+
+take_the_slots_lock_or_quit() {
+  [ -f "$(slot_dir "$1")/slot" ] || quit "$EXIT_NOT_OURS" "This host has no slot $1."
+  slot_lock=$(slot_dir "$1")/lock
+  if open_on 8 "$slot_lock"; then
+    lock_open_descriptor 8 "$2" || quit "$EXIT_LOST" "Another bb-box command is working on slot $1; ask again."
+    return 0
+  fi
+  take_lock 8 "$slot_lock" "$2" || quit "$EXIT_LOST" "Another bb-box command is working on slot $1; ask again."
+}
+
+keep_slot_daemons_loaded() {
+  for plist in "$(slot_dir "$1")"/daemons/*.plist; do
+    [ -f "$plist" ] || continue
+    keep_loaded "$plist" || return 1
+  done
+  : >"$(slot_dir "$1")/loaded"
+}
+
+stop_for_a_restore() {
+  id=${1:-}
+  slot_or_quit "$id" stop
+  read_input "install box"
+  box_word_or_quit "$box" "The stop"
+  take_the_slots_lock_or_quit "$id" 60
+  lock_host 60
+  held_by_the_box_or_quit "$id"
+  user_made_and_recorded_or_quit "$id"
+  stopped_for_a_restore "$id" || printf 'since=%s\n' "$(now)" | put "$(slot_dir "$id")/stopped"
+  unlock_host
+  words=$(stop_slot "$id" 2>&1) || fail "Could not stop slot $id: ${words:-it failed.}"
+  exec 8>&-
+  echo "stopped=$id"
+}
+
+start_after_a_restore() {
+  id=${1:-}
+  slot_or_quit "$id" start
+  read_input "install box"
+  box_word_or_quit "$box" "The start"
+  take_the_slots_lock_or_quit "$id" 60
+  lock_host 60
+  held_by_the_box_or_quit "$id"
+  user_made_and_recorded_or_quit "$id"
+  unlock_host
+  booted=none why=''
+  if [ -n "$(device_udid "$id")" ]; then
+    if why=$(boot_device "$id" 2>&1); then booted=yes; else booted=no; fi
+  fi
+  keep_slot_daemons_loaded "$id" || fail "launchd did not load slot $id's daemons again."
+  rm -f "$(slot_dir "$id")/stopped"
+  exec 8>&-
+  echo "started=$id"
+  echo "booted=$booted"
+  [ "$booted" != no ] || fail "Slot $id's home is restored and its daemons run, but its device did not boot: ${why:-simctl failed.}"
+}
+
 restart() {
   id=${1:-}
   slot_or_quit "$id" restart
@@ -1040,6 +1138,7 @@ restart() {
   lock_host 60
   [ "$(state "$id" is)" = held ] || quit "$EXIT_NOT_OURS" "Slot $id is $(state "$id" is): no box holds it."
   [ "$(field "$dir/claim" install)" = "$install" ] && [ "$(field "$dir/claim" box)" = "$box" ] || quit "$EXIT_NOT_OURS" "Another box holds slot $id."
+  refuse_while_stopped_for_a_restore "$id"
   unlock_host
   label=$DEVICE_LABEL.$(slot_user "$id")
   launchctl print "system/$label" >/dev/null 2>&1 || fail "Slot $id's device server daemon is not loaded."
@@ -1328,9 +1427,11 @@ daemon() {
   read_input "install box"
   box_word_or_quit "$box" "The daemon"
   dir=$(slot_dir "$id")
+  take_the_slots_lock_or_quit "$id" 60
   lock_host 60
   [ "$(state "$id" is)" = held ] && [ "$(field "$dir/claim" box)" = "$box" ] && [ "$(field "$dir/claim" install)" = "$install" ] ||
     quit "$EXIT_NOT_OURS" "Box $box does not hold slot $id."
+  refuse_while_stopped_for_a_restore "$id"
   unlock_host
   user=$(slot_user "$id") uid=$(slot_uid "$id")
   home=$(home_of "$id")
@@ -1555,6 +1656,7 @@ status() {
       "${slot_cores:-0}" "${slot_memory:-0}" "${kib:+$((kib / 1024))}"
     [ "$devices" -le 1 ] || printf 'devices=%s\t%s\t%s\n' "$id" "$devices" "$(field "$dir/second-device" since)"
     [ ! -s "$dir/second-device-words" ] || printf 'device_words=%s\t%s\n' "$id" "$(cat "$dir/second-device-words")"
+    ! stopped_for_a_restore "$id" || printf 'stopped=%s\t%s\n' "$id" "$(field "$dir/stopped" since)"
   done
   echo "sweeping=$(sweep_queue | wc -l | tr -d ' ')"
   [ ! -f "$HOST/sweeps" ] || sed 's/^/sweep=/' "$HOST/sweeps"
@@ -1631,6 +1733,8 @@ case $verb in
   unpromise) unpromise ;;
   vacate) vacate ;;
   restart) restart "$@" ;;
+  stop) stop_for_a_restore "$@" ;;
+  start) start_after_a_restore "$@" ;;
   claim) claim "$@" ;;
   warm) warm "$@" ;;
   release) release "$@" ;;
@@ -1644,5 +1748,5 @@ case $verb in
   measure) measure "$@" ;;
   keep-app) keep_app ;;
   version) echo "$VERSION" ;;
-  *) quit 2 "usage: device-host status | summary | init | install | open | close | make | carry | promise | unpromise | vacate | claim <slot> | release <slot> | restart <slot> | reset | daemon <slot> | resume | keep-app | version" ;;
+  *) quit 2 "usage: device-host status | summary | init | install | open | close | make | carry | promise | unpromise | vacate | claim <slot> | release <slot> | restart <slot> | stop <slot> | start <slot> | reset | daemon <slot> | resume | keep-app | version" ;;
 esac

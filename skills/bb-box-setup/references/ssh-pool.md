@@ -103,8 +103,23 @@ resets the machine, which takes a few seconds on Linux and longer on a Mac.
 
 Each machine's `snapshots` check says what snapshots it could offer: home
 snapshots where its box homes are on APFS, btrfs or ZFS, and machine
-snapshots where an operator installed a snapshot hook. BB Box takes no
-snapshots on pool machines yet, so tell the person what the machines could
-offer, not that they snapshot. A check that warns says what to do: run
+snapshots where an operator installed a snapshot hook. Boxes lent a Mac
+whole, and boxes in its iOS slots, take home snapshots where the Mac says
+its homes clone; slots need helper version 4 and the slots' helper version
+8, from this BB Box's `setup-mac.sh`. A slot made before that is refused
+snapshots with that reason and lent as before; slots made after it have
+them. Linux machines and hooks take none
+yet, so tell the person what those could offer, not that they snapshot. To prove home snapshots on a free Mac,
+have the person run `sudo /usr/local/libexec/bb-box/machine snapshot proof`
+there. On a Mac that lends iOS slots it also checks a scratch slot user's
+Simulator device through a take and a restore. It takes about 2 to 3
+minutes on new scratch users, and iOS slot
+commands wait for it, then go on. It refuses, changing nothing, while a box
+uses the Mac or any iOS slot is not idle, a slot whose claim was cut short
+included. Where an earlier proof was cut short, it first checks
+that proof's whole record, then removes what that proof recorded making;
+where it cannot list the Mac's users or prove something is its own, it
+refuses, changing nothing, and keeps `/var/db/bb-box/proof-made`: tell the person what
+its notes say rather than removing anything yourself. A check that warns says what to do: run
 the machine's setup script again when its helper is older, or, when the
 probe could not remove its trial, remove as root what it names.

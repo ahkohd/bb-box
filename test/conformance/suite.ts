@@ -1058,6 +1058,43 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             assert.equal((await backend.heldSnapshots!(signal())).some((held) => held.id === id), false, "gone once deleted");
           });
 
+          const restoresInPlace = skip.snapshots ?? (offer?.restore === "in-place" && backend.snapshot && backend.rollbackSnapshot && backend.powerOff && backend.start && backend.heldSnapshots && backend.deleteSnapshot ? false : "the kind restores no snapshot in place");
+
+          it("takes a snapshot, restores the box to it in place after an undo, restores the undo, and deletes both", { timeout, skip: restoresInPlace }, async () => {
+            const { guest, command } = need();
+            const id = newSnapshotId((bytes) => randomBytes(bytes));
+            const undoId = newSnapshotId((bytes) => randomBytes(bytes));
+            const contents = async () => (await (await backend.transports(guest, kind.id)).command!.run(`cat "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() })).stdout.trim();
+            const listedRef = async (snapshot: string): Promise<SnapshotRef> => {
+              const listed = (await backend.heldSnapshots!(signal())).find((held) => held.id === snapshot);
+              assert.equal(listed?.state, "complete", "the provider lists the snapshot it took, complete");
+              return { id: snapshot, ref: listed.ref, guest };
+            };
+            const restoreTo = async (ref: SnapshotRef) => {
+              await backend.powerOff!(guest, signal());
+              await backend.rollbackSnapshot!(guest, ref, quietly, signal());
+              await backend.start!(guest, signal());
+            };
+            await command.run(`echo A > "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() });
+            await backend.snapshot!(guest, { id, box: box.boxId, memory: false, forkSafe: offer?.forkSafeFrom ?? 9 }, quietly, signal());
+            const ref = await listedRef(id);
+            await command.run(`echo B > "$HOME/${SNAPSHOT_FILE}"`, { timeoutMs: 30_000, signal: signal() });
+
+            await backend.powerOff!(guest, signal());
+            await backend.snapshot!(guest, { id: undoId, box: box.boxId, memory: false, forkSafe: offer?.forkSafeFrom ?? 9 }, quietly, signal());
+            await backend.rollbackSnapshot!(guest, ref, quietly, signal());
+            await backend.start!(guest, signal());
+            assert.equal(await contents(), "A", "the box holds what it held at the snapshot");
+            assert.equal(await backend.power(guest, signal()), "running");
+
+            await restoreTo(await listedRef(undoId));
+            assert.equal(await contents(), "B", "the undo puts back what the box held before the restore");
+
+            for (const each of [ref, await listedRef(undoId)]) await backend.deleteSnapshot!(each, quietly, signal());
+            const left = (await backend.heldSnapshots!(signal())).filter((held) => held.id === id || held.id === undoId);
+            assert.deepEqual(left, [], "both gone once deleted");
+          });
+
           let kept: SnapshotRef | null = null;
           const keptUntil = async (target: Backend, id: string) => (await target.heldSnapshots!(signal())).find((held) => held.id === id)?.keptUntil;
 
@@ -1643,6 +1680,60 @@ export async function slotConformance(options: SlotConformanceOptions): Promise<
       if (backend.stop) await assert.rejects(backend.stop(first, wait()), (error: unknown) => error instanceof BackendError && error.code === "unsupported" && /shared/.test(error.message));
       if (backend.planResize) await assert.rejects(backend.planResize(first, options.kind, { cores: 2, memoryMiB: 4096, diskGiB: null }, [], wait()), /no size of its own/);
       if (backend.grant) await assert.rejects(backend.grant(first, { program: "/bin/sh", permissions: ["accessibility"] }, wait()), /no console session/);
+    });
+
+    const restoresInItsSlot = async (guest: Guest): Promise<string | false> => {
+      if (!(backend.planSnapshots && backend.snapshot && backend.rollbackSnapshot && backend.powerOff && backend.start && backend.heldSnapshots && backend.deleteSnapshot)) return "the backend restores no snapshot in place";
+      const plan = await backend.planSnapshots(guest, options.kind, null, wait()).catch((error: unknown) => {
+        if (error instanceof BackendError && error.code === "unsupported") return error.message;
+        throw error;
+      });
+      if (typeof plan === "string") return plan;
+      if (!plan.take.ok) return `it takes no snapshot of a box in a slot: ${plan.take.why}`;
+      return plan.restore.way === "rollback" ? false : `it restores no snapshot of a box in a slot in place: ${plan.restore.why}`;
+    };
+
+    it("takes a snapshot of a box in a slot, restores it in place after an undo, restores the undo and deletes both, leaving the other slot's box as it was", { timeout }, async (t) => {
+      assert.ok(first && second);
+      const skipped = await restoresInItsSlot(first);
+      if (skipped) return t.skip(skipped);
+      const file = "conformance-slot-snapshot.txt";
+      const quietly = { submitting: async () => {}, task: async () => {} };
+      const command = async (guest: Guest) => (await backend.transports(guest, options.kind)).command!;
+      const write = async (guest: Guest, text: string) => assert.equal((await (await command(guest)).run(`echo ${text} > "$HOME/${file}"`, { timeoutMs: 30_000, signal: wait() })).exitCode, 0);
+      const contents = async (guest: Guest) => (await (await command(guest)).run(`cat "$HOME/${file}"`, { timeoutMs: 30_000, signal: wait() })).stdout.trim();
+      const box = first.data?.box as string;
+      const id = newSnapshotId((bytes) => randomBytes(bytes));
+      const undoId = newSnapshotId((bytes) => randomBytes(bytes));
+      const listedRef = async (snapshot: string): Promise<SnapshotRef> => {
+        const listed = (await backend.heldSnapshots!(wait())).find((held) => held.id === snapshot);
+        assert.equal(listed?.state, "complete", "the provider lists the snapshot it took, complete");
+        return { id: snapshot, ref: listed.ref, guest: first! };
+      };
+      await write(first, "A");
+      await write(second, "other");
+
+      await backend.snapshot!(first, { id, box, memory: false }, quietly, wait());
+      const ref = await listedRef(id);
+      await write(first, "B");
+      await backend.powerOff!(first, wait());
+      assert.equal(await backend.power(first, wait()), "stopped", "a stopped slot box reads as stopped");
+      await backend.snapshot!(first, { id: undoId, box, memory: false }, quietly, wait());
+      await backend.rollbackSnapshot!(first, ref, quietly, wait());
+      await backend.start!(first, wait());
+
+      assert.equal(await contents(first), "A", "the box holds what it held at the snapshot");
+      assert.equal(await backend.power(first, wait()), "running");
+      assert.equal(await contents(second), "other", "the other slot's box is as it was");
+      assert.equal(await backend.power(second, wait()), "running");
+
+      await backend.powerOff!(first, wait());
+      await backend.rollbackSnapshot!(first, await listedRef(undoId), quietly, wait());
+      await backend.start!(first, wait());
+      assert.equal(await contents(first), "B", "the undo puts back what the box held before the restore");
+
+      for (const each of [ref, await listedRef(undoId)]) await backend.deleteSnapshot!(each, quietly, wait());
+      assert.deepEqual((await backend.heldSnapshots!(wait())).filter((held) => held.id === id || held.id === undoId), [], "both gone once deleted");
     });
 
     it("a release of one leaves the other answering on the same host", { timeout }, async () => {

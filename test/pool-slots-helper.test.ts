@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -100,7 +101,7 @@ test("a kept host, as the pool's Mac is, starts closed with no carried slots, ho
   const values = lines(summary.stdout);
   assert.deepEqual(
     ["helper", "kept", "closed", "deleting", "most", "ahead", "held", "ready", "waiting", "sweeping", "runtime", "model", "labels"].map((key) => values.get(key)),
-    ["7", "1", "", "", "12", "1", "0", values.get("ready"), "0", "0", `${RUNTIME}\t27.0\t24A434\t${LIST}`, "iPhone 18 Pro\tcom.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", undefined],
+    ["8", "1", "", "", "12", "1", "0", values.get("ready"), "0", "0", `${RUNTIME}\t27.0\t24A434\t${LIST}`, "iPhone 18 Pro\tcom.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro", undefined],
   );
   assert.equal(host.status().values.get("kept"), "1");
 
@@ -177,7 +178,7 @@ test("the Mac's helper lends slots only while it is not lent whole, and a whole 
   const claim = host.machine(["slot", "claim", slot], SLOT_CLAIM());
   assert.equal(claim.status, 0, claim.stderr);
   const status = parseStatus(host.machine(["status"]).stdout);
-  assert.equal(status.helper, 2);
+  assert.equal(status.helper, 4);
   assert.deepEqual([status.slots?.kept, status.slots?.held, status.slots?.closedSince, status.slots?.model?.name], [true, 1, null, "iPhone 18 Pro"]);
 
   const refused = host.machine(["claim", "0"], WHOLE_CLAIM());
@@ -328,4 +329,40 @@ test("mac-ios.sh warns when a user with no desktop session cannot set and read a
   const never = spawnSync("/bin/sh", [script, "bbbox-admin", udid], { encoding: "utf8", env: { ...desktop.env, SLOT_CLIPBOARD_GAP_S: "0" } });
   assert.equal(never.status, 1);
   assert.deepEqual([never.stdout, never.stderr], ["", "simctl pbcopy exited with 60 in gui/499: The operation couldn't be completed. Operation timed out \n"], "its words on standard error, which its callers keep");
+});
+
+test("a slot claim dispatched as the Mac's home snapshot proof starts waits for the proof, so no slot becomes held while it runs", async () => {
+  const host = poolMac();
+  const slot = made(host, "machine");
+  const record = join(host.root, "var/db/bb-box/proof-made");
+  const state = () => host.file(`${HOST}/slots/${slot}/state`) ?? "";
+  const claim = spawn("/bin/sh", [host.machineHelper, "slot", "claim", slot], { env: host.env, stdio: ["pipe", "ignore", "ignore"] });
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  const proof = spawn("/bin/sh", [host.machineHelper, "snapshot", "proof"], { env: host.env, stdio: ["ignore", "ignore", "ignore"] });
+  await host.until("the proof starts its record", () => existsSync(record));
+
+  claim.stdin!.end(SLOT_CLAIM());
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const during = state();
+  const proofStillRan = existsSync(record);
+
+  assert.ok(proofStillRan, "the proof still runs");
+  assert.match(during, /^is=ready$/m, `slot ${slot} while the proof runs: ${during}`);
+  await Promise.all([once(proof, "exit"), once(claim, "exit")]);
+});
+
+test("the Mac's home snapshot proof refuses a slot whose claim was killed after its claim was linked and before its held state was written, and changes nothing", () => {
+  const host = poolMac();
+  const slot = made(host, "machine");
+  host.flag("killed-after-linking-a-claim");
+
+  const claim = host.run(["claim", slot], SLOT_CLAIM());
+  const proof = host.machine(["snapshot", "proof"]);
+
+  assert.equal(claim.status, null, claim.stderr);
+  assert.match(host.file(`${HOST}/slots/${slot}/state`) ?? "", /^is=ready$/m);
+  assert.match(host.file(`${HOST}/slots/${slot}/claim`) ?? "", /^box=box_a$/m);
+  assert.equal(proof.status, MACHINE_EXIT.held, proof.stdout + proof.stderr);
+  assert.match(proof.stderr, new RegExp(`an iOS slot is claimed, or its claim was cut short \\(.*/slots/${slot}/claim\\)`));
+  assert.equal(existsSync(join(host.root, "var/db/bb-box/proof-made")), false);
 });

@@ -8,7 +8,9 @@ export const SNAPSHOT_PROBE_VERSION = 1;
 export const SNAPSHOT_REPORT_KEY_PREFIX = "pool-snapshots/";
 export const SNAPSHOT_HOOK_PATH = "/usr/local/libexec/bb-box/snapshot-machine";
 export const SNAPSHOT_HOOK_CONTRACT = 1;
-export const POOL_TAKES_NO_SNAPSHOTS_YET = `${PRODUCT} takes no snapshots on the SSH host pool yet`;
+export const LINUX_TAKES_NONE_YET = `${PRODUCT} takes no snapshots on the pool's Linux machines yet`;
+export const HOOKS_TAKE_NONE_YET = `${PRODUCT} takes no machine snapshots by a hook yet`;
+export const MACS_TAKE_HOME_SNAPSHOTS = "Boxes lent a Mac whole and boxes in its iOS slots take home snapshots there";
 
 export type HomeWay = "apfs" | "btrfs" | "zfs";
 
@@ -248,9 +250,17 @@ export function machineSnapshotsCheck(check: MachineSnapshotsCheck): DoctorCheck
     };
   }
   const offers = offersOf(report, machine, check.listsSlots);
-  const detail = `${capitalised(homeWords(report, offers.home))}. ${capitalised(machineWords(offers.machine))}. Probed ${measuredAgo(report.at, check.now)}. ${POOL_TAKES_NO_SNAPSHOTS_YET}.`;
+  const detail = `${capitalised(homeWords(report, offers.home))}. ${capitalised(machineWords(offers.machine))}. Probed ${measuredAgo(report.at, check.now)}. ${takenWords(machine, offers, check.listsSlots)}`;
   if (report.left.length) return { id, name, status: "warn", detail, fix: leftFix(machine, report.left) };
   return { id, name, status: "ok", detail, fix: null };
+}
+
+function takenWords(machine: SshPoolMachine, offers: SnapshotOffers, listsSlots: boolean): string {
+  const said: string[] = [];
+  if (machine.os === "linux") said.push(LINUX_TAKES_NONE_YET);
+  else if (offers.home.is === "yes") said.push(listsSlots ? "Boxes lent it whole and boxes in its iOS slots take home snapshots" : "Boxes lent it whole take home snapshots");
+  if (offers.machine.is === "yes") said.push(HOOKS_TAKE_NONE_YET);
+  return said.map((sentence) => `${sentence}.`).join(" ");
 }
 
 export interface PoolMachineOffers {
@@ -273,7 +283,7 @@ export function poolSnapshotsSummary(id: CheckId, machines: readonly PoolMachine
     `${of(hooked.length)} could offer machine snapshots by a hook${namesWords(hooked)}`,
     ...(unknown.length ? [`${of(unknown.length)} have not said${namesWords(unknown)}`] : []),
   ];
-  return { id, name: "Snapshots on the pool's machines", status: "ok", detail: `${capitalised(parts.join("; "))}. ${POOL_TAKES_NO_SNAPSHOTS_YET}.`, fix: null };
+  return { id, name: "Snapshots on the pool's machines", status: "ok", detail: `${capitalised(parts.join("; "))}. ${MACS_TAKE_HOME_SNAPSHOTS}; ${LINUX_TAKES_NONE_YET}, nor machine snapshots by a hook.`, fix: null };
 }
 
 function homeRefusalWords(report: PoolSnapshotReport, home: Measured<HomeSnapshots>): string {
@@ -288,12 +298,13 @@ function machineRefusalWords(machine: Measured<MachineSnapshots>): string {
 
 export function noSnapshotsWhy(machine: SshPoolMachine, report: PoolSnapshotReport | null, listsSlots: boolean): string {
   const its = `its machine, ${machine.name},`;
-  if (!report) return `${its} has not said whether it can snapshot, and ${POOL_TAKES_NO_SNAPSHOTS_YET}`;
+  if (!report) return `${its} has not said whether it can snapshot: run bb box doctor, which asks it`;
   const offers = offersOf(report, machine, listsSlots);
-  if (couldOffer(offers)) {
+  if (machine.os === "linux" && couldOffer(offers)) {
     const could = [offers.home.is === "yes" ? homeWords(report, offers.home) : null, offers.machine.is === "yes" ? machineWords(offers.machine) : null].filter(Boolean).join("; ");
-    return `${its} reports ${could}, but ${POOL_TAKES_NO_SNAPSHOTS_YET}`;
+    return `${its} reports ${could}, but ${LINUX_TAKES_NONE_YET}`;
   }
+  if (offers.home.is !== "yes" && offers.machine.is === "yes") return `${its} reports ${machineWords(offers.machine)}, but ${HOOKS_TAKE_NONE_YET}, and for a home snapshot, ${homeRefusalWords(report, offers.home)}`;
   return `${its} takes no snapshots: for a home snapshot, ${homeRefusalWords(report, offers.home)}; for a machine snapshot, ${machineRefusalWords(offers.machine)}`;
 }
 

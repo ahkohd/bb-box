@@ -489,6 +489,20 @@ export function scopeFootnote(scope: Exclude<SnapshotScope, "box">, boxName: str
   }
 }
 
+export type HomeUser = "signed-in" | "slot" | "slot-with-device";
+
+export function homeRestoreGoesWords(boxName: string, user: HomeUser = "signed-in"): string {
+  if (user === "slot-with-device") return `Everything in ${boxName}'s home folder since then goes: its files, settings, keychain items, and its device's apps, data and settings. Its device shuts down and every process of its user ends, then the device boots again. Apps installed on the Mac, files outside the home and the Mac's other users stay as they are.`;
+  if (user === "slot") return `Everything in ${boxName}'s home folder since then goes: its files, settings and keychain items. Every process of its user ends, then its daemons start again. Apps installed on the Mac, files outside the home and the Mac's other users stay as they are.`;
+  return `Everything in ${boxName}'s home folder since then goes: its files, settings and keychain items. Its session ends and signs in again where it was, so every process of its user ends. Apps installed on the Mac and files outside the home stay as they are.`;
+}
+
+export function homeRestoreWentWords(user: HomeUser): string {
+  if (user === "slot-with-device") return "Everything in its home folder since then went, its device's apps and data with it. Every process of its user ended, and its device booted again.";
+  if (user === "slot") return "Everything in its home folder since then went. Every process of its user ended, and its daemons started again.";
+  return "Everything in its home folder since then went. Every process of its user ended, and it signed in again where it was.";
+}
+
 export function notKeptForScope(scope: SnapshotScope, boxName: string): string | null {
   switch (scope) {
     case "box":
@@ -509,7 +523,7 @@ export function notForkedForScope(scope: SnapshotScope, boxName: string): string
     case "device":
       return `it holds ${boxName}'s device only`;
     case "home":
-      return `it holds ${boxName}'s home folder only, and ${PRODUCT} does not fork home folders`;
+      return null;
     case "machine":
       return `it holds the whole machine ${boxName} holds alone, which no other box can share`;
   }

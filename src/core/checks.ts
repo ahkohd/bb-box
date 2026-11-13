@@ -235,7 +235,7 @@ export const CHECKS = {
   "machine.<machine>.snapshots": {
     name: "<machine>: snapshots",
     from: ["ssh-pool"],
-    what: `What snapshots the machine could offer: home snapshots where box homes are on a filesystem that clones or snapshots, and machine snapshots where an operator installed a snapshot hook. ${PRODUCT} takes no snapshots on pool machines yet.`,
+    what: `What snapshots the machine could offer: home snapshots where box homes are on a filesystem that clones or snapshots, and machine snapshots where an operator installed a snapshot hook. Boxes lent a Mac whole and boxes in its iOS slots take home snapshots there; ${PRODUCT} takes none on Linux machines or by a hook yet.`,
   },
   "machine.<machine>.input": { name: "<machine>: viewer's input", from: ["ssh-pool"], what: "On a Mac with desktops, a viewer's keys and clicks reach the desktop." },
 } as const satisfies Readonly<Record<string, CheckInfo>>;

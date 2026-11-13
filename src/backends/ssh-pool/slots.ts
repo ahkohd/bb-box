@@ -503,7 +503,10 @@ export class PoolSlots implements SlotLender {
       return "unknown";
     }
     const ours = (box: string, install: string) => box === ref.box && install === this.#access.installId;
-    if (ref.slot) return status.claims.some((claim) => claim.slot === ref.slot && ours(claim.box, claim.install)) ? "running" : null;
+    if (ref.slot) {
+      if (!status.claims.some((claim) => claim.slot === ref.slot && ours(claim.box, claim.install))) return null;
+      return status.stopped.some((stopped) => stopped.slot === ref.slot) ? "stopped" : "running";
+    }
     if (status.promises.some((promise) => ours(promise.box, promise.install))) return "running";
     return status.claims.some((claim) => ours(claim.box, claim.install)) ? "running" : null;
   }

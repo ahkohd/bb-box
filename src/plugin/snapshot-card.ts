@@ -1,8 +1,9 @@
+import { homeUserOf } from "../core/device-host.ts";
 import { createHash } from "node:crypto";
 import type { GpuPart, MachineSize, Holds, Price, SnapshotScope, SnapshotSize, WhileRunning } from "../backends/types.ts";
 import type { Actor } from "../core/box-log.ts";
 import { BoxError, OPERATOR, type BoxRecord } from "../core/boxes.ts";
-import { countsAgainstLimit, eligible, forksOn, isKept, notForkedForScope, notKeptForScope, type Caller, type PictureState, type SnapshotRecord, type SnapshotState, type Standing } from "../core/snapshot.ts";
+import { countsAgainstLimit, eligible, forksOn, isKept, notForkedForScope, notKeptForScope, type Caller, type PictureState, type HomeUser, type SnapshotRecord, type SnapshotState, type Standing } from "../core/snapshot.ts";
 import { restoreStepWords, unflushedOf, type ForkCheck, type KeepInput, type RestoreCheck, type RestoreGuard, type Snapshots, type TakeCheck } from "../core/snapshots.ts";
 import { keepCostWords } from "./snapshot-words.ts";
 import { describeSize } from "../core/sizes.ts";
@@ -252,6 +253,7 @@ export interface RestorePreview {
   readonly snapshot: SnapshotRowView | null;
   readonly token: string;
   readonly undoUnflushed: string | null;
+  readonly homeUser: HomeUser;
 }
 
 function tokenOf(box: BoxRecord, preview: Omit<RestorePreview, "token" | "undoUnflushed">): string {
@@ -280,7 +282,7 @@ export async function restorePreview(snapshots: Snapshots, box: BoxRecord, ref: 
   const standing = personStanding(box);
   const record = snapshots.find(PERSON, standing, ref);
   const guard: RestoreGuard = await snapshots.guardOf(box);
-  const seen = { threads: guard.threads ?? [], threadsUnread: guard.threadsUnread, control: guard.control, terminals: guard.terminals, snapshot: rowOf(snapshots, record, now) };
+  const seen = { threads: guard.threads ?? [], threadsUnread: guard.threadsUnread, control: guard.control, terminals: guard.terminals, snapshot: rowOf(snapshots, record, now), homeUser: homeUserOf(box) };
   const undoOperation = record.undoOf ? snapshots.ledger.operation(record.undoOf) : null;
   const undoUnflushed = undoOperation ? unflushedOf(undoOperation) : null;
   let preview: Omit<RestorePreview, "token" | "undoUnflushed">;
