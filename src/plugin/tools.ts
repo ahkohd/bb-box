@@ -20,7 +20,7 @@ import { describeSize } from "../core/sizes.ts";
 import { listWords } from "../core/device.ts";
 import { wholeCardsOffInList } from "../core/gpu.ts";
 import { fontFiles } from "../core/record-font.ts";
-import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, boxClockScript, chaptersOf, clockOffset, parsePrepared, parseRecordResult, planClip, previewHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, driverDrawsAgentCursor, withAgentCursorHidden, withInputs, type Chapter, type ClipPlan, type ClockReading } from "../core/record.ts";
+import { RECORD_DIR, RECORD_LIMIT_S, RECORD_START_EXITS, RECORD_STEP_EXITS, RECORD_STOP_EXITS, SCENE_BUNDLE, boxClockScript, chaptersOf, clockOffset, parsePrepared, parseRecordResult, planClip, previewFrameHeight, recordMakeScript, recordPage, recordPrepareScript, recordStartScript, recordStepScript, sceneBundle, driverDrawsAgentCursor, withAgentCursorHidden, withInputs, type Chapter, type ClipPlan, type ClockReading } from "../core/record.ts";
 import { GRANT_PERMISSIONS, desktopDisplays, type BoxGrants, type GrantBlock } from "../backends/types.ts";
 import type { RunResult } from "../transports/types.ts";
 import { DRAIN_MS, Detached, Drain, Restarted } from "./drain.ts";
@@ -1034,6 +1034,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           const said = refused[result.exitCode ?? -1];
           if (said) return { content: [{ type: "text", text: said }], isError: true };
           if (result.exitCode !== 0) throw new BoxError("unreachable", `Recording box ${found.name} did not start: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
+          if (os === "windows") app.clipFfmpeg.noteImageFfmpeg(found);
           const clipWords = os === "windows" ? "" : await desktopClipWords(found);
           return `Recording box ${found.name}'s desktop, for at most ${RECORD_LIMIT_S / 60} minutes.${clipWords}${next(`Do what the video should show, then call box_record with box "${found.name}" and action "stop".`)}`;
         }
@@ -1066,7 +1067,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           ? await stopDeviceRecording(device, found, stills ?? "cut", times, os === "macos" ? "macos" : "linux").finally(() => app.devices.recordingEnded(found.id))
           : await (async () => {
               const cursorHidden = driverDrawsAgentCursor(os) && found.capabilities.computerUse ? await app.computer.showAgentCursor(found).catch(() => false) : false;
-              const prepared = await runLong(recordPrepareScript(stills ?? "cut", os), 4 * 1024 * 1024);
+              const ready = os === "windows" ? null : await readyClipFfmpeg(device.run, found, "choose");
+              const pair = ready?.ok ? ready.said.pair : null;
+              const prepared = await runLong(recordPrepareScript(stills ?? "cut", os, pair), 4 * 1024 * 1024);
               const inputs = app.recordings.end(found.id);
               if (prepared.result.exitCode === RECORD_STOP_EXITS.none) return null;
               const facts = prepared.result.exitCode === 0 ? parsePrepared(prepared.result.stdout) : null;
@@ -1080,7 +1083,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
               if (drawing) await boxes.writeFile(owner, found.id, `${RECORD_DIR}/${SCENE_BUNDLE}`, drawing, { signal });
               for (const file of fontFiles()) await boxes.writeFile(owner, found.id, `${RECORD_DIR}/${file.name}`, file.bytes, { signal }).catch(() => undefined);
               const makeBegan = Date.now();
-              const { result } = await runLong(recordMakeScript(plan, os));
+              const { result } = await runLong(recordMakeScript(plan, os, pair));
               const said = result.exitCode === 0 ? parseRecordResult(result.stdout) : null;
               if (!said) throw new BoxError("unreachable", `Making the clip in box ${found.name} failed: ${result.stderr.trim() || `exit code ${result.exitCode}`}`);
               timings.drawing = said.drawing ?? 0;
@@ -1131,7 +1134,7 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
         const steps = made.captions === false ? " The box could not draw the step captions, so the clip has none." : "";
         const limit = made.ended === "limit" ? ` It reached the ${RECORD_LIMIT_S / 60}-minute limit and ended by itself.` : "";
         const where = `The MP4 is in this thread's storage folder: $BB_THREAD_STORAGE/${name}.mp4${copied ? `, and in the storage folder of its parent thread${copied === 1 ? "" : `s, ${copied} of them`}` : ""}.`;
-        const directive = `::inline-vis{source="thread-storage" file="${name}.html" height="${previewHeight(made.size) + (chapters.length ? 16 + chapters.length * 46 : 0)}"}`;
+        const directive = `::inline-vis{source="thread-storage" file="${name}.html" height="${previewFrameHeight(made.size, chapters.length)}"}`;
         const shows = copied ? "this thread and in its parent threads, which have a copy, so a parent can pass the line on" : "this thread only";
         return `Recorded box ${found.name}${onDevice ? "'s device" : ""}: ${parts.join(", ")}.${limit}${deviceWords}${steps}${took} ${where}${next(`To show it in the thread, put this line on its own in your reply, outside any code block. It shows the clip in ${shows}:\n${directive}`)}`;
       } catch (error) {

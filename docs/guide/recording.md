@@ -70,9 +70,9 @@ On an iOS or Android box, a recording shows the device's own screen, not the hos
 
 ## What a box needs to record
 
-BB Box makes the clip in the box, with ffmpeg. When a recording starts, it checks the box's own ffmpeg. It serves when it has what a clip needs: H.264 encoding with libx264, and on Linux the drawtext filter, which draws the captions there. A Mac draws its captions itself, so Homebrew's ffmpeg serves there.
+BB Box makes the clip in the box, with ffmpeg and ffprobe. When a recording starts, it checks the box's own pair. The pair serves when ffmpeg has what a clip needs, H.264 encoding with libx264 and on Linux the drawtext filter, which draws the captions there, and when the two make and read back a test frame within 30 seconds. A Mac draws its captions itself, so Homebrew's ffmpeg serves there.
 
-When the box has no ffmpeg fit for a clip, as on an Android box or an iOS box on a shared Namespace Mac, BB Box fetches its own copy of ffmpeg 9.0.2 into the box user's home at the first recording. It checks the download against its SHA-256, needs no root, and keeps it for later recordings. That makes the first start slower:
+When the box has no pair fit for a clip, as on an Android box or an iOS box on a shared Namespace Mac, BB Box fetches its own copy of ffmpeg 9.0.2 at the first recording. It checks the download against its SHA-256 and the test frame, then puts it in place whole, in a folder only the box user can open, `~/.bb-box/ffmpeg`. It needs no root. Later recordings use it while its files match the checksums taken when it was put in place. BB Box does not use a folder there that is a link or another user's. The clip is made with the pair that check chose. That makes the first start slower:
 
 | Box | Download | Fetch at the first start |
 | --- | --- | --- |
@@ -81,7 +81,7 @@ When the box has no ffmpeg fit for a clip, as on an Android box or an iOS box on
 
 Each new iOS box on a shared host fetches again, as its macOS user goes when it is released. The box must reach github.com for Linux, or ffmpeg.martin-riedl.de for macOS. Where these builds come from, and their licences, are on the [Third-party software](../../THIRD-PARTY.md) page.
 
-If a device box cannot get an ffmpeg fit for a clip, the agent is told why when it starts recording, and the device does not record. A desktop records anyway, and the agent is told that its clip will have no step captions. `bb box doctor` says, for each kind, what a recording makes there, what it needs, and what the last recording's start found.
+If a device box cannot get an ffmpeg fit for a clip, the agent is told why when it starts recording, and the device does not record. A desktop whose ffmpeg cannot draw the captions records anyway, and the agent is told that its clip will have no step captions. A desktop with no ffmpeg at all cannot record its screen, so it is refused at the start: its image brings ffmpeg. `bb box doctor` says, for each kind, what a recording makes there, what it needs, and what the last recording's start found.
 
 ## Asking an agent for a recording
 
@@ -100,7 +100,7 @@ Agents record with the `box_record` tool. See [agent tools](../reference/tools.m
 
 A clip is an MP4 file in the thread's storage folder. The captions and marks are part of the video, so they stay when you share the file. The list of steps is only on the page in the thread.
 
-The page fits the clip whole into its frame, in the chat and in the side panel. A phone's or tablet's upright clip is at most 560 pixels tall in the chat, and as wide as that height allows. A desktop's clip fills the width as before.
+The page fits the clip whole into its frame, in the chat and in the side panel. A phone's or tablet's upright clip is at most 560 pixels tall in the chat, and as wide as that height allows. A desktop's clip fills the width as before. The list of steps under it shows 4 steps in the chat, and scrolls for more. However many steps there are, the video keeps at least 55% of the page's height.
 
 ## Limits
 

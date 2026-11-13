@@ -55,16 +55,24 @@ export const FFMPEG_BUILDS: readonly FfmpegBuild[] = [
 ];
 
 export const CLIP_FFMPEG_DIR = ".bb-box/ffmpeg";
-export const CLIP_FFMPEG_BIN = `${CLIP_FFMPEG_DIR}/bin`;
 
-export const FETCHED_FFMPEG_FIRST_ON_PATH = `[ ! -x "$HOME/${CLIP_FFMPEG_BIN}/ffmpeg" ] || PATH="$HOME/${CLIP_FFMPEG_BIN}:$PATH"; export PATH`;
+export const CLIP_FFMPEG_EXITS = { ready: 0, noBuild: 4, fetchFailed: 5, mismatch: 6, broken: 7, publishFailed: 8, untrusted: 9, noneFit: 10 } as const;
 
-export const CLIP_FFMPEG_EXITS = { ready: 0, noBuild: 4, fetchFailed: 5, mismatch: 6, broken: 7 } as const;
+export type ClipFfmpegMode = "fetch" | "choose";
 
 export const CLIP_FILTERS = ["overlay", "geq", "freezedetect", "tpad"] as const;
 
+export const PAIR_DOES_NOT_WORK = "broken";
+
+const CHECK_LIMIT_S = 30;
+
 export function clipFilters(os: FetchedOs): readonly string[] {
   return os === "linux" ? [...CLIP_FILTERS, "drawtext"] : CLIP_FILTERS;
+}
+
+export interface ClipFfmpegPair {
+  readonly ffmpeg: string;
+  readonly ffprobe: string;
 }
 
 export interface ClipFfmpeg {
@@ -72,6 +80,16 @@ export interface ClipFfmpeg {
   readonly version: string;
   readonly seconds: number;
   readonly missing: readonly string[];
+  readonly pair: ClipFfmpegPair;
+}
+
+function shellQuoted(text: string): string {
+  return `'${text.replace(/'/g, `'\\''`)}'`;
+}
+
+export function useClipFfmpeg(pair: ClipFfmpegPair | null): string {
+  if (!pair) return "";
+  return `ffmpeg() { ${shellQuoted(pair.ffmpeg)} "$@"; }\nffprobe() { ${shellQuoted(pair.ffprobe)} "$@"; }`;
 }
 
 function buildId(build: FfmpegBuild): string {
@@ -84,10 +102,10 @@ function unpackLines(download: FfmpegDownload): string {
   const extract = download.unpack === "zip" ? `unzip -q -o "$work/get" ${quoted} -d "$work/out"` : `tar -xJf "$work/get" -C "$work/out" ${quoted}`;
   const moves = [download.ffmpeg ? `mv "$work/out/${download.ffmpeg}" "$work/bin/ffmpeg"` : "", download.ffprobe ? `mv "$work/out/${download.ffprobe}" "$work/bin/ffprobe"` : ""].filter(Boolean);
   return [
-    `  curl -fsSL --retry 2 -o "$work/get" '${download.url}' 2>"$work/curl.log" || { echo "${PRODUCT} could not fetch ${download.url}: $(tail -n 1 "$work/curl.log")" >&2; exit ${CLIP_FFMPEG_EXITS.fetchFailed}; }`,
-    `  [ "$(sum256 "$work/get")" = '${download.sha256}' ] || { echo "${download.url} did not match its SHA-256, so ${PRODUCT} did not use it." >&2; exit ${CLIP_FFMPEG_EXITS.mismatch}; }`,
-    `  mkdir -p "$work/out" && ${extract} && ${moves.join(" && ")} || { echo "${PRODUCT} could not unpack ${download.url}." >&2; exit ${CLIP_FFMPEG_EXITS.broken}; }`,
-    `  rm -rf "$work/get" "$work/out"`,
+    `    curl -fsSL --retry 2 -o "$work/get" '${download.url}' 2>"$work/curl.log" || { echo "${PRODUCT} could not fetch ${download.url}: $(tail -n 1 "$work/curl.log")" >&2; exit ${CLIP_FFMPEG_EXITS.fetchFailed}; }`,
+    `    [ "$(sum256 "$work/get")" = '${download.sha256}' ] || { echo "${download.url} did not match its SHA-256, so ${PRODUCT} did not use it." >&2; exit ${CLIP_FFMPEG_EXITS.mismatch}; }`,
+    `    mkdir -p "$work/out" && ${extract} && ${moves.join(" && ")} || { echo "${PRODUCT} could not unpack ${download.url}." >&2; exit ${CLIP_FFMPEG_EXITS.broken}; }`,
+    `    rm -rf "$work/get" "$work/out"`,
   ].join("\n");
 }
 
@@ -98,65 +116,123 @@ function unamePattern(build: FfmpegBuild): string {
   return UNAME_MACHINES[build.arch].map((machine) => `${UNAME_SYSTEM[build.os]}/${machine}`).join("|");
 }
 
-function fetchBranch(build: FfmpegBuild): string {
+function buildBranch(build: FfmpegBuild): string {
   return `  ${unamePattern(build)})
   version='${build.version}'; id='${buildId(build)}'
+  download() {
 ${build.downloads.map(unpackLines).join("\n")}
+  }
   ;;`;
 }
 
-export function clipFfmpegScript(os: FetchedOs, builds: readonly FfmpegBuild[] = FFMPEG_BUILDS): string {
-  const filters = clipFilters(os);
-  return String.raw`dir="$HOME/${CLIP_FFMPEG_DIR}"; bin="$HOME/${CLIP_FFMPEG_BIN}"
-now() { perl -MTime::HiRes=time -e 'printf "%.3f", time'; }
-began=$(now)
+function pairChecks(os: FetchedOs): string {
+  return String.raw`bounded() { perl -e 'alarm shift; exec @ARGV or exit 127' ${CHECK_LIMIT_S} "$@"; }
 missing_in() {
-  filters=$("$1" -hide_banner -filters 2>/dev/null) || { printf 'ffmpeg'; return; }
-  encoders=$("$1" -hide_banner -encoders 2>/dev/null)
+  filters=$(bounded "$1" -hide_banner -filters 2>/dev/null) || { printf 'ffmpeg'; return; }
+  encoders=$(bounded "$1" -hide_banner -encoders 2>/dev/null)
   out=
   printf '%s\n' "$encoders" | grep -q ' libx264 ' || out="libx264"
-  for f in ${filters.join(" ")}; do printf '%s\n' "$filters" | grep -q " $f " || out="$out${"$"}{out:+ }$f"; done
+  for f in ${clipFilters(os).join(" ")}; do printf '%s\n' "$filters" | grep -q " $f " || out="$out${"$"}{out:+ }$f"; done
   printf '%s' "$out"
 }
-said() { printf '{"ffmpeg":"%s","version":"%s","seconds":%s,"missing":"%s"}\n' "$1" "$("$2" -hide_banner -version 2>/dev/null | sed -n '1s/^ffmpeg version [^0-9]*\([0-9][0-9.]*\).*/\1/p')" "$(awk -v a="$began" -v b="$(now)" 'BEGIN { printf "%.1f", b - a }')" "$3"; }
-if [ -x "$bin/ffmpeg" ] && [ -x "$bin/ffprobe" ] && [ -z "$(missing_in "$bin/ffmpeg")" ]; then said kept "$bin/ffmpeg" ""; exit 0; fi
+works() {
+  [ -n "$1" ] && [ -n "$2" ] && [ -z "$(missing_in "$1")" ] || return 1
+  t=$(mktemp -d "${"$"}{TMPDIR:-/tmp}/bb-box-ffmpeg.XXXXXX") || return 1
+  bounded "$1" -nostdin -v error -y -f lavfi -i color=s=16x16:d=0.2:r=5 -frames:v 1 -c:v libx264 -pix_fmt yuv420p "$t/smoke.mkv" </dev/null >/dev/null 2>&1 &&
+    [ "$(bounded "$2" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$t/smoke.mkv" 2>/dev/null)" = h264 ]
+  ok=$?
+  rm -rf "$t"
+  return $ok
+}
+sum256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d ' ' -f 1; else shasum -a 256 "$1" | cut -d ' ' -f 1; fi; }
+private_dir() { [ -d "$1" ] && [ ! -L "$1" ] && [ -O "$1" ]; }
+sums_hold() { [ -s "$1/sums" ] && [ "$(sum256 "$1/ffmpeg") $(sum256 "$1/ffprobe")" = "$(cat "$1/sums")" ]; }
+cached_works() { private_dir "$1" && [ ! -L "$1/ffmpeg" ] && [ ! -L "$1/ffprobe" ] && sums_hold "$1" && works "$1/ffmpeg" "$1/ffprobe"; }`;
+}
+
+const PUBLISH = String.raw`  work=$(mktemp -d "$base/fetch.XXXXXX") || exit ${CLIP_FFMPEG_EXITS.publishFailed}
+  trap 'rm -rf "$work"' EXIT
+  mkdir "$work/bin" || exit ${CLIP_FFMPEG_EXITS.publishFailed}
+  download
+  chmod 755 "$work/bin/ffmpeg" "$work/bin/ffprobe" || exit ${CLIP_FFMPEG_EXITS.broken}
+  works "$work/bin/ffmpeg" "$work/bin/ffprobe" || { echo "ffmpeg $version from ${PRODUCT}'s pinned build does not make a clip there: it lacks $(missing_in "$work/bin/ffmpeg"), or it or its ffprobe did not run." >&2; exit ${CLIP_FFMPEG_EXITS.broken}; }
+  printf '%s %s\n' "$(sum256 "$work/bin/ffmpeg")" "$(sum256 "$work/bin/ffprobe")" >"$work/bin/sums" || { echo "${PRODUCT} could not write ffmpeg's checksums in $base." >&2; exit ${CLIP_FFMPEG_EXITS.publishFailed}; }
+  target="$base/$id"; aside="$base/$id.old.$$"
+  if [ -e "$target" ] || [ -L "$target" ]; then mv "$target" "$aside" || { echo "${PRODUCT} could not move the unusable ffmpeg in $target aside." >&2; exit ${CLIP_FFMPEG_EXITS.publishFailed}; }; fi
+  if ! mv "$work/bin" "$target"; then
+    [ ! -e "$aside" ] || mv "$aside" "$target"
+    echo "${PRODUCT} could not put ffmpeg $version in place in $base." >&2
+    exit ${CLIP_FFMPEG_EXITS.publishFailed}
+  fi
+  if ! cached_works "$target"; then
+    rm -rf "$target"
+    [ ! -e "$aside" ] || mv "$aside" "$target"
+    echo "ffmpeg $version did not work once in place in $base." >&2
+    exit ${CLIP_FFMPEG_EXITS.publishFailed}
+  fi
+  rm -rf "$aside"`;
+
+export function clipFfmpegScript(os: FetchedOs, builds: readonly FfmpegBuild[] = FFMPEG_BUILDS, mode: ClipFfmpegMode = "fetch"): string {
+  return String.raw`base="$HOME/${CLIP_FFMPEG_DIR}"
+now() { perl -MTime::HiRes=time -e 'printf "%.3f", time'; }
+began=$(now)
+${pairChecks(os)}
+said() { printf '{"ffmpeg":"%s","version":"%s","seconds":%s,"missing":"%s","path":"%s","probe":"%s"}\n' "$1" "$(bounded "$2" -hide_banner -version 2>/dev/null | sed -n '1s/^ffmpeg version [^0-9]*\([0-9][0-9.]*\).*/\1/p')" "$(awk -v a="$began" -v b="$(now)" 'BEGIN { printf "%.1f", b - a }')" "$4" "$2" "$3"; }
 own=$(command -v ffmpeg 2>/dev/null || true)
+probe=$(command -v ffprobe 2>/dev/null || true)
 missing=ffmpeg
 if [ -n "$own" ]; then
   missing=$(missing_in "$own")
-  command -v ffprobe >/dev/null 2>&1 || missing="$missing${"$"}{missing:+ }ffprobe"
-  if [ -z "$missing" ]; then said own "$own" ""; exit 0; fi
+  [ -n "$probe" ] || missing="$missing${"$"}{missing:+ }ffprobe"
+  if [ -z "$missing" ]; then
+    if works "$own" "$probe"; then said own "$own" "$probe" ""; exit 0; fi
+    missing=${PAIR_DOES_NOT_WORK}
+  fi
 fi
-sum256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d ' ' -f 1; else shasum -a 256 "$1" | cut -d ' ' -f 1; fi; }
-mkdir -p "$dir"
-work=$(mktemp -d "$dir/fetch.XXXXXX") || exit ${CLIP_FFMPEG_EXITS.broken}
-trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/bin"
+id=
 case "$(uname -s)/$(uname -m)" in
-${builds.map(fetchBranch).join("\n")}
-  *) echo "$missing" >&2; exit ${CLIP_FFMPEG_EXITS.noBuild} ;;
+${builds.map(buildBranch).join("\n")}
 esac
-chmod 755 "$work/bin/ffmpeg" "$work/bin/ffprobe"
-left=$(missing_in "$work/bin/ffmpeg")
-[ -z "$left" ] || { echo "ffmpeg $version from ${PRODUCT}'s pinned build lacks $left there." >&2; exit ${CLIP_FFMPEG_EXITS.broken}; }
-"$work/bin/ffprobe" -hide_banner -version >/dev/null 2>&1 || { echo "ffprobe $version from ${PRODUCT}'s pinned build does not run there." >&2; exit ${CLIP_FFMPEG_EXITS.broken}; }
-rm -rf "$bin"
-mv "$work/bin" "$bin" && printf '%s\n' "$id" >"$dir/build"
-find "$dir" -mindepth 1 -maxdepth 1 -name 'fetch.*' ! -path "$work" -mmin +30 -exec rm -rf {} + 2>/dev/null
-said fetched "$bin/ffmpeg" "$missing"
+mkdir -p "$base" 2>/dev/null
+if ! private_dir "$HOME/.bb-box" || ! private_dir "$base" || ! chmod 700 "$base"; then
+  echo "$base is a link, or not the box user's, so ${PRODUCT} does not keep ffmpeg there. Remove it, then start again." >&2
+  exit ${CLIP_FFMPEG_EXITS.untrusted}
+fi
+if [ -n "$id" ] && cached_works "$base/$id"; then said kept "$base/$id/ffmpeg" "$base/$id/ffprobe" ""; exit 0; fi
+code=${CLIP_FFMPEG_EXITS.noBuild}
+[ ${mode} = fetch ] || code=${CLIP_FFMPEG_EXITS.noneFit}
+if [ -n "$id" ] && [ ${mode} = fetch ]; then
+  (
+${PUBLISH}
+  )
+  code=$?
+  if [ "$code" = 0 ]; then
+    find "$base" -mindepth 1 -maxdepth 1 ! -name "$id" ! -name 'fetch.*' -exec rm -rf {} + 2>/dev/null
+    find "$base" -mindepth 1 -maxdepth 1 -name 'fetch.*' -mmin +30 -exec rm -rf {} + 2>/dev/null
+    said fetched "$base/$id/ffmpeg" "$base/$id/ffprobe" "$missing"
+    exit 0
+  fi
+fi
+for earlier in $(find "$base" -mindepth 1 -maxdepth 1 -type d ! -name 'fetch.*' ! -name '*.old.*' 2>/dev/null); do
+  if cached_works "$earlier"; then said kept "$earlier/ffmpeg" "$earlier/ffprobe" "$missing"; exit 0; fi
+done
+[ "$code" != ${CLIP_FFMPEG_EXITS.noBuild} ] && [ "$code" != ${CLIP_FFMPEG_EXITS.noneFit} ] || echo "$missing" >&2
+exit $code
 `;
 }
 
 export function parseClipFfmpeg(stdout: string): ClipFfmpeg | null {
   const line = stdout.trim().split("\n").pop() ?? "";
   try {
-    const value = JSON.parse(line) as { ffmpeg?: unknown; version?: unknown; seconds?: unknown; missing?: unknown };
+    const value = JSON.parse(line) as { ffmpeg?: unknown; version?: unknown; seconds?: unknown; missing?: unknown; path?: unknown; probe?: unknown };
     if (value.ffmpeg !== "own" && value.ffmpeg !== "fetched" && value.ffmpeg !== "kept") return null;
+    if (typeof value.path !== "string" || !value.path.startsWith("/") || typeof value.probe !== "string" || !value.probe.startsWith("/")) return null;
     return {
       ffmpeg: value.ffmpeg,
       version: typeof value.version === "string" ? value.version : "",
       seconds: typeof value.seconds === "number" ? value.seconds : 0,
       missing: typeof value.missing === "string" && value.missing ? value.missing.split(" ") : [],
+      pair: { ffmpeg: value.path, ffprobe: value.probe },
     };
   } catch {
     return null;

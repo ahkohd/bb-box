@@ -13,7 +13,7 @@
 import type { GuestOs } from "../transports/types.ts";
 import { RECORD_DIR, RECORD_LIMIT_S, type CaptionPosition, type StepKind } from "./device-recording.ts";
 import { fontName, textRuns, type FontWeight } from "./record-font.ts";
-import { FETCHED_FFMPEG_FIRST_ON_PATH } from "./record-ffmpeg.ts";
+import { useClipFfmpeg, type ClipFfmpegPair } from "./record-ffmpeg.ts";
 import { markArt, markRgb, type MarkKind } from "./record-icons.ts";
 import type { InputEvent } from "./record-input.ts";
 import { END_HOLD_S, FADE_OUT_S, unionOfCuts } from "./record-edit.ts";
@@ -184,10 +184,10 @@ printf '%s\t%s\t%s\n' "$(perl -MTime::HiRes=time -e 'printf "%.3f", time')" ${ki
 `;
 }
 
-export function recordPrepareScript(stills: "cut" | "keep", os: GuestOs = "linux"): string {
+export function recordPrepareScript(stills: "cut" | "keep", os: GuestOs = "linux", pair: ClipFfmpegPair | null = null): string {
   if (os === "windows") return windowsPrepare(stills);
   return String.raw`d="$HOME/${RECORD_DIR}"
-${FETCHED_FFMPEG_FIRST_ON_PATH}
+${useClipFfmpeg(pair)}
 [ -s "$d/pid" ] || [ -s "$d/capture.mkv" ] || exit ${RECORD_STOP_EXITS.none}
 ended=limit
 if [ -s "$d/pid" ]; then
@@ -794,13 +794,13 @@ function markInstalls(plan: ClipPlan): string {
     .join("\n");
 }
 
-export function recordMakeScript(plan: ClipPlan, os: GuestOs = "linux"): string {
+export function recordMakeScript(plan: ClipPlan, os: GuestOs = "linux", pair: ClipFfmpegPair | null = null): string {
   if (os === "windows") return windowsMake(plan);
   const pills = pillCalls(plan, "pill", "linux");
   const inputs = pillInputs(plan, (file) => `"$d/pill-${file}.png"`);
   const marks = markInstalls(plan);
   return String.raw`d="$HOME/${RECORD_DIR}"
-${FETCHED_FFMPEG_FIRST_ON_PATH}
+${useClipFfmpeg(pair)}
 [ -s "$d/capture.mkv" ] || exit ${RECORD_STOP_EXITS.none}
 decode() { perl -MMIME::Base64 -e 'print decode_base64($ARGV[0])' "$1"; }
 font_regular="$d/${fontName("regular")}"
@@ -1206,7 +1206,11 @@ function clock(seconds: number): string {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
-const CLIP_FITS_ITS_FRAME = "html,body{height:100%}body{margin:0;background:#111;display:flex;flex-direction:column}video{display:block;flex:1 1 auto;min-height:0;width:100%;height:100%;object-fit:contain}";
+export const VIDEO_SHARE_LEAST = 55;
+
+const CLIP_FITS_ITS_FRAME = `html,body{height:100%}body{margin:0;background:#111;display:flex;flex-direction:column}video{display:block;flex:1 1 0;min-height:${VIDEO_SHARE_LEAST}%;width:100%;object-fit:contain}`;
+
+const STEPS_SCROLL = `ol{flex:0 1 auto;min-height:0;max-height:${100 - VIDEO_SHARE_LEAST}%;overflow-y:auto;list-style:none;margin:0;padding:8px 10px}`;
 
 export const PREVIEW_VIDEO_MOST = 560;
 
@@ -1227,13 +1231,21 @@ export function recordPage(title: string, mp4: string, chapters: readonly Chapte
     })
     .join("");
   return `<!doctype html><meta charset="utf-8"><title>${escape(title)}</title>
-<style>${CLIP_FITS_ITS_FRAME}body{color:#e8e8e8;font:13px/1.45 -apple-system,system-ui,sans-serif}ol{flex:none;list-style:none;margin:0;padding:8px 10px}li a{display:flex;gap:10px;padding:5px 6px;border-radius:6px;color:inherit;text-decoration:none}li a:hover{background:#222}.at{color:#9a9a9a;font-variant-numeric:tabular-nums;min-width:2.6em}</style>
+<style>${CLIP_FITS_ITS_FRAME}body{color:#e8e8e8;font:13px/1.45 -apple-system,system-ui,sans-serif}${STEPS_SCROLL}li a{display:flex;gap:10px;padding:5px 6px;border-radius:6px;color:inherit;text-decoration:none}li a:hover{background:#222}.at{color:#9a9a9a;font-variant-numeric:tabular-nums;min-width:2.6em}</style>
 <body>${video}<ol>${rows}</ol>
 <script>document.querySelectorAll("a[data-at]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); const v = document.getElementById("clip"); v.currentTime = Number(a.dataset.at); v.play(); }));</script></body>
 `;
 }
 
 /** The preview's height in BB, for a clip of `size` (WxH) shown about 640 wide. */
+export const STEP_ROWS_SHOWN = 4;
+const STEP_ROW_PX = 46;
+const STEP_LIST_PAD_PX = 16;
+
+export function previewFrameHeight(size: string, steps: number): number {
+  return previewHeight(size) + (steps ? STEP_LIST_PAD_PX + Math.min(steps, STEP_ROWS_SHOWN) * STEP_ROW_PX : 0);
+}
+
 export function previewHeight(size: string): number {
   const [width, height] = size.split("x").map(Number);
   if (!width || !height) return 400;

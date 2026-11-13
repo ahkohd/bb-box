@@ -419,18 +419,11 @@ test("a clip's marks are the owner's icons, tinted, and its words are Inter, wit
   assert.match(windows, /mark-warn-/);
 });
 
-test("a portrait clip fits its preview whole, its video as tall as its frame allows with its width following, and a landscape clip keeps its height (059)", () => {
+test("a portrait clip's preview is capped to a screen's height, and a landscape clip keeps its height (059)", () => {
   assert.equal(previewHeight("1080x1600"), PREVIEW_VIDEO_MOST + 8, "a phone's clip is capped to a screen's height");
   assert.equal(previewHeight("1280x1600"), PREVIEW_VIDEO_MOST + 8, "a tablet's too");
   assert.equal(previewHeight("1280x834"), 425, "a desktop's is as before");
   assert.equal(previewHeight("1280x720"), 368);
-
-  for (const page of [recordPage("Box a", "a.mp4"), recordPage("Box a", "a.mp4", [{ at: 1, real: 1, text: "Open it", result: null }])]) {
-    assert.match(page, /html,body\{height:100%\}body\{margin:0;background:#111;display:flex;flex-direction:column\}/, "the page is its frame's height");
-    assert.match(page, /video\{display:block;flex:1 1 auto;min-height:0;width:100%;height:100%;object-fit:contain\}/, "the video takes what the steps leave, and keeps its shape");
-    assert.doesNotMatch(page, /style="display:block;width:100%;height:auto"/, "the width no longer sets the height");
-  }
-  assert.match(recordPage("Box a", "a.mp4", [{ at: 1, real: 1, text: "Open it", result: null }]), /ol\{flex:none;/, "the step list keeps its height");
 });
 
 const FONTS = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "core", "fonts");

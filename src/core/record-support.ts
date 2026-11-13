@@ -1,6 +1,6 @@
 import { PRODUCT } from "../brand.ts";
 import { desktopDisplays, type DoctorCheck, type KindCapabilities } from "../backends/types.ts";
-import { CLIP_FFMPEG_EXITS, buildFor, clipFilters, fetchSize, type ClipFfmpeg, type FetchedOs } from "./record-ffmpeg.ts";
+import { CLIP_FFMPEG_EXITS, PAIR_DOES_NOT_WORK, buildFor, clipFilters, fetchSize, type ClipFfmpeg, type FetchedOs } from "./record-ffmpeg.ts";
 
 export interface RecordedKind {
   readonly id: string;
@@ -12,6 +12,7 @@ export interface ClipFfmpegMeasure {
   readonly box: string;
   readonly said: ClipFfmpeg | null;
   readonly refusal: string | null;
+  readonly image: boolean;
 }
 
 type Records = "device" | "desktop" | "nothing";
@@ -19,6 +20,14 @@ type Records = "device" | "desktop" | "nothing";
 function recordsOn(capabilities: KindCapabilities): Records {
   if (capabilities.device) return "device";
   return desktopDisplays(capabilities.displays).length ? "desktop" : "nothing";
+}
+
+function installWords(os: FetchedOs): string {
+  return os === "linux" ? "ffmpeg with libx264 and drawtext" : "ffmpeg with libx264";
+}
+
+function osOf(capabilities: KindCapabilities): FetchedOs {
+  return capabilities.os === "macos" ? "macos" : "linux";
 }
 
 function needsWords(os: FetchedOs): string {
@@ -43,10 +52,11 @@ function measureWords(measure: ClipFfmpegMeasure): string {
   const when = new Date(measure.at).toISOString().slice(0, 16).replace("T", " ");
   const where = `In box ${measure.box}, at ${when} UTC`;
   if (measure.refusal) return `${where}: ${measure.refusal}`;
+  if (measure.image) return `${where}, a recording started with the image's own ffmpeg.`;
   const said = measure.said!;
   if (said.ffmpeg === "own") return `${where}, its own ffmpeg ${said.version} had all a clip needs.`;
   if (said.ffmpeg === "kept") return `${where}, it used the ffmpeg ${said.version} ${PRODUCT} had fetched into it before.`;
-  const lacked = said.missing.includes("ffmpeg") ? "it had no ffmpeg" : `its own ffmpeg lacked ${said.missing.join(", ")}`;
+  const lacked = said.missing.includes("ffmpeg") ? "it had no ffmpeg" : said.missing.includes(PAIR_DOES_NOT_WORK) ? "its own ffmpeg or ffprobe did not make a test frame" : `its own ffmpeg lacked ${said.missing.join(", ")}`;
   return `${where}, ${lacked}, so ${PRODUCT} fetched ffmpeg ${said.version} in ${said.seconds.toFixed(1)} s.`;
 }
 
@@ -66,7 +76,7 @@ export function recordingChecks(kinds: readonly RecordedKind[], measured: Readon
         name,
         status: measure?.refusal ? "warn" : "ok",
         detail: `${whatWords(kind.capabilities)} ${fetchWords(kind.capabilities)}${last}`,
-        fix: measure?.refusal ? `Let boxes of ${kind.id} reach the ffmpeg download, or put ffmpeg with libx264 and drawtext in the kind's image.` : null,
+        fix: measure?.refusal ? `Let boxes of ${kind.id} reach the ffmpeg download, or put ${installWords(osOf(kind.capabilities))} in the kind's image.` : null,
       },
     ];
   });
@@ -74,11 +84,12 @@ export function recordingChecks(kinds: readonly RecordedKind[], measured: Readon
 
 export function clipFfmpegRefusal(box: string, capabilities: KindCapabilities, exitCode: number | null, stderr: string): string {
   const why = stderr.trim().split("\n").pop() ?? "";
-  const lacks = (words: string) => (words === "ffmpeg" ? "it has no ffmpeg" : `its ffmpeg lacks ${words.split(" ").join(", ")}`);
+  const lacks = (words: string) => (words === "ffmpeg" ? "it has no ffmpeg" : words === PAIR_DOES_NOT_WORK ? "its ffmpeg or ffprobe does not make a test frame" : `its ffmpeg lacks ${words.split(" ").join(", ")}`);
   if (exitCode === CLIP_FFMPEG_EXITS.noBuild) {
     const os = capabilities.os === "macos" ? "macOS" : "Linux";
-    return `Box ${box} cannot make a recording's clip: ${lacks(why || "ffmpeg")}, and ${PRODUCT} has no ffmpeg build to fetch for ${os} on ${capabilities.arch}. Install ffmpeg with libx264 and drawtext in the box, then start again.`;
+    return `Box ${box} cannot make a recording's clip: ${lacks(why || "ffmpeg")}, and ${PRODUCT} has no ffmpeg build to fetch for ${os} on ${capabilities.arch}. Install ${installWords(osOf(capabilities))} in the box, then start again.`;
   }
+  if (exitCode === CLIP_FFMPEG_EXITS.noneFit) return `Box ${box} has no ffmpeg fit for the clip now: ${lacks(why || "ffmpeg")}. Start a recording again: ${PRODUCT} fetches one as it starts.`;
   if (exitCode === CLIP_FFMPEG_EXITS.fetchFailed) return `Box ${box} cannot make a recording's clip yet: ${why || "the download failed"}. Check that the box can reach the internet, then start again.`;
   return `Box ${box} cannot make a recording's clip: ${why || `getting ffmpeg ended with exit code ${exitCode}`}`;
 }

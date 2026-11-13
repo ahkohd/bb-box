@@ -2,9 +2,9 @@ import type { BoxRecord } from "../core/boxes.ts";
 import { isTestOffer, type DeviceAnswer } from "../core/device.ts";
 import type { DeviceRequestBody } from "../core/device-link.ts";
 import { RECORD_LIMIT_S, parseRecordingLog, type CaptionPosition, type RecordingEnd, type StepKind } from "../core/device-recording.ts";
-import { DEVICE_COMPOSE_EXITS, deviceComposeScript, devicePrepared, deviceReadLogScript, parseComposed, planDeviceClip } from "../core/record-device.ts";
+import { deviceComposeScript, devicePrepared, deviceReadLogScript, parseComposed, planDeviceClip } from "../core/record-device.ts";
 import { fontInstallScript } from "../core/record-font.ts";
-import { clipFfmpegScript, parseClipFfmpeg, type ClipFfmpeg, type FetchedOs } from "../core/record-ffmpeg.ts";
+import { FFMPEG_BUILDS, PAIR_DOES_NOT_WORK, clipFfmpegScript, parseClipFfmpeg, type ClipFfmpeg, type ClipFfmpegMode, type FetchedOs } from "../core/record-ffmpeg.ts";
 import { clipFfmpegRefusal, type ClipFfmpegMeasure } from "../core/record-support.ts";
 import { RECORD_STOP_EXITS, parseRecordResult, planClip, recordMakeScript, type ClipPlan, type RecordResult, type RecordSpeed } from "../core/record.ts";
 import { desktopDisplays } from "../backends/types.ts";
@@ -32,18 +32,23 @@ const FETCH_TIMEOUT_MS = 240_000;
 
 export type ClipFfmpegReady = { readonly ok: true; readonly said: ClipFfmpeg } | { readonly ok: false; readonly text: string };
 
-export async function readyClipFfmpeg(run: DeviceRecordDeps["run"], box: BoxRecord): Promise<ClipFfmpegReady> {
+export async function readyClipFfmpeg(run: DeviceRecordDeps["run"], box: BoxRecord, mode: ClipFfmpegMode = "fetch"): Promise<ClipFfmpegReady> {
   const os: FetchedOs = box.capabilities.os === "macos" ? "macos" : "linux";
-  const result = await run(clipFfmpegScript(os), FETCH_TIMEOUT_MS);
+  const result = await run(clipFfmpegScript(os, FFMPEG_BUILDS, mode), FETCH_TIMEOUT_MS);
   const said = result.exitCode === 0 ? parseClipFfmpeg(result.stdout) : null;
   if (said) return { ok: true, said };
   return { ok: false, text: clipFfmpegRefusal(box.name, box.capabilities, result.exitCode, result.stderr) };
 }
 
+function ownLackedWords(missing: readonly string[]): string {
+  if (missing.includes("ffmpeg")) return "The box had no ffmpeg";
+  if (missing.includes(PAIR_DOES_NOT_WORK)) return "The box's own ffmpeg or ffprobe did not make a test frame";
+  return `The box's ffmpeg lacked ${missing.join(", ")}`;
+}
+
 export function fetchedWords(said: ClipFfmpeg): string {
   if (said.ffmpeg !== "fetched") return "";
-  const lacked = said.missing.includes("ffmpeg") ? "The box had no ffmpeg" : `The box's ffmpeg lacked ${said.missing.join(", ")}`;
-  return ` ${lacked}, so ${PRODUCT} fetched ffmpeg ${said.version} into it for the clip, in ${said.seconds.toFixed(1)} s.`;
+  return ` ${ownLackedWords(said.missing)}, so ${PRODUCT} fetched ffmpeg ${said.version} into it for the clip, in ${said.seconds.toFixed(1)} s.`;
 }
 
 export function recordsDevice(box: BoxRecord): boolean {
@@ -84,13 +89,15 @@ export async function stopDeviceRecording(deps: DeviceRecordDeps, box: BoxRecord
   const log = parseRecordingLog(read.stdout);
   const composition = planDeviceClip(log);
   if (typeof composition === "string") return { ok: false, text: `Box ${box.name}'s recording has no clip to make. ${composition}` };
-  const composed = await deps.run(deviceComposeScript(composition, stills), COMPOSE_TIMEOUT_MS);
-  if (composed.exitCode === DEVICE_COMPOSE_EXITS.noRecorder) return { ok: false, text: `Box ${box.name} has no ffmpeg for the clip now. Start a recording again: ${PRODUCT} fetches one as it starts.` };
+  const ready = await readyClipFfmpeg(deps.run, box, "choose");
+  if (!ready.ok) return { ok: false, text: ready.text };
+  const pair = ready.said.pair;
+  const composed = await deps.run(deviceComposeScript(composition, stills, pair), COMPOSE_TIMEOUT_MS);
   const cuts = composed.exitCode === 0 ? parseComposed(composed.stdout) : null;
   if (!cuts) return { ok: false, text: `Framing box ${box.name}'s recording failed: ${composed.stderr.trim() || `exit code ${composed.exitCode}`}` };
   const plan = planClip(devicePrepared(composition, cuts.cuts), speed);
   await deps.run(fontInstallScript(), READ_TIMEOUT_MS).catch(() => undefined);
-  const made = await deps.run(recordMakeScript(plan, os), COMPOSE_TIMEOUT_MS);
+  const made = await deps.run(recordMakeScript(plan, os, pair), COMPOSE_TIMEOUT_MS);
   const said = made.exitCode === 0 ? parseRecordResult(made.stdout) : null;
   if (!said) return { ok: false, text: `Making the clip in box ${box.name} failed: ${made.stderr.trim() || `exit code ${made.exitCode}`}` };
   const lost = composition.notes.map((note) => note.text);
@@ -112,7 +119,11 @@ export class ClipFfmpegLedger {
   }
 
   note(box: BoxRecord, ready: ClipFfmpegReady): void {
-    this.#last.set(box.kind, { at: this.#now(), box: box.name, said: ready.ok ? ready.said : null, refusal: ready.ok ? null : ready.text });
+    this.#last.set(box.kind, { at: this.#now(), box: box.name, said: ready.ok ? ready.said : null, refusal: ready.ok ? null : ready.text, image: false });
+  }
+
+  noteImageFfmpeg(box: BoxRecord): void {
+    this.#last.set(box.kind, { at: this.#now(), box: box.name, said: null, refusal: null, image: true });
   }
 
   get measured(): ReadonlyMap<string, ClipFfmpegMeasure> {

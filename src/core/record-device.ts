@@ -1,7 +1,7 @@
 import { clockwiseTurns, deviceModel, foldScreenFor, isSideways, type QuarterTurns } from "./device.ts";
 import { applied, bodyToStage, frameShape, outerBounds, screenOnStage, videoToStage, type Affine, type FrameShape, type Placement, type Point2, type Rect } from "./device-frame.ts";
 import { RECORD_DIR, lastAt, segmentFile, type CaptionPosition, type RecordingLog } from "./device-recording.ts";
-import { FETCHED_FFMPEG_FIRST_ON_PATH } from "./record-ffmpeg.ts";
+import { useClipFfmpeg, type ClipFfmpegPair } from "./record-ffmpeg.ts";
 import { RECORD_FPS, RECORD_STOP_EXITS, type ClipLayout, type ClipNote, type Prepared, type RecordEvent } from "./record.ts";
 
 export const DEVICE_CLIP_WIDTH = { least: 1080, most: 1280 } as const;
@@ -306,11 +306,11 @@ export function composeGraph(plan: DeviceComposition, stills: "cut" | "keep"): s
   return `${lines.join(";\n")}\n`;
 }
 
-export function deviceComposeScript(plan: DeviceComposition, stills: "cut" | "keep"): string {
+export function deviceComposeScript(plan: DeviceComposition, stills: "cut" | "keep", pair: ClipFfmpegPair | null = null): string {
   const inputs = plan.segments.map((segment) => `-i "$d/${segment.file}"`).join(" ");
   const files = plan.segments.map((segment) => segment.file).join(" ");
   return String.raw`d="$HOME/${RECORD_DIR}"
-${FETCHED_FFMPEG_FIRST_ON_PATH}
+${useClipFfmpeg(pair)}
 [ -s "$d/device.jsonl" ] || exit ${DEVICE_COMPOSE_EXITS.none}
 command -v ffmpeg >/dev/null || { echo ffmpeg >&2; exit ${DEVICE_COMPOSE_EXITS.noRecorder}; }
 for f in ${files}; do [ -s "$d/$f" ] || { echo "The recording's $f is missing." >&2; exit ${DEVICE_COMPOSE_EXITS.failed}; }; done

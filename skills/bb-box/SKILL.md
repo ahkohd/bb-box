@@ -542,7 +542,8 @@ steps for the viewer.
   `start` first fetches BB Box's own ffmpeg into the box user's home: about
   10 seconds on Android and 2 on a Mac, once per box. If it cannot, `start`
   says why and the device does not record; on a desktop it records but says
-  the clip will have no step captions.
+  the clip will have no step captions. A desktop with no ffmpeg at all is
+  refused at the start.
 
 ## BB machines
 
