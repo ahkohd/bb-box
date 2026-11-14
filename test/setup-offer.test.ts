@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // First-run setup: what each BB machine offers, and the line that fixes what stands in the way.
 
 import assert from "node:assert/strict";

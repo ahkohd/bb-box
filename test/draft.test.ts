@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // Drafting a project image's script from the project's files (049).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";

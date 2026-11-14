@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The Docker API relay's channels (src/relay/mux.ts, 042).
 
 import assert from "node:assert/strict";

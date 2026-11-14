@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // What the backends with a warm pool share: an upkeep that runs once more
 // when asked during a run (#355), and the record of pools short of room,
 // logged once per reason (#356).

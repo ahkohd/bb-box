@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { basename } from "node:path";
 import { test } from "node:test";

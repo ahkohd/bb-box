@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The Tart backend's Windows boxes, whose VMs QEMU runs (046), and their warm
 // pool: on a fake Mac with fake QEMU (fake-qemu.mjs), and a fake Windows
 // guest that the fake ssh reaches at its port on the Mac's loopback.

@@ -5,6 +5,7 @@
 // 19 October 2026). Its own timer is unref'd, so a process that ends as it
 // should never sees it.
 
+import "./check-test-machine.mjs";
 import { readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +13,6 @@ import { after, afterEach, beforeEach } from "node:test";
 import { OWNER_FILE, TEMP_PREFIX, shortTempBase } from "../src/core/temp-folders.ts";
 import { helperChildrenNotClosed } from "../src/transports/forker.ts";
 import { installHostGuard, reachedTestMachineMessage } from "./host-guard.ts";
-import { refuseRiskyTestMachine } from "./preflight.mjs";
 
 /** How long a test file's process may run on after its last test. */
 const EXIT_WAIT_MS = 60_000;
@@ -32,8 +32,6 @@ function foldersThisProcessLeft(): string[] {
   }
   return left;
 }
-
-refuseRiskyTestMachine();
 
 const hostGuard = installHostGuard();
 

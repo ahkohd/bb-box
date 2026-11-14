@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { createDemandSampler } from "../src/monitor/demand-sampler.ts";

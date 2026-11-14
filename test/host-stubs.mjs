@@ -49,10 +49,15 @@ export const HOST_CHANGING_COMMANDS = [
 ];
 
 export const READ_OR_CHANGE_COMMANDS = {
-  ip: ["add", "del", "delete", "change", "replace", "set", "flush", "append", "prepend", "exec", "attach", "detach", "save", "restore"],
-  route: ["add", "del", "delete", "change", "flush"],
-  sysctl: ["*=*", "-w", "--write", "-p", "-p*", "--load", "--load=*", "--system"],
-  scutil: ["--set"],
+  ip: [
+    "while [ $# -gt 0 ]; do case \"$1\" in -4|-6|-o|-oneline|-j|-json|-p|-pretty|-br|-brief|-d|-details|-s|-stats|-c|-color|-c=*|-color=*) shift ;; *) break ;; esac; done",
+    'case "$1" in addr|address|link|route|neigh|rule) object=$1; shift ;; *) return 1 ;; esac',
+    "[ $# -gt 0 ] || return 0",
+    'case "$1" in show|list) return 0 ;; get) [ "$object" = route ] ;; *) return 1 ;; esac',
+  ],
+  route: ['for arg in "$@"; do case "$arg" in -n|-e|-ee|-v|-4|-6|--numeric|--extend|--verbose) ;; *) return 1 ;; esac; done'],
+  sysctl: ['for arg in "$@"; do case "$arg" in -n|-e|-N|-q|-a|-A|-X|-b|--values|--names|--all|--ignore|--quiet|--binary) ;; -*|*=*) return 1 ;; esac; done'],
+  scutil: ['[ $# -eq 2 ] && [ "$1" = --get ] && return 0', '[ $# -eq 1 ] && case "$1" in --dns|--proxy|--nwi) return 0 ;; esac', "return 1"],
 };
 
 export const PATH_GUARDED_COMMANDS = ["rm", "chown", "chmod"];
@@ -168,17 +173,18 @@ function unreachableServiceManagerStub(record) {
 function readOrChangeStub(name, real, onChange) {
   return [
     "#!/bin/sh",
-    'for arg in "$@"; do',
-    `  case "$arg" in ${READ_OR_CHANGE_COMMANDS[name].join("|")}) ${onChange} ;; esac`,
-    "done",
-    real ? `exec ${shellQuote(real)} "$@"` : "exit 0",
+    "only_reads() {",
+    ...READ_OR_CHANGE_COMMANDS[name].map((line) => `  ${line}`),
+    "}",
+    `if only_reads "$@"; then ${real ? `exec ${shellQuote(real)} "$@"` : "exit 0"}; fi`,
+    onChange,
   ].join("\n");
 }
 
 function stubFor(name, record, stubs, path) {
   if (ROOT_RUNNERS.includes(name)) return rootRunnerStub(record, stubs);
   if (SERVICE_MANAGERS.has(name)) return unreachableServiceManagerStub(record);
-  if (name in READ_OR_CHANGE_COMMANDS) return readOrChangeStub(name, realToolOutside(name, path), `${recordLine(record)}; exit 0`);
+  if (name in READ_OR_CHANGE_COMMANDS) return readOrChangeStub(name, realToolOutside(name, path), [recordLine(record), "exit 0"].join("\n"));
   return hostChangingStub(record);
 }
 
@@ -194,7 +200,25 @@ export function privilegedToolsOn(path) {
   return PRIVILEGED_COMMANDS.filter((name) => firstOnPath(name, searched) !== null);
 }
 
-const TAKES_OWNER_OR_MODE_FIRST = new Set(["chown", "chmod"]);
+const FILE_TOOL_OPTIONS = {
+  rm: {
+    flags: "fiIrRdv",
+    long: ["--force", "--interactive", "--interactive=*", "--one-file-system", "--preserve-root", "--preserve-root=all", "--recursive", "--dir", "--verbose"],
+    operandFirst: null,
+  },
+  chmod: {
+    flags: "Rcfv",
+    long: ["--recursive", "--changes", "--silent", "--quiet", "--verbose", "--preserve-root", "--no-dereference", "--reference=*"],
+    operandFirst: "mode",
+  },
+  chown: {
+    flags: "RcfvhP",
+    long: ["--recursive", "--changes", "--silent", "--quiet", "--verbose", "--preserve-root", "--no-dereference", "--reference=*", "--from=*"],
+    operandFirst: "owner",
+  },
+};
+
+const MODE_CHARACTERS = "rwxXstugoa0-7,+=-";
 
 const RESOLVE_FOLLOWING_LINKS = [
   "resolve() {",
@@ -224,20 +248,38 @@ const OWNED_ROOTS = [
   "}",
 ];
 
+function optionLines(options) {
+  return [
+    '    case "$arg" in',
+    "      --) ended=1; continue ;;",
+    `      ${options.long.join("|")}) continue ;;`,
+    "      --*) refuse=1; break ;;",
+    "      -?*)",
+    '        flags=${arg#-}',
+    `        case "$flags" in *[!${options.flags}]*) ;; *) continue ;; esac`,
+    ...(options.operandFirst === "mode" ? [`        if [ -n "$first" ]; then case "$flags" in *[!${MODE_CHARACTERS}]*) ;; *) first=; continue ;; esac; fi`] : []),
+    "        refuse=1; break ;;",
+    "    esac",
+  ];
+}
+
 function pathGuardedStub(name, record, real, owned) {
-  const ownerFirst = TAKES_OWNER_OR_MODE_FIRST.has(name);
+  const options = FILE_TOOL_OPTIONS[name];
   return [
     "#!/bin/sh",
     `owned=\${${OWNED_FOLDERS_VARIABLE}:-${shellQuote(owned)}}`,
     ...RESOLVE_FOLLOWING_LINKS,
     ...OWNED_ROOTS,
     "refuse=",
-    `skip=${ownerFirst ? 1 : ""}`,
-    'case " $* " in *" --reference="*) skip= ;; esac',
-    'for operand in "$@"; do',
-    `  case "$operand" in ${ownerFirst ? "-L|-H|--dereference) refuse=1; break ;; " : ""}-*) continue ;; esac`,
-    '  if [ -n "$skip" ]; then skip=; continue; fi',
-    '  full=$(resolve "$operand") || { refuse=1; break; }',
+    "ended=",
+    `first=${options.operandFirst ? 1 : ""}`,
+    'case " $* " in *" --reference="*) first= ;; esac',
+    'for arg in "$@"; do',
+    '  if [ -z "$ended" ]; then',
+    ...optionLines(options),
+    "  fi",
+    '  if [ -n "$first" ]; then first=; continue; fi',
+    '  full=$(resolve "$arg") || { refuse=1; break; }',
     '  inside "$full" || { refuse=1; break; }',
     "done",
     `if [ -n "$refuse" ]; then ${recordLine(record)}; exit 0; fi`,

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BackendError, GpuPlanChanged, ResizeHolds, ResizeLeftStopped, startedGpu, startedGuest, type AcquireHooks, type BoxIdentity, type GpuPart, type Guest, type ResizeTarget } from "../src/backends/types.ts";

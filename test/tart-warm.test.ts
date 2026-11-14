@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The Tart backend's warm pool on a fake Mac: suspended clones at a kind's
 // default size, filled by maintain(), taken by a box of that size, and
 // retired when their image, Tart or macOS changes.

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // Pool checks for the SSH host pool on live machines: the Docker rig that
 // setup/ssh-pool/test/rig.sh starts on this computer. They look at and
 // change the machines from outside with docker exec, as an operator would

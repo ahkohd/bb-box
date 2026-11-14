@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The Proxmox API's self-signed certificate is trusted by its fingerprint, as
 // the setup guide's token file gives it, against a real HTTPS server.
 

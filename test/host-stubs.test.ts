@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -97,6 +98,38 @@ test("rm, chmod and chown in a fake box follow a link to its target, and leave a
   assert.equal(statSync(join(outside, "victim-chmod")).mode & 0o777, 0o600);
   assert.equal(statSync(join(outside, "victim-chown")).uid, process.getuid!());
   assert.deepEqual(hostCommandsRecorded(fake.dir), ["rm -f escape/victim-rm", "chmod 777 escape/victim-chmod", "chown 12345 escape/victim-chown", `rm -f ${outside}/unrelated`]);
+});
+
+test("rm, chmod and chown in a fake box check operands after -- too, such as a link named -escape out of the fake's own folders", async () => {
+  const fake = fakeSsh();
+  const box = new SshTransport(fake.ssh, at("box-1"), "linux");
+  const outside = tempDir("not-the-fakes");
+  for (const name of ["rm", "chmod", "chown"]) writeFileSync(join(outside, name), name, { mode: 0o600 });
+  const home = fake.home("box-1");
+  mkdirSync(home, { recursive: true });
+  symlinkSync(outside, join(home, "-escape"));
+
+  const ran = await box.run("rm -f -- -escape/rm; chmod 777 -- -escape/chmod; chown 12345 -- -escape/chown; rm -rf --no-preserve-root -- -escape; echo done", { timeoutMs: 20_000 });
+
+  assert.equal(ran.stdout.trim(), "done", ran.stderr);
+  assert.deepEqual(readdirSync(outside).sort(), ["chmod", "chown", "rm"]);
+  assert.equal(statSync(join(outside, "chmod")).mode & 0o777, 0o600);
+  assert.equal(statSync(join(outside, "chown")).uid, process.getuid!());
+  assert.deepEqual(hostCommandsRecorded(fake.dir), ["rm -f -- -escape/rm", "chmod 777 -- -escape/chmod", "chown 12345 -- -escape/chown", "rm -rf --no-preserve-root -- -escape"]);
+});
+
+test("ip and scutil in a fake box run only in the forms that read, so an abbreviation, a batch file or commands on scutil's input are only recorded", async () => {
+  const fake = fakeSsh();
+  const box = new SshTransport(fake.ssh, at("box-1"), "linux");
+  const testMachine = standInsForTheTestMachine();
+
+  const ran = await withHostToolsFirstOnPath(testMachine, () =>
+    box.run("ip l s bbbox-test-none down; ip -batch /nonexistent/bbbox-test-batch; printf 'remove State:/Network/BbBoxTestNone\\n' | scutil; ip -o -4 addr show >/dev/null 2>&1; echo done", { timeoutMs: 20_000 }),
+  );
+
+  assert.equal(ran.stdout.trim(), "done", ran.stderr);
+  assert.deepEqual(testMachine.ran(), [], "nothing reached the test machine's own tools");
+  assert.deepEqual(hostCommandsRecorded(fake.dir), ["ip l s bbbox-test-none down", "ip -batch /nonexistent/bbbox-test-batch", "scutil"]);
 });
 
 test("the fake boat.dev guest's sudo runs its command under the stubs, even a command named by its full path", async () => {

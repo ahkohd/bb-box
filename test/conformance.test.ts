@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // Runs the backend conformance suite against the fake backend, in both
 // natures, against the Proxmox LXC backend on a fake Proxmox and fake SSH,
 // against the Tart backend on a fake Mac, against the Docker backend on a

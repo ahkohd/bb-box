@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // What BB Box runs in a box keeps to what both GNU coreutils and sudo, as on Ubuntu 24.04, and uutils and sudo-rs, as on
 // 26.04's Wayland image, do alike (060). scripts/coreutils/compare.sh runs every form in use on both; they differed only here.
 

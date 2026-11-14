@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";

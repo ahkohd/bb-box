@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BackendError, SnapshotFailed, type Backend, type CopyHooks, type GpuHandoff, type GpuPart, type Guest, type GuestIdentity, type BoxIdentity, type SnapshotHooks, type SnapshotRef } from "../src/backends/types.ts";

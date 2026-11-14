@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // fetch-artifacts.sh's download cache (#96): pinned files from the cache when
 // their SHA-256 matches, downloads into it, and nothing kept that no pin names.
 // The pins point at file:// URLs, which curl reads with no network.

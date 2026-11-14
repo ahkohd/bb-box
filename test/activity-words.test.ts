@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { GAP_WORDS, historyClock, historyGapsWords, historyNetworkSummary, historySummary, historyTicks, partlyReadWords, repeatsLocally, stepWhenWords, readOutWords, bytesWords, gapsOf, hostAtStart, liveTicks, liveWindow, liveWords, memoryOfShare, networkSummary, percentOfShare, rateWords, slotCpuWords, slotLineWords, usageSummary } from "../src/app/activity-words.ts";

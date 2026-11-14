@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer, type Http2Server } from "node:http2";

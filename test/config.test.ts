@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // BB Box's configuration document (029): the move from BB's settings, each
 // start cut short after each of its steps, the settings RPC and the
 // `bb box config` commands. Values are made up; addresses come from

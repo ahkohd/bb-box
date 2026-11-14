@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";

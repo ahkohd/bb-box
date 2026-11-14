@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // Video on GPU desktops (#863): the image's Selkies encodes with NVENC on the
 // GPU display path, without NvFBC, and its check sees NVENC at work.
 

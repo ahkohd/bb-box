@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The VNC holder for a Tart macOS VM's run (#406), run with python3 against
 // a fake Tart VNC server that, as Tart's does, ends on any second connection
 // in its life, and on an update request before DesktopSize is set.

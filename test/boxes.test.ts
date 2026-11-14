@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The registry against the fake backend: acquire and release, limits and
 // capacity, commands and copies, stop and start, and the sweep.
 

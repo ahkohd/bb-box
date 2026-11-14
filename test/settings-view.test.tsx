@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import { expect, test } from "vitest";
 import type { ConfigDocument } from "../src/core/document.ts";
 import type { ConfigState } from "../src/plugin/contract.ts";

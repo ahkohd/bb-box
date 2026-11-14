@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { DeviceStage, TURN_MS } from "../src/app/device-stage.ts";
 import type { DeviceState, Orientation } from "../src/core/device.ts";

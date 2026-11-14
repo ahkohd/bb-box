@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The set of backends: offers of one kind from several backends.
 
 import assert from "node:assert/strict";

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // Building BB Box's images on a BB machine that hosts Docker boxes (src/plugin/docker-images.ts, 042).
 
 import assert from "node:assert/strict";

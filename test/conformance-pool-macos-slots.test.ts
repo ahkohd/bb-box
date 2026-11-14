@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import { slotConformance } from "./conformance/suite.ts";
 import { fakePoolMac } from "./fake-pool-mac.ts";
 

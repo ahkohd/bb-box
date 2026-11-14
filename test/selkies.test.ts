@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The desktop relay for a Selkies display (src/core/selkies.ts, 056), against
 // a stand-in for the box's Selkies.
 

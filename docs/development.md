@@ -30,23 +30,29 @@ npm run reference
 - Run the tests in a BB Box box or on GitHub Actions, not on a machine
   that matters. Some fakes run a box's scripts on the test machine itself,
   and a script can reach that machine's own tools in ways no fake can
-  stop, such as by a full path. The tests refuse to start where the
-  current user can run `sudo` without a password, where the tests run as
-  root, or where Tailscale is installed, unless the machine is a BB Box
-  box, which has `/usr/share/bb-box/image.json`, or a GitHub Actions run.
-  `npm test`, `npm run test:app`, each `node --test` file and each vitest
-  file check this before any test runs. To run them on such a machine
+  stop, such as by a full path. Each test file's first import,
+  `test/check-test-machine.mjs`, checks the machine before any test runs,
+  however the file is run: by `npm test`, `npm run test:app`, `node
+  --test`, `node` alone or vitest. The tests refuse to start where the
+  current user can run `sudo` without a password, where `sudo -n true`
+  does not answer within 10 seconds or fails, where the tests run as root,
+  or where Tailscale is installed. They start anyway in a BB Box box,
+  whose `/usr/share/bb-box/image.json` is an image record that only root
+  can change, or in a GitHub Actions run. To run them on such a machine
   anyway, at the risk of changing it, set
-  `BBBOX_TESTS_MAY_BREAK_THIS_MACHINE=1`.
+  `BBBOX_TESTS_MAY_BREAK_THIS_MACHINE=1`. A new test file starts with
+  `import "./check-test-machine.mjs";`, and a test fails while one does
+  not.
 - The stubs keep the fakes' own scripts off the machine's tools, as far as
   a PATH can. A fake that runs a box's script on the test machine, such as
   the fake `ssh`, `docker` or microsandbox, puts a folder of stubs first
   on the script's PATH. There, `sudo` runs its command under the stubs,
   the tools that change a machine, such as `tailscale`, `systemctl`,
   `reboot`, `iptables`, `mount` and `pkill`, only record their call, and
-  `ip`, `route`, `sysctl` and `scutil` run only when they change nothing.
-  `rm`, `chown` and `chmod` follow each path to its real target and act
-  only inside the fake's own folders. A test reads the calls with
+  `ip`, `route`, `sysctl` and `scutil` run only in forms known to read.
+  `rm`, `chown` and `chmod` accept only their own options, check every
+  operand, after `--` too, follow it to its real target and act only
+  inside the fake's own folders. A test reads the calls with
   `hostCommandsRecorded` from
   [test/host-stubs.mjs](../test/host-stubs.mjs).
 - Each test process also puts a guard folder on the PATH of the children

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { deflateSync } from "node:zlib";
 import { test } from "node:test";

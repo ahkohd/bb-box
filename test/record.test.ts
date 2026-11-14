@@ -1,9 +1,10 @@
+import "./check-test-machine.mjs";
 // box_record's scripts (059), run with a fake ffmpeg and ffprobe that say
 // what they were asked, and its page for the thread's preview.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { pngPixels } from "../src/core/png.ts";
@@ -456,4 +457,13 @@ test("a Mac caption whose Inter file is missing falls back to the system font ra
 
   assert.deepEqual(readPill(join(home, "pill-0.png")).words.map((words) => words.font), ["system"]);
   assert.match(size, /^\d+x29$/);
+});
+
+test("the fake ffmpeg answers -version without writing a file where it runs", () => {
+  const where = tempDir("ffmpeg-runs-here");
+  const ffmpeg = join(fakeFfmpeg(), "ffmpeg");
+
+  for (const args of [["-version"], ["-hide_banner", "-version"]]) spawnSync(ffmpeg, args, { cwd: where, env: { PATH: process.env.PATH, HOME: where } });
+
+  assert.deepEqual(readdirSync(where).filter((name) => name !== "ffmpeg-args"), []);
 });
