@@ -59,7 +59,10 @@ after(async () => {
 function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage(), options: QemuBackendOptions = {}, warm: Record<string, number> = {}) {
   const ssh = fakeSsh();
   // Each box address answers as Windows does, in PowerShell.
-  for (let last = 150; last <= 159; last++) ssh.windows(`192.0.2.${last}`);
+  for (let last = 150; last <= 159; last++) {
+    ssh.windows(`192.0.2.${last}`);
+    ssh.powershell(`192.0.2.${last}`, windowsWithExpiringPassword());
+  }
   const proxmox = new FakeProxmox();
   proxmox.addVmTemplate(9104);
   proxmox.addVmTemplate(9105);
