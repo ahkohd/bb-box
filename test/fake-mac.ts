@@ -161,7 +161,18 @@ export function tartConfig(values: Record<string, unknown> = {}): TartConfig {
  * `hardware` (yes, or no as VideoToolbox's -12903). Each xcrun call is noted
  * in the Mac's ~/.fake-xcrun-log. `software` puts a bb-box-h264 at that path.
  */
-export function fakeIosProbe(bin: string, options: { readonly hardware?: "yes" | "no"; readonly xcode?: string | null; readonly runtimes?: readonly string[]; readonly software?: string } = {}): void {
+export function fakeIosProbe(
+  bin: string,
+  options: {
+    readonly hardware?: "yes" | "no";
+    readonly xcode?: string | null;
+    readonly runtimes?: readonly string[];
+    readonly software?: string;
+    readonly simctlFailsFor?: number;
+    readonly runtimesEmptyFor?: number;
+    readonly checkSilentFor?: number;
+  } = {},
+): void {
   mkdirSync(bin, { recursive: true });
   const xcode = options.xcode === undefined ? "27.0" : options.xcode;
   const tool = (name: string, body: string) => {
@@ -176,13 +187,27 @@ export function fakeIosProbe(bin: string, options: { readonly hardware?: "yes" |
   }
   const hardware = options.hardware === "no" ? "echo hardware=no status=-12903" : "echo hardware=yes frames=12 seconds=0.05";
   const runtimes = (options.runtimes ?? ["iOS 27.0"]).map((runtime) => `echo '${runtime} (${runtime.slice(4)} - 24A434) - com.apple.CoreSimulator.SimRuntime.${runtime.replace(/[ .]/g, "-")}'`).join("; ");
+  const failsFor = options.simctlFailsFor ?? 0;
+  const emptyFor = failsFor + (options.runtimesEmptyFor ?? 0);
+  const counted = (file: string) => `n=$(($(cat "$HOME/${file}" 2>/dev/null || echo 0) + 1)); echo "$n" > "$HOME/${file}"`;
+  tool(
+    "hardware-check",
+    `${counted(".fake-check-runs")}
+if [ "$n" -le ${options.checkSilentFor ?? 0} ]; then echo 'Trace/BPT trap: 5' >&2; exit 133; fi
+${hardware}`,
+  );
   tool(
     "xcrun",
     `echo "$*" >> "$HOME/.fake-xcrun-log"
 case "$1" in
   --find) echo /Applications/Xcode.app/Contents/Developer/usr/bin/swiftc ;;
-  simctl) if [ "$3" = devicetypes ]; then echo '== Device Types =='; echo 'iPhone 18 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro)'; echo 'iPhone 17 (com.apple.CoreSimulator.SimDeviceType.iPhone-17)'; else echo '== Runtimes =='; ${runtimes || ":"}; fi ;;
-  swiftc) while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done; printf '#!/bin/sh\\n%s\\n' '${hardware}' > "$out"; chmod +x "$out" ;;
+  simctl) if [ "$3" = devicetypes ]; then echo '== Device Types =='; echo 'iPhone 18 Pro (com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro)'; echo 'iPhone 17 (com.apple.CoreSimulator.SimDeviceType.iPhone-17)'; else
+    ${counted(".fake-simctl-lists")}
+    if [ "$n" -le ${failsFor} ]; then echo 'An error was encountered processing the command (domain=com.apple.CoreSimulator.SimError, code=405): Unable to locate device set.' >&2; exit 1; fi
+    echo '== Runtimes =='
+    if [ "$n" -gt ${emptyFor} ]; then ${runtimes || ":"}; fi
+  fi ;;
+  swiftc) while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done; cp '${join(bin, "hardware-check")}' "$out"; chmod +x "$out" ;;
 esac`,
   );
   if (options.software) {

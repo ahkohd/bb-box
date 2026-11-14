@@ -58,7 +58,15 @@ export const SOFTWARE_ENCODER_PATH = "/usr/local/bin/bb-box-h264";
 export const PROBE_FRAMES = 12;
 export const CAPABILITIES_STALE_MS = 24 * 60 * 60_000;
 export const PROBE_TIMEOUT_MS = 120_000;
-export const PROBE_VERSION = 2;
+export const PROBE_VERSION = 3;
+export const PROBE_FINISHED = "probe=done";
+
+export interface ProbeWaits {
+  readonly tries: number;
+  readonly pauseSeconds: number;
+}
+
+export const PROBE_WAITS: ProbeWaits = { tries: 5, pauseSeconds: 5 };
 
 export function measuredByOlderProbe(report: MacReport): boolean {
   return (report.probe ?? 1) < PROBE_VERSION;
@@ -109,8 +117,10 @@ function shellQuoted(text: string): string {
   return `'${text.replaceAll("'", "'\\''")}'`;
 }
 
-export function macProbeScript(softwareEncoder: string = SOFTWARE_ENCODER_PATH): string {
+export function macProbeScript(softwareEncoder: string = SOFTWARE_ENCODER_PATH, waits: ProbeWaits = PROBE_WAITS): string {
   const check = `$HOME/.bb-box/probe/hardware-${hardwareCheckHash()}`;
+  const tries = Math.max(1, Math.floor(waits.tries));
+  const pause = Math.max(0, waits.pauseSeconds);
   return `export PATH="$PATH:/usr/local/bin:/opt/homebrew/bin"
 echo "chip=$(sysctl -n machdep.cpu.brand_string 2>/dev/null)"
 echo "macos=$(sw_vers -productVersion 2>/dev/null)"
@@ -121,9 +131,21 @@ case "$developer" in
 esac
 echo "xcode=$xcode"
 if [ -n "$xcode" ]; then
-  runtimes=$(xcrun simctl list runtimes available 2>/dev/null | sed -n 's/^\\(iOS [0-9.]*\\) .*/\\1/p' | tr '\\n' ',' | sed 's/,$//')
-  echo "runtimes=$runtimes"
-  echo "newest-ios=$(xcrun simctl list runtimes available 2>/dev/null | sed -n 's/^iOS \\([0-9.]*\\) ([0-9.]* - \\([0-9A-Za-z]*\\)).*/\\1 \\2/p' | tail -n 1)"
+  tried=0
+  while :; do
+    listed=$(xcrun simctl list runtimes available 2>&1)
+    listing=$?
+    runtimes=$(printf '%s\\n' "$listed" | sed -n 's/^\\(iOS [0-9.]*\\) .*/\\1/p' | tr '\\n' ',' | sed 's/,$//')
+    tried=$((tried + 1))
+    if [ -n "$runtimes" ] || [ "$tried" -ge ${tries} ]; then break; fi
+    sleep ${pause}
+  done
+  if [ -n "$runtimes" ] || [ "$listing" -eq 0 ]; then
+    echo "runtimes=$runtimes"
+  else
+    echo "simulator=unknown why=simctl did not list the runtimes $tried times, the last with exit code $listing: $(printf '%s' "$listed" | tail -n 1)"
+  fi
+  echo "newest-ios=$(printf '%s\\n' "$listed" | sed -n 's/^iOS \\([0-9.]*\\) ([0-9.]* - \\([0-9A-Za-z]*\\)).*/\\1 \\2/p' | tail -n 1)"
   echo "device-types=$(xcrun simctl list devicetypes 2>/dev/null | sed -n 's/.*(\\(com\\.apple\\.CoreSimulator\\.SimDeviceType\\.[^)]*\\))$/\\1/p' | tr '\\n' ',' | sed 's/,$//')"
 fi
 check=${check}
@@ -135,7 +157,20 @@ if [ ! -x "$check" ]; then
     echo "hardware=unknown why=the Mac has no Swift compiler to build its check"
   fi
 fi
-[ -x "$check" ] && "$check" ${PROBE_FRAMES} 2>&1 | tail -n 1
+if [ -x "$check" ]; then
+  tried=0
+  while :; do
+    said=$("$check" ${PROBE_FRAMES} 2>&1 | tail -n 1)
+    tried=$((tried + 1))
+    case "$said" in hardware=yes*|"hardware=no "*) break ;; esac
+    [ "$tried" -ge ${tries} ] && break
+    sleep ${pause}
+  done
+  case "$said" in
+    hardware=yes*|"hardware=no "*) echo "$said" ;;
+    *) echo "hardware=unknown why=its check gave no answer in $tried tries, the last saying $(printf '%s' "\${said:-nothing}" | tr '=' ' ')" ;;
+  esac
+fi
 software=${shellQuoted(softwareEncoder)}
 if [ -x "$software" ]; then
   said=$("$software" --version 2>&1 | head -n 1)
@@ -143,6 +178,7 @@ if [ -x "$software" ]; then
 else
   echo "software=no why=bb-box-h264 is not installed"
 fi
+echo "${PROBE_FINISHED}"
 exit 0
 `;
 }
@@ -170,19 +206,33 @@ function deviceTypesOf(text: string | null): { readonly deviceTypes?: readonly s
   return types.length ? { deviceTypes: types } : {};
 }
 
+export const PROBE_CUT_SHORT = "the probe ended before it finished, as when the Mac is released or stops answering while it is measured";
+
+const CUT_SHORT: MacCapabilities = {
+  simulator: { is: "unknown", why: PROBE_CUT_SHORT },
+  hardwareEncoder: { is: "unknown", why: PROBE_CUT_SHORT },
+  softwareEncoder: { is: "unknown", why: PROBE_CUT_SHORT },
+};
+
+function simulatorOf(value: (key: string) => string | null): Measured<SimulatorOffer> {
+  const xcode = value("xcode");
+  if (xcode === null) return { is: "unknown", why: "the probe did not say whether the Mac has Xcode" };
+  if (!xcode) return { is: "no", why: "it has no Xcode" };
+  const unlisted = value("simulator");
+  if (unlisted?.startsWith("unknown")) return { is: "unknown", why: unlisted.replace(/^unknown( why=)?/, "") || "simctl did not list the runtimes" };
+  const listed = value("runtimes");
+  if (listed === null) return { is: "unknown", why: "the probe did not say which iOS runtimes Xcode has" };
+  const runtimes = listed.split(",").map((each) => each.trim()).filter(Boolean);
+  return runtimes.length ? { is: "yes", what: { xcode, runtimes, ...newestOf(value("newest-ios")), ...deviceTypesOf(value("device-types")) } } : { is: "no", why: `Xcode ${xcode} has no iOS runtime` };
+}
+
 export function parseMacProbe(stdout: string, mac: string, at: number, where: MeasuredWhere): MacReport {
   const lines = stdout.split("\n").map((line) => line.trim());
   const value = (key: string) => lines.find((line) => line.startsWith(`${key}=`))?.slice(key.length + 1).trim() ?? null;
-  const xcode = value("xcode");
-  const runtimes = (value("runtimes") ?? "").split(",").map((each) => each.trim()).filter(Boolean);
-  const simulator: Measured<SimulatorOffer> =
-    xcode === null
-      ? { is: "unknown", why: "the probe did not say whether the Mac has Xcode" }
-      : !xcode
-        ? { is: "no", why: "it has no Xcode" }
-        : runtimes.length
-          ? { is: "yes", what: { xcode, runtimes, ...newestOf(value("newest-ios")), ...deviceTypesOf(value("device-types")) } }
-          : { is: "no", why: `Xcode ${xcode} has no iOS runtime` };
+  const chip = value("chip") || null;
+  const macos = value("macos") || null;
+  if (!lines.includes(PROBE_FINISHED)) return { mac, chip, macos, at, where, capabilities: CUT_SHORT, probe: PROBE_VERSION };
+  const simulator = simulatorOf(value);
   const hardwareLine = lines.find((line) => line.startsWith("hardware="));
   let hardwareEncoder: Measured<HardwareEncoderOffer> = { is: "unknown", why: "the probe did not say" };
   if (hardwareLine) {
@@ -204,7 +254,22 @@ export function parseMacProbe(stdout: string, mac: string, at: number, where: Me
     if (said.startsWith("yes")) softwareEncoder = { is: "yes", what: { encoder: said.replace(/^yes encoder=/, "").replace(/, source [0-9a-f]+/, "") } };
     else softwareEncoder = { is: "no", why: said.replace(/^no why=/, "") };
   }
-  return { mac, chip: value("chip") || null, macos: value("macos") || null, at, where, capabilities: { simulator, hardwareEncoder, softwareEncoder }, probe: PROBE_VERSION };
+  return { mac, chip, macos, at, where, capabilities: { simulator, hardwareEncoder, softwareEncoder }, probe: PROBE_VERSION };
+}
+
+function conclusive<T>(known: Measured<T>, fresh: Measured<T>): Measured<T> {
+  return fresh.is === "unknown" && known.is !== "unknown" ? known : fresh;
+}
+
+export function keptConclusive(known: MacReport | null, fresh: MacReport): MacReport {
+  if (!known) return fresh;
+  const capabilities: MacCapabilities = {
+    simulator: conclusive(known.capabilities.simulator, fresh.capabilities.simulator),
+    hardwareEncoder: conclusive(known.capabilities.hardwareEncoder, fresh.capabilities.hardwareEncoder),
+    softwareEncoder: conclusive(known.capabilities.softwareEncoder, fresh.capabilities.softwareEncoder),
+  };
+  const keptSome = capabilities.simulator !== fresh.capabilities.simulator || capabilities.hardwareEncoder !== fresh.capabilities.hardwareEncoder || capabilities.softwareEncoder !== fresh.capabilities.softwareEncoder;
+  return keptSome ? { ...known, capabilities } : fresh;
 }
 
 export function streamWay(capabilities: MacCapabilities): StreamWay | null {
@@ -227,7 +292,8 @@ export function videoWords(capabilities: MacCapabilities): string {
   const { hardwareEncoder, softwareEncoder } = capabilities;
   const software = softwareEncoder.is === "yes" ? `software (${softwareEncoder.what.encoder.split(",")[0]})` : null;
   if (hardwareEncoder.is === "yes") return software ? `video by its hardware H.264 encoder, ${software} as the fallback` : "video by its hardware H.264 encoder";
-  if (software) return `video by ${software}, as it has no hardware H.264 encoder`;
+  if (software && hardwareEncoder.is === "no") return `video by ${software}, as it has no hardware H.264 encoder`;
+  if (software) return `video by ${software} until its hardware H.264 encoder is measured`;
   if (hardwareEncoder.is === "no" && softwareEncoder.is === "no") return "no device video: no hardware H.264 encoder, and no software one";
   return "device video not measured yet";
 }
@@ -434,6 +500,7 @@ export interface MacProbeCacheOptions {
   readonly run: (mac: string, script: string, signal?: AbortSignal) => Promise<string>;
   readonly where?: MeasuredWhere;
   readonly softwareEncoder?: string;
+  readonly waits?: ProbeWaits;
   readonly now?: () => number;
   readonly staleMs?: number;
   readonly saved?: (report: MacReport) => void;
@@ -453,9 +520,12 @@ export class MacProbeCache implements MacProbes {
     return this.#options.now?.() ?? Date.now();
   }
 
-  remember(report: MacReport): void {
-    const known = this.#reports.get(report.mac);
-    if (!known || known.at <= report.at) this.#reports.set(report.mac, report);
+  remember(report: MacReport): MacReport {
+    const known = this.#reports.get(report.mac) ?? null;
+    if (known && known.at > report.at) return known;
+    const kept = keptConclusive(known, report);
+    this.#reports.set(report.mac, kept);
+    return kept;
   }
 
   report(mac: string): MacReport | null {
@@ -489,11 +559,10 @@ export class MacProbeCache implements MacProbes {
     const running = this.#measuring.get(mac);
     if (running) return running;
     const measuring = (async () => {
-      const stdout = await this.#options.run(mac, macProbeScript(this.#options.softwareEncoder), signal);
-      const report = parseMacProbe(stdout, mac, this.#now(), this.#options.where ?? "mac");
-      this.remember(report);
-      this.#options.saved?.(report);
-      return report;
+      const stdout = await this.#options.run(mac, macProbeScript(this.#options.softwareEncoder, this.#options.waits), signal);
+      const kept = this.remember(parseMacProbe(stdout, mac, this.#now(), this.#options.where ?? "mac"));
+      this.#options.saved?.(kept);
+      return kept;
     })().finally(() => this.#measuring.delete(mac));
     this.#measuring.set(mac, measuring);
     return measuring;

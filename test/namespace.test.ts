@@ -12,7 +12,7 @@ import { NS_HOST_KEY } from "../src/backends/namespace/ios-hosts.ts";
 import { CUA_SHA256, CUA_VERSION } from "../src/backends/tart/backend.ts";
 import { parseNamespacePart, type NamespaceConfig } from "../src/backends/namespace/config.ts";
 import { Tailnet } from "../src/core/tailnet.ts";
-import { PROBE_VERSION, reportKey, type MacReport } from "../src/core/mac-capabilities.ts";
+import { PROBE_FINISHED, PROBE_VERSION, deviceRoom, parseMacProbe, reportKey, type MacReport } from "../src/core/mac-capabilities.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace, type FakeInstance } from "./fake-namespace.ts";
 import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
@@ -513,6 +513,136 @@ test("Namespace counts which of its Macs of a kind had a hardware encoder, once 
   assert.deepEqual(again.all()[0]?.machines, { withHardwareEncoder: MACHINES_KEPT_PER_CHIP, withoutHardwareEncoder: 0 }, "it keeps the latest machines of each kind");
 });
 
+test("a Namespace Mac released while it is measured, seconds after it is ready, leaves its kind's offer as the last whole measurement found it", async () => {
+  const storage = new MemoryStorage();
+  const reports = new NamespaceMacReports(storage, () => {});
+  reports.remember({ ...IOS_REPORT, mac: "instance-a" }, "instance-a");
+  const cutShort = parseMacProbe(`chip=${IOS_REPORT.chip}\nmacos=26.3.1\nxcode=26.1.1\nruntimes=\n`, "instance-b", 2, "mac");
+  reports.remember(cutShort, "instance-b");
+  const [kind] = reports.all();
+  assert.equal(reports.all().length, 1);
+  assert.deepEqual(kind?.capabilities.simulator, IOS_REPORT.capabilities.simulator);
+  assert.deepEqual(deviceRoom(kind!.capabilities), { is: "yes", way: "hardware" });
+  assert.deepEqual(kind?.machines, { withHardwareEncoder: 1, withoutHardwareEncoder: 0 }, "a machine not measured is not counted");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual((await storage.get<MacReport>(reportKey(IOS_REPORT.chip!)))?.capabilities.simulator, IOS_REPORT.capabilities.simulator, "what is saved is the whole measurement");
+  reports.remember(parseMacProbe("", "instance-c", 3, "mac"), "instance-c");
+  assert.deepEqual(reports.all().map((report) => report.mac), [IOS_REPORT.chip], "a probe that said nothing, not even its chip, makes no kind of Mac");
+  const noRuntime = parseMacProbe(`chip=${IOS_REPORT.chip}\nxcode=26.1.1\nruntimes=\nhardware=yes frames=12 seconds=0.1\nsoftware=no why=bb-box-h264 is not installed\n${PROBE_FINISHED}\n`, "instance-d", 4, "mac");
+  reports.remember(noRuntime, "instance-d");
+  assert.equal(reports.all()[0]?.capabilities.simulator.is, "no", "a whole measurement that finds no runtime still counts");
+});
+
+test("a new kind of Namespace Mac whose first measurement was cut short does not take the ios offer from a kind that runs the iOS Simulator", async () => {
+  const m5 = "Apple M5 Pro (Virtual)";
+  const cutShort = parseMacProbe(`chip=${m5}\nmacos=26.3.1\nxcode=26.1.1\n`, "instance-b", 2, "mac");
+  const reports = new NamespaceMacReports(new MemoryStorage(), () => {});
+  reports.remember({ ...IOS_REPORT, mac: "instance-a" }, "instance-a");
+  reports.remember(cutShort, "instance-b");
+  assert.deepEqual(reports.all().map((report) => report.mac), [m5, IOS_REPORT.chip], "the doctor still lists the newest first");
+  assert.equal(reports.forOffer()?.chip, IOS_REPORT.chip);
+  const noRuntime = parseMacProbe(`chip=${m5}\nxcode=26.1.1\nruntimes=\nsoftware=no why=bb-box-h264 is not installed\n${PROBE_FINISHED}\n`, "instance-c", 3, "mac");
+  reports.remember(noRuntime, "instance-c");
+  assert.equal(reports.forOffer()?.chip, m5, "a newer whole measurement that finds no runtime retires the older yes");
+  const onlyUnknown = new NamespaceMacReports(new MemoryStorage(), () => {});
+  onlyUnknown.remember(cutShort, "instance-b");
+  assert.equal(onlyUnknown.forOffer()?.chip, m5, "with nothing conclusive, the newest is all there is");
+
+  fakeSsh();
+  const storage = new MemoryStorage();
+  await storage.set(reportKey(IOS_REPORT.chip!), IOS_REPORT);
+  await storage.set(reportKey(m5), { ...cutShort, mac: m5 });
+  const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.macCapabilities()[0]?.chip, m5);
+  assert.equal(backend.slots.lends("ios"), true);
+  assert.ok(backend.kinds().some((kind) => kind.id === "ios"), "ios stays on offer");
+  await backend.maintain();
+  await measuredAfresh(backend);
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 0, "no Mac is started to measure while the offer stands");
+});
+
+test("a Namespace report saved by 0.2.4's probe that withdrew the ios offer is measured again at the first maintenance", async () => {
+  fakeSsh();
+  const storage = new MemoryStorage();
+  const m5 = "Apple M5 Pro (Virtual)";
+  const misread: MacReport = { ...IOS_REPORT, mac: m5, chip: m5, at: Date.now() - 60_000, probe: 2, capabilities: { ...IOS_REPORT.capabilities, simulator: { is: "no", why: "Xcode 26.1.1 has no iOS runtime" }, hardwareEncoder: { is: "unknown", why: "the probe did not say" } } };
+  await storage.set(reportKey(m5), misread);
+  const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const context = testContext(storage, "inst1", { id: "namespace" });
+  const backend = disposed(new NamespaceBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.slots.lends("ios"), false);
+  await backend.maintain();
+  await measuredAfresh(backend);
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 1);
+  assert.match(context.logs.join("\n"), /afresh, as its last report came from an older probe and cannot make an offer\./);
+});
+
+test("an old yes for one kind of Namespace Mac does not keep ios on offer once a newer whole measurement of another kind finds no iOS runtime", async () => {
+  fakeSsh();
+  const storage = new MemoryStorage();
+  const m5 = "Apple M5 Pro (Virtual)";
+  const noRuntime = parseMacProbe(`chip=${m5}\nmacos=26.3.1\nxcode=26.1.1\nruntimes=\nhardware=yes frames=12 seconds=0.1\nsoftware=no why=bb-box-h264 is not installed\n${PROBE_FINISHED}\n`, "instance-b", 2, "mac");
+  await storage.set(reportKey(IOS_REPORT.chip!), IOS_REPORT);
+  await storage.set(reportKey(m5), { ...noRuntime, mac: m5 });
+  const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.slots.lends("ios"), false);
+  assert.ok(!backend.kinds().some((kind) => kind.id === "ios"));
+  await backend.maintain();
+  await measuredAfresh(backend);
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 0, "a whole measurement of every kind is not measured afresh");
+});
+
+test("while no offer stands, a report from an older probe is measured again though it is not the newest", async () => {
+  fakeSsh();
+  const storage = new MemoryStorage();
+  const m5 = "Apple M5 Pro (Virtual)";
+  const olderNo: MacReport = { ...IOS_REPORT, at: 1, probe: 2, capabilities: { ...IOS_REPORT.capabilities, simulator: { is: "no", why: "Xcode 26.1.1 has no iOS runtime" } } };
+  const newerNo = parseMacProbe(`chip=${m5}\nmacos=26.3.1\nxcode=26.1.1\nruntimes=\nhardware=yes frames=12 seconds=0.1\nsoftware=no why=bb-box-h264 is not installed\n${PROBE_FINISHED}\n`, "instance-b", 2, "mac");
+  await storage.set(reportKey(IOS_REPORT.chip!), olderNo);
+  await storage.set(reportKey(m5), { ...newerNo, mac: m5 });
+  const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const context = testContext(storage, "inst1", { id: "namespace" });
+  const backend = disposed(new NamespaceBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.macCapabilities()[0]?.chip, m5);
+  assert.equal(backend.slots.lends("ios"), false);
+  await backend.maintain();
+  await measuredAfresh(backend);
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 1);
+  assert.match(context.logs.join("\n"), /afresh, as its report of an Apple M4 Pro \(Virtual\) came from an older probe, and no kind of Mac makes an offer\./);
+});
+
+test("a kind of Namespace Mac whose last measurement did not finish, and so makes no offer, is measured again on a Mac BB Box starts, at most once a day", async () => {
+  let now = Date.parse("2030-01-01T00:00:00Z");
+  fakeSsh();
+  const storage = new MemoryStorage();
+  const m5 = "Apple M5 Pro (Virtual)";
+  const cutShort = parseMacProbe(`chip=${m5}\nmacos=26.3.1\nxcode=26.1.1\n`, "instance-b", now - 60_000, "mac");
+  await storage.set(reportKey(m5), { ...cutShort, mac: m5 });
+  const fake = new FakeNamespace({ now: () => now, lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const context = testContext(storage, "inst1", { id: "namespace" });
+  const backend = disposed(new NamespaceBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":", now: () => now }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.slots.lends("ios"), false);
+  const creates = () => fake.calls.filter((call) => call.method === "CreateInstance").length;
+  await backend.maintain();
+  await measuredAfresh(backend);
+  assert.equal(creates(), 1, "a Mac is started at the first maintenance");
+  assert.match(context.logs.join("\n"), /to measure what Namespace's Macs offer iOS devices afresh, as its last measurement of an Apple M5 Pro \(Virtual\) did not finish\./);
+  now += 60 * 60_000;
+  await backend.maintain();
+  assert.equal(creates(), 1, "not again within the day");
+  now += MEASURE_AGAIN_AFTER_MS;
+  await backend.maintain();
+  await measuredAfresh(backend);
+  assert.equal(creates(), 2);
+});
+
 test("box_list's ios offer on Namespace says its slots are on a Mac made for them, and the doctor says when Namespace's Macs vary by machine", async () => {
   fakeSsh();
   const storage = new MemoryStorage();
@@ -570,7 +700,9 @@ test("a Namespace report from an older probe that cannot make an offer is measur
   for (const step of ["made", "running", "answering SSH", "measured: an unknown chip", "destroyed"]) assert.match(logged, new RegExp(`made to measure afresh: ${step}`), step);
   now += MEASURE_AGAIN_AFTER_MS;
   await backend.maintain();
-  assert.equal(creates(), 2, "a report from the current probe is not measured afresh");
+  await measuredAfresh(backend);
+  assert.equal(creates(), 3, "the Mac it measured was another kind, so the older report is still due while no offer stands, once a day");
+  assert.match(context.logs.join("\n"), /afresh, as its report of an Apple M4 Pro \(Virtual\) came from an older probe, and no kind of Mac makes an offer\./);
 });
 
 test("a Namespace report from an older probe that can still make an offer is not measured afresh, so no ios box waits for the Mac", async () => {
