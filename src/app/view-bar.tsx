@@ -64,11 +64,11 @@ export function fromTheTerminalWords(): string {
   return `In the terminal, ${LEAVE_TERMINAL_KEYS} comes here.`;
 }
 
-export function OtherViews({ box, shown, without, onSwitch }: { box: BoxView; shown: BoxViewName; without?: BoxViewName; onSwitch: (view: BoxViewName) => void }) {
+export function OtherViews({ box, shown, without, onSwitch }: { box: BoxView; shown: BoxViewName; without?: readonly BoxViewName[]; onSwitch: (view: BoxViewName) => void }) {
   return (
     <>
       {otherViewsNow(box, shown)
-        .filter((choice) => choice.view !== without)
+        .filter((choice) => !without?.includes(choice.view))
         .map((choice) => (
           <ViewSwitchButton key={choice.view} view={choice.view} words={choice.words} hint={shown === "terminal" ? fromTheTerminalWords() : undefined} onClick={() => onSwitch(choice.view)} />
         ))}

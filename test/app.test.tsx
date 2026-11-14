@@ -9849,15 +9849,17 @@ test("a view's way back goes back in history when the panel itself made the move
   window.history.pushState(null, "", "/");
 });
 
-test("a view's bar has the box's other screens as buttons, a screen's menu opens its terminal, and a switch replaces the view keeping every origin of G8, there and back (069 section 8, unit 5)", async () => {
+test("a view's bar has the box's other screens as buttons, a screen's menu opens its terminal and files with no Files button on its bar, and a switch replaces the view keeping every origin of G8, there and back (069 section 8, unit 5)", async () => {
   const android = box({ id: "box_a", name: "pixel-box", kind: "android", kindLabel: "Android emulator", form: "VM", desktop: false, display: null, device: { platform: "android", model: "Pixel 8", simulatorHost: false }, control: { owner: "agent", holder: null } });
   const { handlers } = server([desktopBox(), android]);
   for (const origins of ["", "/from-list", "/from-box", "/from-box/from-list", "/from-box/from-settings", "/from-settings"]) {
     const desktop = boxPageAt(handlers, `box/box_2/desktop${origins}`);
-    const menu = await openMenu(await desktop.findByRole("button", { name: "Desktop actions" }));
+    const actions = await desktop.findByRole("button", { name: "Desktop actions" });
     expect(desktop.queryByRole("button", { name: "Terminal" })).toBeNull();
+    expect(desktop.queryByRole("button", { name: "Files" })).toBeNull();
     expect(desktop.queryByRole("button", { name: "Desktop" })).toBeNull();
-    expect(items(menu).slice(0, 2)).toEqual(["Open thread", "Open terminal"]);
+    const menu = await openMenu(actions);
+    expect(items(menu).slice(0, 3)).toEqual(["Open thread", "Open terminal", "Open files"]);
     fireEvent.click(within(menu).getByRole("menuitem", { name: "Open terminal" }));
     expect(desktop.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: `box/box_2/terminal${origins}`, replace: true } });
     cleanup();
@@ -9878,6 +9880,12 @@ test("a view's bar has the box's other screens as buttons, a screen's menu opens
   const old = boxPageAt(handlers, "thr_ui/box_2/from-settings");
   fireEvent.click(within(await openMenu(await old.findByRole("button", { name: "Desktop actions" }))).getByRole("menuitem", { name: "Open terminal" }));
   expect(old.inspection.navigateCalls.at(-1)).toEqual({ method: "toPluginPanel", path: "desktop", options: { subPath: "box/box_2/terminal/from-settings", replace: true } });
+  cleanup();
+  const boxPage = boxPageAt(handlers, "box/box_2");
+  expect((await boxPage.findByRole("link", { name: "Files" })).getAttribute("href")).toBe("/plugins/bb-box/desktop/box/box_2/files/from-box");
+  cleanup();
+  const shell = boxPageAt(handlers, "box/box_2/terminal");
+  expect(await shell.findByRole("button", { name: "Files" })).toBeTruthy();
 });
 
 function unstubTheMonitor(done: () => void) {
