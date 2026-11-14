@@ -58,7 +58,7 @@ export const SOFTWARE_ENCODER_PATH = "/usr/local/bin/bb-box-h264";
 export const PROBE_FRAMES = 12;
 export const CAPABILITIES_STALE_MS = 24 * 60 * 60_000;
 export const PROBE_TIMEOUT_MS = 120_000;
-export const PROBE_VERSION = 2;
+export const PROBE_VERSION = 3;
 export const PROBE_FINISHED = "probe=done";
 
 export interface ProbeWaits {

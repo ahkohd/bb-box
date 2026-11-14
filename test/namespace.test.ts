@@ -563,6 +563,23 @@ test("a new kind of Namespace Mac whose first measurement was cut short does not
   assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 0, "no Mac is started to measure while the offer stands");
 });
 
+test("a Namespace report saved by 0.2.4's probe that withdrew the ios offer is measured again at the first maintenance", async () => {
+  fakeSsh();
+  const storage = new MemoryStorage();
+  const m5 = "Apple M5 Pro (Virtual)";
+  const misread: MacReport = { ...IOS_REPORT, mac: m5, chip: m5, at: Date.now() - 60_000, probe: 2, capabilities: { ...IOS_REPORT.capabilities, simulator: { is: "no", why: "Xcode 26.1.1 has no iOS runtime" }, hardwareEncoder: { is: "unknown", why: "the probe did not say" } } };
+  await storage.set(reportKey(m5), misread);
+  const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const context = testContext(storage, "inst1", { id: "namespace" });
+  const backend = disposed(new NamespaceBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.slots.lends("ios"), false);
+  await backend.maintain();
+  await measuredAfresh(backend);
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 1);
+  assert.match(context.logs.join("\n"), /afresh, as its last report came from an older probe and cannot make an offer\./);
+});
+
 test("a kind of Namespace Mac whose last measurement did not finish, and so makes no offer, is measured again on a Mac BB Box starts, at most once a day", async () => {
   let now = Date.parse("2030-01-01T00:00:00Z");
   fakeSsh();

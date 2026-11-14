@@ -19,10 +19,12 @@ Measured at the earliest point of boot, the probe answered in full. The slow fir
 - On Namespace, a report that measured nothing and did not say its chip makes no kind of Mac.
 - On Namespace, the `ios` offer comes from the newest kind of Mac that runs the iOS Simulator. A kind measured later that does not run it, or is not known to, does not take the offer away. With no such kind, the offer comes from the newest kind measured conclusively, then from the newest of all. The doctor still lists the newest first.
 - On Namespace, a kind of Mac whose Simulator is not known is measured again. A Mac BB Box holds that it has not measured in full is measured at once. Where no kind makes an offer, BB Box starts a Mac for a few minutes to measure, at most once a day, as it does for a report from an older probe. It starts none while another kind makes the offer.
+- The probe's version rises from 2 to 3, so a report an earlier probe saved, which may hold a "no" read from a probe cut short, is due at once. A Tart or pool Mac is measured again at the next chance. On Namespace, a report from an earlier probe that leaves no offer is measured again at the next maintenance, on a Mac BB Box starts if it holds none.
 - Before the hardware encoder is measured, BB Box says video comes in software "until its hardware H.264 encoder is measured", not "as it has no hardware H.264 encoder".
 
 ## Consequences
 
 - A Mac whose Xcode has no iOS runtime takes about 20 seconds longer to measure, and one whose hardware check never answers about 20 seconds more. A Mac that answers at once takes no longer.
+- After the update, each Mac, and each kind of Namespace Mac that leaves no offer, is measured once more.
 - A release while a Mac is measured costs nothing: the offer stays as the last whole measurement found it.
 - A kind of Mac first measured by a probe that did not finish has no conclusive report. The doctor says it is not measured yet until a probe finishes, and the offer comes from another kind that runs the Simulator, where there is one.

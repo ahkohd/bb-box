@@ -304,3 +304,19 @@ test("box_list and the doctor do not say a Mac has no hardware encoder before it
   const unmeasured = { simulator: SIMULATOR, hardwareEncoder: { is: "unknown", why: PROBE_CUT_SHORT }, softwareEncoder: SOFTWARE } as const;
   assert.equal(capabilityWords(unmeasured), "the iOS Simulator (Xcode 27.0, iOS 27.0); video by software (x264 0.165) until its hardware H.264 encoder is measured");
 });
+
+const PROBE_OF_0_2_4 = 2;
+
+test("a report saved by 0.2.4's probe, which read a probe cut short as no iOS runtime, is measured again at once", async () => {
+  const misread = { ...report({ simulator: { is: "no", why: "Xcode 26.1.1 has no iOS runtime" }, hardwareEncoder: { is: "unknown", why: "the probe did not say" }, softwareEncoder: SOFTWARE }, "mac-1", 1_000), probe: PROBE_OF_0_2_4 };
+  assert.equal(measuredByOlderProbe(misread), true);
+  let runs = 0;
+  const cache = new MacProbeCache({ run: async () => (runs++, BOTH), now: () => 2_000, staleMs: 24 * 60 * 60_000 });
+  cache.remember(misread);
+  assert.equal(cache.stale("mac-1"), true, "a minute old, it is due all the same");
+  await cache.known("mac-1");
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(runs, 1);
+  assert.equal(cache.report("mac-1")?.capabilities.simulator.is, "yes");
+  assert.equal(cache.report("mac-1")?.probe, PROBE_VERSION);
+});
