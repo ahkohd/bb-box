@@ -67,3 +67,12 @@ No check: on Linux an action by reference has no place. Through the plugin's tes
 | Click by pixels | where Cua clicked | where Cua clicked |
 | Click by reference while reading a setting takes 5 s | 5019 ms | under 3 s, nothing read |
 | An action begun before a stop and start, noted after | shown, and kept for a later viewer | neither |
+
+## Typing by reference in a recording
+
+A third review typed by reference into a GTK 3 field, in a window at 16, 128 and 700 by 500, with the pointer parked at 1800, 900. With no change seen on the screen, the camera fell back to the pointer and zoomed 1.8x on 1387, 780, away from the field. Typing by reference on Linux is now marked as having no known place:
+
+| Case, through the recording planner's tests | Before | Now |
+| --- | --- | --- |
+| Pointer at 1800, 900, no change seen | zoom | no zoom; the Typing pill stays |
+| A change seen at 300, 420, 90 by 18, in the window | zoom | zoom on that change |

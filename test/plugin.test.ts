@@ -8030,6 +8030,7 @@ test("on a Linux desktop, a recording logs no place for actions by reference, as
     events.map((event) => (event.type === "typing" ? `typing ${event.characters} ${event.area ? "at a place" : "with no place"}` : event.type)),
     ["typing 8 with no place", "typing 0 with no place"],
   );
+  assert.equal(events[0]!.type === "typing" && events[0]!.placeUnknown, true, "so the clip zooms only where the screen changed");
 });
 
 test("while a desktop box records, its computer use is logged for the clip: clicks where they land, chords, and typing as a count, never its text (073)", async (t) => {

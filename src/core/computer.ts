@@ -1183,7 +1183,8 @@ export class Computer {
     const role = target.element?.role ?? null;
     if (input.action === "set_value") {
       const value = input.value ?? "";
-      onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: typingKeptSecret(typedField(target.element), value), role, window }, sentAt);
+      const placeUnknown = !!target.element && !framesPlaceActions(use.box.capabilities.os);
+      onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: typingKeptSecret(typedField(target.element), value), role, window, ...(placeUnknown ? { placeUnknown } : {}) }, sentAt);
       return;
     }
     if (!point) return;
@@ -1207,7 +1208,15 @@ export class Computer {
     const typed = text ?? "";
     const input: ActedInput = keys
       ? { type: "keys", key: keys.key, modifiers: keys.modifiers }
-      : { type: "typing", characters: typed.length, area: element?.frame && framesPlaceActions(use.box.capabilities.os) ? toArea(element.frame) : null, secret: typingKeptSecret(typedField(element), typed), role: element?.role ?? null, window: window ? toArea(window) : null };
+      : {
+          type: "typing",
+          characters: typed.length,
+          area: element?.frame && framesPlaceActions(use.box.capabilities.os) ? toArea(element.frame) : null,
+          secret: typingKeptSecret(typedField(element), typed),
+          role: element?.role ?? null,
+          window: window ? toArea(window) : null,
+          ...(element && !framesPlaceActions(use.box.capabilities.os) ? { placeUnknown: true } : {}),
+        };
     use.typedInput = { input, sentAt: Date.now() };
   }
 

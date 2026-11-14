@@ -16,7 +16,8 @@ BB Box already knows each of the agent's clicks and scrolls: it keeps them for r
 - The panel draws the agent's pointer there, over the picture, scaled and placed as the picture is. It is the arrow recordings draw (073), at a fixed 40 px, in BB's primary colour on its primary foreground, so it reads in both themes. Each click shows a ring that grows and fades within 0.6 seconds, with no motion when the person has asked for less. The pointer stays where the agent last acted, as Cua's does on macOS and Windows.
 - The viewer with control does not see it: their own pointer stands for it.
 - On macOS and Windows, nothing changes: Cua Driver's cursor is in the picture.
-- On Linux, an action by reference has no place, at any scale: a click or scroll by reference shows no pointer, live or in a recording, and typing by reference is logged with no place for a recording to zoom to. BB Box does not guess, and reads nothing in the box for it, so the tool waits for nothing.
+- On Linux, an action by reference has no place, at any scale: a click or scroll by reference shows no pointer, live or in a recording. BB Box does not guess, and reads nothing in the box for it, so the tool waits for nothing.
+- On Linux, typing by reference is logged with its count and its window, and marked as having no known place. A recording keeps its Typing pill. It zooms to it only where the screen changed during the typing, in the typing's window, as those pixels did change. Where nothing changed, it does not zoom: it never falls back to the field's frame, the pointer, or a caret line guessed from the pointer.
 - An action that began before its box last stopped, restarted or was released is not shown, nor kept.
 
 ## Consequences
@@ -25,7 +26,7 @@ BB Box already knows each of the agent's clicks and scrolls: it keeps them for r
 - The pointer is drawn only in BB Box's viewer. A recording draws its own, from the same events (073), so a clip shows one pointer, not two.
 - It needs no new image: it works on every Linux desktop now running, on X11 and Wayland.
 - The pointer shows where the agent clicked or scrolled by pixels, not where it acted by reference, typed or pressed keys, and it does not glide between places. An agent that works by reference, as most do, shows a pointer only for its clicks by pixels.
-- On Linux, recordings lose the ring and zoom they drew for actions by reference, which were wrong on a scaled desktop.
+- On Linux, recordings lose the ring and zoom they drew for clicks and scrolls by reference, which were wrong on a scaled desktop. Typing by reference zooms only where the screen changed.
 - Two earlier forms were dropped (see the results). Doubling frames that lay outside their window and fitted it doubled put elements in the wrong place both ways. Reading whether the desktop is scaled missed an app's own scale, such as `GDK_SCALE` in its environment, took a failed read for unscaled, could show an old action after a restart, and held the tool for up to 10 seconds when the read stalled.
 - What the agent last did is forgotten as its box stops, restarts or is released. A viewer that connects is told it only while the box is running.
 - iOS and Android devices could show the agent's taps the same way, from the device's own events, on the device stream. That is not built yet.

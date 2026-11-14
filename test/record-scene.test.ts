@@ -24,6 +24,7 @@ import {
   typingFocus,
   typingSpan,
   viewCovers,
+  type PlacedTyping,
   type Scene,
   type ShapeSpan,
 } from "../src/core/record-motion.ts";
@@ -905,6 +906,27 @@ test("typing into a large text area zooms on where the text appears, or on the p
   assert.deepEqual(typingFocus(scene({ typing: [unplaced] }), unplaced, pointer), { x: 900, y: 500, width: 0, height: 0 }, "else where the pointer is");
   const camera = planCamera(scene({ clicks: [{ at: 2.5, x: 900, y: 500, button: "left", count: 1, area: null }], typing: [typing], changes: [line] }), pointer);
   assert.ok(cameraAt(camera, 3.4).zoom > 1.5, "the click and the typing after it stay zoomed in");
+});
+
+test("typing by reference on Linux, whose place BB Box cannot know, zooms only to a change seen on the screen, never to the pointer or a caret guessed from it (102)", () => {
+  const window = { x: 16, y: 128, width: 700, height: 500 };
+  const parked = [{ at: 1000, x: 1800, y: 900, buttons: 0 }];
+  const typed: InputEvent = { at: 1003, by: "agent", type: "typing", characters: 5, space: "screen", area: null, secret: false, role: null, window, placeUnknown: true };
+  const ended: InputEvent = { at: 1004, by: "agent", type: "typing", characters: 0, space: "screen", area: null, secret: false, window, placeUnknown: true };
+  const unseen = planScene(facts({ samples: parked, inputs: [typed, ended] }), SCREEN, 1000, 10, { zoom: true, frame: false });
+  assert.equal(unseen.zooms, false, "no zoom where nothing changed: the pointer at (1800, 900) says nothing of the field");
+  assert.ok(unseen.pills.length > 0, "the Typing pill stays");
+  const text = { at: 3.3, x: 300, y: 420, width: 90, height: 18 };
+  const seen = planScene(facts({ samples: parked, changes: [text], inputs: [typed, ended] }), SCREEN, 1000, 10, { zoom: true, frame: false });
+  assert.equal(seen.zooms, true, "a change on the screen is a real place");
+  const placed: PlacedTyping = { at: 3, characters: 5, area: null, secret: false, window, placeUnknown: true };
+  const pointer = planPointer(scene({ samples: [{ at: 0, x: 1800, y: 900, buttons: 0 }] }));
+  assert.equal(typingFocus(scene({ typing: [placed] }), placed, pointer), null);
+  assert.deepEqual(typingFocus(scene({ typing: [placed], changes: [text] }), placed, pointer), { x: 300, y: 420, width: 90, height: 18 });
+  const inputs = new RecordingInputs(() => 1_000);
+  inputs.begin("box", 0, "linux");
+  inputs.acted("box", { type: "typing", characters: 5, area: null, secret: false, window, placeUnknown: true });
+  assert.equal((inputs.end("box")![0] as { placeUnknown?: boolean }).placeUnknown, true, "the log keeps that its place is unknown");
 });
 
 test("a button, typing into a large field, and a dialog each zoom in, and the camera is out between them (073)", () => {
