@@ -148,11 +148,18 @@ test("shows nothing when Tailscale is stopped, logged out or the output is not J
 
 test("the Tailscale reader reuses one reading for a minute", async () => {
   let clock = 0;
-  const read = createTailscaleReader(() => clock);
+  let reads = 0;
+  const read = createTailscaleReader(() => clock, async () => (reads++, parseTailscaleStatus(running({ DNSName: "laptop.example.ts.net." }))));
   const signal = new AbortController().signal;
+
   const first = await read(signal);
   clock = 30_000;
-  assert.equal(await read(signal), first);
+  const second = await read(signal);
+  clock = 61_000;
+  await read(signal);
+
+  assert.equal(second, first);
+  assert.equal(reads, 2);
 });
 
 for (const [metric, name, threshold] of [["cpu", "CPU", 95], ["memory", "Memory", 90]] as const) {

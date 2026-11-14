@@ -11,5 +11,5 @@ export default defineConfig({
       { find: "@", replacement: fileURLToPath(new URL(".", import.meta.url)) },
     ],
   },
-  test: { include: ["test/**/*.test.tsx"], environment: "jsdom", hookTimeout: 30_000 },
+  test: { include: ["test/**/*.test.tsx"], environment: "jsdom", hookTimeout: 30_000, setupFiles: ["test/vitest-host-guard.ts"] },
 });

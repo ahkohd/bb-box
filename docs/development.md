@@ -27,6 +27,19 @@ npm run reference
   GitHub runs it, and the typecheck, on each pull request. It fails when
   the reference is out of date, a link between Markdown files is broken,
   or the skill does not name an agent tool.
+- A fake that runs a box's script on the test machine, such as the fake
+  `ssh`, `docker` or microsandbox, puts a folder of stubs first on the
+  script's PATH. `sudo`, `tailscale`, `systemctl`, `reboot`, `iptables`,
+  `mount`, `pkill`, `launchctl` and the other tools that change a machine
+  only record their call there, and `sudo` runs its command under the
+  stubs. `rm`, `chown` and `chmod` act only inside the test's temporary
+  folders. A fake refuses to run a script that would reach a real one. A
+  test reads the calls with `hostCommandsRecorded` from
+  [test/host-stubs.mjs](../test/host-stubs.mjs).
+- `npm test` fails a test file that runs the test machine's own `sudo`,
+  `tailscale`, `systemctl` or another of those tools. Every test process
+  puts a guard folder on the PATH of each child it starts, before the
+  machine's own folders, whose tools record the call, say so and fail.
 - `scripts/smoke.ts` runs one box on a real backend without BB: it
   acquires a box, runs a command, opens a desktop as the relay does, and
   releases the box, printing each step's time. Its settings file is the

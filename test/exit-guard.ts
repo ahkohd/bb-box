@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { after, afterEach, beforeEach } from "node:test";
 import { OWNER_FILE, TEMP_PREFIX, shortTempBase } from "../src/core/temp-folders.ts";
 import { helperChildrenNotClosed } from "../src/transports/forker.ts";
+import { installHostGuard, reachedTestMachineMessage } from "./host-guard.ts";
 
 /** How long a test file's process may run on after its last test. */
 const EXIT_WAIT_MS = 60_000;
@@ -30,6 +31,16 @@ function foldersThisProcessLeft(): string[] {
   }
   return left;
 }
+
+const hostGuard = installHostGuard();
+
+process.once("exit", () => {
+  const reached = hostGuard.reached();
+  hostGuard.dispose();
+  if (!reached.length) return;
+  process.stderr.write(`${reachedTestMachineMessage(reached)}\n`);
+  process.exitCode = 1;
+});
 
 process.once("exit", () => {
   const left = foldersThisProcessLeft();

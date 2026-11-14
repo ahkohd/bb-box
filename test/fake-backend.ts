@@ -29,6 +29,7 @@ import { emptyDesktop } from "./fake-cua.ts";
 import { FakeRfb } from "./fake-rfb.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
 import { fakeGroup, inGroup } from "./helpers.ts";
+import { hostStubsRootForThisProcess, pathRefusingRealHostTools, pathWithHostStubs } from "./host-stubs.mjs";
 import {
   type GuestOs,
   BackendError,
@@ -926,7 +927,7 @@ export class FakeTransport implements CommandTransport {
     this.#identityState = join(home, ".bb-box-state");
     // A test's cgroup for the memory a box uses (061), which no real box sets.
     const env = {
-      PATH: identityBin ? `${identityBin}:${process.env.PATH}` : process.env.PATH,
+      PATH: pathRefusingRealHostTools("The fake box", pathWithHostStubs(hostStubsRootForThisProcess(), identityBin ? [identityBin] : [], process.env.PATH)),
       HOME: home,
       ...(shell ? { SHELL: shell } : {}),
       ...(process.env.BBBOX_CGROUP ? { BBBOX_CGROUP: process.env.BBBOX_CGROUP } : {}),
@@ -1002,13 +1003,14 @@ export class FakeTransport implements CommandTransport {
   async spawn(script: string, signal?: AbortSignal): Promise<ByteChannel> {
     await this.#answer();
     // The fake Cua Driver is the box's cua-driver command. A Windows box's PowerShell starts a program with &, which sh does without.
-    const path = `${FAKE_CUA_BIN}:${process.env.PATH ?? ""}`;
+    const path = pathRefusingRealHostTools("The fake box", pathWithHostStubs(hostStubsRootForThisProcess(), [FAKE_CUA_BIN], process.env.PATH));
     return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && HOME=${quote(this.#home)} && PATH=${quote(path)} && export HOME PATH && ${script.replace(/^& /, "")}`] }, this.#signal(signal));
   }
   /** A shell on the test machine in the fake box's home, on a PTY. */
   async terminal(size: TerminalSize, signal?: AbortSignal): Promise<Terminal> {
     await this.#answer();
-    return openTerminal(["sh", "-c", `cd ${quote(this.#home)} && exec sh -i`], size, this.#signal(signal));
+    const path = pathRefusingRealHostTools("The fake box", pathWithHostStubs(hostStubsRootForThisProcess(), [], process.env.PATH));
+    return openTerminal(["sh", "-c", `cd ${quote(this.#home)} && PATH=${quote(path)} && export PATH && exec sh -i`], size, this.#signal(signal));
   }
 }
 

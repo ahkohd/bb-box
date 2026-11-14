@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -155,9 +155,10 @@ test("the workspace's ID is the value of tenant_id in Namespace's metadata, with
 });
 
 test("with the tailnet on, a build machine joins it with a one-off key of its own before the build, as BB's app comes from BB's server, then leaves it, its device removed, before it is destroyed", async () => {
-  fakeSsh();
-  const dir = mkdtempSync(join(tmpdir(), "ns-build-tailnet-"));
-  const log = join(dir, "calls");
+  const sshDir = fakeSsh().dir;
+  const dir = join(sshDir, "bin");
+  mkdirSync(dir);
+  const log = join(sshDir, "tailscale-calls");
   writeFileSync(log, "");
   const tool = (name: string, body: string) => {
     writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`);
@@ -165,8 +166,6 @@ test("with the tailnet on, a build machine joins it with a one-off key of its ow
   };
   tool("tailscale", `printf '%s\\n' "tailscale $*" >> ${log}\ncase "$1" in up) f=$(printf '%s' "$2" | sed 's/^--auth-key=file://'); printf 'key %s\\n' "$(cat "$f")" >> ${log};; ip) echo 100.64.0.9;; esac`);
   tool("sudo", `[ "$1" = -n ] && shift\nexec "$@"`);
-  const path = process.env.PATH;
-  process.env.PATH = `${dir}:${path}`;
   const minted: string[] = [];
   const removed: string[] = [];
   const tailnet = new Tailnet({
@@ -181,33 +180,29 @@ test("with the tailnet on, a build machine joins it with a one-off key of its ow
       return { ok: false, status: 404, text: async () => "{}" };
     },
   });
-  try {
-    const fake = new FakeNamespace({ maxCores: 64 });
-    const context = { ...testContext(new MemoryStorage(), "inst1", { id: "namespace" }), bbUrl: () => "https://bb.example", images: { bbApp: async () => "a".repeat(64) }, tailnet: () => tailnet } as never;
-    const order: string[] = [];
-    const backend = new NamespaceBackend(CONFIG, context, {
-      fetch: fake.fetch,
-      sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER,
-      sleep: async () => {},
-      readyTimeoutMs: 20_000,
-      setupArchive: async () => Buffer.from("setup"),
-      linuxTailscaleScript: ":",
-      linuxImageScript: (target, key) => (order.push(readFileSync(log, "utf8").includes("tailscale up") ? "built after joining" : "built before joining"), `cat >/dev/null; echo nscr.io/ws/bbbox/${target}:${key}`),
-    });
-    disposed(backend);
-    const image = await backend.linuxImages.forBox("linux", new AbortController().signal);
-    assert.match(image.ref, /^nscr\.io\/ws\/bbbox\/linux:/);
-    assert.deepEqual(order, ["built after joining"]);
-    assert.deepEqual(minted, ["BB Box Namespace build-linux"]);
-    const calls = readFileSync(log, "utf8").trim().split("\n");
-    assert.ok(calls.some((call) => /^tailscale up --auth-key=file:\S+ --hostname=bb-box-ns-inst1-build-linux /.test(call)), calls.join("; "));
-    assert.ok(calls.includes("key tskey-auth-one-off-build"), "the key reached the machine on its input");
-    assert.equal(calls.at(-1), "tailscale logout");
-    assert.deepEqual(removed, ["n-build"], "only the build machine's device");
-    assert.equal([...fake.instances.values()][0]!.status, "DESTROYED");
-  } finally {
-    process.env.PATH = path;
-  }
+  const fake = new FakeNamespace({ maxCores: 64 });
+  const context = { ...testContext(new MemoryStorage(), "inst1", { id: "namespace" }), bbUrl: () => "https://bb.example", images: { bbApp: async () => "a".repeat(64) }, tailnet: () => tailnet } as never;
+  const order: string[] = [];
+  const backend = new NamespaceBackend(CONFIG, context, {
+    fetch: fake.fetch,
+    sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER,
+    sleep: async () => {},
+    readyTimeoutMs: 20_000,
+    setupArchive: async () => Buffer.from("setup"),
+    linuxTailscaleScript: ":",
+    linuxImageScript: (target, key) => (order.push(readFileSync(log, "utf8").includes("tailscale up") ? "built after joining" : "built before joining"), `cat >/dev/null; echo nscr.io/ws/bbbox/${target}:${key}`),
+  });
+  disposed(backend);
+  const image = await backend.linuxImages.forBox("linux", new AbortController().signal);
+  assert.match(image.ref, /^nscr\.io\/ws\/bbbox\/linux:/);
+  assert.deepEqual(order, ["built after joining"]);
+  assert.deepEqual(minted, ["BB Box Namespace build-linux"]);
+  const calls = readFileSync(log, "utf8").trim().split("\n");
+  assert.ok(calls.some((call) => /^tailscale up --auth-key=file:\S+ --hostname=bb-box-ns-inst1-build-linux /.test(call)), calls.join("; "));
+  assert.ok(calls.includes("key tskey-auth-one-off-build"), "the key reached the machine on its input");
+  assert.equal(calls.at(-1), "tailscale logout");
+  assert.deepEqual(removed, ["n-build"], "only the build machine's device");
+  assert.equal([...fake.instances.values()][0]!.status, "DESTROYED");
 });
 
 test("a reload while an image builds leaves the build running in its instance, and the next run carries on with the same instance; nothing is destroyed until the build ends (#1032)", async (t) => {

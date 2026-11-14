@@ -1,4 +1,5 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { pathRefusingRealHostTools, pathWithHostStubs } from "./host-stubs.mjs";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -135,7 +136,7 @@ export class FakeBoatGuest {
     await this.#beforeRun?.(script);
     const local = script.replaceAll("/var/tmp/bb-box-build", this.buildDir).replaceAll("/run/bb-box-build", this.stateDir).replaceAll("/usr/share/bb-box/", `${this.root}/usr/share/bb-box/`);
     const started = Date.now();
-    const child = spawn("sh", ["-c", local], { cwd: this.root, env: { ...process.env, PATH: `${this.#bin}:${process.env.PATH ?? ""}` }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("sh", ["-c", local], { cwd: this.root, env: { ...process.env, PATH: pathRefusingRealHostTools("The fake boat guest", pathWithHostStubs(this.root, [this.#bin], process.env.PATH)) }, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));

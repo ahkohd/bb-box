@@ -92,7 +92,9 @@ async function readStatusOnce(signal: AbortSignal): Promise<TailscaleInfo | null
   return null;
 }
 
-export function createTailscaleReader(now: () => number = Date.now) {
+export type TailscaleStatusRead = (signal: AbortSignal) => Promise<TailscaleInfo | null>;
+
+export function createTailscaleReader(now: () => number = Date.now, readStatus: TailscaleStatusRead = readStatusOnce) {
   let cached: { value: TailscaleInfo | null; readAt: number } | null = null;
   let pending: Promise<TailscaleInfo | null> | null = null;
 
@@ -100,7 +102,7 @@ export function createTailscaleReader(now: () => number = Date.now) {
     if (cached !== null && now() - cached.readAt < CACHE_MS) {
       return Promise.resolve(cached.value);
     }
-    pending ??= readStatusOnce(signal)
+    pending ??= readStatus(signal)
       .then((value) => {
         cached = { value, readAt: now() };
         return value;
