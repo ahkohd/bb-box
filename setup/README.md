@@ -26,7 +26,7 @@ The cloud backends join their machines to your tailnet when BB is on one: see [j
 
 Install BB Box from BB's plugin store. In BB, open Settings, then Installed plugins, search for **BB Box**, and install it. Or open the plugin store and install **BB Box**. BB updates a store install to each new release before 1.0.
 
-To install from Git instead, open Settings, then Installed plugins. Select the arrow beside **New plugin**, then **Install from source**, and enter `git:https://github.com/ahkohd/bb-box.git@main` for new work as it lands, or a release tag such as `git:https://github.com/ahkohd/bb-box.git@v0.2.2`. Or, with BB's command line:
+To install from Git instead, open Settings, then Installed plugins. Select the arrow beside **New plugin**, then **Install from source**, and enter `git:https://github.com/ahkohd/bb-box.git@main` for new work as it lands, or a release tag such as `git:https://github.com/ahkohd/bb-box.git@v0.2.3`. Or, with BB's command line:
 
 ```sh
 bb plugin install git:https://github.com/ahkohd/bb-box.git@main
@@ -34,7 +34,7 @@ bb plugin install git:https://github.com/ahkohd/bb-box.git@main
 
 It asks you to confirm; an agent or a script adds `--yes`. BB fetches and builds it, so you need no clone.
 
-A release tag, such as `git:https://github.com/ahkohd/bb-box.git@v0.2.2`, stays on that tag. Releases are tags on `main`. `bb plugin update` refuses a plugin installed from a tag.
+A release tag, such as `git:https://github.com/ahkohd/bb-box.git@v0.2.3`, stays on that tag. Releases are tags on `main`. `bb plugin update` refuses a plugin installed from a tag.
 
 To change BB Box itself, clone it, run `npm install` and `bb plugin build`, then `bb plugin install .` in the clone.
 
