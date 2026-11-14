@@ -115,7 +115,10 @@ bb box backend add proxmox-qemu --field windows-templates=9104 \
 Set `linux-templates`, `linux-desktop-templates` and `android-templates`
 for the others, and `linux-kvm=true` when the build said KVM works in a
 clone. A Windows box holds its memory while it runs, and a spare or warm
-one waits hibernated, so keep their counts small on a small host.
+one waits hibernated, so keep their counts small on a small host. When the
+doctor warns that a Windows template's box user's password can expire,
+refresh it with `bb box images build proxmox-qemu/<vmid>`, or rebuild it:
+its boxes otherwise need a repair and one more restart as they start.
 
 ## Check and prove
 

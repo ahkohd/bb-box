@@ -45,6 +45,11 @@ trap {
 
 $build = Get-Content C:\bb-box\build.json -Raw | ConvertFrom-Json
 
+Step "Passwords: box's never expires, and the machine's maximum password age is unlimited"
+Set-LocalUser -Name box -PasswordNeverExpires $true
+net.exe accounts /maxpwage:unlimited | Out-Null
+if ($null -ne (Get-LocalUser -Name box).PasswordExpires) { throw "the box user's password still expires" }
+
 Step 'VirtIO drivers and the QEMU guest agent'
 $virtio = Get-PSDrive -PSProvider FileSystem | Where-Object { Test-Path (Join-Path $_.Root 'virtio-win-gt-x64.msi') } | Select-Object -First 1
 if ($virtio) {

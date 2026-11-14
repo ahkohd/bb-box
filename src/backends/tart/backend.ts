@@ -94,6 +94,7 @@ import {
   type GrantAnswer,
   type GrantRequest,
   type Guest,
+  type GuestFact,
   type HeldGuest,
   type HostCapacity,
   type ImageBox,
@@ -113,7 +114,7 @@ import { MacProbeCache, PROBE_TIMEOUT_MS, capabilityCheck, deviceRoom, hardwareK
 import { WINDOWS_HARDWARE_CURSOR, judgeImage, recordFromJson, type ImageJudgement, type ImageRecord } from "../images.ts";
 import { ReadyPool } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
-import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, followWindowsPointer, compileDisplay, desktopUp, extendC, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
+import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_STREAM_EXE, WINDOWS_VIDEO, followWindowsPointer, compileDisplay, desktopUpOrRepairExpiredPassword, extendC, PASSWORD_REPAIR_BY_HAND, repairExpiredPasswordAfterBoot, withDesktop, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
 import type { OpenStream } from "../../core/selkies.ts";
 import { SELKIES_DISPLAY, SELKIES_LAUNCHER, selkiesDisplay } from "../selkies.ts";
 import { openRoute } from "../../transports/route.ts";
@@ -1877,9 +1878,11 @@ export class TartBackend implements Backend {
       const { ssh } = await this.#keys();
       const access = this.#windows(await this.#mac(host), (await this.#ports(host, guest, signal)).ssh);
       await this.#waitReady(host, guest.ref, access, os, deadline, signal);
+      const desktop = await this.#repairExpiredPasswordAfterBoot(host, guest.ref, access, deadline, signal);
       await setClock(new SshTransport(ssh, access, os), signal);
       bootedAfresh();
-      return;
+      const started = withDesktop({ facts: guest.facts }, desktop);
+      return started.facts === guest.facts ? undefined : { facts: started.facts ?? [] };
     }
     const address = await this.#address(host, guest.ref, deadline, signal);
     await this.#waitReady(host, guest.ref, this.#vm(await this.#mac(host), address, os), os, deadline, signal);
@@ -3519,13 +3522,26 @@ export class TartBackend implements Backend {
     const { ssh } = await this.#keys();
     const command = new SshTransport(ssh, access, "windows");
     const left = Math.max(1_000, deadline - Date.now());
-    const up = { probe: (inner?: AbortSignal) => desktopUp(command, inner) };
-    if (!(await waitUntilAnswers(up, { timeoutMs: left, intervalMs: WINDOWS_DESKTOP_POLL_MS, signal, sleep: this.#options.sleep ?? pause }))) {
-      throw new Error(
-        `Windows' desktop in ${vm} on ${host.name} was not up within ${Math.round(left / 1000)} s: Explorer did not run in a desktop session, ` +
-          `or Cua's daemon did not listen on ${CUA_PIPE}. Check that the image signs the box user in.`,
-      );
+    const repairs: string[] = [];
+    const up = desktopUpOrRepairExpiredPassword(command, (said) => {
+      repairs.push(said);
+      this.#context.log?.(`${vm} on ${host.name}: ${said}`);
+    });
+    const answered = await waitUntilAnswers(up, { timeoutMs: left, intervalMs: WINDOWS_DESKTOP_POLL_MS, signal, sleep: this.#options.sleep ?? pause }).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      throw new Error(`Windows' desktop in ${vm} on ${host.name} is not up: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    if (!answered) {
+      const why = `Explorer did not run in a desktop session, or Cua's daemon did not listen on ${CUA_PIPE}.`;
+      const next = `Check that the image signs the box user in. ${PASSWORD_REPAIR_BY_HAND}`;
+      throw new Error([`Windows' desktop in ${vm} on ${host.name} was not up within ${Math.round(left / 1000)} s:`, why, ...repairs, next].join(" "));
     }
+  }
+
+  async #repairExpiredPasswordAfterBoot(host: TartHost, vm: string, access: SshAccess, deadline: number, signal?: AbortSignal): Promise<GuestFact | null> {
+    const command = new SshTransport((await this.#keys()).ssh, access, "windows");
+    const log = (said: string) => this.#context.log?.(`${vm} on ${host.name}: ${said}`);
+    return repairExpiredPasswordAfterBoot(command, () => this.#windowsDesktop(host, vm, access, deadline, signal), log, signal);
   }
 
   /**

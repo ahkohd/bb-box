@@ -351,6 +351,19 @@ test("a fresh image built with this BB Box's pins and BB's app passes", () => {
   assert.equal(judgeImage(record(), { os: "linux", pins: null, bbApp: null, now: NOW }, REBUILD).status, "ok");
 });
 
+test("a Windows image whose box user's password can expire warns that its boxes need a repair, and how to end it", () => {
+  const windows = { ...facts, os: "windows" as const };
+
+  const expiring = judgeImage(record(1, { kind: "windows-desktop", tools: {} }), windows, REBUILD);
+  const neverExpiring = judgeImage(record(1, { kind: "windows-desktop", tools: { "password-never-expires": "1" } }), windows, REBUILD);
+  const linux = judgeImage(record(1, { tools: {} }), facts, REBUILD);
+
+  assert.deepEqual([expiring.status, expiring.fix], ["warn", REBUILD]);
+  assert.match(expiring.detail, / Its record does not say its box user's password never expires, so the password may expire 42 days after it was set, as Windows' default is, and Windows then no longer logs its boxes in to the desktop\. BB Box repairs each such box as it starts, with one more restart, about a minute, where nobody is logged in to it\./);
+  assert.equal(neverExpiring.status, "ok", neverExpiring.detail);
+  assert.doesNotMatch(linux.detail, /password/);
+});
+
 test("an image warns when it has no record, is old, or has another BB app or other pins", () => {
   const none = judgeImage(null, facts, REBUILD);
   assert.deepEqual([none.status, none.fix], ["warn", REBUILD]);
@@ -360,7 +373,7 @@ test("an image warns when it has no record, is old, or has another BB app or oth
   assert.equal(old.status, "warn");
   assert.match(old.detail, / It is 15 days old, more than 14, so its tools and packages are behind\.$/);
   assert.equal(judgeImage(record(13.9), facts, REBUILD).status, "ok");
-  assert.equal(judgeImage(record(59, { kind: "windows" }), { ...facts, os: "windows" }, REBUILD).status, "ok", "Windows images are rebuilt monthly");
+  assert.equal(judgeImage(record(59, { kind: "windows", tools: { "password-never-expires": "1" } }), { ...facts, os: "windows" }, REBUILD).status, "ok", "Windows images are rebuilt monthly");
 
   const app = judgeImage(record(1, { bbApp: "b".repeat(64) }), facts, REBUILD);
   assert.equal(app.status, "warn");

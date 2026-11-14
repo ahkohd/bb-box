@@ -19,6 +19,7 @@ import { TEMPLATE_FILES as BOAT_TEMPLATE_FILES } from "./boat/templates.ts";
  */
 import { PRODUCT } from "../brand.ts";
 export const WINDOWS_HARDWARE_CURSOR = "hardware-cursor";
+export const WINDOWS_PASSWORD_NEVER_EXPIRES = "password-never-expires";
 
 /** The contract an image must keep (049); a record with an older one fails the doctor. */
 export const IMAGE_CONTRACT = 1;
@@ -442,6 +443,11 @@ export function judgeImage(
   if (facts.os === "ios") judgeIosImage(record, facts.macosBuild ?? null, failures, warnings);
   if (facts.os === "macos" && !record.tools.xcode) {
     warnings.push("It has no Xcode, so its boxes have no XCTest, Metal compiler or iOS Simulator (#475).");
+  }
+  if (facts.os === "windows" && !record.tools[WINDOWS_PASSWORD_NEVER_EXPIRES]) {
+    warnings.push(
+      `Its record does not say its box user's password never expires, so the password may expire 42 days after it was set, as Windows' default is, and Windows then no longer logs its boxes in to the desktop. ${PRODUCT} repairs each such box as it starts, with one more restart, about a minute, where nobody is logged in to it.`,
+    );
   }
   if (facts.os === "windows" && facts.joins) {
     const node = record.tools.node;

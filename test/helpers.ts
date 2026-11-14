@@ -139,6 +139,30 @@ export function fakeSsh(options: { share?: boolean; lostWaitMs?: number } = {}) 
   };
 }
 
+export const EXPIRED_ON = "The password of box expired on 2026-11-13 14:59:21Z.";
+export const NOT_SET_NEVER_TO_EXPIRE = `${EXPIRED_ON.slice(0, -1)}, and Windows did not set it never to expire.`;
+
+export function windowsWithExpiringPassword(): string {
+  return [
+    `case "$1" in`,
+    `  *PasswordNeverExpires*)`,
+    `    [ -f "$HOME/no-desktop" ] || exit 0`,
+    `    [ -f "$HOME/password-expired" ] || exit 5`,
+    `    [ -f "$HOME/password-stuck" ] && { echo "${NOT_SET_NEVER_TO_EXPIRE}" >&2; exit 4; }`,
+    `    rm -f "$HOME/password-expired" "$HOME/no-desktop"`,
+    `    echo restarted >> "$HOME/restarts"`,
+    `    echo "${EXPIRED_ON}"`,
+    `    exit 3;;`,
+    `  *Set-Date*) exit 0;;`,
+    `  *Resize-Partition*) exit 0;;`,
+    `  *Add-Type*) exit 0;;`,
+    `  *"Test-Path -LiteralPath"*bb-box-stream.exe*) exit 3;;`,
+    `  *) exec sh -c "$1";;`,
+    `esac`,
+    ``,
+  ].join("\n");
+}
+
 export class MemoryStorage implements BackendStorage {
   readonly values = new Map<string, unknown>();
 
