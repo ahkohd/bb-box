@@ -21,7 +21,10 @@ const LONGEST_QUICK_PROBE_MS = 3_000;
 
 const A_DEVELOPERS_MACHINE: TestMachineFacts = { root: false, sudo: SUDO_ANSWERS.noPassword, tailscale: "/usr/bin/tailscale", box: false, githubActions: false, override: false, noExemptions: false };
 const REFUSAL = /^BB Box's tests will not run on this machine: this user can run sudo without a password, and Tailscale is installed, at \/usr\/bin\/tailscale\. A test that goes wrong could change this machine: one once logged a machine out of its tailnet\. Run the tests in a BB Box box or on GitHub Actions\. To run them here anyway, at the risk of changing this machine, set BBBOX_TESTS_MAY_BREAK_THIS_MACHINE=1\.$/;
-const REFUSED = /BB Box's tests will not run on this machine: this user can run sudo without a password/;
+const REFUSED = /BB Box's tests will not run on this machine: (.+, and )?this user can run sudo without a password/;
+const COULD_NOT_TELL = /BB Box's tests will not run on this machine: (.+, and )?BB Box could not tell whether this user can run sudo without a password/;
+const NOT_ROOT = 1000;
+const ROOT = 0;
 const A_TEST_PASSED = /pass [1-9]|^ok /m;
 
 function sudoWithoutPassword(): HostToolStandIns {
@@ -115,16 +118,18 @@ test("whatever sudo answers, what it left running in its process group is stoppe
   assert.equal(stillRunning(Number(readFileSync(pidFile, "utf8"))), false);
 });
 
-test("the machine's facts come from its sudo, its Tailscale and GitHub's variables, and a stray file at the box marker's path is not a box", () => {
+test("the machine's facts come from the uid it runs as, its sudo, its Tailscale and GitHub's variables, and a record at the box marker's path that someone other than root owns is not a box", () => {
   const tools = sudoWithoutPassword();
   const stray = join(tempDir("stray-marker"), "image.json");
   writeFileSync(stray, `${imageRecord("linux")}\n`, { mode: 0o644 });
 
-  const facts = readTestMachineFacts({ env: { PATH: tools.dir, CI: "true", GITHUB_ACTIONS: "true", [MAY_BREAK_THIS_MACHINE]: "1" }, marker: NOWHERE });
-  const elsewhere = readTestMachineFacts({ env: { PATH: tools.dir, CI: "true" }, marker: stray });
+  const someoneElse = process.getuid!() + 1;
 
-  assert.deepEqual({ ...facts, root: false }, { root: false, sudo: SUDO_ANSWERS.noPassword, tailscale: join(tools.dir, "tailscale"), box: false, githubActions: true, override: true, noExemptions: false });
-  assert.deepEqual([elsewhere.box, elsewhere.githubActions, elsewhere.override], [false, false, false]);
+  const facts = readTestMachineFacts({ env: { PATH: tools.dir, CI: "true", GITHUB_ACTIONS: "true", [MAY_BREAK_THIS_MACHINE]: "1" }, marker: NOWHERE, uid: NOT_ROOT });
+  const elsewhere = readTestMachineFacts({ env: { PATH: tools.dir, CI: "true" }, marker: stray, markerOwner: someoneElse, uid: ROOT });
+
+  assert.deepEqual(facts, { root: false, sudo: SUDO_ANSWERS.noPassword, tailscale: join(tools.dir, "tailscale"), box: false, githubActions: true, override: true, noExemptions: false });
+  assert.deepEqual([elsewhere.root, elsewhere.box, elsewhere.githubActions, elsewhere.override], [true, false, false, false]);
   assert.deepEqual(tools.ran(), ["sudo -n true", "sudo -n true"], "only sudo -n true ran, to ask whether sudo needs a password");
 });
 
@@ -194,7 +199,7 @@ test("on a machine that matters, a sudo that answers the deadline's SIGTERM by e
   const ran = spawnSync(process.execPath, ["--test", A_TEST_FILE], { cwd: REPOSITORY, env: { ...env, PATH: `${sudoThat("trap 'exit 1' TERM\nsleep 60 & wait $!")}:${process.env.PATH}` }, encoding: "utf8" });
 
   assert.notEqual(ran.status, 0);
-  assert.match(`${ran.stdout}${ran.stderr}`, /BB Box's tests will not run on this machine: BB Box could not tell whether this user can run sudo without a password/);
+  assert.match(`${ran.stdout}${ran.stderr}`, COULD_NOT_TELL);
   assert.doesNotMatch(`${ran.stdout}${ran.stderr}`, A_TEST_PASSED);
 });
 

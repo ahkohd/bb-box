@@ -47,14 +47,14 @@ export function isBoxImageRecord(marker, expectedOwner = ROOT_UID) {
   }
 }
 
-export function readTestMachineFacts({ env = process.env, marker = BOX_MARKER, sudoLimits = SUDO_PROBE_LIMITS } = {}) {
+export function readTestMachineFacts({ env = process.env, marker = BOX_MARKER, markerOwner = ROOT_UID, uid = process.getuid?.(), sudoLimits = SUDO_PROBE_LIMITS } = {}) {
   const path = machinePath(env.PATH);
   const sudo = firstOnPath("sudo", path);
   return {
-    root: process.getuid?.() === ROOT_UID,
+    root: uid === ROOT_UID,
     sudo: sudo === null ? SUDO_ANSWERS.absent : askSudo(sudo, path, sudoLimits),
     tailscale: firstOnPath("tailscale", path) ?? firstOnPath("tailscaled", path) ?? TAILSCALE_APPS.find((app) => existsSync(app)) ?? null,
-    box: isBoxImageRecord(marker),
+    box: isBoxImageRecord(marker, markerOwner),
     githubActions: env.CI === "true" && env.GITHUB_ACTIONS === "true",
     override: env[MAY_BREAK_THIS_MACHINE] === "1",
     noExemptions: env[MACHINE_CHECK] === NO_EXEMPTIONS,

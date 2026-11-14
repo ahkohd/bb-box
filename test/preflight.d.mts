@@ -23,7 +23,7 @@ export interface TestMachineFacts {
 }
 
 export declare function isBoxImageRecord(marker: string, expectedOwner?: number): boolean;
-export declare function readTestMachineFacts(options?: { env?: Readonly<Record<string, string | undefined>>; marker?: string; sudoLimits?: SudoProbeLimits }): TestMachineFacts;
+export declare function readTestMachineFacts(options?: { env?: Readonly<Record<string, string | undefined>>; marker?: string; markerOwner?: number; uid?: number; sudoLimits?: SudoProbeLimits }): TestMachineFacts;
 export declare function testMachineRefusal(facts: TestMachineFacts): string | null;
 export declare function refusalForThisMachine(env?: Readonly<Record<string, string | undefined>>): string | null;
 export declare function refuseRiskyTestMachine(): void;
