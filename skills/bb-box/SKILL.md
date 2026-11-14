@@ -251,6 +251,14 @@ Beyond those:
   but not PowerShell variables: pass values in `$env:`.
 - For a GUI program's window to show, call `Start-Detached` in a desktop
   command (`desktop: true`).
+- A Windows box that is not logged in to its desktop, so it cannot join BB
+  or use computer use, may have a box user whose password expired. BB Box
+  repairs that as the box starts, with one restart, unless someone is
+  logged in or a step fails: then `box_status` has a Desktop line saying
+  why. To repair it yourself,
+  run `Set-LocalUser -Name box -PasswordNeverExpires $true; net accounts
+  /maxpwage:unlimited` in it with `box_run`, then `Restart-Computer -Force`,
+  and wait a minute for its desktop.
 
 ## Copying files
 

@@ -223,6 +223,11 @@ $installers = @{
 }
 
 try {
+  Step "Passwords: box's never expires, and the machine's maximum password age is unlimited"
+  Set-LocalUser -Name ([Environment]::UserName) -PasswordNeverExpires $true
+  net.exe accounts /maxpwage:unlimited | Out-Null
+  if ($null -ne (Get-LocalUser -Name ([Environment]::UserName)).PasswordExpires) { throw "the box user's password still expires" }
+
   Update-Windows
 
   foreach ($pin in (Get-Content $Pins -Raw | ConvertFrom-Json).tools) {

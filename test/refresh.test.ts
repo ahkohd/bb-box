@@ -601,7 +601,7 @@ test("a Windows image's first logon and its refresh turn on the VirtIO GPU's har
   assert.match(firstLogon, /& C:\\bb-box\\hardware-cursor\.ps1/);
   assert.match(refresh, /& "\$dir\\hardware-cursor\.ps1"/);
   assert.match(build, /cp [^\n]*"\$here\/\.\.\/windows\/hardware-cursor\.ps1" "\$work\/answer\/bb-box\/"/);
-  assert.match(build, /openh264: \$openh264, "hardware-cursor": "1"\}/);
+  assert.match(build, /openh264: \$openh264, "hardware-cursor": "1", /);
   assert.match(script, /-Name HWCursor -Value 1 -PropertyType DWord/);
   assert.match(script, /Control\\Class\\\$driver/);
   assert.match(script, /Control\\Video\\\$video\\0000/);
@@ -640,6 +640,26 @@ test("a refreshed arm64 Windows record lists the hardware cursor once OpenH264 i
   const withStream = windowsRecord(current, [pin("git"), pin("openh264")], "build.2", 0, "digest");
   assert.equal(withStream.tools["hardware-cursor"], "1");
   assert.equal(withStream.arch, "arm64");
+});
+
+test("every Windows image sets the box user's password never to expire and the maximum password age to unlimited, records it, and its check fails one that expires", () => {
+  const firstLogon = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "firstlogon.ps1"), "utf8");
+  const refresh = readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8");
+  const check = readFileSync(join(SETUP, "windows", "check.ps1"), "utf8");
+  const build = readFileSync(join(SETUP, "proxmox-qemu", "build.sh"), "utf8");
+  const tart = readFileSync(join(SETUP, "tart", "prepare-windows-image.sh"), "utf8");
+  const current = { kind: "windows-arm64-desktop", record: null } as unknown as Parameters<typeof windowsRecord>[0];
+
+  const settings = /Set-LocalUser -Name [^\n]+ -PasswordNeverExpires \$true\n\s*net\.exe accounts \/maxpwage:unlimited/;
+  const firstStep = firstLogon.indexOf("-PasswordNeverExpires $true");
+  assert.match(firstLogon, settings);
+  assert.ok(firstStep > 0 && firstStep < firstLogon.indexOf("Step 'VirtIO drivers"), "before anything else the first logon does");
+  assert.match(refresh, settings);
+  assert.ok(refresh.indexOf("-PasswordNeverExpires $true") < refresh.indexOf("Update-Windows\n"), "before Windows Update, which may restart the box");
+  assert.match(check, /Check "box user's password never expires" \{\n[^\n]*Get-LocalUser[^\n]*\n[^\n]*\$null -ne \$user\.PasswordExpires[^\n]*throw[^\n]*\n[^\n]*Maximum password age[^\n]*\n[^\n]*-ne 'Unlimited'[^\n]*throw/);
+  assert.match(build, /"hardware-cursor": "1", "password-never-expires": "1"\}/);
+  assert.match(tart, /"hardware-cursor":"1","password-never-expires":"1",/);
+  assert.equal(windowsRecord(current, [], "build.1", 0, "digest").tools["password-never-expires"], "1", "a refresh records it, as refresh.ps1 sets it");
 });
 
 test("setup/windows/pins.json has the Windows build scripts' pins, Node.js included", () => {

@@ -184,9 +184,12 @@ it has read the devices the template's record lists.
 - warns when the template is more than 60 days old, or was built with other
   pins than this bb-box's `build.sh`;
 - warns when Windows boxes join BB and the template has no Node.js 22.19 or
-  later, or none of the agent CLIs.
+  later, or none of the agent CLIs;
+- warns when the template's box user's password can expire, as in templates
+  built before BB Box set it never to expire.
 
-Its fix is the `build.sh windows <vmid> --replace` command.
+Its fix is the `build.sh windows <vmid> --replace` command. A refresh, below,
+fixes the password too, in about the time Windows' updates take.
 
 ## Update
 
@@ -254,6 +257,18 @@ The host's Proxmox LXC parts stay until you remove that backend too.
   not get the VirtIO SCSI driver. Build with `--sata`.
 - **Setup stops on a screen:** the ISO is not English (United States), or the
   edition is not on it. Check `BBBOX_WINDOWS_EDITION`.
+- **A box is not logged in to its desktop, and does not join BB:** in a
+  template built before BB Box set the box user's password never to expire,
+  the password expires 42 days after it was set, and Windows then shows its
+  sign-in screen. BB Box repairs such a box as it starts: it sets the
+  password never to expire and the maximum password age to unlimited, reads
+  both back, then restarts Windows once, which takes about a minute. It does
+  not restart a box that someone is logged in to, or one where any step
+  fails: the box's status then has a Desktop line that says it is not ready
+  for computer use, and why. To repair a box by hand,
+  run `Set-LocalUser -Name box -PasswordNeverExpires $true; net accounts
+  /maxpwage:unlimited` in it, then restart it. Refresh or rebuild the
+  template, so that new boxes need no repair.
 - **A box has no address:** it reads its address at each boot, from the
   SMBIOS serial bb-box gives it, and logs to `C:\bb-box\boot.log`.
 - **Anything else in a build:** run it again with `--keep`, and look at the
@@ -269,8 +284,10 @@ The host's Proxmox LXC parts stay until you remove that backend too.
   The time zone and the VM's clock are UTC.
 - User `box`, an administrator, logged on to the console automatically, with
   no lock screen, sleep, screen saver or UAC prompt. Its password is random
-  per build and kept nowhere else. OneDrive is off by policy, so it does not
-  start at sign-in or ask to back the box up.
+  per build and kept nowhere else, and never expires: the first logon sets
+  that, and the machine's maximum password age to unlimited, as Windows'
+  default of 42 days would stop the automatic logon. OneDrive is off by
+  policy, so it does not start at sign-in or ask to back the box up.
 - OpenSSH Server with PowerShell 7 as its shell, bb-box's key, and its
   firewall rule open on every network profile. SSH sessions are elevated.
 - UTF-8 as the system code page.

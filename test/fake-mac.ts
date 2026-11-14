@@ -93,7 +93,7 @@ export function fakeQemu(home: string): void {
 }
 
 /** What a Windows image carries for its boxes to join BB and run threads (#539, #581). */
-export const WINDOWS_TOOLS = { node: "24.21.0", "claude-code": "2.1.283", codex: "0.157.1", pi: "0.87.1" };
+export const WINDOWS_TOOLS = { node: "24.21.0", "claude-code": "2.1.283", codex: "0.157.1", pi: "0.87.1", "password-never-expires": "1" };
 
 /** A fresh image record (049), as the prepare scripts write one. */
 export function imageRecord(kind: string, changes: Record<string, unknown> = {}): string {
