@@ -515,28 +515,43 @@ export class NamespaceBackend implements Backend {
     return this.#reports.all();
   }
 
+  #whyMeasureAfresh(): string | null {
+    const reports = this.macCapabilities();
+    const latest = reports[0];
+    if (latest && measuredByOlderProbe(latest) && !this.slots.offerable().ok) return "its last report came from an older probe and cannot make an offer";
+    const unsettled = reports.find((report) => report.capabilities.simulator.is === "unknown");
+    return unsettled ? `its last measurement of an ${unsettled.chip ?? "unknown chip"} did not finish` : null;
+  }
+
+  #measuredWhole(instance: string): boolean {
+    const report = this.#probes.report(instance);
+    return !!report && report.capabilities.simulator.is !== "unknown";
+  }
+
   async #measureAfreshIfDue(signal?: AbortSignal): Promise<void> {
-    const latest = this.macCapabilities()[0];
-    if (!latest || !measuredByOlderProbe(latest) || this.slots.offerable().ok || !(this.#config.iosHosts ?? NAMESPACE_IOS_HOSTS_DEFAULTS).on || this.#measuringAfresh) return;
+    if (!(this.#config.iosHosts ?? NAMESPACE_IOS_HOSTS_DEFAULTS).on || this.#measuringAfresh) return;
+    const why = this.#whyMeasureAfresh();
+    if (!why) return;
     if (await this.slots.record()) return;
-    const mac = (await this.#held(signal)).find((instance) => instance.status === "running" && !isLinuxKind(instance.labels[LABELS.kind] ?? ""));
+    const mac = (await this.#held(signal)).find((instance) => instance.status === "running" && !isLinuxKind(instance.labels[LABELS.kind] ?? "") && !this.#measuredWhole(instance.id));
     if (mac) return void (await this.#probes.measure(mac.id, signal));
+    if (this.slots.offerable().ok) return;
     const tried = await this.#context.storage.get<number>(MEASURE_TRIED);
     if (typeof tried === "number" && this.#now() - tried < MEASURE_AGAIN_AFTER_MS) return;
     const room = await this.#hostRoom(signal);
     if (room.words) return;
     await this.#context.storage.set(MEASURE_TRIED, this.#now());
     const until = this.#now() + MEASURE_LIFE_MS;
-    this.#measuringAfresh = { until, done: this.#measureOnAMacOfItsOwn(room.shape ?? HOST_SHAPE, until)
+    this.#measuringAfresh = { until, done: this.#measureOnAMacOfItsOwn(room.shape ?? HOST_SHAPE, until, why)
       .catch((error) => this.#context.logError("measure a Namespace Mac afresh", error))
       .finally(() => (this.#measuringAfresh = null)) };
   }
 
-  async #measureOnAMacOfItsOwn(shape: MacShape, until: number): Promise<void> {
+  async #measureOnAMacOfItsOwn(shape: MacShape, until: number, why: string): Promise<void> {
     const started = this.#now();
     const within = AbortSignal.timeout(MEASURE_LIFE_MS - MEASURE_MARGIN_MS);
     const { publicKey } = await this.#keys();
-    this.#context.log?.(`bb-box is starting a ${shape.cores}x${shape.memoryGB} Namespace Mac to measure what Namespace's Macs offer iOS devices afresh, as its last report came from an older probe and cannot make an offer. It is destroyed once measured, and by ${clock(until)} at the latest.`);
+    this.#context.log?.(`bb-box is starting a ${shape.cores}x${shape.memoryGB} Namespace Mac to measure what Namespace's Macs offer iOS devices afresh, as ${why}. It is destroyed once measured, and by ${clock(until)} at the latest.`);
     const made = await this.#api.create(
       {
         shape: { os: "macos", arch: "arm64", cores: shape.cores, memoryMiB: shape.memoryGB * MIB_PER_GB, selectors: { "macos.version": this.#config.macosVersion } },

@@ -558,6 +558,35 @@ test("a new kind of Namespace Mac whose first measurement was cut short does not
   assert.equal(backend.macCapabilities()[0]?.chip, m5);
   assert.equal(backend.slots.lends("ios"), true);
   assert.ok(backend.kinds().some((kind) => kind.id === "ios"), "ios stays on offer");
+  await backend.maintain();
+  await measuredAfresh(backend);
+  assert.equal(fake.calls.filter((call) => call.method === "CreateInstance").length, 0, "no Mac is started to measure while the offer stands");
+});
+
+test("a kind of Namespace Mac whose last measurement did not finish, and so makes no offer, is measured again on a Mac BB Box starts, at most once a day", async () => {
+  let now = Date.parse("2030-01-01T00:00:00Z");
+  fakeSsh();
+  const storage = new MemoryStorage();
+  const m5 = "Apple M5 Pro (Virtual)";
+  const cutShort = parseMacProbe(`chip=${m5}\nmacos=26.3.1\nxcode=26.1.1\n`, "instance-b", now - 60_000, "mac");
+  await storage.set(reportKey(m5), { ...cutShort, mac: m5 });
+  const fake = new FakeNamespace({ now: () => now, lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const context = testContext(storage, "inst1", { id: "namespace" });
+  const backend = disposed(new NamespaceBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":", now: () => now }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.slots.lends("ios"), false);
+  const creates = () => fake.calls.filter((call) => call.method === "CreateInstance").length;
+  await backend.maintain();
+  await measuredAfresh(backend);
+  assert.equal(creates(), 1, "a Mac is started at the first maintenance");
+  assert.match(context.logs.join("\n"), /to measure what Namespace's Macs offer iOS devices afresh, as its last measurement of an Apple M5 Pro \(Virtual\) did not finish\./);
+  now += 60 * 60_000;
+  await backend.maintain();
+  assert.equal(creates(), 1, "not again within the day");
+  now += MEASURE_AGAIN_AFTER_MS;
+  await backend.maintain();
+  await measuredAfresh(backend);
+  assert.equal(creates(), 2);
 });
 
 test("box_list's ios offer on Namespace says its slots are on a Mac made for them, and the doctor says when Namespace's Macs vary by machine", async () => {

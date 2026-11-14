@@ -1,4 +1,4 @@
-# 101: A Mac measurement that does not finish says not known, and never replaces one that did
+# 102: A Mac measurement that does not finish says not known, and never replaces one that did
 
 Status: accepted, 14 November 2026. Extends [065](065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md).
 
@@ -8,7 +8,7 @@ BB Box measures each Mac it starts on Namespace in the background, as soon as th
 
 A box released within those seconds destroys its Mac while the probe runs. The transport hands back what the probe had printed: the chip, macOS and Xcode, and nothing after. The parser read the missing runtime list as an empty one, so it recorded "Xcode has no iOS runtime", and the hardware encoder as not measured. Namespace keeps one report for each kind of Mac, and the newest replaced the last. So one release seconds after ready took `ios` and shared iOS hosts away from every thread, until a later Mac of that kind was measured in full. The doctor also said "as it has no hardware H.264 encoder" when the encoder had not been measured.
 
-Measured at the earliest point of boot, the probe answered in full. The slow first list did not give an empty answer by itself. See the [results](101-results.md).
+Measured at the earliest point of boot, the probe answered in full. The slow first list did not give an empty answer by itself. See the [results](102-results.md).
 
 ## Decision
 
@@ -17,7 +17,8 @@ Measured at the earliest point of boot, the probe answered in full. The slow fir
 - While the hardware check gives no answer, such as when it crashes, the probe runs it again, up to 5 times, 5 seconds apart. VideoToolbox's refusal is an answer, and is not asked again.
 - A measurement that is not conclusive never replaces one that is. For each of the Simulator, the hardware encoder and the software encoder, a "not known" keeps what was known. Where any is kept, the report keeps its earlier time, so it stays due and the Mac is measured again at the next chance. A conclusive "no" still replaces a "yes".
 - On Namespace, a report that measured nothing and did not say its chip makes no kind of Mac.
-- On Namespace, the `ios` offer comes from the newest kind of Mac that runs the iOS Simulator. A kind measured later that does not run it, or is not known to, does not take the offer away. With no such kind, the offer comes from the newest kind measured conclusively, then from the newest of all. The doctor still lists the newest first, and BB Box still measures afresh by the newest report.
+- On Namespace, the `ios` offer comes from the newest kind of Mac that runs the iOS Simulator. A kind measured later that does not run it, or is not known to, does not take the offer away. With no such kind, the offer comes from the newest kind measured conclusively, then from the newest of all. The doctor still lists the newest first.
+- On Namespace, a kind of Mac whose Simulator is not known is measured again. A Mac BB Box holds that it has not measured in full is measured at once. Where no kind makes an offer, BB Box starts a Mac for a few minutes to measure, at most once a day, as it does for a report from an older probe. It starts none while another kind makes the offer.
 - Before the hardware encoder is measured, BB Box says video comes in software "until its hardware H.264 encoder is measured", not "as it has no hardware H.264 encoder".
 
 ## Consequences
