@@ -16,10 +16,34 @@ Measured on 14 November 2026 on a linux-desktop-cpu box on Proxmox QEMU, Ubuntu 
 | --- | --- | --- | --- |
 | 1920 by 1080, scale 1 | Edit menu, by reference | Edit is 675 to 716 across, 116 to 141 down | 696, 129, its centre |
 | 1920 by 1080, scale 1 | the text, by pixels | 1024, 432 | 1024, 432 |
-| 2880 by 1800, scale 2 | Edit menu, by reference | Edit is 714 to 796 across, 116 to 166 down, twice its frame | 755, 141, its centre |
+| 2880 by 1800, scale 2 | Edit menu, by reference | Edit is 714 to 796 across, 116 to 166 down, twice its frame | 755, 141 by the first form; nothing now |
 | 2880 by 1800, scale 2 | the text, by pixels | 1409, 720 | 1409, 720 |
 
-At scale 2, Cua Driver gave Mousepad's Search menu the frame 398, 58, 60 by 25, and a click by pixels on it landed at 856, 140 in X's pixels, twice the frame.
+At scale 2, Cua Driver gave Mousepad's Search menu the frame 398, 58, 60 by 25, and a click by pixels on it landed at 856, 140 in X's pixels, twice the frame. The first form of this decision doubled such frames when they lay outside their window and fitted it doubled. An independent review showed that test fails both ways, and the rows above for clicks by reference at scale 2 came from it: see the next section.
+
+## Frames at scale 2 have no single space
+
+On a second box, with the screen at 3840 by 2160:
+
+| App | Its window, in X's pixels | An element's frame from Cua Driver | Where it is, in X's pixels |
+| --- | --- | --- | --- |
+| GTK 3 test window, at scale 2 | 4, 82, 1400 by 1000 | button 302, 241, 180 by 60 | 604, 482, 360 by 120 |
+| Mousepad, at scale 2 | 1280, 639, 1280 by 960 | File menu 640, 319, 39 by 25 | twice the frame |
+| Chrome 157, at scale 2 | 20, 74, 1890 by 2066 | its window's frame 10, 37, 945 by 1033 | twice the frame |
+| Chrome 157, at scale 2 | the same | a page's button 646, 685, 360 by 120 | the frame as given |
+
+Cua Driver's `get_screen_size` said a scale of 1.0, and its `window_bounds` were in X's pixels. For GTK apps it lists no frame for the window itself. The GTK button's frame lies inside its window read either way.
+
+## Clicks with the check
+
+The same GTK test window, a button at 300, 200 and 180 by 60 in its own points, through this decision's computer code driving the real Cua Driver. The check took 5 to 8 ms in the box.
+
+| Scale | Click | The button's centre, in X's pixels | What BB Box noted |
+| --- | --- | --- | --- |
+| 2 | by reference | 784, 542 | nothing: the check said scaled |
+| 2 | by pixels | 784, 542 | 784, 541 |
+| 1 | by reference | 394, 312 | 394, 312 |
+| 1 | by pixels | 394, 312 | 394, 311 |
 
 ## The pointer over the picture
 

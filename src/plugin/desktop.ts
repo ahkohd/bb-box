@@ -174,6 +174,7 @@ export interface Desktops {
    */
   paste(boxId: string, viewer: string, text: string): Promise<void>;
   agentActed(box: BoxRecord, input: ActedInput): void;
+  forgetAgent(boxId: string): void;
   /** Whether the box's desktop is High resolution, or null where it cannot be. */
   sharp(boxId: string): Promise<boolean | null>;
   /** Makes the box's desktop High resolution, twice the pixels at twice Xfce's scale, or not. */
@@ -493,11 +494,22 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   const listenAgent = (boxId: string, send: (message: string) => void): (() => void) => {
     const listeners = agentListeners.get(boxId) ?? new Set<(message: string) => void>();
     agentListeners.set(boxId, listeners);
-    listeners.add(send);
-    const last = agentPlaces.get(boxId);
-    if (last) send(last);
+    let told = false;
+    const tell = (message: string) => {
+      told = true;
+      send(message);
+    };
+    listeners.add(tell);
+    void boxes
+      .find(boxId)
+      .then((box) => {
+        const last = agentPlaces.get(boxId);
+        if (told || !last || !listeners.has(tell) || box?.state !== "ready" || !viewerDrawsAgentCursor(box)) return;
+        tell(last);
+      })
+      .catch((error: unknown) => deps.logError("tell a viewer where the agent last acted", error));
     return () => {
-      listeners.delete(send);
+      listeners.delete(tell);
       if (!listeners.size && agentListeners.get(boxId) === listeners) agentListeners.delete(boxId);
     };
   };
@@ -1127,6 +1139,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   return {
     control,
     agentActed,
+    forgetAgent: (boxId) => void agentPlaces.delete(boxId),
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${DESKTOP_ROUTE}`,
     async sharp(boxId) {
       const box = await boxes.find(boxId);

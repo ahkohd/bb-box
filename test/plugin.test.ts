@@ -4451,23 +4451,82 @@ test("on a Linux desktop, whose driver draws no agent cursor, each viewer is tol
   assert.deepEqual(agentSaid(macViewer), []);
 });
 
-test("on a Linux desktop at Xfce's scale 2, whose GTK apps give element frames in half the screen's pixels, the agent's click by reference is shown where it lands (073)", async (t) => {
+function withXfceScale(t: TestContext, scale: number): void {
+  const bin = tempDir("xfconf");
+  writeFileSync(join(bin, "xfconf-query"), `#!/bin/sh\ncase "$*" in *WindowScalingFactor*) echo ${scale} ;; *) exit 1 ;; esac\n`);
+  chmodSync(join(bin, "xfconf-query"), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${bin}:${path}`;
+  t.after(() => {
+    process.env.PATH = path;
+  });
+}
+
+function agentClicks(session: { sent: readonly (string | Uint8Array)[] }): string[] {
+  return session.sent.filter((message): message is string => typeof message === "string" && message.startsWith("BB_AGENT,click,"));
+}
+
+test("on a Linux desktop at Xfce's scale 2, a click by reference, whose frame may be in points or pixels, is not placed, and a click by pixels is (101)", async (t) => {
+  withXfceScale(t, 2);
   const { harness, box, file, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   editDesktop(file, (desktop) => {
-    for (const window of desktop.windows) window.halfFrames = true;
+    const tasks = desktop.windows[0]!;
+    tasks.x = 0;
+    tasks.y = 0;
+    tasks.halfFrames = true;
   });
   const vnc = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
   const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
-  await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Delete Task 1"') });
-  const tasks = readDesktop(file).windows.find((window) => window.id === 100)!;
-  const centre = { x: tasks.x + 700 + 90 / 2, y: tasks.y + 45 + 30 / 2 };
-  await until("the click told", async () => vnc.sent.some((message) => typeof message === "string" && message.startsWith("BB_AGENT,click,")));
-  assert.deepEqual(
-    vnc.sent.filter((message) => typeof message === "string" && message.startsWith("BB_AGENT,click,")),
-    [`BB_AGENT,click,${centre.x},${centre.y}`],
-  );
+  const clicked = await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Delete Task 1"') });
+  assert.equal(isError(clicked), false, text(clicked));
+  await tool("computer_screenshot", { box: box.name });
+  const byPixels = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 400, y: 300 }));
+  const [, sx, sy] = /\((\d+), (\d+)\) on the screen/.exec(byPixels)!;
+  await until("the click by pixels told", async () => agentClicks(vnc).length > 0);
+  assert.deepEqual(agentClicks(vnc), [`BB_AGENT,click,${sx},${sy}`], "nothing for the click by reference: half its frame or the frame as given could both be right");
   await vnc.close();
+});
+
+test("on a Linux desktop at scale 1, a click by reference on an element partly above its window is placed at its frame on the screen (101, 048)", async (t) => {
+  withXfceScale(t, 1);
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    desktop.windows[0]!.olderTasks = true;
+  });
+  const vnc = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Show older tasks"') });
+  await until("the click told", async () => agentClicks(vnc).length > 0);
+  assert.deepEqual(agentClicks(vnc), ["BB_AGENT,click,220,110"]);
+  await vnc.close();
+});
+
+test("where the agent last acted is forgotten as its box stops or is released, so no viewer is shown an old place (101)", async (t) => {
+  const { harness, box, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const agentSaid = (session: { sent: readonly (string | Uint8Array)[] }) => session.sent.filter((message): message is string => typeof message === "string" && message.startsWith("BB_AGENT,"));
+  await tool("computer_screenshot", { box: box.name });
+  await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 400, y: 300 });
+  const before = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
+  await until("the last place told", async () => agentSaid(before).length > 0);
+  await before.close();
+
+  assert.equal(((await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name })) as { box: { state: string } }).box.state, "stopped");
+  assert.equal(((await harness.behavior.callRpc("start", { threadId: THREAD, box: box.id })) as { box: { state: string } }).box.state, "ready");
+  const restarted = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.deepEqual(agentSaid(restarted), [], "a desktop that started again has no place of the agent's yet");
+  await restarted.close();
+
+  await tool("computer_screenshot", { box: box.name });
+  await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 400, y: 300 });
+  assert.deepEqual(await harness.behavior.callRpc("release", { threadId: THREAD, box: box.name }), { box: null, error: null });
+  const released = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00003&stream=pointer`);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.deepEqual(agentSaid(released), [], "a released box's last place is not replayed");
+  await released.close();
 });
 
 test("the backend resizes a desktop whose stream server cannot, one resize at a time and the latest last, and not below the display's smallest size (021)", async (t) => {

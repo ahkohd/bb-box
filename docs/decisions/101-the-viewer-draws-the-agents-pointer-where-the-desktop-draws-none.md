@@ -16,7 +16,8 @@ BB Box already knows each of the agent's clicks and scrolls, and where on the sc
 - The panel draws the agent's pointer there, over the picture, scaled and placed as the picture is. It is the arrow recordings draw (073), at a fixed 40 px, in BB's primary colour on its primary foreground, so it reads in both themes. Each click shows a ring that grows and fades within 0.6 seconds, with no motion when the person has asked for less. The pointer stays where the agent last acted, as Cua's does on macOS and Windows.
 - The viewer with control does not see it: their own pointer stands for it.
 - On macOS and Windows, nothing changes: Cua Driver's cursor is in the picture.
-- Where an element's frame lies outside its window, and inside it at twice its size, the frame is in a GTK app's points at Xfce's scale 2, as with High resolution. BB Box notes such a click at twice the frame, in the screen's pixels, for the live pointer and for recordings alike.
+- A click by pixels is placed where Cua clicked. A click, scroll or text by reference is placed at the element's frame only where the desktop is not scaled. Where it is scaled, as at High resolution, it has no place: the live pointer stays where it was, and a recording shows no ring for it.
+- Whether the desktop is scaled is read in the box, as the action is made: GTK's scale (`GDK_SCALE` and Xfce's `Gdk/WindowScalingFactor`), Qt's `QT_SCALE_FACTOR`, Xfce's `Xft/DPI` other than 96, and each Sway output's scale. A read that fails counts as scaled. It runs beside the action, so the tool does not wait for it.
 
 ## Consequences
 
@@ -24,4 +25,6 @@ BB Box already knows each of the agent's clicks and scrolls, and where on the sc
 - The pointer is drawn only in BB Box's viewer. A recording draws its own, from the same events (073), so a clip shows one pointer, not two.
 - It needs no new image: it works on every Linux desktop now running, on X11 and Wayland.
 - The pointer shows where the agent clicked or scrolled, not where it typed or pressed keys, and it does not glide between places.
+- On a scaled desktop, a click by reference shows no pointer, live or in a recording. There, frames come in either space and nothing says which. At Xfce's scale 2, a GTK app gives element frames in points, half the screen's pixels. Chrome gives its own toolbar's in points and its page's in pixels, in one window. Cua Driver says a scale of 1 and gives no frame for the window's own element. A frame in points can lie inside its window read either way. A test of where frames lie put one in two places, and put an element partly above its window at twice its place. So BB Box does not guess.
+- What the agent last did is forgotten as its box stops, restarts or is released. A viewer that connects is told it only while the box is running.
 - iOS and Android devices could show the agent's taps the same way, from the device's own events, on the device stream. That is not built yet.

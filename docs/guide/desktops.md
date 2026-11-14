@@ -62,7 +62,7 @@ A box's clipboard is its own. A Mac that runs boxes as virtual machines does not
 
 Without control, your own pointer shows over the desktop. With control, the pointer takes the box's shape. If the box hides its pointer, yours shows instead, so it never disappears.
 
-People watching a desktop see where the agent works. On macOS and Windows, the box draws the agent's pointer itself. On a Linux desktop, BB Box draws it over the picture: a grey arrow where the agent last clicked or scrolled, with a ring that grows and fades at each click. It shows over VNC and over video, on X11 and Wayland, and stays where the agent last acted. While you hold control, it does not show for you.
+People watching a desktop see where the agent works. On macOS and Windows, the box draws the agent's pointer itself. On a Linux desktop, BB Box draws it over the picture: a grey arrow where the agent last clicked or scrolled, with a ring that grows and fades at each click. It shows over VNC and over video, on X11 and Wayland, and stays where the agent last acted. While you hold control, it does not show for you. At High resolution, or any other scale, a click on an element by its reference does not move it, as BB Box cannot tell where that element is on the screen; a click at a place on the screen does.
 
 ## Video
 
