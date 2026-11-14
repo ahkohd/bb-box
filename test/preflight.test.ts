@@ -18,6 +18,8 @@ const MACHINE_CHECK_IMPORT = 'import "./check-test-machine.mjs";';
 const NOWHERE = "/nonexistent/bb-box-image.json";
 const QUICK_PROBE = { answerWithinMs: 300, killAfterMs: 300 };
 const LONGEST_QUICK_PROBE_MS = 3_000;
+const A_KILL_TAKES_EFFECT_WITHIN_MS = 5_000;
+const KILL_POLL_MS = 20;
 
 const A_DEVELOPERS_MACHINE: TestMachineFacts = { root: false, sudo: SUDO_ANSWERS.noPassword, tailscale: "/usr/bin/tailscale", box: false, githubActions: false, override: false, noExemptions: false };
 const REFUSAL = /^BB Box's tests will not run on this machine: this user can run sudo without a password, and Tailscale is installed, at \/usr\/bin\/tailscale\. A test that goes wrong could change this machine: one once logged a machine out of its tailnet\. Run the tests in a BB Box box or on GitHub Actions\. To run them here anyway, at the risk of changing this machine, set BBBOX_TESTS_MAY_BREAK_THIS_MACHINE=1\.$/;
@@ -55,6 +57,15 @@ function stillRunning(pid: number): boolean {
   }
   const stat = existsSync(`/proc/${pid}/stat`) ? readFileSync(`/proc/${pid}/stat`, "utf8") : "";
   return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) !== "Z";
+}
+
+async function stopsWithin(pid: number, ms: number): Promise<boolean> {
+  const until = Date.now() + ms;
+  while (stillRunning(pid)) {
+    if (Date.now() > until) return false;
+    await new Promise((resolve) => setTimeout(resolve, KILL_POLL_MS));
+  }
+  return true;
 }
 
 function machineCheckImport(fromFolder: string, testRoot: string): string {
@@ -109,13 +120,13 @@ test("a sudo that hangs is stopped at the deadline, even one that ignores SIGTER
   }
 });
 
-test("whatever sudo answers, what it left running in its process group is stopped", () => {
+test("whatever sudo answers, what it left running in its process group is stopped", async () => {
   const pidFile = join(tempDir("left-running"), "pid");
 
   const facts = readTestMachineFacts({ env: { PATH: sudoThat(`sleep 60 &\necho $! > ${pidFile}\nexit 1`) }, marker: NOWHERE, sudoLimits: QUICK_PROBE });
 
   assert.equal(facts.sudo, SUDO_ANSWERS.needsPassword);
-  assert.equal(stillRunning(Number(readFileSync(pidFile, "utf8"))), false);
+  assert.equal(await stopsWithin(Number(readFileSync(pidFile, "utf8")), A_KILL_TAKES_EFFECT_WITHIN_MS), true);
 });
 
 test("the machine's facts come from the uid it runs as, its sudo, its Tailscale and GitHub's variables, and a record at the box marker's path that someone other than root owns is not a box", () => {
