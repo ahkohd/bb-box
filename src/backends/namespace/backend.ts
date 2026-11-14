@@ -516,9 +516,10 @@ export class NamespaceBackend implements Backend {
   }
 
   #whyMeasureAfresh(): string | null {
+    if (this.slots.offerable().ok) return null;
     const reports = this.macCapabilities();
-    const latest = reports[0];
-    if (latest && measuredByOlderProbe(latest) && !this.slots.offerable().ok) return "its last report came from an older probe and cannot make an offer";
+    const older = reports.find(measuredByOlderProbe);
+    if (older) return older === reports[0] ? "its last report came from an older probe and cannot make an offer" : `its report of an ${older.chip ?? "unknown chip"} came from an older probe, and no kind of Mac makes an offer`;
     const unsettled = reports.find((report) => report.capabilities.simulator.is === "unknown");
     return unsettled ? `its last measurement of an ${unsettled.chip ?? "unknown chip"} did not finish` : null;
   }
@@ -535,7 +536,6 @@ export class NamespaceBackend implements Backend {
     if (await this.slots.record()) return;
     const mac = (await this.#held(signal)).find((instance) => instance.status === "running" && !isLinuxKind(instance.labels[LABELS.kind] ?? "") && !this.#measuredWhole(instance.id));
     if (mac) return void (await this.#probes.measure(mac.id, signal));
-    if (this.slots.offerable().ok) return;
     const tried = await this.#context.storage.get<number>(MEASURE_TRIED);
     if (typeof tried === "number" && this.#now() - tried < MEASURE_AGAIN_AFTER_MS) return;
     const room = await this.#hostRoom(signal);
