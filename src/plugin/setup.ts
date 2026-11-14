@@ -873,6 +873,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       // A desktop that stops, restarts or goes gives control back to the agent.
       if (deleted || box.state !== "ready") {
         desktops?.control.forget(box.id);
+        desktops?.forgetAgent(box.id);
         computer?.forget(box.id);
         deviceComputer?.forget(box.id);
         // Its shells are gone with it; their tabs hear why.
@@ -1059,7 +1060,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const recordings = new RecordingInputs();
   const clipFfmpeg = new ClipFfmpegLedger();
   const computing = new Computer({
-    onInput: (box, input, sentAt) => recordings.acted(box.id, input, sentAt),
+    onInput: (box, input, sentAt) => {
+      recordings.acted(box.id, input, sentAt);
+      desktops?.agentActed(box, input, sentAt);
+    },
     async spawn(box, script, signal) {
       const { command } = await boxes.transports(box);
       if (!command?.spawn) throw new BoxError("unsupported", `Box ${box.name}'s command transport cannot start the computer-use driver.`);

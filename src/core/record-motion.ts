@@ -71,6 +71,7 @@ export interface PlacedTyping {
   readonly window?: InputArea | null;
   readonly by?: InputSource;
   readonly call?: number;
+  readonly placeUnknown?: boolean;
 }
 
 export interface ChangedRegion extends InputArea {
@@ -471,6 +472,7 @@ export function typingFocus(scene: Scene, typing: PlacedTyping, pointer: Pointer
   const near = scene.changes.filter((change) => change.at >= span.from - 0.3 && change.at <= span.to + 0.5 && within(change) && areaOf(change) > 0 && !fieldRepaint(change, typing.area));
   const inField = near.map((change) => (typing.area && areaOf(typing.area) > 0 ? intersectionOf(change, typing.area) : change)).filter((area): area is InputArea => !!area && areaOf(area) > 0);
   if (inField.length) return unionOf(inField);
+  if (typing.placeUnknown) return null;
   const field = typing.area && areaOf(typing.area) > 0 ? typing.area : null;
   if (field && viewContaining(scene, field).zoom >= ZOOM_LEAST) return field;
   return caretLine(scene, field, pointer, span.to);

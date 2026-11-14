@@ -1,4 +1,4 @@
-# 102: A Mac measurement that does not finish says not known, and never replaces one that did
+# 103: A Mac measurement that does not finish says not known, and never replaces one that did
 
 Status: accepted, 14 November 2026. Extends [065](065-macs-say-what-they-offer-and-ios-streams-in-software-where-they-must.md).
 
@@ -8,7 +8,7 @@ BB Box measures each Mac it starts on Namespace in the background, as soon as th
 
 A box released within those seconds destroys its Mac while the probe runs. The transport hands back what the probe had printed: the chip, macOS and Xcode, and nothing after. The parser read the missing runtime list as an empty one, so it recorded "Xcode has no iOS runtime", and the hardware encoder as not measured. Namespace keeps one report for each kind of Mac, and the newest replaced the last. So one release seconds after ready took `ios` and shared iOS hosts away from every thread, until a later Mac of that kind was measured in full. The doctor also said "as it has no hardware H.264 encoder" when the encoder had not been measured.
 
-Measured at the earliest point of boot, the probe answered in full. The slow first list did not give an empty answer by itself. See the [results](102-results.md).
+Measured at the earliest point of boot, the probe answered in full. The slow first list did not give an empty answer by itself. See the [results](103-results.md).
 
 ## Decision
 
