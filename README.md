@@ -72,7 +72,7 @@ Set up BB Box for me: the BB plugin that gives threads computers of their own, c
    bb plugin install git:https://github.com/ahkohd/bb-box.git@main
    ```
 
-   The store installs the latest release and updates within 0.x. `@main` follows new work as it lands. A release tag, such as `@v0.2.3`, stays on that release.
+   The store installs the latest release and updates within 0.x. `@main` follows new work as it lands. A release tag, such as `@v0.2.4`, stays on that release.
 
 2. On Linux, open a thread's **Box** panel, or BB Box in BB's settings, and select **Use Docker on this machine**. The Linux image usually builds in 5 to 12 minutes, depending on the machine. On a Mac with Apple silicon, run `bb box backend add microsandbox --on` instead; its arm64 image builds in about 3 minutes. `bb box doctor` checks the setup.
 3. Select the plus, then **Create box**.
