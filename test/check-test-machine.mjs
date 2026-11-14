@@ -1,6 +1,6 @@
 import { refusalForThisMachine } from "./preflight.mjs";
 
-const refusal = await refusalForThisMachine();
+const refusal = refusalForThisMachine();
 
 if (refusal !== null) {
   if (process.env.VITEST) throw new Error(refusal);

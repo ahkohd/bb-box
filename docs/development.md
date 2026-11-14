@@ -31,18 +31,21 @@ npm run reference
   that matters. Some fakes run a box's scripts on the test machine itself,
   and a script can reach that machine's own tools in ways no fake can
   stop, such as by a full path. Each test file's first import,
-  `test/check-test-machine.mjs`, checks the machine before any test runs,
-  however the file is run: by `npm test`, `npm run test:app`, `node
-  --test`, `node` alone or vitest. The tests refuse to start where the
-  current user can run `sudo` without a password, where `sudo -n true`
-  does not answer within 10 seconds or fails, where the tests run as root,
-  or where Tailscale is installed. They start anyway in a BB Box box,
-  whose `/usr/share/bb-box/image.json` is an image record that only root
-  can change, or in a GitHub Actions run. To run them on such a machine
-  anyway, at the risk of changing it, set
-  `BBBOX_TESTS_MAY_BREAK_THIS_MACHINE=1`. A new test file starts with
-  `import "./check-test-machine.mjs";`, and a test fails while one does
-  not.
+  `test/check-test-machine.mjs`, checks the machine, and finishes before
+  the file's other imports load, however the file is run: by `npm test`,
+  `npm run test:app`, `node --test`, `node` alone or vitest. The tests
+  refuse to start where the current user can run `sudo` without a
+  password, where the tests run as root, where Tailscale is installed, or
+  where `sudo -n true` gives no clear answer: it fails other than by
+  asking for a password, or has not answered within 10 seconds, when its
+  process group gets SIGTERM and, 2 seconds later, SIGKILL. They start
+  anyway in a BB Box box, whose `/usr/share/bb-box/image.json` is an image
+  record of a contract and kind BB Box knows, that only root can change,
+  or in a GitHub Actions run. To run them on such a machine anyway, at the
+  risk of changing it, set `BBBOX_TESTS_MAY_BREAK_THIS_MACHINE=1`. A test
+  file, in any folder under `test`, starts with `import
+  "./check-test-machine.mjs";`, by its own relative path, and a test fails
+  while one does not.
 - The stubs keep the fakes' own scripts off the machine's tools, as far as
   a PATH can. A fake that runs a box's script on the test machine, such as
   the fake `ssh`, `docker` or microsandbox, puts a folder of stubs first
