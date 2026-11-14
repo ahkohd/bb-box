@@ -12,7 +12,7 @@ import { NS_HOST_KEY } from "../src/backends/namespace/ios-hosts.ts";
 import { CUA_SHA256, CUA_VERSION } from "../src/backends/tart/backend.ts";
 import { parseNamespacePart, type NamespaceConfig } from "../src/backends/namespace/config.ts";
 import { Tailnet } from "../src/core/tailnet.ts";
-import { PROBE_VERSION, reportKey, type MacReport } from "../src/core/mac-capabilities.ts";
+import { PROBE_FINISHED, PROBE_VERSION, deviceRoom, parseMacProbe, reportKey, type MacReport } from "../src/core/mac-capabilities.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type Guest } from "../src/backends/types.ts";
 import { FAKE_NAMESPACE_TOKEN, FakeNamespace, type FakeInstance } from "./fake-namespace.ts";
 import { FAKE_MAC_HELPER, FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
@@ -511,6 +511,26 @@ test("Namespace counts which of its Macs of a kind had a hardware encoder, once 
   assert.deepEqual(again.all()[0]?.machines, { withHardwareEncoder: 1, withoutHardwareEncoder: 1 });
   for (let n = 0; n < MACHINES_KEPT_PER_CHIP + 5; n++) again.remember({ ...IOS_REPORT, at: 10 + n, mac: `more-${n}` }, `more-${n}`);
   assert.deepEqual(again.all()[0]?.machines, { withHardwareEncoder: MACHINES_KEPT_PER_CHIP, withoutHardwareEncoder: 0 }, "it keeps the latest machines of each kind");
+});
+
+test("a Namespace Mac released while it is measured, seconds after it is ready, leaves its kind's offer as the last whole measurement found it", async () => {
+  const storage = new MemoryStorage();
+  const reports = new NamespaceMacReports(storage, () => {});
+  reports.remember({ ...IOS_REPORT, mac: "instance-a" }, "instance-a");
+  const cutShort = parseMacProbe(`chip=${IOS_REPORT.chip}\nmacos=26.3.1\nxcode=26.1.1\nruntimes=\n`, "instance-b", 2, "mac");
+  reports.remember(cutShort, "instance-b");
+  const [kind] = reports.all();
+  assert.equal(reports.all().length, 1);
+  assert.deepEqual(kind?.capabilities.simulator, IOS_REPORT.capabilities.simulator);
+  assert.deepEqual(deviceRoom(kind!.capabilities), { is: "yes", way: "hardware" });
+  assert.deepEqual(kind?.machines, { withHardwareEncoder: 1, withoutHardwareEncoder: 0 }, "a machine not measured is not counted");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual((await storage.get<MacReport>(reportKey(IOS_REPORT.chip!)))?.capabilities.simulator, IOS_REPORT.capabilities.simulator, "what is saved is the whole measurement");
+  reports.remember(parseMacProbe("", "instance-c", 3, "mac"), "instance-c");
+  assert.deepEqual(reports.all().map((report) => report.mac), [IOS_REPORT.chip], "a probe that said nothing, not even its chip, makes no kind of Mac");
+  const noRuntime = parseMacProbe(`chip=${IOS_REPORT.chip}\nxcode=26.1.1\nruntimes=\nhardware=yes frames=12 seconds=0.1\nsoftware=no why=bb-box-h264 is not installed\n${PROBE_FINISHED}\n`, "instance-d", 4, "mac");
+  reports.remember(noRuntime, "instance-d");
+  assert.equal(reports.all()[0]?.capabilities.simulator.is, "no", "a whole measurement that finds no runtime still counts");
 });
 
 test("box_list's ios offer on Namespace says its slots are on a Mac made for them, and the doctor says when Namespace's Macs vary by machine", async () => {

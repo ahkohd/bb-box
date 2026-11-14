@@ -1,4 +1,4 @@
-import { loadReports, reportKey, withCapabilities, type MacReport, type Measured, type SoftwareEncoderOffer } from "../../core/mac-capabilities.ts";
+import { keptConclusive, loadReports, reportKey, withCapabilities, type MacReport, type Measured, type SoftwareEncoderOffer } from "../../core/mac-capabilities.ts";
 import type { BackendStorage } from "../types.ts";
 
 export const SOFTWARE_ENCODER_EACH_HOST_BUILDS: Measured<SoftwareEncoderOffer> = { is: "yes", what: { encoder: "OpenH264, built when a shared iOS host starts" } };
@@ -6,6 +6,10 @@ export const MACHINES_KEY_PREFIX = "mac-machines/";
 export const MACHINES_KEPT_PER_CHIP = 20;
 
 type HardwareByMachine = Map<string, boolean>;
+
+function measuredNothing(report: MacReport): boolean {
+  return Object.values(report.capabilities).every((measured) => measured.is === "unknown");
+}
 
 export class NamespaceMacReports {
   readonly #storage: BackendStorage;
@@ -35,7 +39,8 @@ export class NamespaceMacReports {
     const known = this.#byChip.get(chip);
     if (measuredOn) this.#tally(chip, measuredOn, report);
     if (known && known.at > report.at) return;
-    const byChip: MacReport = { ...report, mac: chip };
+    if (!report.chip && measuredNothing(report)) return;
+    const byChip: MacReport = keptConclusive(known ?? null, { ...report, mac: chip });
     this.#byChip.set(chip, byChip);
     this.#offered = null;
     if (measuredOn) void this.#storage.set(reportKey(chip), byChip).catch((error) => this.#logError(`keep what Namespace's ${chip} Macs offer`, error));
