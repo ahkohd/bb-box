@@ -4429,8 +4429,7 @@ test("on a Linux desktop, whose driver draws no agent cursor, each viewer is tol
   const [, sx, sy] = /\((\d+), (\d+)\) on the screen/.exec(clicked)!;
   await until("both viewers told of the click", async () => agentSaid(vnc).includes(`BB_AGENT,click,${sx},${sy}`) && agentSaid(video).includes(`BB_AGENT,click,${sx},${sy}`));
   assert.equal(vnc.closeCalls.length, 0, "the pointer stream stays open for the agent's actions, though the image has no bb-box-cursor");
-  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
-  await tool("computer_act", { box: box.name, action: "scroll", ref: refOf(tree, '"Add"'), direction: "down" });
+  await tool("computer_act", { box: box.name, action: "scroll", window: "desktop", x: 300, y: 200, direction: "down" });
   await until("the scroll", async () => agentSaid(vnc).some((message) => message.startsWith("BB_AGENT,scroll,")));
   const scrolled = agentSaid(vnc).find((message) => message.startsWith("BB_AGENT,scroll,"))!;
   const later = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
@@ -4451,59 +4450,78 @@ test("on a Linux desktop, whose driver draws no agent cursor, each viewer is tol
   assert.deepEqual(agentSaid(macViewer), []);
 });
 
-function withXfceScale(t: TestContext, scale: number): void {
+function withXfceScale(t: TestContext, scale: number, slowMs = 0): string {
   const bin = tempDir("xfconf");
-  writeFileSync(join(bin, "xfconf-query"), `#!/bin/sh\ncase "$*" in *WindowScalingFactor*) echo ${scale} ;; *) exit 1 ;; esac\n`);
+  const asked = join(bin, "asked");
+  writeFileSync(join(bin, "xfconf-query"), `#!/bin/sh\necho "$*" >> '${asked}'\nsleep ${slowMs / 1000}\ncase "$*" in *WindowScalingFactor*) echo ${scale} ;; *) exit 1 ;; esac\n`);
   chmodSync(join(bin, "xfconf-query"), 0o755);
   const path = process.env.PATH;
   process.env.PATH = `${bin}:${path}`;
   t.after(() => {
     process.env.PATH = path;
   });
+  return asked;
 }
 
 function agentClicks(session: { sent: readonly (string | Uint8Array)[] }): string[] {
   return session.sent.filter((message): message is string => typeof message === "string" && message.startsWith("BB_AGENT,click,"));
 }
 
-test("on a Linux desktop at Xfce's scale 2, a click by reference, whose frame may be in points or pixels, is not placed, and a click by pixels is (101)", async (t) => {
-  withXfceScale(t, 2);
-  const { harness, box, file, tool } = await desktopBox();
-  t.after(() => harness.lifecycle.dispose());
-  editDesktop(file, (desktop) => {
-    const tasks = desktop.windows[0]!;
-    tasks.x = 0;
-    tasks.y = 0;
-    tasks.halfFrames = true;
+for (const scale of [1, 2]) {
+  test(`on a Linux desktop at scale ${scale}, a click by reference shows no pointer, as BB Box cannot know where it is, and a click by pixels shows one where Cua clicked (102)`, async (t) => {
+    withXfceScale(t, scale);
+    const { harness, box, file, tool } = await desktopBox();
+    t.after(() => harness.lifecycle.dispose());
+    editDesktop(file, (desktop) => {
+      const tasks = desktop.windows[0]!;
+      tasks.olderTasks = scale === 1;
+      tasks.halfFrames = scale === 2;
+    });
+    const vnc = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
+    const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+    const clicked = await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, scale === 1 ? '"Show older tasks"' : '"Delete Task 1"') });
+    assert.equal(isError(clicked), false, text(clicked));
+    await tool("computer_screenshot", { box: box.name });
+    const byPixels = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 400, y: 300 }));
+    const [, sx, sy] = /\((\d+), (\d+)\) on the screen/.exec(byPixels)!;
+    await until("the click by pixels told", async () => agentClicks(vnc).length > 0);
+    assert.deepEqual(agentClicks(vnc), [`BB_AGENT,click,${sx},${sy}`]);
+    await vnc.close();
   });
-  const vnc = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
+}
+
+test("a click by reference on a Linux desktop waits for nothing in the box before the tool answers (102)", async (t) => {
+  const asked = withXfceScale(t, 2, 5_000);
+  const { harness, box, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
   const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  const began = Date.now();
   const clicked = await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Delete Task 1"') });
   assert.equal(isError(clicked), false, text(clicked));
-  await tool("computer_screenshot", { box: box.name });
-  const byPixels = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 400, y: 300 }));
-  const [, sx, sy] = /\((\d+), (\d+)\) on the screen/.exec(byPixels)!;
-  await until("the click by pixels told", async () => agentClicks(vnc).length > 0);
-  assert.deepEqual(agentClicks(vnc), [`BB_AGENT,click,${sx},${sy}`], "nothing for the click by reference: half its frame or the frame as given could both be right");
-  await vnc.close();
+  assert.ok(Date.now() - began < 3_000, `it took ${Date.now() - began} ms`);
+  assert.equal(existsSync(asked), false, "no setting was read in the box");
 });
 
-test("on a Linux desktop at scale 1, a click by reference on an element partly above its window is placed at its frame on the screen (101, 048)", async (t) => {
-  withXfceScale(t, 1);
-  const { harness, box, file, tool } = await desktopBox();
+test("an action that began before its box stopped shows no pointer once the box runs again (102)", async (t) => {
+  const { harness, app, box } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
-  editDesktop(file, (desktop) => {
-    desktop.windows[0]!.olderTasks = true;
-  });
+  const click = { type: "click", button: "left", count: 1, point: { x: 845, y: 160 }, area: null, role: null, window: null } as const;
+  const began = Date.now();
+  assert.equal(((await harness.behavior.callRpc("stop", { threadId: THREAD, box: box.name })) as { box: { state: string } }).box.state, "stopped");
+  assert.equal(((await harness.behavior.callRpc("start", { threadId: THREAD, box: box.id })) as { box: { state: string } }).box.state, "ready");
+  const running = (await only(app))!;
   const vnc = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
-  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
-  await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Show older tasks"') });
-  await until("the click told", async () => agentClicks(vnc).length > 0);
-  assert.deepEqual(agentClicks(vnc), ["BB_AGENT,click,220,110"]);
+  app.desktops.agentActed(running, click, began);
+  const later = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.deepEqual([...agentClicks(vnc), ...later.sent.filter((message) => typeof message === "string" && message.startsWith("BB_AGENT,"))], [], "the old action is not shown, nor kept for a later viewer");
+  app.desktops.agentActed(running, click, Date.now());
+  await until("an action since the start shown", async () => agentClicks(vnc).length === 1);
   await vnc.close();
+  await later.close();
 });
 
-test("where the agent last acted is forgotten as its box stops or is released, so no viewer is shown an old place (101)", async (t) => {
+test("where the agent last acted is forgotten as its box stops or is released, so no viewer is shown an old place (102)", async (t) => {
   const { harness, box, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   const agentSaid = (session: { sent: readonly (string | Uint8Array)[] }) => session.sent.filter((message): message is string => typeof message === "string" && message.startsWith("BB_AGENT,"));
@@ -8000,8 +8018,23 @@ test("070 unit 8: bb box snapshot keep and unkeep, a release that copies what wa
   assert.equal(app.snapshotStore.records().length, 0);
 });
 
+test("on a Linux desktop, a recording logs no place for actions by reference, as BB Box cannot know where they land, and keeps the typing as a count (102)", async (t) => {
+  const { harness, app, box, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  app.recordings.begin(box.id, 0, "linux");
+  await tool("computer_type", { box: box.name, ref: refOf(tree, '"New task"'), text: "Buy milk" });
+  await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Add"') });
+  const events = app.recordings.end(box.id)!;
+  assert.deepEqual(
+    events.map((event) => (event.type === "typing" ? `typing ${event.characters} ${event.area ? "at a place" : "with no place"}` : event.type)),
+    ["typing 8 with no place", "typing 0 with no place"],
+  );
+});
+
 test("while a desktop box records, its computer use is logged for the clip: clicks where they land, chords, and typing as a count, never its text (073)", async (t) => {
-  const { harness, app, box, tool, file } = await desktopBox();
+  const kind: BoxKind = { ...FAKE_KINDS[1]!, id: "macos-desktop", label: "macOS desktop", capabilities: { ...FAKE_KINDS[1]!.capabilities, os: "macos" } };
+  const { harness, app, box, tool, file } = await desktopBox({ kind });
   t.after(() => harness.lifecycle.dispose());
   const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
   const field = refOf(tree, '"New task"');

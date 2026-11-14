@@ -117,7 +117,6 @@ export interface ComputerResult {
 
 export interface ComputerDeps {
   onInput?(box: BoxRecord, input: ActedInput, sentAt: number): void;
-  framesOnScreen?(box: BoxRecord): Promise<boolean>;
   /** Starts `script` in the box through its command transport's spawn. */
   spawn(box: BoxRecord, script: string, signal?: AbortSignal): Promise<ByteChannel>;
   /**
@@ -396,7 +395,7 @@ interface Use {
   readonly state: BoxState;
   readonly box: BoxRecord;
   readonly signal?: AbortSignal;
-  typedInput?: { readonly input: ActedInput; readonly sentAt: number; readonly framesOnScreen: Promise<boolean> } | null;
+  typedInput?: { readonly input: ActedInput; readonly sentAt: number } | null;
 }
 
 interface Read {
@@ -834,24 +833,8 @@ export function windowLine(window: WindowInfo): string {
   return `window ${window.id}: ${window.app || "an app"}${title}, ${window.width} by ${window.height}${window.onScreen ? "" : ", not on screen"}`;
 }
 
-export const UNSCALED_DESKTOP = "unscaled";
-
-export function unscaledDesktopScript(): string {
-  return `set -a; [ ! -r /run/bb-box/display.env ] || . /run/bb-box/display.env; set +a
-scaled() { echo scaled; exit 0; }
-case "\${GDK_SCALE:-1}" in 1) ;; *) scaled ;; esac
-case "\${QT_SCALE_FACTOR:-1}" in 1) ;; *) scaled ;; esac
-if command -v xfconf-query >/dev/null 2>&1; then
-  gdk=$(xfconf-query -c xsettings -p /Gdk/WindowScalingFactor 2>/dev/null) || gdk=1
-  [ "$gdk" = 1 ] || scaled
-  dpi=$(xfconf-query -c xsettings -p /Xft/DPI 2>/dev/null) || dpi=96
-  case "$dpi" in 96|-1) ;; *) scaled ;; esac
-fi
-if [ -n "\${SWAYSOCK:-}" ] && command -v swaymsg >/dev/null 2>&1; then
-  scales=$(swaymsg -t get_outputs -r 2>/dev/null | grep -o '"scale": *[0-9.]*' | grep -o '[0-9.]*$') || scales=
-  for each in $scales; do case "$each" in 1|1.0) ;; *) scaled ;; esac; done
-fi
-echo ${UNSCALED_DESKTOP}`;
+export function framesPlaceActions(os: GuestOs): boolean {
+  return os !== "linux";
 }
 
 function toArea(rect: Rect): InputArea {
@@ -1172,14 +1155,13 @@ export class Computer {
       // An element Cua cannot click as an element is clicked at its centre (048).
       const centre = step.tool === "click" && target.element?.frame ? cannotInject : undefined;
       const sentAt = Date.now();
-      const framesOnScreen = this.#framesOnScreen(use.box, target.element?.frame ?? null);
       let { result, foreground } = await this.#deliver(use, step.tool, { ...target.args, ...step.args }, input.action !== "set_value", centre);
       let elsewhere = landedElsewhere(result);
       const byPosition = !!result.isError && !elsewhere;
       let before = target.snapshot;
       if (byPosition) ({ result, foreground, snapshot: before } = await this.#centre(use, target, step.args));
       elsewhere ??= landedElsewhere(result);
-      await this.#noteAct(use, input, target, sentAt, framesOnScreen);
+      this.#noteAct(use, input, target, sentAt);
       const done = `${step.done} ${target.label}${byPosition ? " at its centre" : ""}${input.action === "set_value" ? ` to "${input.value}"` : ""}${foreground ? POINTER : ""}.${byPosition ? ` ${BY_POSITION}` : ""}`;
       const lines = [target.coordinates ? `${done} ${target.coordinates}` : done];
       if (elsewhere) lines.push(await this.#cameForward(use, elsewhere.forward));
@@ -1192,13 +1174,12 @@ export class Computer {
     });
   }
 
-  async #noteAct(use: Use, input: ActInput, target: Target, sentAt: number, framesOnScreen: Promise<boolean>): Promise<void> {
+  #noteAct(use: Use, input: ActInput, target: Target, sentAt: number): void {
     const onInput = this.#deps.onInput;
     if (!onInput) return;
     const window = target.snapshot?.window ? toArea(target.snapshot.window) : null;
-    const byPixels = target.screen ?? this.#windowPoint(use, target);
-    const area = (await framesOnScreen) ? (target.element?.frame ?? null) : null;
-    const point = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : byPixels;
+    const area = framesPlaceActions(use.box.capabilities.os) ? (target.element?.frame ?? null) : null;
+    const point = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : (target.screen ?? this.#windowPoint(use, target));
     const role = target.element?.role ?? null;
     if (input.action === "set_value") {
       const value = input.value ?? "";
@@ -1208,12 +1189,6 @@ export class Computer {
     if (!point) return;
     if (input.action === "scroll") onInput(use.box, { type: "scroll", point, window }, sentAt);
     else onInput(use.box, { type: "click", button: input.action === "right_click" ? "right" : "left", count: input.action === "double_click" ? 2 : 1, point, area: area ? toArea(area) : null, role, window }, sentAt);
-  }
-
-  #framesOnScreen(box: BoxRecord, frame: Rect | null): Promise<boolean> {
-    const check = this.#deps.framesOnScreen;
-    if (!frame || !this.#deps.onInput || box.capabilities.os !== "linux" || !check) return Promise.resolve(true);
-    return check(box).catch(() => false);
   }
 
   #windowPoint(use: Use, target: Target): { x: number; y: number } | null {
@@ -1232,19 +1207,16 @@ export class Computer {
     const typed = text ?? "";
     const input: ActedInput = keys
       ? { type: "keys", key: keys.key, modifiers: keys.modifiers }
-      : { type: "typing", characters: typed.length, area: element?.frame ? toArea(element.frame) : null, secret: typingKeptSecret(typedField(element), typed), role: element?.role ?? null, window: window ? toArea(window) : null };
-    use.typedInput = { input, sentAt: Date.now(), framesOnScreen: this.#framesOnScreen(use.box, keys ? null : (element?.frame ?? null)) };
+      : { type: "typing", characters: typed.length, area: element?.frame && framesPlaceActions(use.box.capabilities.os) ? toArea(element.frame) : null, secret: typingKeptSecret(typedField(element), typed), role: element?.role ?? null, window: window ? toArea(window) : null };
+    use.typedInput = { input, sentAt: Date.now() };
   }
 
-  async #typingDone(use: Use): Promise<void> {
+  #typingDone(use: Use): void {
     const pending = use.typedInput;
     use.typedInput = null;
-    const onInput = this.#deps.onInput;
-    if (!pending || !onInput) return;
-    const typed = pending.input;
-    const onScreen = await pending.framesOnScreen;
-    onInput(use.box, typed.type === "typing" && !onScreen ? { ...typed, area: null } : typed, pending.sentAt);
-    if (typed.type === "typing") onInput(use.box, { type: "typing", characters: 0, area: null, secret: typed.secret }, Date.now());
+    if (!pending || !this.#deps.onInput) return;
+    this.#deps.onInput(use.box, pending.input, pending.sentAt);
+    if (pending.input.type === "typing") this.#deps.onInput(use.box, { type: "typing", characters: 0, area: null, secret: pending.input.secret }, Date.now());
   }
 
   /** Types text, or presses a key chord, into a reference, a window's focused element, or whatever has the focus. */
@@ -1296,7 +1268,7 @@ export class Computer {
       const watch = await this.#watch(use, null);
       if (popup && !watch.popups.has(popup.window.id)) throw this.#closed(use.state, popup);
       await this.#deliver(use, tool, { scope: "desktop", ...typed }, true);
-      await this.#typingDone(use);
+      this.#typingDone(use);
       const where = popup ? `for ${popup.what ?? "the popup"} (window ${popup.window.id})` : "into whatever has the focus";
       const seen = await this.#settle(use, watch, { element: null, right: false });
       return { text: [`${what} with the real keyboard, ${where}.`, ...seen.parts].join("\n\n"), hints: seen.hints };
@@ -1371,7 +1343,7 @@ export class Computer {
 
   /** What typing said, and what changed in the window since `before`. */
   async #typed(use: Use, said: string, before: Snapshot | null, readBack: string | null, args: Json): Promise<ComputerResult> {
-    await this.#typingDone(use);
+    this.#typingDone(use);
     if (!before) return { text: said, hints: [`Call computer_observe with window ${args.window_id} to see it.`] };
     const changed = await this.#changes(use, before, { readBack, popups: { element: null, right: false, result: null }, late: true });
     return { text: [said, ...changed.parts].join("\n\n"), hints: changed.hints };

@@ -27,7 +27,7 @@ import { EVERYONE, reservedChecks, threadAudience, type Audience } from "../core
 import type { ProjectChoice } from "./config-edits.ts";
 import type { SizeRequest } from "../core/sizes.ts";
 import { boxFiles as boxFilesOf } from "../core/box-files.ts";
-import { Computer, UNSCALED_DESKTOP, swayKeyboardScript, swayRestoreScript, swayStageScript, unscaledDesktopScript, type ComputerDeps } from "../core/computer.ts";
+import { Computer, swayKeyboardScript, swayRestoreScript, swayStageScript, type ComputerDeps } from "../core/computer.ts";
 import { DeviceComputer } from "../core/device-computer.ts";
 import type { GeneralConfig } from "../core/config.ts";
 import { GENERAL_DEFAULTS, emptyDocument, type BackendConfig, type ConfigDocument, type ImageConfig, type InUse } from "../core/document.ts";
@@ -114,7 +114,6 @@ const NIGHTLY_HOURS = 4;
 /** How often bb-box looks for a BB update that leaves the images behind. */
 const BB_UPDATE_LOOK_MS = 5 * 60_000;
 const DOCTOR_TIMEOUT_MS = 30_000;
-const FRAMES_CHECK_TIMEOUT_MS = 10_000;
 const ROOM_ANSWER_MS = 6_000;
 
 function withinMs<T>(work: Promise<T>, ms: number): Promise<T | null> {
@@ -1063,11 +1062,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const computing = new Computer({
     onInput: (box, input, sentAt) => {
       recordings.acted(box.id, input, sentAt);
-      desktops?.agentActed(box, input);
-    },
-    async framesOnScreen(box) {
-      const result = await boxes.runOwn(box, unscaledDesktopScript(), { session: "desktop", timeoutMs: FRAMES_CHECK_TIMEOUT_MS, maxOutputBytes: 1024 });
-      return result.exitCode === 0 && result.stdout.trim() === UNSCALED_DESKTOP;
+      desktops?.agentActed(box, input, sentAt);
     },
     async spawn(box, script, signal) {
       const { command } = await boxes.transports(box);

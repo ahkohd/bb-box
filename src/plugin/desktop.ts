@@ -46,6 +46,7 @@ const CLIPBOARD_WATCH_RETRY_MS = 30_000;
 const FOLLOW_AFTER_MS = 300;
 /** How long after bb-box-cursor ends, as when the desktop restarts, it runs again while the box has video viewers (060). */
 const POINTER_AGAIN_MS = 2_000;
+const AGENT_ACTION_LONGEST_MS = 10 * 60_000;
 
 /** What hears a box's pointer (060): each message, and, where the box's image has no helper, that none will come. */
 interface PointerListener {
@@ -173,7 +174,7 @@ export interface Desktops {
    * the box did not take it.
    */
   paste(boxId: string, viewer: string, text: string): Promise<void>;
-  agentActed(box: BoxRecord, input: ActedInput): void;
+  agentActed(box: BoxRecord, input: ActedInput, sentAt: number): void;
   forgetAgent(boxId: string): void;
   /** Whether the box's desktop is High resolution, or null where it cannot be. */
   sharp(boxId: string): Promise<boolean | null>;
@@ -513,7 +514,15 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       if (!listeners.size && agentListeners.get(boxId) === listeners) agentListeners.delete(boxId);
     };
   };
-  const agentActed = (box: BoxRecord, input: ActedInput): void => {
+  const agentEnded = new Map<string, number>();
+  const forgetAgent = (boxId: string): void => {
+    const now = Date.now();
+    for (const [each, at] of agentEnded) if (now - at > AGENT_ACTION_LONGEST_MS) agentEnded.delete(each);
+    agentEnded.set(boxId, now);
+    agentPlaces.delete(boxId);
+  };
+  const agentActed = (box: BoxRecord, input: ActedInput, sentAt: number): void => {
+    if (sentAt < (agentEnded.get(box.id) ?? 0)) return;
     if (!viewerDrawsAgentCursor(box) || (input.type !== "click" && input.type !== "scroll")) return;
     agentPlaces.set(box.id, agentMessage({ act: "at", ...input.point }));
     const message = agentMessage({ act: input.type, ...input.point });
@@ -1139,7 +1148,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   return {
     control,
     agentActed,
-    forgetAgent: (boxId) => void agentPlaces.delete(boxId),
+    forgetAgent,
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${DESKTOP_ROUTE}`,
     async sharp(boxId) {
       const box = await boxes.find(boxId);
