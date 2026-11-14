@@ -261,8 +261,11 @@ The host's Proxmox LXC parts stay until you remove that backend too.
   template built before BB Box set the box user's password never to expire,
   the password expires 42 days after it was set, and Windows then shows its
   sign-in screen. BB Box repairs such a box as it starts: it sets the
-  password never to expire and the maximum password age to unlimited, then
-  restarts Windows once, which takes about a minute. To repair a box by hand,
+  password never to expire and the maximum password age to unlimited, reads
+  both back, then restarts Windows once, which takes about a minute. It does
+  not restart a box that someone is logged in to, or one where any step
+  fails: the box's status then has a Desktop line that says it is not ready
+  for computer use, and why. To repair a box by hand,
   run `Set-LocalUser -Name box -PasswordNeverExpires $true; net accounts
   /maxpwage:unlimited` in it, then restart it. Refresh or rebuild the
   template, so that new boxes need no repair.

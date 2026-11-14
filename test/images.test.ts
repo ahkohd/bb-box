@@ -359,7 +359,7 @@ test("a Windows image whose box user's password can expire warns that its boxes 
   const linux = judgeImage(record(1, { tools: {} }), facts, REBUILD);
 
   assert.deepEqual([expiring.status, expiring.fix], ["warn", REBUILD]);
-  assert.match(expiring.detail, / Its box user's password expires 42 days after it was set, as Windows' default is, and Windows then no longer logs its boxes in to the desktop\. BB Box repairs each such box as it starts, with one more restart, about a minute\./);
+  assert.match(expiring.detail, / Its record does not say its box user's password never expires, so the password may expire 42 days after it was set, as Windows' default is, and Windows then no longer logs its boxes in to the desktop\. BB Box repairs each such box as it starts, with one more restart, about a minute, where nobody is logged in to it\./);
   assert.equal(neverExpiring.status, "ok", neverExpiring.detail);
   assert.doesNotMatch(linux.detail, /password/);
 });

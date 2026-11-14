@@ -111,7 +111,7 @@ Check 'automatic logon' {
   if (-not $e) { throw 'no desktop session' }; "$($e.UserName), session $($e.SessionId)"
 }
 Check "box user's password never expires" {
-  $user = Get-LocalUser -Name $env:USERNAME
+  $user = Get-LocalUser -Name $env:USERNAME -ErrorAction Stop
   if ($null -ne $user.PasswordExpires) { throw "it expires on $($user.PasswordExpires.ToString('u')), and Windows then stops logging it in to the desktop" }
   $age = ((net.exe accounts | Select-String 'Maximum password age') -replace '^.*:\s*', '').Trim()
   if ($age -ne 'Unlimited') { throw "the machine's maximum password age is $age days" }

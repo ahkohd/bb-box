@@ -11,6 +11,7 @@ import { BoxWebSocket } from "../core/websocket.ts";
 import { pause } from "../transports/ready.ts";
 import { PRODUCT } from "../brand.ts";
 import type { BoxPointer, CommandTransport, DisplayInput, DisplaySize } from "../transports/types.ts";
+import type { GuestFact } from "./types.ts";
 
 /** The named pipe Cua's daemon listens on. A task at logon starts it, elevated, as SSH is (039). */
 export const CUA_PIPE = "\\\\.\\pipe\\cua-driver";
@@ -341,23 +342,57 @@ const DESKTOP_LOGGED_IN = "(Get-Process explorer -ErrorAction SilentlyContinue |
 const EXIT_0_WHEN_DESKTOP_UP = `if (${DESKTOP_LOGGED_IN} -and (Test-Path -LiteralPath '${CUA_PIPE}')) { exit 0 }`;
 
 const PASSWORD_REPAIRED_AND_RESTARTING = 3;
-const PASSWORD_REPAIR_FAILED = 4;
+const PASSWORD_REPAIR_REFUSED = 4;
+const DESKTOP_NOT_UP_AND_NOTHING_TO_REPAIR = 5;
+const NOBODY_LOGGED_IN = "No User exists";
+const RESTARTED_FOR_PASSWORD = ".bb-box-password-restart";
 
-const SET_BOX_USER_PASSWORD_NEVER_EXPIRES = `Set-LocalUser -Name $bbUser.Name -PasswordNeverExpires $true
-net.exe accounts /maxpwage:unlimited | Out-Null`;
+const READ_EXPIRED_BOX_USER = `$bbName = [Environment]::UserName
+try { $bbUser = Get-LocalUser -Name $bbName -ErrorAction Stop }
+catch { [Console]::Error.WriteLine("${PRODUCT} could not read the box user $bbName, so it did not repair the box: $_"); exit ${PASSWORD_REPAIR_REFUSED} }
+if ($null -eq $bbUser.PasswordExpires -or $bbUser.PasswordExpires -gt (Get-Date)) { exit ${DESKTOP_NOT_UP_AND_NOTHING_TO_REPAIR} }
+$bbExpired = $bbUser.PasswordExpires.ToUniversalTime().ToString('u')
+$bbSetOn = $bbUser.PasswordLastSet.ToUniversalTime().ToString('o')
+function Stop-BbRepair($why) {
+  [Console]::Error.WriteLine("The password of $bbName expired on $bbExpired. $why")
+  exit ${PASSWORD_REPAIR_REFUSED}
+}`;
 
-const DESKTOP_UP_OR_REPAIR = `${EXIT_0_WHEN_DESKTOP_UP}
-$bbUser = Get-LocalUser -Name ([Environment]::UserName)
-if ($null -eq $bbUser.PasswordExpires -or $bbUser.PasswordExpires -gt (Get-Date)) { exit 1 }
-if (${DESKTOP_LOGGED_IN}) { exit 1 }
-${SET_BOX_USER_PASSWORD_NEVER_EXPIRES}
-if ($null -ne (Get-LocalUser -Name $bbUser.Name).PasswordExpires) {
-  [Console]::Error.WriteLine("The password of $($bbUser.Name) expired on $($bbUser.PasswordExpires.ToString('u')), and Windows did not set it never to expire.")
-  exit ${PASSWORD_REPAIR_FAILED}
+const SET_PASSWORD_NEVER_EXPIRES = `try {
+  Set-LocalUser -Name $bbName -PasswordNeverExpires $true -ErrorAction Stop
+  $bbNet = net.exe accounts /maxpwage:unlimited 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "net accounts /maxpwage:unlimited exited with $($LASTEXITCODE): $bbNet" }
+} catch { Stop-BbRepair "${PRODUCT} could not set it never to expire: $_" }`;
+
+const READ_BACK_NEVER_EXPIRES = `try {
+  $bbAccount = Get-CimInstance Win32_UserAccount -Filter "LocalAccount = TRUE AND Name = '$bbName'" -ErrorAction Stop
+  $bbAge = net.exe accounts 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "net accounts exited with $($LASTEXITCODE): $bbAge" }
+  $bbAge = (($bbAge | Select-String 'Maximum password age') -replace '^.*:\\s*', '').Trim()
+  $bbAfter = Get-LocalUser -Name $bbName -ErrorAction Stop
+} catch { Stop-BbRepair "${PRODUCT} set it never to expire, but could not read the settings back, so it did not restart the box: $_" }
+if ($null -eq $bbAccount -or $bbAccount.PasswordExpires -ne $false -or $bbAge -ne 'Unlimited' -or $null -ne $bbAfter.PasswordExpires) {
+  Stop-BbRepair "Windows did not keep the settings: the password expires $(if ($null -eq $bbAccount) { 'unread' } else { $bbAccount.PasswordExpires }), the maximum password age is '$bbAge'. ${PRODUCT} did not restart the box."
+}`;
+
+const RESTART_ONLY_IF_NOBODY_LOGGED_IN = `$bbUsers = quser.exe 2>&1
+$bbQuser = $LASTEXITCODE
+$bbUsers = ($bbUsers | ForEach-Object { "$_".Trim() } | Where-Object { $_ }) -join '; '
+if ($bbQuser -eq 0) { Stop-BbRepair "It now never expires, but someone is logged in to the box ($bbUsers), so ${PRODUCT} did not restart it. Restart the box once their work is saved." }
+if ($bbQuser -ne 1 -or $bbUsers -notmatch '${NOBODY_LOGGED_IN}') { Stop-BbRepair "It now never expires, but ${PRODUCT} could not tell whether anyone is logged in to the box (quser exited with $($bbQuser): $bbUsers), so it did not restart it. Restart the box once nobody's work is open." }`;
+
+const RESTART_ONCE = `$bbRestarted = Join-Path $HOME '${RESTARTED_FOR_PASSWORD}'
+if ((Test-Path -LiteralPath $bbRestarted) -and "$(Get-Content -LiteralPath $bbRestarted -Raw)".Trim() -eq $bbSetOn) {
+  Stop-BbRepair "${PRODUCT} restarted the box once for this password already, and it still expired, so it did not restart it again."
 }
-[Console]::Out.WriteLine("The password of $($bbUser.Name) expired on $($bbUser.PasswordExpires.ToString('u')).")
-shutdown.exe /r /t 0 /c "${PRODUCT} set the box user's password never to expire"
+try { Set-Content -LiteralPath $bbRestarted -Value $bbSetOn -ErrorAction Stop }
+catch { Stop-BbRepair "It now never expires, but ${PRODUCT} could not note its restart, so it did not restart the box: $_" }
+$bbShutdown = shutdown.exe /r /t 0 /c "${PRODUCT} set the box user's password never to expire" 2>&1
+if ($LASTEXITCODE -ne 0) { Stop-BbRepair "It now never expires, but Windows refused the restart (shutdown exited with $($LASTEXITCODE): $bbShutdown). Restart the box." }
+[Console]::Out.WriteLine("The password of $bbName expired on $bbExpired.")
 exit ${PASSWORD_REPAIRED_AND_RESTARTING}`;
+
+const DESKTOP_UP_OR_REPAIR = [EXIT_0_WHEN_DESKTOP_UP, READ_EXPIRED_BOX_USER, SET_PASSWORD_NEVER_EXPIRES, READ_BACK_NEVER_EXPIRES, RESTART_ONLY_IF_NOBODY_LOGGED_IN, RESTART_ONCE].join("\n");
 
 /** Extends C: over the space its disk grew by. */
 export async function extendC(command: CommandTransport, signal?: AbortSignal): Promise<void> {
@@ -522,30 +557,73 @@ export async function setClock(command: CommandTransport, signal?: AbortSignal):
   }
 }
 
-export interface DesktopChecked {
-  readonly up: boolean;
-  readonly restarting: boolean;
-  readonly said: string | null;
-}
+export type DesktopChecked =
+  | { readonly state: "up" }
+  | { readonly state: "not up" }
+  | { readonly state: "restarting"; readonly said: string }
+  | { readonly state: "refused"; readonly said: string }
+  | { readonly state: "no answer"; readonly said: string };
 
 export async function checkDesktopOrRepairExpiredPassword(command: CommandTransport, signal?: AbortSignal): Promise<DesktopChecked> {
-  const result = await command.run(DESKTOP_UP_OR_REPAIR, { timeoutMs: 10_000, signal, maxOutputBytes: 4096 }).catch(() => null);
-  const restarting = result?.exitCode === PASSWORD_REPAIRED_AND_RESTARTING;
-  const said = restarting ? `${result.stdout.trim()} ${PASSWORD_REPAIRED_SAYS}` : result?.exitCode === PASSWORD_REPAIR_FAILED ? result.stderr.trim() : null;
-  return { up: result?.exitCode === 0, restarting, said };
+  let result;
+  try {
+    result = await command.run(DESKTOP_UP_OR_REPAIR, { timeoutMs: 20_000, signal, maxOutputBytes: 8192 });
+  } catch (error) {
+    return { state: "no answer", said: `Windows did not answer ${PRODUCT}'s look at its desktop: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (result.exitCode === 0) return { state: "up" };
+  if (result.exitCode === PASSWORD_REPAIRED_AND_RESTARTING) return { state: "restarting", said: `${result.stdout.trim()} ${PASSWORD_REPAIRED_SAYS}` };
+  if (result.exitCode === PASSWORD_REPAIR_REFUSED) return { state: "refused", said: result.stderr.trim() };
+  if (result.exitCode === DESKTOP_NOT_UP_AND_NOTHING_TO_REPAIR) return { state: "not up" };
+  return { state: "no answer", said: `${PRODUCT}'s look at Windows' desktop exited with ${result.exitCode}: ${result.stderr.trim().slice(0, 500) || "no reason given"}` };
 }
 
-export function desktopUpOrRepairExpiredPassword(command: CommandTransport, heard: (said: string) => void): { probe: (signal?: AbortSignal) => Promise<boolean> } {
+export function desktopUpOrRepairExpiredPassword(command: CommandTransport, restarting: (said: string) => void): { probe: (signal?: AbortSignal) => Promise<boolean> } {
   return {
     async probe(signal) {
       const checked = await checkDesktopOrRepairExpiredPassword(command, signal);
-      if (checked.said) heard(checked.said);
-      return checked.up;
+      if (checked.state === "restarting") restarting(checked.said);
+      if (checked.state === "refused") throw new Error(`${checked.said} ${PASSWORD_REPAIR_BY_HAND}`);
+      return checked.state === "up";
     },
   };
 }
 
 const PASSWORD_REPAIRED_SAYS = `Windows did not log the box user in to the desktop, so ${PRODUCT} set the password never to expire and restarted Windows.`;
+
+export async function repairExpiredPasswordAfterBoot(
+  command: CommandTransport,
+  waitForDesktop: () => Promise<void>,
+  log: (said: string) => void,
+  signal?: AbortSignal,
+): Promise<GuestFact | null> {
+  const checked = await checkDesktopOrRepairExpiredPassword(command, signal);
+  if (checked.state === "up" || checked.state === "not up") return null;
+  log(checked.said);
+  if (checked.state === "refused") return desktopNotReady(`${checked.said} ${PASSWORD_REPAIR_BY_HAND}`);
+  try {
+    await waitForDesktop();
+    return null;
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return desktopNotReady(error instanceof Error ? error.message : String(error));
+  }
+}
+
+export function withDesktop<T extends { readonly facts?: readonly GuestFact[] }>(guest: T, fact: GuestFact | null): T {
+  const saidBefore = guest.facts?.some((each) => each.label === DESKTOP_FACT) ?? false;
+  return fact || saidBefore ? { ...guest, facts: withDesktopFact(guest.facts, fact) } : guest;
+}
+
+export const DESKTOP_FACT = "Desktop";
+
+export function desktopNotReady(why: string): GuestFact {
+  return { label: DESKTOP_FACT, value: `Not ready for computer use. ${why}` };
+}
+
+export function withDesktopFact(facts: readonly GuestFact[] | undefined, fact: GuestFact | null): readonly GuestFact[] {
+  return [...(facts ?? []).filter((each) => each.label !== DESKTOP_FACT), ...(fact ? [fact] : [])];
+}
 
 export const PASSWORD_REPAIR_BY_HAND =
   "If the box user's password has expired, run Set-LocalUser -Name box -PasswordNeverExpires $true; net accounts /maxpwage:unlimited in the box, then restart it.";

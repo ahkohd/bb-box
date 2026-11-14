@@ -147,7 +147,7 @@ export function windowsWithExpiringPassword(): string {
     `case "$1" in`,
     `  *PasswordNeverExpires*)`,
     `    [ -f "$HOME/no-desktop" ] || exit 0`,
-    `    [ -f "$HOME/password-expired" ] || exit 1`,
+    `    [ -f "$HOME/password-expired" ] || exit 5`,
     `    [ -f "$HOME/password-stuck" ] && { echo "${NOT_SET_NEVER_TO_EXPIRE}" >&2; exit 4; }`,
     `    rm -f "$HOME/password-expired" "$HOME/no-desktop"`,
     `    echo restarted >> "$HOME/restarts"`,

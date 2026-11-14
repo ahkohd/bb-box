@@ -446,7 +446,7 @@ export function judgeImage(
   }
   if (facts.os === "windows" && !record.tools[WINDOWS_PASSWORD_NEVER_EXPIRES]) {
     warnings.push(
-      `Its box user's password expires 42 days after it was set, as Windows' default is, and Windows then no longer logs its boxes in to the desktop. ${PRODUCT} repairs each such box as it starts, with one more restart, about a minute.`,
+      `Its record does not say its box user's password never expires, so the password may expire 42 days after it was set, as Windows' default is, and Windows then no longer logs its boxes in to the desktop. ${PRODUCT} repairs each such box as it starts, with one more restart, about a minute, where nobody is logged in to it.`,
     );
   }
   if (facts.os === "windows" && facts.joins) {

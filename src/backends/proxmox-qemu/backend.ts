@@ -83,6 +83,7 @@ import {
   type DoctorReport,
   type Guest,
   type GuestFact,
+  type Started,
   type HeldGuest,
   type ImageBox,
   type ImageBuild,
@@ -120,7 +121,7 @@ import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
 import { MIN_DESKTOP, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
-import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, checkDesktopOrRepairExpiredPassword, desktopUpOrRepairExpiredPassword, extendC, PASSWORD_REPAIR_BY_HAND, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
+import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUpOrRepairExpiredPassword, extendC, PASSWORD_REPAIR_BY_HAND, repairExpiredPasswordAfterBoot, withDesktop, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
 import type { OpenStream } from "../../core/selkies.ts";
 import { openRoute } from "../../transports/route.ts";
 import type { QemuConfig } from "./config.ts";
@@ -1226,15 +1227,16 @@ export class ProxmoxQemuBackend implements Backend {
       if (linux && this.#kindOf(template).capabilities.displays.length) {
         display = await step("display", () => this.#linuxDisplay(id, Math.max(1_000, deadline - Date.now()), signal));
       }
+      let desktop: GuestFact | null = null;
       if (!linux) {
-        await step("password", () => this.#repairExpiredPasswordAfterBoot(id, Math.max(1_000, deadline - Date.now()), signal));
+        desktop = await step("password", () => this.#repairExpiredPasswordAfterBoot(id, Math.max(1_000, deadline - Date.now()), signal));
         // A resumed acquire may have grown the disk before it stopped.
         if (grew || (resumed && box.size.diskGiB !== null)) await step("extend", () => this.#extend(id, signal));
         this.#compileDisplay(id);
       }
       // A spare keeps its low weight until a box takes it: relabel() puts it back then.
       if (box.threadId !== SPARES) await this.#settle(api, id, signal);
-      return withRootFact(this.#guest(api.node, id, template, box.boxId, await size, build, display), unfilled);
+      return withDesktop(withRootFact(this.#guest(api.node, id, template, box.boxId, await size, build, display), unfilled), desktop);
     } catch (error) {
       // A clone cut short may still have made the guest; it is ours if it names the box.
       const leftover = vmid ?? claimed;
@@ -1270,7 +1272,7 @@ export class ProxmoxQemuBackend implements Backend {
    * Resumes a hibernated VM, or boots a stopped one, and waits for SSH. Then
    * sets Windows' clock, which a resume leaves at the time it stopped (039).
    */
-  async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, answered?: () => Promise<void>, readyWithinMs?: number): Promise<void> {
+  async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, answered?: () => Promise<void>, readyWithinMs?: number): Promise<Started | void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
@@ -1282,7 +1284,7 @@ export class ProxmoxQemuBackend implements Backend {
     const os = this.#osOf(guest.data?.template);
     const readyWithin = this.#options.readyTimeoutMs ?? readyWithinMs ?? READY_TIMEOUT_MS;
     await this.#waitReady(vmid, readyWithin, signal, step, os);
-    if (os === "windows") await step("password", () => this.#repairExpiredPasswordAfterBoot(vmid, readyWithin, signal));
+    const desktop = os === "windows" ? await step("password", () => this.#repairExpiredPasswordAfterBoot(vmid, readyWithin, signal)) : null;
     const kind = this.#kindOf(guest.data?.template);
     if (isLinuxVmKind(kind.id)) {
       const name = (await api.config(vmid, signal)).name;
@@ -1292,6 +1294,8 @@ export class ProxmoxQemuBackend implements Backend {
     // Linux keeps its clock with its own time service.
     if (os === "windows") await step("clock", () => this.#setClock(vmid, signal));
     else if (resumed && this.#kindOf(guest.data?.template) === ANDROID_IMAGE_KIND) await step("clock", () => this.#setLinuxClock(vmid, signal));
+    const started = withDesktop({ facts: guest.facts }, desktop);
+    if (started.facts !== guest.facts) return { facts: started.facts ?? [] };
   }
 
   /**
@@ -2631,16 +2635,20 @@ export class ProxmoxQemuBackend implements Backend {
       repairs.push(said);
       this.#context.log?.(`VM ${vmid}: ${said}`);
     });
-    if (!(await waitUntilAnswers(up, { timeoutMs, intervalMs: DESKTOP_POLL_MS, signal, sleep: this.#options.sleep }))) {
+    const refused = (error: unknown) => new Error(`Windows' desktop in VM ${vmid} is not up: ${error instanceof Error ? error.message : String(error)}`);
+    const answered = await waitUntilAnswers(up, { timeoutMs, intervalMs: DESKTOP_POLL_MS, signal, sleep: this.#options.sleep }).catch((error: unknown) => {
+      if (signal?.aborted) throw error;
+      throw refused(error);
+    });
+    if (!answered) {
       const why = `Explorer did not run in a desktop session, or Cua's daemon did not listen on ${CUA_DRIVER.socket}.`;
       const next = `Check the VM's console in Proxmox, and that the template signs the box user in. ${PASSWORD_REPAIR_BY_HAND}`;
       throw new Error([`Windows' desktop in VM ${vmid} was not up within ${Math.round(timeoutMs / 1000)} s:`, why, ...repairs, next].join(" "));
     }
   }
 
-  async #repairExpiredPasswordAfterBoot(vmid: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
-    const checked = await checkDesktopOrRepairExpiredPassword(await this.#command(vmid), signal);
-    if (checked.said) this.#context.log?.(`VM ${vmid}: ${checked.said}`);
-    if (checked.restarting) await this.#desktopUp(vmid, timeoutMs, signal);
+  async #repairExpiredPasswordAfterBoot(vmid: number, timeoutMs: number, signal?: AbortSignal): Promise<GuestFact | null> {
+    const log = (said: string) => this.#context.log?.(`VM ${vmid}: ${said}`);
+    return repairExpiredPasswordAfterBoot(await this.#command(vmid), () => this.#desktopUp(vmid, timeoutMs, signal), log, signal);
   }
 }

@@ -1204,6 +1204,54 @@ test("a fill whose password cannot be set never to expire says so, and what to r
   assert.deepEqual(warmVms(proxmox), []);
 });
 
+const BY_HAND = "If the box user's password has expired, run Set-LocalUser -Name box -PasswordNeverExpires $true; net accounts /maxpwage:unlimited in the box, then restart it.";
+
+test("an acquire whose repair Windows refuses gives a box that says it is not ready for computer use, why, and what to run", async () => {
+  const { backend, ssh, context } = setup();
+  const home = expiringPassword(ssh, "192.0.2.150", "no-desktop", "password-expired", "password-stuck");
+
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+
+  assert.deepEqual(guest.facts, [{ label: "Desktop", value: `Not ready for computer use. ${NOT_SET_NEVER_TO_EXPIRE} ${BY_HAND}` }]);
+  assert.equal(restarts(home), 0);
+  assert.deepEqual(context.logs, [`VM 9700: ${NOT_SET_NEVER_TO_EXPIRE}`]);
+});
+
+test("a start whose repair Windows refuses says the box is not ready for computer use, and a start that finds the desktop up says so no more", async () => {
+  const { backend, ssh, proxmox } = setup();
+  const home = expiringPassword(ssh, "192.0.2.150");
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+  const vm = proxmox.guests.get(9700)!;
+  vm.status = "stopped";
+  for (const file of ["no-desktop", "password-expired", "password-stuck"]) writeFileSync(join(home, file), "");
+
+  const refused = await backend.start(guest, signal());
+
+  assert.deepEqual(refused, { facts: [{ label: "Desktop", value: `Not ready for computer use. ${NOT_SET_NEVER_TO_EXPIRE} ${BY_HAND}` }] });
+
+  vm.status = "stopped";
+  for (const file of ["no-desktop", "password-expired", "password-stuck"]) rmSync(join(home, file));
+  const healthy = await backend.start({ ...guest, facts: refused ? refused.facts : [] }, signal());
+
+  assert.deepEqual(healthy, { facts: [] });
+  assert.equal(restarts(home), 0);
+});
+
+test("a restart that brings no desktop up says the box is not ready for computer use, with the wait's reason", async () => {
+  const { backend, ssh } = setup();
+  const home = expiringPassword(ssh, "192.0.2.150", "no-desktop", "password-expired");
+  ssh.powershell(
+    "192.0.2.150",
+    windowsWithExpiringPassword().replace('rm -f "$HOME/password-expired" "$HOME/no-desktop"', 'rm -f "$HOME/password-expired"'),
+  );
+
+  const guest = await backend.acquire(identity(), null, hooks().value, signal());
+
+  assert.equal(restarts(home), 1);
+  assert.equal(guest.facts?.length, 1);
+  assert.match(guest.facts![0]!.value, /^Not ready for computer use\. Windows' desktop in VM 9700 was not up within 1 s: Explorer did not run in a desktop session/);
+});
+
 test("the pool fills only while there is room, and a box a ready warm VM serves needs no VMID", async () => {
   const { backend, proxmox, context } = warmSetup(3, { "vmid-last": 9701 });
   await backend.maintain(signal());
