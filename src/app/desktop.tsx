@@ -2220,6 +2220,8 @@ export function BoxesPage({ subPath }: { subPath: string }) {
   return <BoxList />;
 }
 
+const VIEWS_ONLY_IN_THE_SCREEN_MENU: readonly BoxViewName[] = ["terminal", "files"];
+
 function BoxViewPage({ route }: { route: BoxViewRoute }) {
   const nav = useBoxesNav();
   const { value: page, error, refresh } = useBoxPage(route.boxId);
@@ -2235,7 +2237,7 @@ function BoxViewPage({ route }: { route: BoxViewRoute }) {
   const switchTo = (view: BoxViewName) => nav.go(otherView(route, view), { replace: true });
   const box = page?.box ?? null;
   const otherViews = (shown: BoxViewName) => (box ? <OtherViews box={box} shown={shown} onSwitch={switchTo} /> : null);
-  const otherScreens = (shown: Screen) => (box ? <OtherViews box={box} shown={shown} without="terminal" onSwitch={switchTo} /> : null);
+  const otherScreens = (shown: Screen) => (box ? <OtherViews box={box} shown={shown} without={VIEWS_ONLY_IN_THE_SCREEN_MENU} onSwitch={switchTo} /> : null);
   const reach = page?.monitor ?? null;
   const machineId = box && reach?.is === "read" ? reach.machineId : null;
   const numbers = (everyWidth: boolean) => (box && machineId ? <BarNumbers boxId={box.id} machineId={machineId} name={box.name} page={pageLink} everyWidth={everyWidth} /> : null);

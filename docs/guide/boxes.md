@@ -218,7 +218,7 @@ The back arrow on a desktop, device or terminal goes back to where you opened it
 
 ### A view's bar
 
-A desktop, device or terminal on the Boxes page can switch to the box's other views, as each can open now. Its bar has a button for each of the box's other screens: **Desktop**, **Simulator** or **Emulator**. On a desktop or device, select **Open terminal** in the toolbar's menu, beside **Open thread**. Switching replaces the view rather than adding a step, so its back arrow, and your browser's Back, still go to where you first opened it from.
+A desktop, device or terminal on the Boxes page can switch to the box's other views, as each can open now. Its bar has a button for each of the box's other screens: **Desktop**, **Simulator** or **Emulator**. A desktop's or device's bar shows only its screen, with no **Terminal** or **Files** button: select **Open terminal** or **Open files** in the toolbar's menu, beside **Open thread**. A device has no files view. Switching replaces the view rather than adding a step, so its back arrow, and your browser's Back, still go to where you first opened it from.
 
 A desktop's or device's bar can show the box's CPU and memory now, from the same reading as its page, before **Take control**. They are hidden until you select **Show CPU and memory** in the toolbar's menu. It is ticked while they show, and your choice lasts in that browser, for every box, until you select it again. A terminal's bar shows them in a window wider than 640 px. A shared iOS or macOS box shows its own, against its share. Select them to open the box's page. If a reading fails after one worked, the bar keeps the last numbers and says which time they are from. They do not show while the Monitor is off, or while the box is not running.
 
