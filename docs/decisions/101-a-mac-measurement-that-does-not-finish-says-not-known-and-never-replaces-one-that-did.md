@@ -17,10 +17,11 @@ Measured at the earliest point of boot, the probe answered in full. The slow fir
 - While the hardware check gives no answer, such as when it crashes, the probe runs it again, up to 5 times, 5 seconds apart. VideoToolbox's refusal is an answer, and is not asked again.
 - A measurement that is not conclusive never replaces one that is. For each of the Simulator, the hardware encoder and the software encoder, a "not known" keeps what was known. Where any is kept, the report keeps its earlier time, so it stays due and the Mac is measured again at the next chance. A conclusive "no" still replaces a "yes".
 - On Namespace, a report that measured nothing and did not say its chip makes no kind of Mac.
+- On Namespace, the `ios` offer comes from the newest kind of Mac that runs the iOS Simulator. A kind measured later that does not run it, or is not known to, does not take the offer away. With no such kind, the offer comes from the newest kind measured conclusively, then from the newest of all. The doctor still lists the newest first, and BB Box still measures afresh by the newest report.
 - Before the hardware encoder is measured, BB Box says video comes in software "until its hardware H.264 encoder is measured", not "as it has no hardware H.264 encoder".
 
 ## Consequences
 
 - A Mac whose Xcode has no iOS runtime takes about 20 seconds longer to measure, and one whose hardware check never answers about 20 seconds more. A Mac that answers at once takes no longer.
 - A release while a Mac is measured costs nothing: the offer stays as the last whole measurement found it.
-- A kind of Mac first measured by a probe that did not finish has no conclusive report. Its offer says it is not measured yet until a probe finishes.
+- A kind of Mac first measured by a probe that did not finish has no conclusive report. The doctor says it is not measured yet until a probe finishes, and the offer comes from another kind that runs the Simulator, where there is one.

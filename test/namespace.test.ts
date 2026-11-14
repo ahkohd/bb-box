@@ -533,6 +533,33 @@ test("a Namespace Mac released while it is measured, seconds after it is ready, 
   assert.equal(reports.all()[0]?.capabilities.simulator.is, "no", "a whole measurement that finds no runtime still counts");
 });
 
+test("a new kind of Namespace Mac whose first measurement was cut short does not take the ios offer from a kind that runs the iOS Simulator", async () => {
+  const m5 = "Apple M5 Pro (Virtual)";
+  const cutShort = parseMacProbe(`chip=${m5}\nmacos=26.3.1\nxcode=26.1.1\n`, "instance-b", 2, "mac");
+  const reports = new NamespaceMacReports(new MemoryStorage(), () => {});
+  reports.remember({ ...IOS_REPORT, mac: "instance-a" }, "instance-a");
+  reports.remember(cutShort, "instance-b");
+  assert.deepEqual(reports.all().map((report) => report.mac), [m5, IOS_REPORT.chip], "the doctor still lists the newest first");
+  assert.equal(reports.forOffer()?.chip, IOS_REPORT.chip);
+  const noRuntime = parseMacProbe(`chip=${m5}\nxcode=26.1.1\nruntimes=\nsoftware=no why=bb-box-h264 is not installed\n${PROBE_FINISHED}\n`, "instance-c", 3, "mac");
+  reports.remember(noRuntime, "instance-c");
+  assert.equal(reports.forOffer()?.chip, IOS_REPORT.chip, "the offer comes from a kind that runs the Simulator");
+  const onlyUnknown = new NamespaceMacReports(new MemoryStorage(), () => {});
+  onlyUnknown.remember(cutShort, "instance-b");
+  assert.equal(onlyUnknown.forOffer()?.chip, m5, "with nothing conclusive, the newest is all there is");
+
+  fakeSsh();
+  const storage = new MemoryStorage();
+  await storage.set(reportKey(IOS_REPORT.chip!), IOS_REPORT);
+  await storage.set(reportKey(m5), { ...cutShort, mac: m5 });
+  const fake = new FakeNamespace({ lifeCapMs: 4 * 3600_000, maxCores: 64 });
+  const backend = disposed(new NamespaceBackend(CONFIG, testContext(storage, "inst1", { id: "namespace" }), { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000, cuaScript: ":" }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(backend.macCapabilities()[0]?.chip, m5);
+  assert.equal(backend.slots.lends("ios"), true);
+  assert.ok(backend.kinds().some((kind) => kind.id === "ios"), "ios stays on offer");
+});
+
 test("box_list's ios offer on Namespace says its slots are on a Mac made for them, and the doctor says when Namespace's Macs vary by machine", async () => {
   fakeSsh();
   const storage = new MemoryStorage();

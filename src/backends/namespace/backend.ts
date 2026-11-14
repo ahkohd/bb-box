@@ -455,7 +455,7 @@ export class NamespaceBackend implements Backend {
       longestLifeMs: () => this.#config.longestLifeHours * 3600_000,
       now: () => this.#now(),
       sleep: (ms, signal) => this.#sleep(ms, signal),
-      report: () => this.macCapabilities()[0] ?? null,
+      report: () => this.#reports.forOffer(),
       room: (signal) => this.#hostRoom(signal),
       create: async (tag, shape, signal) => {
         const { publicKey } = await this.#keys();

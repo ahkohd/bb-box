@@ -64,6 +64,11 @@ export class NamespaceMacReports {
     return this.#offered;
   }
 
+  forOffer(): MacReport | null {
+    const reports = this.all();
+    return reports.find((report) => report.capabilities.simulator.is === "yes") ?? reports.find((report) => report.capabilities.simulator.is === "no") ?? reports[0] ?? null;
+  }
+
   #asOffered(report: MacReport): MacReport {
     const machines = [...(this.#machines.get(report.mac)?.values() ?? [])];
     const offered = report.capabilities.softwareEncoder.is === "yes" ? report : withCapabilities(report, { softwareEncoder: SOFTWARE_ENCODER_EACH_HOST_BUILDS });
