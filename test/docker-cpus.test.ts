@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { allotCpus, cpusBothAllow, cpusToPinTo, daemonCpusFromRefusal, formatCpuList, hostCpuRange, hostCpusFromProbe, movesOntoFreeCpus, parseCpuList, resizeCpus } from "../src/backends/docker/cpus.ts";

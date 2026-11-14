@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // A terminal with its PTY on BB's server (src/transports/terminal.ts), and
 // the sessions the plugin keeps for tabs that come and go (src/plugin/terminal.ts).
 

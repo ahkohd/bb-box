@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BoatBackend, LABELS, stagingName } from "../src/backends/boat/backend.ts";
@@ -11,7 +12,8 @@ import { providerName } from "../src/core/provider-name.ts";
 import { ImageJobs } from "../src/plugin/images.ts";
 import { ownImageLines } from "../src/plugin/views.ts";
 import { FAKE_BOAT_KEY, FakeBoat, type FakeSandbox } from "./fake-boat.ts";
-import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, testContext } from "./helpers.ts";
+import { FAKE_SSH_BINARY, MemoryStorage, disposedOnceTheFileEnds, fakeSsh, tempDir, testContext } from "./helpers.ts";
+import { hostCommandsRecorded, recordingStandInsForHostTools, withHostToolsFirstOnPath } from "./host-stubs.mjs";
 
 const disposed = disposedOnceTheFileEnds();
 const CONFIG = { key: FAKE_BOAT_KEY, mostBoxes: 3, leaseMinutes: 30, androidLicence: false };
@@ -370,6 +372,22 @@ test("on the longest install ID with the longest backend name, releasing one of 
 
   await backendOn(on, id, { storage, installId: longest, tailnet, templateLabels: null }).release(first, RELEASE);
 
+  assert.deepEqual(removed, ["box-a"]);
+});
+
+test("releasing a box on the tailnet logs it out through the fake ssh's stubs, never the test machine's own sudo or tailscale", async () => {
+  const testMachine = recordingStandInsForHostTools(tempDir("test-machine-tools"), ["sudo", "tailscale"]);
+  const on = account({ paid: true });
+  const storage = new MemoryStorage();
+  const { tailnet, removed } = tailnetOf([{ nodeId: "box-a", hostname: tailnetNameOf(FIRST, "inst1", `box-${BOX_A}`) }]);
+
+  await withHostToolsFirstOnPath(testMachine, async () => {
+    const first = await acquire(backendOn(on, FIRST, { storage }), BOX_A);
+    await backendOn(on, FIRST, { storage, tailnet, templateLabels: null }).release(first, RELEASE);
+  });
+
+  assert.deepEqual(testMachine.ran(), [], "nothing reached the test machine's own tools");
+  assert.ok(hostCommandsRecorded(process.env.FAKE_SSH_DIR!).includes("tailscale logout"), hostCommandsRecorded(process.env.FAKE_SSH_DIR!).join("; "));
   assert.deepEqual(removed, ["box-a"]);
 });
 

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The docs against the code (#503): the reference is as scripts/reference.ts
 // would write it and names everything the code has, links between Markdown
 // files lead somewhere, and the skill tells the agent of every tool.

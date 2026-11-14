@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Hetzner, HetznerError, selectorMatchingAll, type HetznerOptions } from "../src/backends/hetzner/api.ts";

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { allocationLines, collectionLine, gcLines, memoryLine, ownerOf, profileLoop, summarise, type CpuProfile } from "../src/plugin/profile.ts";

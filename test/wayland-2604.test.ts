@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The Wayland desktop on Ubuntu 26.04, whose Sway and wayvnc carry the box's
 // own pointer shapes: the guest scripts build it on 24.04 or 26.04, by the
 // image's release, and the X11 desktops and Linux stay on 24.04.

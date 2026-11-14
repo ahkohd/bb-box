@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import { TartBackend } from "../src/backends/tart/backend.ts";
 import { slotConformance } from "./conformance/suite.ts";
 import { IOS_HOST_FAKES, IOS_HOST_SETTINGS, fakeIosHostMac } from "./fake-ios-host.ts";

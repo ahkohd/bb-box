@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // bb-box-stream's qemu mode against a real QEMU's D-Bus display (#885): QEMU with no guest still shows a
 // placeholder screen, which it shares as memory with the listener, as it shares a Windows VM's. A QEMU whose D-Bus
 // display stops sharing, or changes its protocol, fails here. It runs where QEMU and swiftc are, as on the Macs that

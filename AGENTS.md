@@ -46,6 +46,8 @@ npm run check-links  # fails on a link, asset or Markdown copy that leads nowher
 
 GitHub runs the typecheck, `npm test`, the site's build and its link check on each pull request.
 
+Run the tests only in a BB Box box or on GitHub Actions. They refuse to start on a machine where the user can run `sudo` without a password, where they run as root, or where Tailscale is installed, as a test that goes wrong could change it. Every test file starts with `import "./check-test-machine.mjs";`, which makes that check. [docs/development.md](docs/development.md) says how they check.
+
 - Run `npm run reference` after you change a tool, command, setting, kind or check. `npm test` fails while `docs/reference` is out of date. Never edit `docs/reference` by hand.
 - `npm test` needs no real host: it runs against fakes of Proxmox, Docker, SSH, Tart and the cloud APIs. The conformance suite and `scripts/smoke.ts` need a real backend: see [docs/development.md](docs/development.md).
 - The code is TypeScript that Node runs as it is, so use only syntax that can be erased: no enums, namespaces or parameter properties. Import files with their `.ts` extension.

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { placementOf, placementWords } from "../src/core/device-host.ts";

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { basename } from "node:path";
 import { test } from "node:test";
@@ -12,6 +13,8 @@ import { DRIVERS } from "../src/backends/index.ts";
 import { BOX_MACHINE_PREFIX, MonitorOffError, SERVER_MACHINE, asSlotReading, createLightSampler, listMachines, monitorChecks, monitorRpcHandlers, offlineMachineWords, readableState, stillJoiningWords, unreadReason, unreadableWords, type MonitoredBox, type MonitorHost } from "../src/plugin/monitor.ts";
 import { monitorSnapshotText } from "../src/plugin/monitor-cli.ts";
 import { flush, startTestMonitor } from "./monitor-helpers.ts";
+
+const NO_TAILNET = async () => null;
 
 test("a box whose BB machine is known is not called no BB machine when that machine is offline, and one still joining is not called offline", () => {
   assert.equal(unreadReason("calm-otter", { state: "enrolled", hostId: "host_1" }), offlineMachineWords("calm-otter"));
@@ -197,7 +200,7 @@ function cgroupReader(sequence: ContainerCounters[]) {
 test("in a container the collector shows no load average, the cpuset's cores and the cgroup's pressure", async () => {
   const first = parseContainer(LXC_FILES)!;
   const later = { ...first, usageMicros: first.usageMicros + 400_000 };
-  const collector = createCollector({ refreshIntervalMs: () => 5000, readContainer: cgroupReader([first, first, later]) });
+  const collector = createCollector({ refreshIntervalMs: () => 5000, readContainer: cgroupReader([first, first, later]), readTailscaleStatus: NO_TAILNET });
   const snapshot = snapshotSchema.parse(await collector.collect(new AbortController().signal));
   assert.equal(snapshot.cpu.loadAverage, null);
   assert.equal(snapshot.host.container, true);
@@ -208,7 +211,7 @@ test("in a container the collector shows no load average, the cpuset's cores and
 });
 
 test("outside a container the collector keeps the load average and judges it", async () => {
-  const collector = createCollector({ refreshIntervalMs: () => 5000, readContainer: async () => null });
+  const collector = createCollector({ refreshIntervalMs: () => 5000, readContainer: async () => null, readTailscaleStatus: NO_TAILNET });
   const snapshot = snapshotSchema.parse(await collector.collect(new AbortController().signal));
   assert.equal(snapshot.cpu.loadAverage?.length, 3);
   assert.equal(snapshot.host.container, undefined);

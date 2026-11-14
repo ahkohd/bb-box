@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import type { GuestOs } from "../src/backends/types.ts";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";

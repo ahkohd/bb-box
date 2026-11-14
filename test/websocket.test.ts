@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The relay's WebSocket client on a box's channel (src/core/websocket.ts, 056).
 
 import assert from "node:assert/strict";

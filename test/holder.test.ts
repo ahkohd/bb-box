@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // How BB Box's server calls its host entry to hold the thread's access on a
 // box (src/plugin/holder.ts), and the host entry itself (src/host/access.ts).
 

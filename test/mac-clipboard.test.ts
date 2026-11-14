@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CLIPBOARD_WATCH_MAX_BYTES, MAC_CLIPBOARD_WATCH_SCRIPT, macClipboardWatchCommand, startClipboardWatch } from "../src/core/mac-clipboard.ts";

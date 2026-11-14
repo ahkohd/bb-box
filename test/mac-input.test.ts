@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The macOS desktop's input helper (#406): the keys it maps, its script's
 // quoting, and its line protocol, over a channel a test plays the helper on.
 

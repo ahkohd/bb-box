@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseHostSlot } from "../src/backends/tart/device-host.ts";
 import { fakeMacos, type FakeMacos, type Run } from "./fake-macos.ts";
+import { ownedFoldersEnv, pathRefusingRealHostTools, pathWithHostStubs } from "./host-stubs.mjs";
 
 const IOS = fileURLToPath(new URL("../setup/tart/ios/", import.meta.url));
 const POOL_HOME = fileURLToPath(new URL("../setup/ssh-pool/mac-home/", import.meta.url));
@@ -94,7 +95,7 @@ export function fakeDeviceHost(options: { slim?: boolean; template?: boolean } =
   for (const path of ["daemons", "load", "commands"]) mkdirSync(join(mac.state, path), { recursive: true });
   mkdirSync(join(mac.state, "groups", "com.apple.access_ssh"), { recursive: true });
 
-  const env = { FAKE_MAC_STATE: mac.state, FAKE_MAC_ROOT: mac.root, FAKE_MAC_BIN: bin, FAKE_MACOS_BIN: macosBin, PATH: `${bin}:/usr/bin:/bin`, LC_ALL: "C" };
+  const env = { FAKE_MAC_STATE: mac.state, FAKE_MAC_ROOT: mac.root, FAKE_MAC_BIN: bin, FAKE_MACOS_BIN: macosBin, PATH: pathRefusingRealHostTools("The fake device host", pathWithHostStubs(dir, [bin], "/usr/bin:/bin")), LC_ALL: "C", ...ownedFoldersEnv([dir], join(dir, "tmp")) };
   const run = (args: readonly string[], input = ""): Run => {
     const result = spawnSync("/bin/sh", [helper, ...args], { input, encoding: "utf8", env, timeout: 60_000 });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };

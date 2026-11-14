@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // This install's ID (018): made once, kept in plugin storage, and checked
 // before an operator sets it.
 

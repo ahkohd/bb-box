@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // BB machines as Docker hosts in the settings (src/plugin/docker-hosts.ts, 042).
 
 import assert from "node:assert/strict";

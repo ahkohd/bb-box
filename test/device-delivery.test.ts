@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import { EncoderLedgers } from "../src/core/encoder-ledger.ts";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

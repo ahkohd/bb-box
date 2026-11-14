@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEVICE_HOST_EXITS } from "../src/backends/tart/device-host.ts";

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -287,9 +288,10 @@ test("the settings need a token, a known region and sane limits, each problem at
   assert.deepEqual(fine.ok ? fine.config : null, { token: FAKE_NAMESPACE_TOKEN, region: "us", macosVersion: "26.x", machines: 2, longestLifeHours: 3, largestMachine: null, iosHosts: { on: true, most: null, ahead: 1, resettingMost: 2, diskReserveGiB: 20 } });
 });
 
-function fakeTailscaleTools() {
-  const dir = mkdtempSync(join(tmpdir(), "ns-tailscale-"));
-  const log = join(dir, "calls");
+function fakeTailscaleToolsOnEveryHost(sshDir: string) {
+  const dir = join(sshDir, "bin");
+  mkdirSync(dir, { recursive: true });
+  const log = join(sshDir, "tailscale-calls");
   writeFileSync(log, "");
   const tool = (name: string, body: string) => {
     writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`);
@@ -299,12 +301,11 @@ function fakeTailscaleTools() {
   tool("tailscaled", `printf '%s\\n' "tailscaled $*" >> ${log}`);
   tool("brew", `printf '%s\\n' "brew $*" >> ${log}`);
   tool("sudo", `[ "$1" = -n ] && shift\nexec "$@"`);
-  process.env.PATH = `${dir}:${process.env.PATH}`;
   return { calls: () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean) };
 }
 
 test("with a tailnet, each Mac joins it with a single-use key of its own, given only on its input, leaves it at release, and its stale device goes", async () => {
-  const tools = fakeTailscaleTools();
+  const tools = fakeTailscaleToolsOnEveryHost(fakeSsh().dir);
   const minted: string[] = [];
   const devices = [
     { nodeId: "old", hostname: "bb-box-ns-inst1-gone-box", tags: ["tag:bb-box"], lastSeen: "2020-01-01T00:00:00Z" },
@@ -327,7 +328,6 @@ test("with a tailnet, each Mac joins it with a single-use key of its own, given 
       return { ok: false, status: 404, text: async () => "{}" };
     },
   });
-  fakeSsh();
   const fake = new FakeNamespace({ maxCores: 64 });
   const context = { ...testContext(new MemoryStorage(), "inst1", { id: "namespace" }), tailnet: () => tailnet };
   const backend = disposed(new NamespaceBackend(CONFIG, context, { fetch: fake.fetch, sshBinary: FAKE_SSH_BINARY, macHelper: FAKE_MAC_HELPER, sleep: async () => {}, readyTimeoutMs: 20_000 }));
@@ -347,8 +347,10 @@ test("with a tailnet, each Mac joins it with a single-use key of its own, given 
 });
 
 test("a macos-desktop box gets its desktop ready as it starts: the video helper built from BB Box's source, Screen Recording, Accessibility and event posting for the processes that need them, no screen-capture notice for those that capture, and a display that stays awake; and shows it over Screen Sharing and as video", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "ns-desktop-"));
-  const log = join(dir, "calls");
+  const { fake, backend } = setup();
+  const dir = join(process.env.FAKE_SSH_DIR!, "bin");
+  mkdirSync(dir);
+  const log = join(process.env.FAKE_SSH_DIR!, "desktop-calls");
   writeFileSync(log, "");
   const tool = (name: string, body: string) => {
     writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`);
@@ -359,46 +361,39 @@ test("a macos-desktop box gets its desktop ready as it starts: the video helper 
   tool("caffeinate", `printf '%s\\n' "caffeinate $*" >> ${log}`);
   tool("killall", `printf '%s\\n' "killall $*" >> ${log}`);
   tool("brew", `printf '%s\\n' "brew $*" >> ${log}`);
-  const path = process.env.PATH;
-  process.env.PATH = `${dir}:${path}`;
-  try {
-    const { fake, backend } = setup();
-    const desktop = await backend.acquire({ ...box("d1"), kind: "macos-desktop" }, null, hooks().hooks, new AbortController().signal);
-    const calls = readFileSync(log, "utf8").trim().split("\n");
-    assert.ok(calls.some((call) => /^xcrun swiftc -O -swift-version 5 -o \S+ \S+stream\.swift$/.test(call)), calls.join("; "));
-    assert.ok(calls.some((call) => /^sudo -n install -m 0755 \S+ \/usr\/local\/bin\/bb-box-stream$/.test(call)), calls.join("; "));
-    const grants = calls.filter((call) => call.startsWith("sudo -n sqlite3"));
-    assert.equal(grants.length, 9);
-    for (const client of ["/opt/namespace/vmguest", "/usr/bin/osascript", "/usr/local/bin/bb-box-stream"]) {
-      for (const service of ["kTCCServiceScreenCapture", "kTCCServiceAccessibility", "kTCCServicePostEvent"]) {
-        assert.ok(grants.some((grant) => grant.includes(`'${service}', '${client}', 1, 2`)), `${service} for ${client}`);
-      }
+  const desktop = await backend.acquire({ ...box("d1"), kind: "macos-desktop" }, null, hooks().hooks, new AbortController().signal);
+  const calls = readFileSync(log, "utf8").trim().split("\n");
+  assert.ok(calls.some((call) => /^xcrun swiftc -O -swift-version 5 -o \S+ \S+stream\.swift$/.test(call)), calls.join("; "));
+  assert.ok(calls.some((call) => /^sudo -n install -m 0755 \S+ \/usr\/local\/bin\/bb-box-stream$/.test(call)), calls.join("; "));
+  const grants = calls.filter((call) => call.startsWith("sudo -n sqlite3"));
+  assert.equal(grants.length, 9);
+  for (const client of ["/opt/namespace/vmguest", "/usr/bin/osascript", "/usr/local/bin/bb-box-stream"]) {
+    for (const service of ["kTCCServiceScreenCapture", "kTCCServiceAccessibility", "kTCCServicePostEvent"]) {
+      assert.ok(grants.some((grant) => grant.includes(`'${service}', '${client}', 1, 2`)), `${service} for ${client}`);
     }
-    assert.ok(calls.includes("sudo -n pmset -a displaysleep 0 sleep 0"), calls.join("; "));
-    assert.ok(calls.includes("caffeinate -u -t 1"), calls.join("; "));
-    const approvals = readFileSync(join(process.env.FAKE_SSH_DIR!, "home", "ssh.us.namespace.so", "Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"), "utf8");
-    const hintYear = new Date().getUTCFullYear() + 5;
-    for (const client of ["/opt/namespace/vmguest", "/usr/local/bin/bb-box-stream", "com.trycua.driver"]) {
-      assert.ok(approvals.includes(`<key>${client}</key><dict><key>kScreenCaptureAlertableUsageCount</key>`), `${client}'s notice put off`);
-    }
-    assert.equal(approvals.match(new RegExp(`<key>kScreenCapturePrivacyHintDate</key><date>${hintYear}-01-01T00:00:00Z</date>`, "g"))?.length, 3);
-    assert.ok(calls.some((call) => /^killall -u \S+ replayd$/.test(call)), "replayd reads them afresh");
-    assert.ok(calls.includes("brew install --quiet ffmpeg"), "ffmpeg, which box_record needs, is installed");
-
-    const transports = await backend.transports(desktop, "macos-desktop");
-    assert.deepEqual(transports.displays.map((display) => `${display.id} ${display.protocol}`), ["desktop rfb", "video selkies"]);
-    const made = [...fake.instances.values()][0]!;
-    const opened = await transports.displays[0]!.open();
-    assert.deepEqual(opened.auth, { type: "apple", user: "runner", password: `vnc-${made.id}` });
-    assert.ok(opened.input, "the viewer's input goes to the input helper");
-    const route = JSON.stringify(opened.route);
-    assert.match(route, /127\.0\.0\.1:5900/);
-    assert.match(route, new RegExp(`${made.id}@ssh\\.us\\.namespace\\.so`));
-    assert.match(JSON.stringify((await transports.displays[1]!.open()).route), /bb-box-stream connect/);
-    assert.deepEqual((await backend.transports(desktop, "macos")).displays, []);
-  } finally {
-    process.env.PATH = path;
   }
+  assert.ok(calls.includes("sudo -n pmset -a displaysleep 0 sleep 0"), calls.join("; "));
+  assert.ok(calls.includes("caffeinate -u -t 1"), calls.join("; "));
+  const approvals = readFileSync(join(process.env.FAKE_SSH_DIR!, "home", "ssh.us.namespace.so", "Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"), "utf8");
+  const hintYear = new Date().getUTCFullYear() + 5;
+  for (const client of ["/opt/namespace/vmguest", "/usr/local/bin/bb-box-stream", "com.trycua.driver"]) {
+    assert.ok(approvals.includes(`<key>${client}</key><dict><key>kScreenCaptureAlertableUsageCount</key>`), `${client}'s notice put off`);
+  }
+  assert.equal(approvals.match(new RegExp(`<key>kScreenCapturePrivacyHintDate</key><date>${hintYear}-01-01T00:00:00Z</date>`, "g"))?.length, 3);
+  assert.ok(calls.some((call) => /^killall -u \S+ replayd$/.test(call)), "replayd reads them afresh");
+  assert.ok(calls.includes("brew install --quiet ffmpeg"), "ffmpeg, which box_record needs, is installed");
+
+  const transports = await backend.transports(desktop, "macos-desktop");
+  assert.deepEqual(transports.displays.map((display) => `${display.id} ${display.protocol}`), ["desktop rfb", "video selkies"]);
+  const made = [...fake.instances.values()][0]!;
+  const opened = await transports.displays[0]!.open();
+  assert.deepEqual(opened.auth, { type: "apple", user: "runner", password: `vnc-${made.id}` });
+  assert.ok(opened.input, "the viewer's input goes to the input helper");
+  const route = JSON.stringify(opened.route);
+  assert.match(route, /127\.0\.0\.1:5900/);
+  assert.match(route, new RegExp(`${made.id}@ssh\\.us\\.namespace\\.so`));
+  assert.match(JSON.stringify((await transports.displays[1]!.open()).route), /bb-box-stream connect/);
+  assert.deepEqual((await backend.transports(desktop, "macos")).displays, []);
 });
 
 test("a macos-desktop box gets Cua Driver for computer use: the pinned release checked by its SHA-256, Accessibility and Screen Recording for its code requirement, and its LaunchAgent answering on its socket", async () => {

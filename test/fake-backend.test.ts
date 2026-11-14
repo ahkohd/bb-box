@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // What the fakes promise the tests that use them.
 
 import assert from "node:assert/strict";

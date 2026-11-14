@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // Windows boxes as BB machines (#539): the script that runs BB's Windows
 // enrolment or reconnect command, and the switch that turns it off.
 

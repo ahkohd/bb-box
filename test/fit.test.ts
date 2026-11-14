@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The doctor's check that a host holds the kinds it offers at their sizes (#74).
 
 import assert from "node:assert/strict";

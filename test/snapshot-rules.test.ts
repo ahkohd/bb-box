@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { SNAPSHOT_DEFAULTS } from "../src/core/document.ts";

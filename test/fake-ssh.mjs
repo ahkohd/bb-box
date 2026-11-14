@@ -26,6 +26,7 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ownedFoldersEnv, pathWithHostStubs, refusalForRealHostTools } from "./host-stubs.mjs";
 
 function appendLog(root, line) {
   const lock = join(root, "log.lock");
@@ -139,9 +140,15 @@ if (existsSync(join(root, "windows", host))) {
 const powershell = join(root, "powershell", host);
 const shell = existsSync(powershell) ? [powershell] : ["-c"];
 const [binary, ...argv] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), "sh", ...shell, script.replaceAll("/run/bb-box/", `${run}/`).replaceAll("/sys/module/nvidia/", `${home}/sys/module/nvidia/`).replaceAll("/usr/share/bb-box/nvidia-version", `${home}/usr/share/bb-box/nvidia-version`)];
+const boxPath = pathWithHostStubs(root, [join(home, "bin"), join(root, "bin")], process.env.PATH);
+const refusal = refusalForRealHostTools("The fake ssh", boxPath);
+if (refusal) {
+  process.stderr.write(refusal);
+  process.exit(255);
+}
 const result = spawnSync(binary, argv, {
   cwd: home,
-  env: { PATH: `${join(home, "bin")}:${process.env.PATH}`, HOME: home, USER: target.split("@")[0] },
+  env: { PATH: boxPath, HOME: home, USER: target.split("@")[0], ...ownedFoldersEnv([root], join(root, "tmp")) },
   stdio: "inherit",
 });
 process.exit(result.status ?? 1);

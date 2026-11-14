@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The panels build as BB's frontend build builds them (#941): BB gives the
 // app its own copies of the packages below, and resolves anything else from
 // the plugin's dependencies, without its devDependencies. The server SDK,

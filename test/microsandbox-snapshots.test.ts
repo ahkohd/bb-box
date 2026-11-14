@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, readFileSync, symlinkSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";

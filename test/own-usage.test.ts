@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createOwnUsage, developerToolsLook, MAC_OWN_READER, macOwnCommand, NATIVE_MARK, parseCpuTime, parseOwnReading, psOwnArgs, readMacOwn, RUSAGE_V2_BYTES, type OwnProcess, type OwnReading } from "../src/monitor/own-usage.ts";

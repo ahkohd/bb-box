@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import { forgetMonitorReadings } from "../src/app/monitor/use-snapshot.ts";
 // The panel, the desktop viewer and the settings section, rendered with the
 // SDK's slot harness against fake RPC handlers and a fake noVNC. Run with

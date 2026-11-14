@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // bb-box-feature (049): a Dev Container feature from a registry or a tarball, its options and defaults, and its containerEnv.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { answerTo, deviceSetOf, judgeGpuMigration, linesFor, parseHelperLines, parseMarker, planMark, planUnmark, rawGpuLines, withGpuTagsOf, type GuestLook, type MarkContext } from "../src/backends/proxmox-lxc/gpu-marking.ts";

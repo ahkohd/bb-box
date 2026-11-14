@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";

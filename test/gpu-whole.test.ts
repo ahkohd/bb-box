@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AudienceError, BackendError, type AcquireHooks, type BoxIdentity, type CopyHooks, type GpuPart, type Guest, type ReleaseHooks } from "../src/backends/types.ts";

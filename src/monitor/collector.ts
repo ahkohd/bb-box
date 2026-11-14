@@ -5,7 +5,7 @@ import { promisify } from "node:util";
 import { setTimeout as sleep } from "node:timers/promises";
 import { basename } from "node:path";
 import type { MetricPoint, MonitorSnapshot, Processes } from "./snapshot.ts";
-import { createTailscaleReader } from "./tailscale.ts";
+import { createTailscaleReader, type TailscaleStatusRead } from "./tailscale.ts";
 import { readBattery } from "./battery.ts";
 import { readMacSensors } from "./mac-sensors.ts";
 import { containerCapacity, containerCpuPercent, containerMemory, readContainer, type ContainerCounters } from "./container.ts";
@@ -351,6 +351,7 @@ export interface CollectorOptions {
   readonly readContainer?: (signal: AbortSignal) => Promise<ContainerCounters | null>;
   readonly readOwn?: (signal: AbortSignal) => Promise<OwnReading | null>;
   readonly readGpus?: (signal: AbortSignal, inContainer: boolean) => Promise<GpuReading | null>;
+  readonly readTailscaleStatus?: TailscaleStatusRead;
 }
 
 function noReading(): Promise<null> {
@@ -359,7 +360,7 @@ function noReading(): Promise<null> {
 
 export function createCollector(options: CollectorOptions) {
   const scope = options.scope ?? "machine";
-  const readTailscale = createTailscaleReader();
+  const readTailscale = createTailscaleReader(Date.now, options.readTailscaleStatus);
   const readOwnContainer = options.readContainer ?? ((signal: AbortSignal) => (platform() === "linux" ? readContainer(signal) : noReading()));
   let previousCpuTimes: CpuTimes | null = null;
   let previousPerCoreTimes: CpuTimes[] | null = null;

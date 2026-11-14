@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { reportedDriver } from "../src/backends/proxmox-lxc/gpu-marking.ts";

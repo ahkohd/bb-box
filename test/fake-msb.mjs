@@ -19,6 +19,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { randomBytes } from "node:crypto";
 import { constants } from "node:os";
 import { join } from "node:path";
+import { ownedFoldersEnv, pathWithHostStubs, refusalForRealHostTools } from "./host-stubs.mjs";
 
 const root = process.env.FAKE_MSB_ROOT;
 if (!root) {
@@ -188,7 +189,10 @@ function exec(rest) {
       .replaceAll("/var/lib/bb-box/", `${join(dir(name), "var-lib", "bb-box")}/`)
       .replaceAll("/home/box", home);
   const [program, ...programArgs] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), ...command.map(own)];
-  const child = spawn(program, programArgs, { cwd: workdir ? own(workdir) : home, env: { PATH: process.env.PATH, HOME: home, ...env }, stdio: "inherit" });
+  const sandboxEnv = { PATH: pathWithHostStubs(root, [], process.env.PATH), HOME: home, ...ownedFoldersEnv([root], join(root, "tmp")), ...env };
+  const refusal = refusalForRealHostTools("The fake microsandbox", sandboxEnv.PATH);
+  if (refusal) fail(refusal.trim(), 126);
+  const child = spawn(program, programArgs, { cwd: workdir ? own(workdir) : home, env: sandboxEnv, stdio: "inherit" });
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => child.kill(signal));
   child.on("error", (error) => fail(`exec failed: ${error.message}`, 126));
   child.on("exit", (code, signal) => process.exit(code ?? 128 + (constants.signals[signal] ?? 0)));

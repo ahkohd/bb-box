@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { connect } from "node:net";
 import { Duplex } from "node:stream";

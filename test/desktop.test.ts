@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The desktop viewer's pieces: the RFB protocol, the relay that answers the
 // box's VNC authentication and drops input from viewers without control, and
 // shared control itself.

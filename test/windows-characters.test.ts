@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // A person's characters over a Windows desktop's VNC (the desktop sweep): which keys go to bb-box-stream as their
 // character rather than to QEMU, and how they go, against a stand-in for the box's bb-box-stream.
 

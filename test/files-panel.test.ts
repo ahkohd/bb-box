@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { OPERATOR, SPARES, type BoxRecord, type Boxes } from "../src/core/boxes.ts";

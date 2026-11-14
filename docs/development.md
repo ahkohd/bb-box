@@ -27,6 +27,41 @@ npm run reference
   GitHub runs it, and the typecheck, on each pull request. It fails when
   the reference is out of date, a link between Markdown files is broken,
   or the skill does not name an agent tool.
+- Run the tests in a BB Box box or on GitHub Actions, not on a machine
+  that matters. Some fakes run a box's scripts on the test machine itself,
+  and a script can reach that machine's own tools in ways no fake can
+  stop, such as by a full path. Each test file's first import,
+  `test/check-test-machine.mjs`, checks the machine, and finishes before
+  the file's other imports load, however the file is run: by `npm test`,
+  `npm run test:app`, `node --test`, `node` alone or vitest. The tests
+  refuse to start where the current user can run `sudo` without a
+  password, where the tests run as root, where Tailscale is installed, or
+  where `sudo -n true` gives no clear answer: it fails other than by
+  asking for a password, or has not answered within 10 seconds, when its
+  process group gets SIGTERM and, 2 seconds later, SIGKILL. They start
+  anyway in a BB Box box, whose `/usr/share/bb-box/image.json` is an image
+  record of a contract and kind BB Box knows, that only root can change,
+  or in a GitHub Actions run. To run them on such a machine anyway, at the
+  risk of changing it, set `BBBOX_TESTS_MAY_BREAK_THIS_MACHINE=1`. A test
+  file, in any folder under `test`, starts with `import
+  "./check-test-machine.mjs";`, by its own relative path, and a test fails
+  while one does not.
+- The stubs keep the fakes' own scripts off the machine's tools, as far as
+  a PATH can. A fake that runs a box's script on the test machine, such as
+  the fake `ssh`, `docker` or microsandbox, puts a folder of stubs first
+  on the script's PATH. There, `sudo` runs its command under the stubs,
+  the tools that change a machine, such as `tailscale`, `systemctl`,
+  `reboot`, `iptables`, `mount` and `pkill`, only record their call, and
+  `ip`, `route`, `sysctl` and `scutil` run only in forms known to read.
+  `rm`, `chown` and `chmod` accept only their own options, check every
+  operand, after `--` too, follow it to its real target and act only
+  inside the fake's own folders. A test reads the calls with
+  `hostCommandsRecorded` from
+  [test/host-stubs.mjs](../test/host-stubs.mjs).
+- Each test process also puts a guard folder on the PATH of the children
+  it starts, so a test file that runs the machine's own `sudo`,
+  `tailscale`, `systemctl` or another of those tools by name fails and
+  says which.
 - `scripts/smoke.ts` runs one box on a real backend without BB: it
   acquires a box, runs a command, opens a desktop as the relay does, and
   releases the box, printing each step's time. Its settings file is the

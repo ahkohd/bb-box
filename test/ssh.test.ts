@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -15,6 +16,18 @@ const HOMEBREW_FILTERS = ["overlay", "geq", "freezedetect", "tpad"];
 const WORKING_FFPROBE = "#!/bin/sh\necho h264\n";
 const BROKEN = "#!/bin/sh\necho broken >&2\nexit 42\n";
 const NOT_INSTALLED = "#!/bin/sh\necho 'not found' >&2\nexit 127\n";
+const PRIVATE_FOLDER = 0o700;
+const PRIVATE_FILE = 0o600;
+const GROUP_WRITABLE_UMASK = 0o002;
+
+function underAGroupWritableUmask<T>(run: () => T): T {
+  const was = process.umask(GROUP_WRITABLE_UMASK);
+  try {
+    return run();
+  } finally {
+    process.umask(was);
+  }
+}
 
 function fakeFfmpegScript(version: string, filters: readonly string[], says = "ffmpeg"): string {
   return `#!/bin/sh
@@ -165,9 +178,11 @@ function fetches(box: FakeBox): string[] {
 function installedBuild(box: FakeBox, name: string, ffmpeg: string, ffprobe = WORKING_FFPROBE): string {
   const folder = join(box.home, CLIP_FFMPEG_DIR, name);
   mkdirSync(folder, { recursive: true });
+  chmodSync(folder, PRIVATE_FOLDER);
   executable(join(folder, "ffmpeg"), ffmpeg);
   executable(join(folder, "ffprobe"), ffprobe);
   writeFileSync(join(folder, "sums"), `${sha256(join(folder, "ffmpeg"))} ${sha256(join(folder, "ffprobe"))}\n`);
+  chmodSync(join(folder, "sums"), PRIVATE_FILE);
   return folder;
 }
 
@@ -287,7 +302,7 @@ test("an install whose last step fails is not reported ready, and an earlier bui
   assert.match(failed.stderr, /No space left on device\nBB Box could not put ffmpeg 9\.0\.2 in place in /);
   assert.equal(failed.stdout, "", "no pair is offered");
 
-  const earlier = installedBuild(box, "earlier-build", fakeFfmpegScript("8.0.1", EVERY_FILTER, "the earlier build"));
+  const earlier = underAGroupWritableUmask(() => installedBuild(box, "earlier-build", fakeFfmpegScript("8.0.1", EVERY_FILTER, "the earlier build")));
   const kept = run(box, clipFfmpegScript("linux", [build]));
 
   assert.equal(kept.status, CLIP_FFMPEG_EXITS.ready, kept.stderr);

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The microsandbox backend (053) against a fake msb host (fake-msb.ts).
 
 import assert from "node:assert/strict";

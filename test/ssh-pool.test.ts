@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The SSH host pool backend on fake SSH, with test/fake-machine.mjs as each
 // machine's helper: its settings, the conformance suite, what the pool does
 // when a reset fails, is cut short or leaves a machine dirty, and its Macs.

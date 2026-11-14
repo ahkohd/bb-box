@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The SSH host pool's Mac helper and setup (047), run on Linux against a fake
 // Mac: stub macOS tools that keep its state in files (test/fake-macos.ts).
 

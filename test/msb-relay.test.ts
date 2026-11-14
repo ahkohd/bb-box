@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The msb relay (053): BB Box's msb client on BB's server (src/relay/msb-client.mjs),
 // the server's hub (src/relay/hub.ts) and the machine's worker
 // (src/host/msb.ts), joined by a WebSocket stand-in, with a fake BB Box msb

@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The box's pointer from bb-box-cursor (060): its lines as events, and its
 // images as the PNG the panel shows.
 

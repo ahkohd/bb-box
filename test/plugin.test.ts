@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The plugin in SDK's fake plugin host, with the fake backend: the agent
 // tools, enrolment as a BB machine, thread events, the panel's RPC, the CLI
 // and settings.

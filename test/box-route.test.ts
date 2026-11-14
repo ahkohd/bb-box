@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { boxPage, boxView, otherView, pageOfView, routeOf, subPathOf, viewFromPage, wayBack, type BoxesRoute } from "../src/app/box-route.ts";

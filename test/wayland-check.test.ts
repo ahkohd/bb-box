@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
@@ -10,6 +11,7 @@ const GUEST = fileURLToPath(new URL("../setup/proxmox-lxc/template/guest/", impo
 const SWAY_WRITES_ITS_ENVIRONMENT_AFTER_MS = 500;
 const CHECK_LINES_WITHIN_MS = 60_000;
 const SWAY_LINE = "Sway and its output";
+const NO_UNITS_RUNNING = '#!/bin/sh\n[ "$1" = is-active ] && shift\nfor unit in "$@"; do echo inactive; done\nexit 3\n';
 
 function sandbox(): { root: string; run: string; libexec: string; bin: string } {
   const root = tempDir("wayland-check");
@@ -29,6 +31,7 @@ esac
 `,
     { mode: 0o755 },
   );
+  writeFileSync(join(bin, "systemctl"), NO_UNITS_RUNNING, { mode: 0o755 });
   return { root, run, libexec, bin };
 }
 

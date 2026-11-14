@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 import { z } from "zod";
 import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';

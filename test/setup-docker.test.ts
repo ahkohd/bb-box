@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // bb box setup docker: what the Box panel's first run does, for an agent or a terminal (the setup plan's PR 5).
 
 import assert from "node:assert/strict";

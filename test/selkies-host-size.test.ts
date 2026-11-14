@@ -1,3 +1,4 @@
+import "./check-test-machine.mjs";
 // The build's patch to Selkies 2.0.0 for a Wayland image (060), run with
 // python3 against a file with the code it expects from Selkies'
 // websockets_mode.py, cut down to the parts it changes and runnable.

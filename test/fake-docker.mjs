@@ -26,6 +26,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { constants } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ownedFoldersEnv, pathWithHostStubs, refusalForRealHostTools } from "./host-stubs.mjs";
 
 const root = process.env.FAKE_DOCKER_ROOT;
 if (!root) {
@@ -65,7 +66,8 @@ const identityRoot = (name) => join(dir(name), "identity");
 const imageIdentityRoot = (image) => join(root, "image-identities", createHash("sha256").update(image).digest("hex"));
 const identityToolIn = (rootDir) => join(rootDir, IDENTITY_TOOL.slice(1));
 const identityEnv = (name, container) => ({
-  PATH: `${join(root, "identity-bin")}:${process.env.PATH}`,
+  PATH: pathWithHostStubs(root, [join(root, "identity-bin")], process.env.PATH),
+  ...ownedFoldersEnv([root], join(root, "tmp")),
   BBBOX_IDENTITY_ROOT: identityRoot(name),
   BBBOX_IDENTITY_NIC_WAIT_SECONDS: "0",
   BBBOX_IDENTITY_SETTLE_SECONDS: "0",
@@ -441,7 +443,7 @@ function startServicesAfterTheHold(name, found) {
   ].join("\n");
   const [command, ...commandArgs] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), "bash", "-c", afterTheHold];
   const child = spawn(command, commandArgs, {
-    env: { PATH: process.env.PATH, BBBOX_FORK_HOLD: envValue(found, "BBBOX_FORK_HOLD"), BBBOX_IDENTITY: envValue(found, "BBBOX_IDENTITY") },
+    env: { PATH: pathWithHostStubs(root, [], process.env.PATH), ...ownedFoldersEnv([root], join(root, "tmp")), BBBOX_FORK_HOLD: envValue(found, "BBBOX_FORK_HOLD"), BBBOX_IDENTITY: envValue(found, "BBBOX_IDENTITY") },
     stdio: "ignore",
   });
   child.unref();
@@ -664,10 +666,13 @@ function exec(rest) {
   const [command, ...commandArgs] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), ...rest.slice(i + 1).map(own)];
   const cards = cardsGiven(found.HostConfig.Devices ?? [], found.HostConfig.Privileged === true);
   const gpuEnv = Object.fromEntries((found.Config.Env ?? []).filter((pair) => /^(CUDA_VISIBLE_DEVICES|NVIDIA_VISIBLE_DEVICES)=/.test(pair)).map((pair) => [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)]));
-  const cardEnv = cards.length ? { PATH: `${join(root, "gpu-bin")}:${process.env.PATH}`, FAKE_CARDS: JSON.stringify(host.smiListsNone ? [] : cards), FAKE_CUDA_IGNORES_VISIBLE: host.cudaIgnoresVisible ? "1" : "", FAKE_CUDA_NO_DEVICE: host.cudaNoDevice ? "1" : "", FAKE_CUDA_ERROR: host.cudaError ? String(host.cudaError) : "", FAKE_REAL_PYTHON: process.env.FAKE_REAL_PYTHON ?? "python3" } : {};
+  const cardEnv = cards.length ? { PATH: pathWithHostStubs(root, [join(root, "gpu-bin")], process.env.PATH), FAKE_CARDS: JSON.stringify(host.smiListsNone ? [] : cards), FAKE_CUDA_IGNORES_VISIBLE: host.cudaIgnoresVisible ? "1" : "", FAKE_CUDA_NO_DEVICE: host.cudaNoDevice ? "1" : "", FAKE_CUDA_ERROR: host.cudaError ? String(host.cudaError) : "", FAKE_REAL_PYTHON: process.env.FAKE_REAL_PYTHON ?? "python3" } : {};
+  const containerEnv = { ...identityEnv(name, found), HOME: home, ...gpuEnv, ...env, ...cardEnv };
+  const refusal = refusalForRealHostTools("The fake docker", containerEnv.PATH);
+  if (refusal) fail(refusal.trim(), 126);
   const child = spawn(command, commandArgs, {
     cwd: workdir ? own(workdir) : home,
-    env: { ...identityEnv(name, found), HOME: home, ...gpuEnv, ...env, ...cardEnv },
+    env: containerEnv,
     stdio: "inherit",
   });
   for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => child.kill(signal));
