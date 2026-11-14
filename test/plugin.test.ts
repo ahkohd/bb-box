@@ -4389,9 +4389,10 @@ test("a VNC viewer's pointer stream gets the box's pointer from the same helper 
   await until("the helper ended", async () => runs[0]!.ended);
 
   // A box whose image has no helper: the stream ends at once, saying why, and the VNC picture is as before.
-  const plain = await start(undefined, { kinds: [FAKE_SELKIES_KIND] });
+  const withoutComputerUse: BoxKind = { ...FAKE_SELKIES_KIND, capabilities: { ...FAKE_SELKIES_KIND.capabilities, computerUse: null } };
+  const plain = await start(undefined, { kinds: [withoutComputerUse] });
   t.after(() => plain.harness.lifecycle.dispose());
-  await plain.harness.behavior.callRpc("acquire", { threadId: THREAD, kind: FAKE_SELKIES_KIND.id });
+  await plain.harness.behavior.callRpc("acquire", { threadId: THREAD, kind: withoutComputerUse.id });
   await plain.app.boxes.idle();
   const older = await only(plain.app);
   const none = await plain.harness.behavior.experimental_openWebSocket(`/desktop?box=${older.id}&viewer=viewer-vnc-00002&stream=pointer`);
@@ -4414,6 +4415,59 @@ test("a box whose image has no bb-box-cursor, as every Wayland box of a 24.04 im
   await until("a frame", async () => one.sent.some((message) => typeof message !== "string"));
   assert.ok(!one.sent.some((message) => typeof message === "string" && message.startsWith("BB_POINTER")), "no pointer of BB Box's");
   await one.close();
+});
+
+test("on a Linux desktop, whose driver draws no agent cursor, each viewer is told where the agent clicks and scrolls, and a viewer that comes later where it last acted (073)", async (t) => {
+  const { harness, box, tool } = await desktopBox({ kind: FAKE_SELKIES_KIND });
+  t.after(() => harness.lifecycle.dispose());
+  const said = (session: { sent: readonly (string | Uint8Array)[] }) => session.sent.filter((message): message is string => typeof message === "string");
+  const agentSaid = (session: { sent: readonly (string | Uint8Array)[] }) => said(session).filter((message) => message.startsWith("BB_AGENT,"));
+  const vnc = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
+  const video = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-video-0001&stream=selkies`);
+  await tool("computer_screenshot", { box: box.name });
+  const clicked = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 400, y: 300 }));
+  const [, sx, sy] = /\((\d+), (\d+)\) on the screen/.exec(clicked)!;
+  await until("both viewers told of the click", async () => agentSaid(vnc).includes(`BB_AGENT,click,${sx},${sy}`) && agentSaid(video).includes(`BB_AGENT,click,${sx},${sy}`));
+  assert.equal(vnc.closeCalls.length, 0, "the pointer stream stays open for the agent's actions, though the image has no bb-box-cursor");
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  await tool("computer_act", { box: box.name, action: "scroll", ref: refOf(tree, '"Add"'), direction: "down" });
+  await until("the scroll", async () => agentSaid(vnc).some((message) => message.startsWith("BB_AGENT,scroll,")));
+  const scrolled = agentSaid(vnc).find((message) => message.startsWith("BB_AGENT,scroll,"))!;
+  const later = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
+  await until("the later viewer told where the agent is", async () => agentSaid(later).length > 0);
+  assert.deepEqual(agentSaid(later), [scrolled.replace("BB_AGENT,scroll,", "BB_AGENT,at,")], "where, with no ring for an action it did not see");
+  await video.close();
+  await vnc.close();
+  await later.close();
+
+  const kind: BoxKind = { ...FAKE_KINDS[1]!, id: "macos-desktop", label: "macOS desktop", capabilities: { ...FAKE_KINDS[1]!.capabilities, os: "macos" } };
+  const mac = await desktopBox({ kind });
+  t.after(() => mac.harness.lifecycle.dispose());
+  const macViewer = await mac.harness.behavior.experimental_openWebSocket(`/desktop?box=${mac.box.id}&viewer=viewer-vnc-00003&stream=pointer`);
+  await until("the stream ended, as Cua draws its own cursor there", async () => macViewer.closeCalls.length > 0);
+  assert.deepEqual(macViewer.closeCalls[0], { code: 1000, reason: POINTER_NONE });
+  await mac.tool("computer_screenshot", { box: mac.box.name });
+  await mac.tool("computer_act", { box: mac.box.name, action: "click", window: "desktop", x: 400, y: 300 });
+  assert.deepEqual(agentSaid(macViewer), []);
+});
+
+test("on a Linux desktop at Xfce's scale 2, whose GTK apps give element frames in half the screen's pixels, the agent's click by reference is shown where it lands (073)", async (t) => {
+  const { harness, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    for (const window of desktop.windows) window.halfFrames = true;
+  });
+  const vnc = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
+  const tree = text(await tool("computer_observe", { box: box.name, window: 100 }));
+  await tool("computer_act", { box: box.name, action: "click", ref: refOf(tree, '"Delete Task 1"') });
+  const tasks = readDesktop(file).windows.find((window) => window.id === 100)!;
+  const centre = { x: tasks.x + 700 + 90 / 2, y: tasks.y + 45 + 30 / 2 };
+  await until("the click told", async () => vnc.sent.some((message) => typeof message === "string" && message.startsWith("BB_AGENT,click,")));
+  assert.deepEqual(
+    vnc.sent.filter((message) => typeof message === "string" && message.startsWith("BB_AGENT,click,")),
+    [`BB_AGENT,click,${centre.x},${centre.y}`],
+  );
+  await vnc.close();
 });
 
 test("the backend resizes a desktop whose stream server cannot, one resize at a time and the latest last, and not below the display's smallest size (021)", async (t) => {

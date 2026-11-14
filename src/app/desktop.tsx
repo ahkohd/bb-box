@@ -32,6 +32,7 @@ import { SnapshotsTabPanel } from "./snapshots-tab.tsx";
 import type { BoxView } from "../plugin/views.ts";
 import { BOXES_ACTION, EmptyPanel, forThread, hasViewer, IconButton, rememberedLive, message, Notice, OPERATOR, ReleasedNotice, deviceModelOf, RowTitle, boxTitleBadges, systemName, SETTINGS_PATH, StatusDot, StatusLine, type Tone, useLive, useNow, BackControl, IconLink, type BackTo } from "./common.tsx";
 import { POINTER_NONE } from "../core/pointer.ts";
+import { AgentPointer } from "./agent-pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import { claimKept, dropKept, keptFree, releaseKept, type Kept } from "./kept.ts";
 import { refreshLosslessly, type LosslessRefresh } from "./rfb-refresh.ts";
@@ -460,6 +461,7 @@ export class DesktopSession implements Kept {
    * a stream of its own, which ends at once for a desktop without the helper.
    */
   readonly #boxPointer = new BoxPointer(this.element);
+  readonly #agentPointer = new AgentPointer(this.element);
   #pointerStream: WebSocket | null = null;
   /** The box's image has no bb-box-cursor: its pointer stream is not opened again. */
   #pointerNone = false;
@@ -646,7 +648,7 @@ export class DesktopSession implements Kept {
     const stream = new WebSocket(`${this.#url}&stream=pointer`);
     this.#pointerStream = stream;
     stream.onmessage = (event: MessageEvent) => {
-      if (typeof event.data === "string" && this.#boxPointer.message(event.data)) this.#drawPointer();
+      if (typeof event.data === "string" && (this.#boxPointer.message(event.data) || this.#agentPointer.message(event.data))) this.#drawPointer();
     };
     stream.onclose = (event: CloseEvent) => {
       if (this.#pointerStream === stream) this.#pointerStream = null;
@@ -667,14 +669,14 @@ export class DesktopSession implements Kept {
     const canvas = this.element.querySelector("canvas");
     if (!canvas) {
       this.#boxPointer.place(null, true);
+      this.#agentPointer.place(null, true);
       return;
     }
     const outer = this.element.getBoundingClientRect();
     const inner = canvas.getBoundingClientRect();
-    this.#boxPointer.place(
-      { left: inner.left - outer.left, top: inner.top - outer.top, width: inner.width, height: inner.height, desktopWidth: canvas.width, desktopHeight: canvas.height },
-      this.#mine,
-    );
+    const picture = { left: inner.left - outer.left, top: inner.top - outer.top, width: inner.width, height: inner.height, desktopWidth: canvas.width, desktopHeight: canvas.height };
+    this.#boxPointer.place(picture, this.#mine);
+    this.#agentPointer.place(picture, this.#mine);
   }
 
   /** Asks for still areas again losslessly from now on, for a desktop whose server sends none itself. */

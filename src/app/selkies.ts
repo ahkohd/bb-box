@@ -12,8 +12,9 @@
 import Keyboard from "@novnc/novnc/core/input/keyboard.js";
 import keysyms from "@novnc/novnc/core/input/keysymdef.js";
 import { DECODES_VERB, LEVELS_PAST_52, LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
-import { POINTER_VERB } from "../core/pointer.ts";
+import { AGENT_VERB, POINTER_VERB } from "../core/pointer.ts";
 import { PRODUCT } from "./product.ts";
+import { AgentPointer } from "./agent-pointer.ts";
 import { BoxPointer } from "./box-pointer.ts";
 import type { Kept } from "./kept.ts";
 import { DEVICE_CLIPBOARD_MOST, DEVICE_FIRST_FRAME_MS, FRAME_GENERATIONS_SINCE_VERSION, PASTE_REQUEST_SINCE_VERSION, frameGenerationOf, stillsRequestText, viewRequestText, type DeviceAnswer, type DeviceControl, type DeviceRequest, type DeviceState, type ModelName, type TouchContact } from "../core/device.ts";
@@ -317,6 +318,7 @@ export class SelkiesSession implements Kept {
   #cursor: string | null = null;
   /** The box's pointer drawn over the picture for a viewer without control, where bb-box sends where it is (060). */
   readonly #boxPointer = new BoxPointer(this.element);
+  readonly #agentPointer = new AgentPointer(this.element);
   #cursorVisible = false;
   readonly #observer: ResizeObserver | null;
   #settle: ReturnType<typeof setTimeout> | undefined;
@@ -863,6 +865,10 @@ export class SelkiesSession implements Kept {
         this.#boxPointer.at(rest);
         this.#drawPointer();
         break;
+      case AGENT_VERB:
+        this.#drawPointer();
+        this.#agentPointer.message(text);
+        break;
     }
   }
 
@@ -1068,6 +1074,7 @@ export class SelkiesSession implements Kept {
       ? { left: (width - this.#width * scale) / 2, top: (height - this.#height * scale) / 2, width: this.#width * scale, height: this.#height * scale, desktopWidth: this.#width, desktopHeight: this.#height }
       : null;
     this.#boxPointer.place(picture, this.#mine);
+    this.#agentPointer.place(picture, this.#mine);
   }
 
   /** The box's OS, for the paste chord and the Cmd mapping. */

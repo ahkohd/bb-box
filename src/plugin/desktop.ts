@@ -22,12 +22,17 @@ import { scaleScript } from "../backends/windows.ts";
 import { openRoute } from "../transports/route.ts";
 import { LEFT_TO_STREAM_SERVER, type BoxPointer, type ByteChannel, type Display } from "../transports/types.ts";
 import { argbToRgba, rgbaPng } from "../core/png.ts";
-import { POINTER_NONE, POINTER_VERB } from "../core/pointer.ts";
+import { POINTER_NONE, POINTER_VERB, agentMessage } from "../core/pointer.ts";
+import { driverDrawsAgentCursor } from "../core/record.ts";
 import { LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
-import type { MacKeys, PersonInput } from "../core/record-input.ts";
+import type { ActedInput, MacKeys, PersonInput } from "../core/record-input.ts";
 import { PRODUCT } from "../brand.ts";
 
 export const DESKTOP_ROUTE = "/desktop";
+
+export function viewerDrawsAgentCursor(box: BoxRecord): boolean {
+  return !!box.capabilities.computerUse && !driverDrawsAgentCursor(box.capabilities.os);
+}
 const VIEWER_ID = /^[A-Za-z0-9_-]{8,64}$/;
 /** Each person's control, for the plugin's next instance (045). */
 const KEPT_KEY = "desktop-control";
@@ -168,6 +173,7 @@ export interface Desktops {
    * the box did not take it.
    */
   paste(boxId: string, viewer: string, text: string): Promise<void>;
+  agentActed(box: BoxRecord, input: ActedInput): void;
   /** Whether the box's desktop is High resolution, or null where it cannot be. */
   sharp(boxId: string): Promise<boolean | null>;
   /** Makes the box's desktop High resolution, twice the pixels at twice Xfce's scale, or not. */
@@ -481,6 +487,33 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       entry.at = message;
     } else return;
     for (const listener of entry.listeners) listener.send(message);
+  };
+  const agentPlaces = new Map<string, string>();
+  const agentListeners = new Map<string, Set<(message: string) => void>>();
+  const listenAgent = (boxId: string, send: (message: string) => void): (() => void) => {
+    const listeners = agentListeners.get(boxId) ?? new Set<(message: string) => void>();
+    agentListeners.set(boxId, listeners);
+    listeners.add(send);
+    const last = agentPlaces.get(boxId);
+    if (last) send(last);
+    return () => {
+      listeners.delete(send);
+      if (!listeners.size && agentListeners.get(boxId) === listeners) agentListeners.delete(boxId);
+    };
+  };
+  const agentActed = (box: BoxRecord, input: ActedInput): void => {
+    if (!viewerDrawsAgentCursor(box) || (input.type !== "click" && input.type !== "scroll")) return;
+    agentPlaces.set(box.id, agentMessage({ act: "at", ...input.point }));
+    const message = agentMessage({ act: input.type, ...input.point });
+    for (const send of agentListeners.get(box.id) ?? []) send(message);
+  };
+  const endsWithoutAgent = (boxId: string, end: () => void): void => {
+    void boxes
+      .find(boxId)
+      .then((box) => {
+        if (!box || !viewerDrawsAgentCursor(box)) end();
+      })
+      .catch(end);
   };
   /** What each video viewer's relay stops listening to the box's pointer with. */
   const unlistens = new Map<SelkiesRelay, () => void>();
@@ -850,10 +883,13 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
               socket.close(1008, "The viewer gave no viewer ID, so it cannot be told apart from other tabs.");
               return;
             }
-            unlistenPointer = listenPointer(boxId, {
-              send: (message) => void socket.send(message),
-              none: () => void socket.close(1000, POINTER_NONE),
-            });
+            const send = (message: string) => void socket.send(message);
+            const stopPointer = listenPointer(boxId, { send, none: () => endsWithoutAgent(boxId, () => void socket.close(1000, POINTER_NONE)) });
+            const stopAgent = listenAgent(boxId, send);
+            unlistenPointer = () => {
+              stopPointer();
+              stopAgent();
+            };
             return;
           }
           const end = { send: (message: string | Uint8Array) => socket.send(message), close: (code: number, reason: string) => socket.close(code, reason) };
@@ -911,7 +947,12 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
             selkiesBoxes.get(boxId)?.relays.add(relay);
             // The box's pointer from bb-box-cursor (060): as it is, then each change.
             const told = relay;
-            unlistens.set(told, listenPointer(boxId, { send: (message) => told.tell(message) }));
+            const stopPointer = listenPointer(boxId, { send: (message) => told.tell(message) });
+            const stopAgent = listenAgent(boxId, (message) => told.tell(message));
+            unlistens.set(told, () => {
+              stopPointer();
+              stopAgent();
+            });
             keepSharp(boxId);
             cursorFor(boxId);
             // As after a restart of bb-box, the person in control may come back by video only.
@@ -1085,6 +1126,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
 
   return {
     control,
+    agentActed,
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${DESKTOP_ROUTE}`,
     async sharp(boxId) {
       const box = await boxes.find(boxId);

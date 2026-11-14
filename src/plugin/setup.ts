@@ -1059,7 +1059,10 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
   const recordings = new RecordingInputs();
   const clipFfmpeg = new ClipFfmpegLedger();
   const computing = new Computer({
-    onInput: (box, input, sentAt) => recordings.acted(box.id, input, sentAt),
+    onInput: (box, input, sentAt) => {
+      recordings.acted(box.id, input, sentAt);
+      desktops?.agentActed(box, input);
+    },
     async spawn(box, script, signal) {
       const { command } = await boxes.transports(box);
       if (!command?.spawn) throw new BoxError("unsupported", `Box ${box.name}'s command transport cannot start the computer-use driver.`);

@@ -833,6 +833,24 @@ export function windowLine(window: WindowInfo): string {
   return `window ${window.id}: ${window.app || "an app"}${title}, ${window.width} by ${window.height}${window.onScreen ? "" : ", not on screen"}`;
 }
 
+const LOGICAL_POINTS_SCALE = 2;
+const FRAME_SLACK_PX = 2;
+
+function frameWithin(frame: Rect, window: Rect): boolean {
+  return (
+    frame.x >= window.x - FRAME_SLACK_PX &&
+    frame.y >= window.y - FRAME_SLACK_PX &&
+    frame.x + frame.width <= window.x + window.width + FRAME_SLACK_PX &&
+    frame.y + frame.height <= window.y + window.height + FRAME_SLACK_PX
+  );
+}
+
+function inScreenPixels(frame: Rect, window: Rect): Rect {
+  if (frameWithin(frame, window)) return frame;
+  const scaled = { x: frame.x * LOGICAL_POINTS_SCALE, y: frame.y * LOGICAL_POINTS_SCALE, width: frame.width * LOGICAL_POINTS_SCALE, height: frame.height * LOGICAL_POINTS_SCALE };
+  return frameWithin(scaled, window) ? scaled : frame;
+}
+
 function toArea(rect: Rect): InputArea {
   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 }
@@ -1172,8 +1190,9 @@ export class Computer {
 
   #noteAct(use: Use, input: ActInput, target: Target, sentAt: number): void {
     if (!this.#deps.onInput) return;
-    const area = target.element?.frame ?? null;
     const window = target.snapshot?.window ? toArea(target.snapshot.window) : null;
+    const frame = target.element?.frame ?? null;
+    const area = frame && window && use.box.capabilities.os === "linux" ? inScreenPixels(frame, window) : frame;
     const point = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : (target.screen ?? this.#windowPoint(use, target));
     if (input.action === "set_value") {
       const value = input.value ?? "";
