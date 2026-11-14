@@ -157,7 +157,7 @@ export function sceneOf(facts: SceneFacts, size: { readonly width: number; reado
   });
   const scrolls: PlacedScroll[] = inputs.flatMap((input) => (input.type === "scroll" ? [{ at: time(input.at), x: input.x * spaceScale(input.space), y: input.y * spaceScale(input.space), window: scaled(input.window ?? null, spaceScale(input.space)) }] : []));
   const typing: PlacedTyping[] = inputs.flatMap((input) =>
-    input.type === "typing" ? [{ at: time(input.at), characters: input.characters, area: scaled(input.area, spaceScale(input.space)), secret: input.secret, role: input.role ?? null, window: scaled(input.window ?? null, spaceScale(input.space)), by: input.by, ...(input.call !== undefined ? { call: input.call } : {}) }] : [],
+    input.type === "typing" ? [{ at: time(input.at), characters: input.characters, area: scaled(input.area, spaceScale(input.space)), secret: input.secret, role: input.role ?? null, window: scaled(input.window ?? null, spaceScale(input.space)), by: input.by, ...(input.call !== undefined ? { call: input.call } : {}), ...(input.placeUnknown ? { placeUnknown: true } : {}) }] : [],
   );
   const keys: PlacedKeys[] = inputs.flatMap((input) => (input.type === "keys" ? [{ at: time(input.at), chord: input.chord }] : []));
   return {

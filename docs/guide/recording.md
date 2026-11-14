@@ -35,6 +35,8 @@ When something opens elsewhere on the screen, such as a dialog, the clip zooms o
 
 It never zooms in on typing it treats as secret: a password field, your own typing, or typing whose field BB Box cannot tell.
 
+On Linux, BB Box cannot be sure where an element the agent names is on the screen. A click or scroll on an element by its reference shows no ring and no zoom. Typing into an element by its reference keeps its pill and zooms only where the screen changed as it typed; where nothing changed, it does not zoom, rather than guess from the pointer.
+
 The zooms follow what was actually done, not guesses: the agent's clicks and keys, your input when you have control, and what changed on the screen.
 
 ### Still stretches and captions

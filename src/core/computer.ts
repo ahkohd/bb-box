@@ -833,6 +833,10 @@ export function windowLine(window: WindowInfo): string {
   return `window ${window.id}: ${window.app || "an app"}${title}, ${window.width} by ${window.height}${window.onScreen ? "" : ", not on screen"}`;
 }
 
+export function framesPlaceActions(os: GuestOs): boolean {
+  return os !== "linux";
+}
+
 function toArea(rect: Rect): InputArea {
   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
 }
@@ -1171,18 +1175,21 @@ export class Computer {
   }
 
   #noteAct(use: Use, input: ActInput, target: Target, sentAt: number): void {
-    if (!this.#deps.onInput) return;
-    const area = target.element?.frame ?? null;
+    const onInput = this.#deps.onInput;
+    if (!onInput) return;
     const window = target.snapshot?.window ? toArea(target.snapshot.window) : null;
+    const area = framesPlaceActions(use.box.capabilities.os) ? (target.element?.frame ?? null) : null;
     const point = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : (target.screen ?? this.#windowPoint(use, target));
+    const role = target.element?.role ?? null;
     if (input.action === "set_value") {
       const value = input.value ?? "";
-      this.#deps.onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: typingKeptSecret(typedField(target.element), value), role: target.element?.role ?? null, window }, sentAt);
+      const placeUnknown = !!target.element && !framesPlaceActions(use.box.capabilities.os);
+      onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: typingKeptSecret(typedField(target.element), value), role, window, ...(placeUnknown ? { placeUnknown } : {}) }, sentAt);
       return;
     }
     if (!point) return;
-    if (input.action === "scroll") this.#deps.onInput(use.box, { type: "scroll", point, window }, sentAt);
-    else this.#deps.onInput(use.box, { type: "click", button: input.action === "right_click" ? "right" : "left", count: input.action === "double_click" ? 2 : 1, point, area: area ? toArea(area) : null, role: target.element?.role ?? null, window }, sentAt);
+    if (input.action === "scroll") onInput(use.box, { type: "scroll", point, window }, sentAt);
+    else onInput(use.box, { type: "click", button: input.action === "right_click" ? "right" : "left", count: input.action === "double_click" ? 2 : 1, point, area: area ? toArea(area) : null, role, window }, sentAt);
   }
 
   #windowPoint(use: Use, target: Target): { x: number; y: number } | null {
@@ -1201,7 +1208,15 @@ export class Computer {
     const typed = text ?? "";
     const input: ActedInput = keys
       ? { type: "keys", key: keys.key, modifiers: keys.modifiers }
-      : { type: "typing", characters: typed.length, area: element?.frame ? toArea(element.frame) : null, secret: typingKeptSecret(typedField(element), typed), role: element?.role ?? null, window: window ? toArea(window) : null };
+      : {
+          type: "typing",
+          characters: typed.length,
+          area: element?.frame && framesPlaceActions(use.box.capabilities.os) ? toArea(element.frame) : null,
+          secret: typingKeptSecret(typedField(element), typed),
+          role: element?.role ?? null,
+          window: window ? toArea(window) : null,
+          ...(element && !framesPlaceActions(use.box.capabilities.os) ? { placeUnknown: true } : {}),
+        };
     use.typedInput = { input, sentAt: Date.now() };
   }
 

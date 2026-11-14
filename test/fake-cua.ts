@@ -81,6 +81,7 @@ export interface FakeWindow {
   noActions?: boolean;
   /** Its elements' frames are in its own pixels, as a GTK 3 app's are on Wayland. */
   ownFrames?: boolean;
+  halfFrames?: boolean;
   /** A "Show older tasks" button lies partly above it, scrolled out of view. */
   olderTasks?: boolean;
 }
@@ -198,6 +199,15 @@ export function openSignIn(desktop: FakeDesktop): FakeWindow {
   desktop.fields[window.id] = "";
   desktop.passwords = { ...desktop.passwords, [window.id]: "" };
   return window;
+}
+
+const LOGICAL_POINTS_AT_SCALE_2 = 0.5;
+
+function framedAt(window: FakeWindow, frame: Node["frame"]): { x: number; y: number; w: number; h: number } {
+  const onScreen = { x: (window.ownFrames ? 0 : window.x) + frame.x, y: (window.ownFrames ? 0 : window.y) + frame.y, w: frame.width, h: frame.height };
+  if (!window.halfFrames) return onScreen;
+  const half = (value: number) => value * LOGICAL_POINTS_AT_SCALE_2;
+  return { x: half(onScreen.x), y: half(onScreen.y), w: half(onScreen.w), h: half(onScreen.h) };
 }
 
 function passwordNode(desktop: FakeDesktop, window: FakeWindow, frame: Node["frame"]): Node {
@@ -628,7 +638,7 @@ export class FakeCua {
       enabled: true,
       actions: entry.node.actions,
       parent_index: entry.parent,
-      frame: { x: (placed.ownFrames ? 0 : placed.x) + entry.node.frame.x, y: (placed.ownFrames ? 0 : placed.y) + entry.node.frame.y, w: entry.node.frame.width, h: entry.node.frame.height },
+      frame: framedAt(placed, entry.node.frame),
     }));
     const dialogs = desktop.windows
       .filter((other) => other.dialogOf === window.id)

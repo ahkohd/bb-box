@@ -6365,6 +6365,70 @@ test("a person watching a Wayland desktop with bb-box-cursor over VNC sees the b
   expect(FakeSocket.made.slice(before).some((each) => each.url.endsWith("&stream=pointer"))).toBe(false);
 });
 
+test("a person watching a Linux desktop sees the agent's pointer where it clicks, with a ring for the click, over VNC and over video (073)", async () => {
+  const { handlers } = server([desktopBox()]);
+  const slot = desktopTab(handlers);
+  await waitFor(() => expect(novnc.FakeRfb.made).toHaveLength(1));
+  const rfb = novnc.FakeRfb.made[0]!;
+  const canvas = document.createElement("canvas");
+  canvas.width = 1920;
+  canvas.height = 1080;
+  rfb.target.appendChild(canvas);
+  const rect = (left: number, top: number, width: number, height: number) => () => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => null }) as DOMRect;
+  rfb.target.getBoundingClientRect = rect(0, 0, 960, 660);
+  canvas.getBoundingClientRect = rect(0, 60, 960, 540);
+  act(() => void rfb.dispatchEvent(new Event("connect")));
+  const stream = await waitFor(() => {
+    const made = FakeSocket.made.find((each) => each.url.endsWith("&stream=pointer"));
+    expect(made).toBeTruthy();
+    return made!;
+  });
+  act(() => stream.open());
+  const agent = () => rfb.target.querySelector<HTMLElement>("[data-testid=agent-pointer]");
+  const rings = () => rfb.target.querySelectorAll("[data-testid=agent-ring]").length;
+  act(() => void stream.onmessage?.({ data: "BB_AGENT,at,100,100" }));
+  await waitFor(() => expect(agent()?.style.display).toBe("block"));
+  expect([agent()!.style.left, agent()!.style.top]).toEqual(["50px", "110px"]);
+  expect(rings()).toBe(0);
+  act(() => void stream.onmessage?.({ data: "BB_AGENT,click,640,360" }));
+  expect([agent()!.style.left, agent()!.style.top]).toEqual(["320px", "240px"]);
+  expect(rings()).toBe(1);
+  act(() => void stream.onmessage?.({ data: "BB_AGENT,click,x,y" }));
+  expect([agent()!.style.left, agent()!.style.top]).toEqual(["320px", "240px"]);
+  fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+  await slot.findByText(/You have control/);
+  await waitFor(() => expect(agent()!.style.display).toBe("none"));
+});
+
+test("a person watching a Linux desktop as video sees the agent's pointer where it clicks (073)", async () => {
+  const undo = withVideo();
+  const size = FakeDecoder.size;
+  try {
+    FakeDecoder.size = { width: 1920, height: 1080 };
+    window.sessionStorage.setItem(streamChoiceKey("box_2"), "selkies");
+    const { handlers } = server([desktopBox()], { video: true });
+    const slot = desktopTab(handlers);
+    await waitFor(() => expect(FakeSocket.made.some((made) => made.url.includes("stream=selkies"))).toBe(true));
+    const socket = videoSocket();
+    act(() => socket.open());
+    act(() => void socket.onmessage?.({ data: "MODE websockets" }));
+    act(() => void socket.onmessage?.({ data: videoFrame(5, true) }));
+    await slot.findByText("The agent has control.");
+    const video = slot.getByTestId("desktop-screen").querySelector("canvas")!.parentElement!;
+    Object.defineProperty(video, "clientWidth", { value: 960, configurable: true });
+    Object.defineProperty(video, "clientHeight", { value: 540, configurable: true });
+    const agent = () => video.querySelector<HTMLElement>("[data-testid=agent-pointer]");
+    act(() => void socket.onmessage?.({ data: "BB_AGENT,click,640,360" }));
+    await waitFor(() => expect(agent()?.style.display).toBe("block"));
+    expect([agent()!.style.left, agent()!.style.top]).toEqual(["320px", "180px"]);
+    expect(video.querySelectorAll("[data-testid=agent-ring]").length).toBe(1);
+  } finally {
+    FakeDecoder.size = size;
+    undo();
+    window.sessionStorage.clear();
+  }
+});
+
 /** Bytes as Selkies sends them in a clipboard message: base64. */
 function b64(bytes: Uint8Array): string {
   let binary = "";
