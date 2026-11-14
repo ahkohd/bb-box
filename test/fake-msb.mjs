@@ -19,7 +19,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { randomBytes } from "node:crypto";
 import { constants } from "node:os";
 import { join } from "node:path";
-import { pathWithHostStubs, refusalForRealHostTools } from "./host-stubs.mjs";
+import { ownedFoldersEnv, pathWithHostStubs, refusalForRealHostTools } from "./host-stubs.mjs";
 
 const root = process.env.FAKE_MSB_ROOT;
 if (!root) {
@@ -189,7 +189,7 @@ function exec(rest) {
       .replaceAll("/var/lib/bb-box/", `${join(dir(name), "var-lib", "bb-box")}/`)
       .replaceAll("/home/box", home);
   const [program, ...programArgs] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), ...command.map(own)];
-  const sandboxEnv = { PATH: pathWithHostStubs(root, [], process.env.PATH), HOME: home, ...env };
+  const sandboxEnv = { PATH: pathWithHostStubs(root, [], process.env.PATH), HOME: home, ...ownedFoldersEnv([root], join(root, "tmp")), ...env };
   const refusal = refusalForRealHostTools("The fake microsandbox", sandboxEnv.PATH);
   if (refusal) fail(refusal.trim(), 126);
   const child = spawn(program, programArgs, { cwd: workdir ? own(workdir) : home, env: sandboxEnv, stdio: "inherit" });

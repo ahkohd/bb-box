@@ -26,7 +26,7 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathWithHostStubs, refusalForRealHostTools } from "./host-stubs.mjs";
+import { ownedFoldersEnv, pathWithHostStubs, refusalForRealHostTools } from "./host-stubs.mjs";
 
 function appendLog(root, line) {
   const lock = join(root, "log.lock");
@@ -148,7 +148,7 @@ if (refusal) {
 }
 const result = spawnSync(binary, argv, {
   cwd: home,
-  env: { PATH: boxPath, HOME: home, USER: target.split("@")[0] },
+  env: { PATH: boxPath, HOME: home, USER: target.split("@")[0], ...ownedFoldersEnv([root], join(root, "tmp")) },
   stdio: "inherit",
 });
 process.exit(result.status ?? 1);

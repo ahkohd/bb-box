@@ -36,12 +36,12 @@
   },
   "scripts": {
     "typecheck": "tsc",
-    "test": "node --import ./test/exit-guard.ts --test --test-timeout=120000 test/*.test.ts && vitest run",
+    "test": "node test/preflight.mjs && node --import ./test/exit-guard.ts --test --test-timeout=120000 test/*.test.ts && vitest run",
     "build": "bb plugin build",
     "smoke": "node scripts/smoke.ts",
     "conformance": "node scripts/conformance.ts",
     "refresh": "node scripts/refresh.ts",
-    "test:app": "vitest run",
+    "test:app": "node test/preflight.mjs && vitest run",
     "reference": "node scripts/reference.ts"
   },
   "dependencies": {

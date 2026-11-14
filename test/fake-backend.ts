@@ -29,7 +29,7 @@ import { emptyDesktop } from "./fake-cua.ts";
 import { FakeRfb } from "./fake-rfb.ts";
 import { FakeSelkies } from "./fake-selkies.ts";
 import { fakeGroup, inGroup } from "./helpers.ts";
-import { hostStubsRootForThisProcess, pathRefusingRealHostTools, pathWithHostStubs } from "./host-stubs.mjs";
+import { hostStubsRootForThisProcess, ownedFoldersEnv, pathRefusingRealHostTools, pathWithHostStubs } from "./host-stubs.mjs";
 import {
   type GuestOs,
   BackendError,
@@ -911,6 +911,12 @@ function withoutTestMachineFlush(script: string): string {
   return script === TEST_MACHINE_WIDE_FLUSH ? FAKE_DISK_FLUSHED : script;
 }
 
+function exported(variables: Readonly<Record<string, string>>): string {
+  return Object.entries(variables)
+    .map(([name, value]) => `${name}=${quote(value)} && export ${name} && `)
+    .join("");
+}
+
 export class FakeTransport implements CommandTransport {
   readonly #home: string;
   readonly #line: CommandLine;
@@ -920,11 +926,13 @@ export class FakeTransport implements CommandTransport {
 
   readonly #identityTool: string;
   readonly #identityState: string;
+  readonly #owned: Readonly<Record<string, string>>;
 
   constructor(home: string, power: () => Promise<PowerState | null>, gone: AbortSignal = new AbortController().signal, shell?: string, identityTool?: string, identityRoot?: string, identityBin?: string) {
     this.#home = home;
     this.#identityTool = quote(identityTool ?? join(home, ".no-identity-tool"));
     this.#identityState = join(home, ".bb-box-state");
+    this.#owned = ownedFoldersEnv([home, ...(identityRoot ? [identityRoot] : [])], join(hostStubsRootForThisProcess(), "tmp"));
     // A test's cgroup for the memory a box uses (061), which no real box sets.
     const env = {
       PATH: pathRefusingRealHostTools("The fake box", pathWithHostStubs(hostStubsRootForThisProcess(), identityBin ? [identityBin] : [], process.env.PATH)),
@@ -932,6 +940,7 @@ export class FakeTransport implements CommandTransport {
       ...(shell ? { SHELL: shell } : {}),
       ...(process.env.BBBOX_CGROUP ? { BBBOX_CGROUP: process.env.BBBOX_CGROUP } : {}),
       BBBOX_IDENTITY_ROOT: identityRoot ?? join(home, ".no-identity-root"),
+      ...this.#owned,
     };
     const sh = (script: string) => ["sh", "-c", script] as const;
     this.#line = new CommandLine({
@@ -1004,13 +1013,13 @@ export class FakeTransport implements CommandTransport {
     await this.#answer();
     // The fake Cua Driver is the box's cua-driver command. A Windows box's PowerShell starts a program with &, which sh does without.
     const path = pathRefusingRealHostTools("The fake box", pathWithHostStubs(hostStubsRootForThisProcess(), [FAKE_CUA_BIN], process.env.PATH));
-    return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && HOME=${quote(this.#home)} && PATH=${quote(path)} && export HOME PATH && ${script.replace(/^& /, "")}`] }, this.#signal(signal));
+    return openRoute({ type: "command", argv: ["sh", "-c", `cd ${quote(this.#home)} && HOME=${quote(this.#home)} && PATH=${quote(path)} && export HOME PATH && ${exported(this.#owned)}${script.replace(/^& /, "")}`] }, this.#signal(signal));
   }
   /** A shell on the test machine in the fake box's home, on a PTY. */
   async terminal(size: TerminalSize, signal?: AbortSignal): Promise<Terminal> {
     await this.#answer();
     const path = pathRefusingRealHostTools("The fake box", pathWithHostStubs(hostStubsRootForThisProcess(), [], process.env.PATH));
-    return openTerminal(["sh", "-c", `cd ${quote(this.#home)} && PATH=${quote(path)} && export PATH && exec sh -i`], size, this.#signal(signal));
+    return openTerminal(["sh", "-c", `cd ${quote(this.#home)} && PATH=${quote(path)} && export PATH && ${exported(this.#owned)}exec sh -i`], size, this.#signal(signal));
   }
 }
 

@@ -375,7 +375,7 @@ test("on the longest install ID with the longest backend name, releasing one of 
 });
 
 test("releasing a box on the tailnet logs it out through the fake ssh's stubs, never the test machine's own sudo or tailscale", async () => {
-  const testMachine = recordingStandInsForHostTools(tempDir("test-machine-tools"));
+  const testMachine = recordingStandInsForHostTools(tempDir("test-machine-tools"), ["sudo", "tailscale"]);
   const on = account({ paid: true });
   const storage = new MemoryStorage();
   const { tailnet, removed } = tailnetOf([{ nodeId: "box-a", hostname: tailnetNameOf(FIRST, "inst1", `box-${BOX_A}`) }]);

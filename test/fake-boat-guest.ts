@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { pathRefusingRealHostTools, pathWithHostStubs } from "./host-stubs.mjs";
+import { ownedFoldersEnv, pathRefusingRealHostTools, pathWithHostStubs, runAsRootUnderHostStubs } from "./host-stubs.mjs";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +7,10 @@ import type { RunResult } from "../src/transports/types.ts";
 
 export const GUEST_TOOLS_HERE = ["sh", "bash", "flock", "setsid", "nohup", "base64", "tar"].every((tool) => spawnSync("sh", ["-c", `command -v ${tool}`], { stdio: "ignore" }).status === 0);
 
-const SUDO_AS_ITSELF = '#!/bin/sh\n[ "$1" = -n ] && shift\nexec "$@"\n';
+
+function sudoUnderHostStubs(runAsRoot: string): string {
+  return `#!/bin/sh\nexec '${runAsRoot}' "$@"\n`;
+}
 
 const STUB_TEMPLATE_SCRIPT = [
   "#!/bin/bash",
@@ -75,7 +78,7 @@ export class FakeBoatGuest {
     this.control = join(this.root, "control");
     this.#bin = join(this.root, "bin");
     for (const dir of [this.control, this.#bin, join(this.root, "var/tmp"), join(this.root, "run")]) mkdirSync(dir, { recursive: true });
-    writeFileSync(join(this.#bin, "sudo"), SUDO_AS_ITSELF);
+    writeFileSync(join(this.#bin, "sudo"), sudoUnderHostStubs(runAsRootUnderHostStubs(this.root)));
     chmodSync(join(this.#bin, "sudo"), 0o755);
     if (!options.holdSteps) {
       this.finish("customize", 0);
@@ -136,7 +139,7 @@ export class FakeBoatGuest {
     await this.#beforeRun?.(script);
     const local = script.replaceAll("/var/tmp/bb-box-build", this.buildDir).replaceAll("/run/bb-box-build", this.stateDir).replaceAll("/usr/share/bb-box/", `${this.root}/usr/share/bb-box/`);
     const started = Date.now();
-    const child = spawn("sh", ["-c", local], { cwd: this.root, env: { ...process.env, PATH: pathRefusingRealHostTools("The fake boat guest", pathWithHostStubs(this.root, [this.#bin], process.env.PATH)) }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("sh", ["-c", local], { cwd: this.root, env: { ...process.env, PATH: pathRefusingRealHostTools("The fake boat guest", pathWithHostStubs(this.root, [this.#bin], process.env.PATH)), ...ownedFoldersEnv([this.root], join(this.root, "tmp")) }, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));

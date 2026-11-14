@@ -41,11 +41,25 @@ export const HOST_CHANGING_COMMANDS = [
   "pmset",
   "networksetup",
   "softwareupdate",
+  "runuser",
+  "setpriv",
+  "killall5",
+  "osascript",
+  "pfctl",
 ];
+
+export const READ_OR_CHANGE_COMMANDS = {
+  ip: ["add", "del", "delete", "change", "replace", "set", "flush", "append", "prepend", "exec", "attach", "detach", "save", "restore"],
+  route: ["add", "del", "delete", "change", "flush"],
+  sysctl: ["*=*", "-w", "--write", "-p", "-p*", "--load", "--load=*", "--system"],
+  scutil: ["--set"],
+};
 
 export const PATH_GUARDED_COMMANDS = ["rm", "chown", "chmod"];
 
-export const PRIVILEGED_COMMANDS = [...ROOT_RUNNERS, ...HOST_CHANGING_COMMANDS];
+export const PRIVILEGED_COMMANDS = [...ROOT_RUNNERS, ...HOST_CHANGING_COMMANDS, ...Object.keys(READ_OR_CHANGE_COMMANDS)];
+
+export const OWNED_FOLDERS_VARIABLE = "BBBOX_FAKE_OWNS";
 
 const SERVICE_MANAGERS = new Set(["systemctl", "loginctl", "launchctl"]);
 
@@ -53,6 +67,7 @@ export const GUARD_FOLDER_PREFIX = "bbbox-test-guard-";
 
 const STUBS_FOLDER = "host-stubs";
 const RECORD_FILE = "host-stubs.log";
+const RUN_AS_ROOT = ".run-as-root";
 export const SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 function shellQuote(value) {
@@ -116,14 +131,16 @@ export function refusalForRealHostTools(fake, path, madeByTests = isTestMade) {
   return `${fake} refused to run a box's script: it would reach the test machine's own ${reached.join(", ")}. Put the fake's host stubs first on its PATH.\n`;
 }
 
-function recordLine(record) {
-  return `printf '%s\\n' "$(basename "$0")\${*:+ $*}" >> ${shellQuote(record)}`;
+const CALLED_NAME = '$(basename "$0")';
+
+function recordLine(record, name = CALLED_NAME) {
+  return `printf '%s\\n' "${name}\${*:+ $*}" >> ${shellQuote(record)}`;
 }
 
-function rootRunnerStub(record, stubs) {
+function rootRunnerStub(record, stubs, name = CALLED_NAME) {
   return [
     "#!/bin/sh",
-    recordLine(record),
+    recordLine(record, name),
     "while [ $# -gt 0 ]; do",
     '  case "$1" in',
     "    -u|-g|-p|-C|-D|-R|-T|-U|-h) shift 2 ;;",
@@ -148,9 +165,20 @@ function unreachableServiceManagerStub(record) {
   return ["#!/bin/sh", recordLine(record), 'echo "Failed to connect to bus: no service manager in a fake box" >&2', "exit 1"].join("\n");
 }
 
-function stubFor(name, record, stubs) {
+function readOrChangeStub(name, real, onChange) {
+  return [
+    "#!/bin/sh",
+    'for arg in "$@"; do',
+    `  case "$arg" in ${READ_OR_CHANGE_COMMANDS[name].join("|")}) ${onChange} ;; esac`,
+    "done",
+    real ? `exec ${shellQuote(real)} "$@"` : "exit 0",
+  ].join("\n");
+}
+
+function stubFor(name, record, stubs, path) {
   if (ROOT_RUNNERS.includes(name)) return rootRunnerStub(record, stubs);
   if (SERVICE_MANAGERS.has(name)) return unreachableServiceManagerStub(record);
+  if (name in READ_OR_CHANGE_COMMANDS) return readOrChangeStub(name, realToolOutside(name, path), `${recordLine(record)}; exit 0`);
   return hostChangingStub(record);
 }
 
@@ -168,22 +196,51 @@ export function privilegedToolsOn(path) {
 
 const TAKES_OWNER_OR_MODE_FIRST = new Set(["chown", "chmod"]);
 
-function pathGuardedStub(name, record, real) {
-  const roots = testMadeRoots().map(shellQuote).join(" ");
+const RESOLVE_FOLLOWING_LINKS = [
+  "resolve() {",
+  '  target=$1',
+  '  case "$target" in /*) ;; *) target=$PWD/$target ;; esac',
+  '  if resolved=$(realpath -m -- "$target" 2>/dev/null); then printf \'%s\\n\' "$resolved"; return 0; fi',
+  "  rest=",
+  '  while [ ! -e "$target" ] && [ ! -L "$target" ]; do rest=/$(basename "$target")$rest; target=$(dirname "$target"); done',
+  '  resolved=$(realpath -- "$target" 2>/dev/null) || return 1',
+  '  printf \'%s%s\\n\' "$resolved" "$rest"',
+  "}",
+];
+
+const OWNED_ROOTS = [
+  "roots=",
+  "saved_ifs=$IFS",
+  "IFS=:",
+  "for root in $owned; do",
+  "  IFS=$saved_ifs",
+  '  resolved_root=$(resolve "$root") && roots="$roots$resolved_root',
+  '"',
+  "done",
+  "IFS=$saved_ifs",
+  "inside() {",
+  '  case "$1/" in */../*|*/./*) return 1 ;; esac',
+  '  printf \'%s\' "$roots" | { while IFS= read -r root; do [ -n "$root" ] && case "$1/" in "$root"/*) exit 0 ;; esac; done; exit 1; }',
+  "}",
+];
+
+function pathGuardedStub(name, record, real, owned) {
+  const ownerFirst = TAKES_OWNER_OR_MODE_FIRST.has(name);
   return [
     "#!/bin/sh",
-    "outside=",
-    `skip=${TAKES_OWNER_OR_MODE_FIRST.has(name) ? 1 : ""}`,
+    `owned=\${${OWNED_FOLDERS_VARIABLE}:-${shellQuote(owned)}}`,
+    ...RESOLVE_FOLLOWING_LINKS,
+    ...OWNED_ROOTS,
+    "refuse=",
+    `skip=${ownerFirst ? 1 : ""}`,
+    'case " $* " in *" --reference="*) skip= ;; esac',
     'for operand in "$@"; do',
-    '  case "$operand" in -*) continue ;; esac',
+    `  case "$operand" in ${ownerFirst ? "-L|-H|--dereference) refuse=1; break ;; " : ""}-*) continue ;; esac`,
     '  if [ -n "$skip" ]; then skip=; continue; fi',
-    '  case "$operand" in /*) full=$operand ;; *) full=$PWD/$operand ;; esac',
-    '  case "/$full/" in */../*) outside=1; break ;; esac',
-    "  inside=",
-    `  for root in ${roots}; do case "$full" in "$root"/*) inside=1 ;; esac; done`,
-    '  [ -n "$inside" ] || { outside=1; break; }',
+    '  full=$(resolve "$operand") || { refuse=1; break; }',
+    '  inside "$full" || { refuse=1; break; }',
     "done",
-    `if [ -n "$outside" ]; then ${recordLine(record)}; exit 0; fi`,
+    `if [ -n "$refuse" ]; then ${recordLine(record)}; exit 0; fi`,
     real ? `exec ${shellQuote(real)} "$@"` : "exit 0",
   ].join("\n");
 }
@@ -192,17 +249,18 @@ function realToolOutside(name, path) {
   return firstOnPath(name, path.split(delimiter).filter((dir) => !isTestMade(dir)).join(delimiter) || SYSTEM_PATH);
 }
 
-function writeStubs(dir, record, finalDir, path) {
+function writeStubs(dir, record, finalDir, path, owned) {
   mkdirSync(dir, { recursive: true });
-  for (const name of privilegedToolsOn(path)) writeFileSync(join(dir, name), stubFor(name, record, finalDir), { mode: 0o755 });
-  for (const name of PATH_GUARDED_COMMANDS) writeFileSync(join(dir, name), pathGuardedStub(name, record, realToolOutside(name, path)), { mode: 0o755 });
+  for (const name of privilegedToolsOn(path)) writeFileSync(join(dir, name), stubFor(name, record, finalDir, path), { mode: 0o755 });
+  for (const name of PATH_GUARDED_COMMANDS) writeFileSync(join(dir, name), pathGuardedStub(name, record, realToolOutside(name, path), owned), { mode: 0o755 });
+  writeFileSync(join(dir, RUN_AS_ROOT), rootRunnerStub(record, finalDir, "sudo"), { mode: 0o755 });
 }
 
 export function hostStubsIn(root, path = process.env.PATH ?? SYSTEM_PATH) {
   const stubs = join(root, STUBS_FOLDER);
   if (existsSync(stubs)) return stubs;
   const making = `${stubs}.${process.pid}.${Math.random().toString(36).slice(2)}`;
-  writeStubs(making, join(root, RECORD_FILE), stubs, path);
+  writeStubs(making, join(root, RECORD_FILE), stubs, path, root);
   try {
     renameSync(making, stubs);
   } catch {
@@ -214,6 +272,15 @@ export function hostStubsIn(root, path = process.env.PATH ?? SYSTEM_PATH) {
 export function pathWithHostStubs(root, testBins, rest) {
   const after = rest || SYSTEM_PATH;
   return [...testBins, hostStubsIn(root, after), after].join(delimiter);
+}
+
+export function runAsRootUnderHostStubs(root, path = process.env.PATH ?? SYSTEM_PATH) {
+  return join(hostStubsIn(root, path), RUN_AS_ROOT);
+}
+
+export function ownedFoldersEnv(owned, temp) {
+  mkdirSync(temp, { recursive: true });
+  return { [OWNED_FOLDERS_VARIABLE]: [...owned, temp].join(delimiter), TMPDIR: temp };
 }
 
 export function hostCommandsRecorded(root) {
@@ -237,7 +304,7 @@ export function pathRefusingRealHostTools(fake, path) {
   return path;
 }
 
-export function recordingStandInsForHostTools(dir, names = PRIVILEGED_COMMANDS) {
+export function recordingStandInsForHostTools(dir, names) {
   const record = join(dir, "ran.log");
   mkdirSync(join(dir, "bin"), { recursive: true });
   for (const name of names) writeFileSync(join(dir, "bin", name), hostChangingStub(record), { mode: 0o755 });

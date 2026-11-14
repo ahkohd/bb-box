@@ -26,7 +26,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { constants } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { pathWithHostStubs, refusalForRealHostTools } from "./host-stubs.mjs";
+import { ownedFoldersEnv, pathWithHostStubs, refusalForRealHostTools } from "./host-stubs.mjs";
 
 const root = process.env.FAKE_DOCKER_ROOT;
 if (!root) {
@@ -67,6 +67,7 @@ const imageIdentityRoot = (image) => join(root, "image-identities", createHash("
 const identityToolIn = (rootDir) => join(rootDir, IDENTITY_TOOL.slice(1));
 const identityEnv = (name, container) => ({
   PATH: pathWithHostStubs(root, [join(root, "identity-bin")], process.env.PATH),
+  ...ownedFoldersEnv([root], join(root, "tmp")),
   BBBOX_IDENTITY_ROOT: identityRoot(name),
   BBBOX_IDENTITY_NIC_WAIT_SECONDS: "0",
   BBBOX_IDENTITY_SETTLE_SECONDS: "0",
@@ -442,7 +443,7 @@ function startServicesAfterTheHold(name, found) {
   ].join("\n");
   const [command, ...commandArgs] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), "bash", "-c", afterTheHold];
   const child = spawn(command, commandArgs, {
-    env: { PATH: pathWithHostStubs(root, [], process.env.PATH), BBBOX_FORK_HOLD: envValue(found, "BBBOX_FORK_HOLD"), BBBOX_IDENTITY: envValue(found, "BBBOX_IDENTITY") },
+    env: { PATH: pathWithHostStubs(root, [], process.env.PATH), ...ownedFoldersEnv([root], join(root, "tmp")), BBBOX_FORK_HOLD: envValue(found, "BBBOX_FORK_HOLD"), BBBOX_IDENTITY: envValue(found, "BBBOX_IDENTITY") },
     stdio: "ignore",
   });
   child.unref();

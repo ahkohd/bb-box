@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, sta
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { GUARD_FOLDER_PREFIX, SYSTEM_PATH, isTestMade, privilegedToolsOn } from "./host-stubs.mjs";
+import { GUARD_FOLDER_PREFIX, READ_OR_CHANGE_COMMANDS, SYSTEM_PATH, isTestMade, privilegedToolsOn } from "./host-stubs.mjs";
 
 export const GUARD_RECORD_VARIABLE = "BBBOX_TEST_GUARD_RECORD";
 const GUARD_EXIT_CODE = 97;
@@ -31,13 +31,16 @@ function guardStub(unattributed: string): string {
   ].join("\n");
 }
 
+function guardedTools(machinePath: string): string[] {
+  return privilegedToolsOn(machinePath).filter((name) => !(name in READ_OR_CHANGE_COMMANDS));
+}
+
 function guardFolderName(stub: string, tools: readonly string[]): string {
   return `${GUARD_FOLDER_PREFIX}${process.getuid?.() ?? "user"}-${createHash("sha256").update(stub).update(tools.join(" ")).digest("hex").slice(0, 12)}`;
 }
 
-function testMachineTools(): string[] {
-  const machinePath = (process.env.PATH || SYSTEM_PATH).split(delimiter).filter((dir) => dir !== "" && !isTestMade(dir));
-  return privilegedToolsOn([...machinePath, SYSTEM_PATH].join(delimiter));
+function testMachinePath(): string {
+  return [...(process.env.PATH || SYSTEM_PATH).split(delimiter).filter((dir) => dir !== "" && !isTestMade(dir)), SYSTEM_PATH].join(delimiter);
 }
 
 function ownedByThisUser(dir: string): boolean {
@@ -46,16 +49,17 @@ function ownedByThisUser(dir: string): boolean {
 }
 
 function sharedGuardFolder(): string {
-  const tools = testMachineTools();
+  const machinePath = testMachinePath();
+  const tools = guardedTools(machinePath);
   const dir = join(tmpdir(), guardFolderName(guardStub(""), tools));
-  const stub = guardStub(join(dir, "unattributed.log"));
+  const unattributed = join(dir, "unattributed.log");
   if (!existsSync(dir)) {
     const making = `${dir}.${process.pid}.${Math.random().toString(36).slice(2)}`;
     for (const folder of [making, join(making, "bin"), join(making, "records")]) {
       mkdirSync(folder, { recursive: true });
       chmodSync(folder, 0o755);
     }
-    for (const name of tools) writeFileSync(join(making, "bin", name), stub, { mode: 0o755 });
+    for (const name of tools) writeFileSync(join(making, "bin", name), guardStub(unattributed), { mode: 0o755 });
     try {
       renameSync(making, dir);
     } catch {

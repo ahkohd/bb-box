@@ -8,7 +8,7 @@ import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSyn
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tempDir } from "./helpers.ts";
-import { pathRefusingRealHostTools, pathWithHostStubs } from "./host-stubs.mjs";
+import { ownedFoldersEnv, pathRefusingRealHostTools, pathWithHostStubs } from "./host-stubs.mjs";
 
 const POOL = fileURLToPath(new URL("../setup/ssh-pool/", import.meta.url));
 const TOOLS = fileURLToPath(new URL("./fake-macos.sh", import.meta.url));
@@ -123,7 +123,7 @@ export function fakeMacos(options: { template?: boolean; settings?: Readonly<Rec
   cpSync(join(POOL, "mac-chrome.sh"), join(pool, "mac-chrome.sh"));
   if (options.template !== false) cpSync(join(POOL, "mac-home"), join(data, "usr", "local", "share", "bb-box", "home"), { recursive: true });
 
-  const env = { FAKE_MAC_STATE: state, FAKE_MAC_ROOT: root, FAKE_MAC_BIN: bin, PATH: pathRefusingRealHostTools("The fake Mac", pathWithHostStubs(dir, [bin], "/usr/bin:/bin")), LC_ALL: "C" };
+  const env = { FAKE_MAC_STATE: state, FAKE_MAC_ROOT: root, FAKE_MAC_BIN: bin, PATH: pathRefusingRealHostTools("The fake Mac", pathWithHostStubs(dir, [bin], "/usr/bin:/bin")), LC_ALL: "C", ...ownedFoldersEnv([dir], join(dir, "tmp")) };
   const run = (script: string, args: readonly string[], input: string, more: Record<string, string> = {}): Run => {
     const result = spawnSync("/bin/sh", [script, ...args], { input, encoding: "utf8", env: { ...env, ...more }, timeout: 60_000 });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
