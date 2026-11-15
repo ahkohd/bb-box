@@ -17,6 +17,7 @@ import { McpClosedError, McpError, McpSession, type McpResult } from "./mcp.ts";
 import { typingKeptSecret, type ActedInput, type InputArea, type TypedField } from "./record-input.ts";
 import { isSecureRole, secureElementLine, secureLabel, secureUnreferencedLine } from "./secure-fields.ts";
 import { PRODUCT } from "../brand.ts";
+import { clickShape, type TypedText } from "./pointer-shapes.ts";
 
 export const PAUSED =
   "Paused: a person has taken control of this box's desktop in BB. The computer tools will work again when they hand control back. " +
@@ -117,6 +118,7 @@ export interface ComputerResult {
 
 export interface ComputerDeps {
   onInput?(box: BoxRecord, input: ActedInput, sentAt: number): void;
+  onTyping?(box: BoxRecord, typing: TypedText | null, sentAt: number): void;
   /** Starts `script` in the box through its command transport's spawn. */
   spawn(box: BoxRecord, script: string, signal?: AbortSignal): Promise<ByteChannel>;
   /**
@@ -396,6 +398,7 @@ interface Use {
   readonly box: BoxRecord;
   readonly signal?: AbortSignal;
   typedInput?: { readonly input: ActedInput; readonly sentAt: number } | null;
+  typingShown?: boolean;
 }
 
 interface Read {
@@ -687,6 +690,17 @@ function elementAt(snapshot: Snapshot | null | undefined, point: Point): Element
     if (!found || frame.width * frame.height < found.frame!.width * found.frame!.height) found = element;
   }
   return found;
+}
+
+function shapingRoleAt(snapshot: Snapshot | null | undefined, point: Point | null): string | null {
+  if (!snapshot || snapshot.partial || !point) return null;
+  let found: Element | null = null;
+  for (const element of snapshot.elements) {
+    const frame = element.frame;
+    if (!frame || !inside(frame, point) || clickShape(element.role) === "arrow") continue;
+    if (!found || frame.width * frame.height < found.frame!.width * found.frame!.height) found = element;
+  }
+  return found?.role ?? null;
 }
 
 /** Windows that opened, closed, or changed title or size, between two window lists. */
@@ -1161,7 +1175,7 @@ export class Computer {
       let before = target.snapshot;
       if (byPosition) ({ result, foreground, snapshot: before } = await this.#centre(use, target, step.args));
       elsewhere ??= landedElsewhere(result);
-      this.#noteAct(use, input, target, sentAt);
+      this.#noteAct(use, input, target, sentAt, watch?.tree ?? null);
       const done = `${step.done} ${target.label}${byPosition ? " at its centre" : ""}${input.action === "set_value" ? ` to "${input.value}"` : ""}${foreground ? POINTER : ""}.${byPosition ? ` ${BY_POSITION}` : ""}`;
       const lines = [target.coordinates ? `${done} ${target.coordinates}` : done];
       if (elsewhere) lines.push(await this.#cameForward(use, elsewhere.forward));
@@ -1174,19 +1188,22 @@ export class Computer {
     });
   }
 
-  #noteAct(use: Use, input: ActInput, target: Target, sentAt: number): void {
-    const onInput = this.#deps.onInput;
-    if (!onInput) return;
+  #noteAct(use: Use, input: ActInput, target: Target, sentAt: number, treeUnder: Snapshot | null): void {
     const window = target.snapshot?.window ? toArea(target.snapshot.window) : null;
     const area = framesPlaceActions(use.box.capabilities.os) ? (target.element?.frame ?? null) : null;
     const point = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : (target.screen ?? this.#windowPoint(use, target));
-    const role = target.element?.role ?? null;
+    const role = target.element?.role ?? (input.action === "set_value" ? null : shapingRoleAt(target.snapshot ?? treeUnder, point));
     if (input.action === "set_value") {
       const value = input.value ?? "";
+      const secret = typingKeptSecret(typedField(target.element), value);
+      this.#typingStarts(use, { characters: value.length, secret, role }, sentAt);
+      this.#typingEnds(use);
       const placeUnknown = !!target.element && !framesPlaceActions(use.box.capabilities.os);
-      onInput(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret: typingKeptSecret(typedField(target.element), value), role, window, ...(placeUnknown ? { placeUnknown } : {}) }, sentAt);
+      this.#deps.onInput?.(use.box, { type: "typing", characters: value.length, area: area ? toArea(area) : null, secret, role, window, ...(placeUnknown ? { placeUnknown } : {}) }, sentAt);
       return;
     }
+    const onInput = this.#deps.onInput;
+    if (!onInput) return;
     if (!point) return;
     if (input.action === "scroll") onInput(use.box, { type: "scroll", point, window }, sentAt);
     else onInput(use.box, { type: "click", button: input.action === "right_click" ? "right" : "left", count: input.action === "double_click" ? 2 : 1, point, area: area ? toArea(area) : null, role, window }, sentAt);
@@ -1203,9 +1220,22 @@ export class Computer {
     return { x: window.x + x * scaleX, y: window.y + y * scaleY };
   }
 
+  #typingStarts(use: Use, typing: TypedText, sentAt: number): void {
+    if (!this.#deps.onTyping) return;
+    use.typingShown = true;
+    this.#deps.onTyping(use.box, typing, sentAt);
+  }
+
+  #typingEnds(use: Use): void {
+    if (!use.typingShown) return;
+    use.typingShown = false;
+    this.#deps.onTyping?.(use.box, null, Date.now());
+  }
+
   #noteTyping(use: Use, keys: { key: string; modifiers: string[] } | null, text: string | null, element: Element | null, window: Rect | null): void {
-    if (!this.#deps.onInput) return;
     const typed = text ?? "";
+    if (!keys) this.#typingStarts(use, { characters: typed.length, secret: typingKeptSecret(typedField(element), typed), role: element?.role ?? null }, Date.now());
+    if (!this.#deps.onInput) return;
     const input: ActedInput = keys
       ? { type: "keys", key: keys.key, modifiers: keys.modifiers }
       : {
@@ -1221,6 +1251,7 @@ export class Computer {
   }
 
   #typingDone(use: Use): void {
+    this.#typingEnds(use);
     const pending = use.typedInput;
     use.typedInput = null;
     if (!pending || !this.#deps.onInput) return;
@@ -1583,6 +1614,8 @@ export class Computer {
       } catch (error) {
         if (notice) state.notice ??= notice;
         throw error;
+      } finally {
+        this.#typingEnds(use);
       }
     });
   }

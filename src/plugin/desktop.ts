@@ -23,6 +23,7 @@ import { openRoute } from "../transports/route.ts";
 import { LEFT_TO_STREAM_SERVER, type BoxPointer, type ByteChannel, type Display } from "../transports/types.ts";
 import { argbToRgba, rgbaPng } from "../core/png.ts";
 import { POINTER_NONE, POINTER_VERB, agentMessage } from "../core/pointer.ts";
+import { clickShape, typingShape, type TypedText } from "../core/pointer-shapes.ts";
 import { driverDrawsAgentCursor } from "../core/record.ts";
 import { LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
 import type { ActedInput, MacKeys, PersonInput } from "../core/record-input.ts";
@@ -175,6 +176,7 @@ export interface Desktops {
    */
   paste(boxId: string, viewer: string, text: string): Promise<void>;
   agentActed(box: BoxRecord, input: ActedInput, sentAt: number): void;
+  agentTyping(box: BoxRecord, typing: TypedText | null, sentAt: number): void;
   forgetAgent(boxId: string): void;
   /** Whether the box's desktop is High resolution, or null where it cannot be. */
   sharp(boxId: string): Promise<boolean | null>;
@@ -515,18 +517,39 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     };
   };
   const agentEnded = new Map<string, number>();
+  const agentPoints = new Map<string, { readonly x: number; readonly y: number }>();
+  const agentTypingShown = new Set<string>();
   const forgetAgent = (boxId: string): void => {
     const now = Date.now();
     for (const [each, at] of agentEnded) if (now - at > AGENT_ACTION_LONGEST_MS) agentEnded.delete(each);
     agentEnded.set(boxId, now);
     agentPlaces.delete(boxId);
+    agentPoints.delete(boxId);
+    agentTypingShown.delete(boxId);
+  };
+  const tellAgent = (boxId: string, message: string): void => {
+    for (const send of agentListeners.get(boxId) ?? []) send(message);
   };
   const agentActed = (box: BoxRecord, input: ActedInput, sentAt: number): void => {
     if (sentAt < (agentEnded.get(box.id) ?? 0)) return;
     if (!viewerDrawsAgentCursor(box) || (input.type !== "click" && input.type !== "scroll")) return;
     agentPlaces.set(box.id, agentMessage({ act: "at", ...input.point }));
-    const message = agentMessage({ act: input.type, ...input.point });
-    for (const send of agentListeners.get(box.id) ?? []) send(message);
+    agentPoints.set(box.id, input.point);
+    const shape = input.type === "click" ? clickShape(input.role) : "arrow";
+    tellAgent(box.id, agentMessage({ act: input.type, ...input.point, ...(shape !== "arrow" ? { shape } : {}) }));
+  };
+  const agentTyping = (box: BoxRecord, typing: TypedText | null, sentAt: number): void => {
+    if (sentAt < (agentEnded.get(box.id) ?? 0) || !viewerDrawsAgentCursor(box)) return;
+    const point = agentPoints.get(box.id);
+    const shown = agentTypingShown.has(box.id);
+    if (typing && typingShape(typing) === "ibeam" && point && !shown) {
+      agentTypingShown.add(box.id);
+      tellAgent(box.id, agentMessage({ act: "typing", ...point }));
+      return;
+    }
+    if (typing || !shown || !point) return;
+    agentTypingShown.delete(box.id);
+    tellAgent(box.id, agentMessage({ act: "typed", ...point }));
   };
   const endsWithoutAgent = (boxId: string, end: () => void): void => {
     void boxes
@@ -1148,6 +1171,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   return {
     control,
     agentActed,
+    agentTyping,
     forgetAgent,
     path: `/api/v1/plugins/${encodeURIComponent(bb.pluginId)}/http${DESKTOP_ROUTE}`,
     async sharp(boxId) {

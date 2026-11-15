@@ -1,6 +1,9 @@
 import type { PointerShape } from "./record-cursors.ts";
 import type { InputArea, InputSource, MouseButton } from "./record-input.ts";
-import { TYPING_AFTER_S, TYPING_GAP_S, TYPING_LEAST_S } from "./record-keys.ts";
+import { TYPING_GAP_S } from "./record-keys.ts";
+import { clickHeld, clickShape, dividerRole, dragHeld, resolveShapes, typingHeld, typingShape, type ShapeRequest, type ShapeSpan } from "./pointer-shapes.ts";
+
+export { SHAPE_HOLD_S, shapeAt, type ShapeSpan } from "./pointer-shapes.ts";
 
 export const CLIP_FPS = 30;
 export const GLIDE_S = 0.5;
@@ -964,35 +967,10 @@ export function cameraMoves(keys: readonly CameraKey[]): Span[] {
   });
 }
 
-export const SHAPE_HOLD_S = 0.3;
 const EDGE_PX = 10;
 const TITLE_PX = 36;
 const DRAG_CLICK_S = 2;
 const FLUSH_PX = 2;
-
-export interface ShapeSpan {
-  readonly from: number;
-  readonly to: number;
-  readonly shape: PointerShape;
-}
-
-function textField(role: string | null | undefined): boolean {
-  return !!role && (/^(?:text|entry|edit)$/i.test(role) || /textbox|searchbox|textarea|textfield|text field|editable|\bentry\b|\bedit\b/i.test(role));
-}
-
-function buttonOrLink(role: string | null | undefined): boolean {
-  return !!role && /button|link/i.test(role);
-}
-
-function dividerRole(role: string | null | undefined): boolean {
-  return !!role && /separator|splitter|divider/i.test(role);
-}
-
-function clickShape(role: string | null | undefined): PointerShape {
-  if (textField(role)) return "ibeam";
-  if (buttonOrLink(role)) return "hand";
-  return "arrow";
-}
 
 function coversPoint(rect: InputArea, x: number, y: number, pad: number): boolean {
   return x >= rect.x - pad && y >= rect.y - pad && x <= rect.x + rect.width + pad && y <= rect.y + rect.height + pad;
@@ -1043,78 +1021,27 @@ function dragCursor(scene: Scene, drag: { readonly from: number; readonly x: num
   return window ? edgeCursor(scene, window, drag.x, drag.y) : "grab";
 }
 
-interface ShapeRequest {
-  readonly from: number;
-  readonly to: number;
-  readonly shape: PointerShape;
-  readonly rank: number;
-}
-
-function heldShapes(pieces: readonly ShapeSpan[], firmEnds: readonly number[] = []): ShapeSpan[] {
-  const out: ShapeSpan[] = [];
-  for (const piece of pieces) {
-    const last = out.at(-1);
-    if (!last) {
-      out.push({ ...piece });
-      continue;
-    }
-    if (last.shape === piece.shape) {
-      out[out.length - 1] = { ...last, to: piece.to };
-      continue;
-    }
-    const endsFirmly = firmEnds.some((at) => Math.abs(at - last.to) < 0.002);
-    if (!(last.from === 0 && last.shape === "arrow") && !endsFirmly && last.to - last.from < SHAPE_HOLD_S) {
-      const until = Math.min(piece.to, last.from + SHAPE_HOLD_S);
-      out[out.length - 1] = { ...last, to: until };
-      if (until < piece.to) out.push({ ...piece, from: until });
-      continue;
-    }
-    out.push({ ...piece });
-  }
-  return out.map((span) => ({ from: round3(span.from), to: round3(span.to), shape: span.shape }));
-}
-
-export function shapeAt(spans: readonly ShapeSpan[], t: number): PointerShape {
-  return (spans.find((span) => t >= span.from && t < span.to) ?? spans.at(-1))?.shape ?? "arrow";
-}
-
 export function pointerShapes(scene: Scene, captions: readonly number[] = []): ShapeSpan[] {
   const pointer = planPointer(scene, captions);
   const drags = pressesOf(scene.samples).filter((press) => press.drag);
   const requests: ShapeRequest[] = [];
   const firmEnds: number[] = [];
   const glideAway = (at: number) => pointer.glides.find((glide) => glide.from > at + 1e-3)?.from ?? scene.length;
-  for (const drag of drags) requests.push({ from: drag.from, to: Math.max(drag.to, drag.from + SHAPE_HOLD_S), shape: dragCursor(scene, drag), rank: 3 });
+  for (const drag of drags) requests.push(dragHeld(drag.from, drag.to, dragCursor(scene, drag)));
   for (const click of scene.clicks) {
     if (drags.some((drag) => Math.abs(drag.from - click.at) <= 0.3 && distance(drag, click) <= SAME_MOVE_PX)) continue;
-    const shape = clickShape(click.role);
-    if (shape === "arrow") continue;
-    const held = shape === "ibeam" ? Math.max(click.at + SHAPE_HOLD_S, glideAway(click.at)) : click.at + SHAPE_HOLD_S;
+    const held = clickHeld(clickShape(click.role), click.at, glideAway(click.at));
+    if (!held) continue;
     const gone = click.windowGoneAt;
-    requests.push({ from: click.at, to: gone !== undefined && gone > click.at ? Math.min(held, gone) : held, shape, rank: 2 });
-    if (gone !== undefined && gone > click.at && gone < held) firmEnds.push(gone);
+    requests.push(gone !== undefined && gone > click.at ? { ...held, to: Math.min(held.to, gone) } : held);
+    if (gone !== undefined && gone > click.at && gone < held.to) firmEnds.push(gone);
   }
   for (const typing of scene.typing) {
-    if (typing.secret || typing.characters === 0 || !textField(typing.role)) continue;
+    if (typingShape(typing) === "arrow") continue;
     const span = typingSpan(typing, scene.typing);
-    const tail = span.to + Math.max(TYPING_AFTER_S, TYPING_LEAST_S);
-    requests.push({ from: span.from, to: Math.max(tail, span.from + SHAPE_HOLD_S), shape: "ibeam", rank: 1 });
+    requests.push(typingHeld(span.from, span.to));
   }
-  const marks = [...new Set([0, scene.length, ...requests.flatMap((request) => [request.from, request.to])].filter((time) => time >= 0 && time <= scene.length).map((time) => round3(time)))].sort((a, b) => a - b);
-  const pieces: ShapeSpan[] = [];
-  for (let index = 0; index < marks.length - 1; index++) {
-    const from = marks[index]!;
-    const to = marks[index + 1]!;
-    if (to <= from) continue;
-    const mid = (from + to) / 2;
-    const active = requests.filter((request) => request.from <= mid && mid < request.to).sort((a, b) => b.rank - a.rank || b.from - a.from);
-    const shape = active[0]?.shape ?? "arrow";
-    const last = pieces.at(-1);
-    if (last && last.shape === shape) pieces[pieces.length - 1] = { ...last, to };
-    else pieces.push({ from, to, shape });
-  }
-  if (!pieces.length) return [{ from: 0, to: round3(scene.length), shape: "arrow" }];
-  return heldShapes(pieces, firmEnds);
+  return resolveShapes(requests, scene.length, firmEnds);
 }
 
 export function keptMotion(cuts: readonly (readonly [number, number])[], kept: readonly Span[], least = 0.4): [number, number][] {

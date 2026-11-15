@@ -10,23 +10,29 @@ export const POINTER_NONE = "This desktop's pointer comes with its picture.";
 
 export const AGENT_VERB = "BB_AGENT";
 
-export type AgentAct = "click" | "scroll" | "at";
+export type AgentAct = "click" | "scroll" | "at" | "typing" | "typed";
+
+export type AgentClickShape = "hand" | "ibeam";
 
 export interface AgentPlace {
   readonly act: AgentAct;
   readonly x: number;
   readonly y: number;
+  readonly shape?: AgentClickShape;
 }
 
-const AGENT_ACTS: readonly string[] = ["click", "scroll", "at"] satisfies readonly AgentAct[];
+const AGENT_ACTS: readonly string[] = ["click", "scroll", "at", "typing", "typed"] satisfies readonly AgentAct[];
+const AGENT_CLICK_SHAPES: readonly string[] = ["hand", "ibeam"] satisfies readonly AgentClickShape[];
 
 export function agentMessage(place: AgentPlace): string {
-  return `${AGENT_VERB},${place.act},${Math.round(place.x)},${Math.round(place.y)}`;
+  const shape = place.act === "click" && place.shape ? `,${place.shape}` : "";
+  return `${AGENT_VERB},${place.act},${Math.round(place.x)},${Math.round(place.y)}${shape}`;
 }
 
 export function agentPlaceOf(rest: string): AgentPlace | null {
-  const [act, x, y] = rest.split(",");
+  const [act, x, y, shape] = rest.split(",");
   const at = { x: Number(x), y: Number(y) };
   if (!act || !AGENT_ACTS.includes(act) || !x || !y || !Number.isFinite(at.x) || !Number.isFinite(at.y)) return null;
-  return { act: act as AgentAct, ...at };
+  const clickShape = act === "click" && shape && AGENT_CLICK_SHAPES.includes(shape) ? { shape: shape as AgentClickShape } : {};
+  return { act: act as AgentAct, ...at, ...clickShape };
 }

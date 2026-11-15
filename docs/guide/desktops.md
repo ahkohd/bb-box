@@ -62,7 +62,9 @@ A box's clipboard is its own. A Mac that runs boxes as virtual machines does not
 
 Without control, your own pointer shows over the desktop. With control, the pointer takes the box's shape. If the box hides its pointer, yours shows instead, so it never disappears.
 
-People watching a desktop see where the agent works. On macOS and Windows, the box draws the agent's pointer itself. On a Linux desktop, BB Box draws it over the picture: a grey arrow where the agent last clicked or scrolled at a place on the screen, with a ring that grows and fades at each click. It shows over VNC and over video, on X11 and Wayland, and stays where the agent last acted. While you hold control, it does not show for you.
+People watching a desktop see where the agent works. On macOS and Windows, the box draws the agent's pointer itself. On a Linux desktop, BB Box draws it over the picture where the agent last clicked or scrolled at a place on the screen, with a ring that grows and fades at each click. It shows over VNC and over video, on X11 and Wayland, and stays where the agent last acted. While you hold control, it does not show for you.
+
+The pointer changes shape as it does in a recording. It is a hand for 0.3 seconds after the agent clicks a link or button, and a text cursor after it clicks a text field, until it acts somewhere else. While the agent types into a text field, it is a text cursor, and stays one for 1 second after. Otherwise it is an arrow. BB Box tells what the agent clicked from the window's elements it already read for that click. Where it read none, as for a window too large to read quickly, such as a long web page, the pointer stays an arrow.
 
 On Linux, the pointer shows only for actions at a place on the screen. When the agent acts on an element by its reference, BB Box cannot be sure where that element is on the screen, so the pointer does not move, and a recording shows no ring or zoom for it. Typing by reference keeps its Typing pill, and a recording zooms to it only where the screen changed as it typed.
 

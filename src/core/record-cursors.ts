@@ -1,6 +1,7 @@
 import { rgbaPng } from "./png.ts";
 import { CURSOR_PARTS, type CursorInk, type CursorPart, type CursorSource } from "./record-cursor-paths.ts";
 import type { Pointer, PointerVariant } from "./record-art.ts";
+import { CURSOR_HOTSPOTS } from "./pointer-shapes.ts";
 
 export type PointerShape = CursorSource | "ns" | "w" | "nw" | "se" | "sw" | "down" | "left";
 
@@ -255,8 +256,7 @@ function scalePaths(paths: readonly (readonly Point[])[], scale: number): Point[
 }
 
 function hotspotOf(shape: PointerShape, fills: readonly (readonly Point[])[]): Point {
-  if (shape === "arrow") return [8.4, 8.4];
-  if (shape === "hand") return [12.3, 5.5];
+  if (shape === "arrow" || shape === "hand") return CURSOR_HOTSPOTS[shape];
   if (shape === "grab") return boundsCentre(fills);
   if (shape === "e" || shape === "right") return extreme(fills, "e");
   if (shape === "w" || shape === "left") return extreme(fills, "w");
