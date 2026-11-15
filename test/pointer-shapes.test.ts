@@ -2,7 +2,7 @@ import "./check-test-machine.mjs";
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { agentMessage, agentPlaceOf } from "../src/core/pointer.ts";
+import { agentMessage, agentPlaceOf, type AgentPlace } from "../src/core/pointer.ts";
 import { SHAPE_HOLD_S, ShapeTimeline, TYPING_TAIL_S, clickHeld, clickShape, resolveShapes, shapeAt, typingHeld, typingShape } from "../src/core/pointer-shapes.ts";
 
 test("a click on a link or button is a hand, on a text field an I-beam, and on an element of a role not known the arrow (105)", () => {
@@ -46,45 +46,88 @@ test("the agent's place carries a click's shape, and the typing it shows an I-be
   assert.equal(agentPlaceOf("typing,x,360"), null);
 });
 
-test("a viewer that connects mid-shape is told the shape and what is left of its hold (105)", () => {
-  const shapes = new ShapeTimeline(100);
-  shapes.act({ act: "click", x: 10, y: 20, shape: "hand" }, 100);
-  assert.deepEqual(shapes.replay(100.1), [{ act: "held", x: 10, y: 20, shape: "hand", forMs: 200 }]);
-  assert.deepEqual(shapes.replay(100.4), []);
+type Act = readonly [number, AgentPlace];
 
-  shapes.act({ act: "click", x: 30, y: 40, shape: "ibeam" }, 101);
-  assert.deepEqual(shapes.replay(150), [{ act: "held", x: 30, y: 40, shape: "ibeam" }], "an I-beam after a click on a text field lasts until the pointer moves");
-  shapes.act({ act: "scroll", x: 50, y: 60 }, 151);
-  assert.deepEqual(shapes.replay(151.1), []);
+function replica(original: ShapeTimeline, at: number): ShapeTimeline {
+  const copy = new ShapeTimeline(at);
+  const told = original.replay(at).map((place) => agentPlaceOf(agentMessage(place).slice("BB_AGENT,".length))!);
+  for (const place of told) copy.act(place, at);
+  return copy;
+}
 
-  shapes.act({ act: "typing", x: 50, y: 60 }, 160);
-  assert.deepEqual(shapes.replay(170), [{ act: "typing", x: 50, y: 60 }]);
-  shapes.act({ act: "typed", x: 50, y: 60 }, 172);
-  const tail = shapes.replay(172.25);
-  assert.equal(tail.length, 1);
-  assert.equal(tail[0]!.act, "held");
-  assert.equal(tail[0]!.shape, "ibeam");
-  assert.ok(Math.abs(tail[0]!.forMs! - (TYPING_TAIL_S - 0.25) * 1000) < 2, String(tail[0]!.forMs));
-  assert.deepEqual(shapes.replay(172 + TYPING_TAIL_S + 0.01), []);
+function assertConverges(acts: readonly Act[], connectAt: number, until: number): ShapeTimeline {
+  const original = new ShapeTimeline(0);
+  const earlier = acts.filter(([at]) => at <= connectAt);
+  const later = acts.filter(([at]) => at > connectAt);
+  for (const [at, place] of earlier) original.act(place, at);
+  const copy = replica(original, connectAt);
+  let next = 0;
+  const betweenMarks = 0.005;
+  for (let step = 0; connectAt + betweenMarks + step * 0.01 <= until; step++) {
+    const t = connectAt + betweenMarks + step * 0.01;
+    while (next < later.length && later[next]![0] <= t) {
+      const [at, place] = later[next++]!;
+      original.act(place, at);
+      copy.act(place, at);
+    }
+    assert.equal(copy.now(t).shape, original.now(t).shape, `at ${t.toFixed(2)} s`);
+  }
+  return copy;
+}
+
+test("a viewer that connects behind a hold sees the shape pending after it, as one connected all along does (105)", () => {
+  const copy = assertConverges(
+    [
+      [0, { act: "click", x: 10, y: 20, shape: "hand" }],
+      [0.1, { act: "click", x: 30, y: 40, shape: "ibeam" }],
+    ],
+    0.15,
+    3,
+  );
+  assert.equal(copy.now(0.5).shape, "ibeam");
 });
 
-test("a replayed hold ends when it says, not held to 0.3 s, and the arrow follows (105)", () => {
-  const shapes = new ShapeTimeline(0);
-  shapes.act({ act: "held", x: 10, y: 20, shape: "hand", forMs: 50 }, 0);
-  assert.equal(shapes.now(0.04).shape, "hand");
-  assert.equal(shapes.now(0.06).shape, "arrow");
-  shapes.act({ act: "held", x: 10, y: 20, shape: "ibeam" }, 1);
-  assert.equal(shapes.now(60).shape, "ibeam");
-  assert.equal(shapes.now(60).changesAt, null);
-  shapes.act({ act: "click", x: 90, y: 20 }, 61);
-  assert.equal(shapes.now(61.31).shape, "arrow");
+test("a viewer that connects mid-shape converges on the shapes of one connected all along (105)", () => {
+  const typing: Act[] = [
+    [0, { act: "click", x: 10, y: 20, shape: "ibeam" }],
+    [0.5, { act: "typing", x: 10, y: 20 }],
+    [3, { act: "typed", x: 10, y: 20 }],
+    [3.2, { act: "click", x: 50, y: 60, shape: "hand" }],
+    [5, { act: "scroll", x: 70, y: 80 }],
+  ];
+  for (const connectAt of [0.1, 0.4, 1, 3.1, 3.3, 3.9, 4.5]) assertConverges(typing, connectAt, 7);
+  const quick: Act[] = [
+    [0, { act: "click", x: 10, y: 20, shape: "ibeam" }],
+    [0.2, { act: "scroll", x: 30, y: 40 }],
+    [0.25, { act: "click", x: 50, y: 60, shape: "hand" }],
+  ];
+  for (const connectAt of [0.05, 0.22, 0.4, 0.6]) assertConverges(quick, connectAt, 2);
 });
 
-test("a held shape's message carries what is left of its hold, and none for one held until the pointer moves (105)", () => {
-  assert.equal(agentMessage({ act: "held", x: 10, y: 20, shape: "hand", forMs: 199.6 }), "BB_AGENT,held,10,20,hand,200");
-  assert.equal(agentMessage({ act: "held", x: 10, y: 20, shape: "ibeam" }), "BB_AGENT,held,10,20,ibeam");
-  assert.deepEqual(agentPlaceOf("held,10,20,hand,200"), { act: "held", x: 10, y: 20, shape: "hand", forMs: 200 });
-  assert.deepEqual(agentPlaceOf("held,10,20,ibeam"), { act: "held", x: 10, y: 20, shape: "ibeam" });
-  assert.equal(agentPlaceOf("held,10,20"), null);
-  assert.equal(agentPlaceOf("held,10,20,grab,100"), null);
+test("a hold already over at the connection shows no shape (105)", () => {
+  const original = new ShapeTimeline(0);
+  original.act({ act: "click", x: 10, y: 20, shape: "hand" }, 0);
+  assert.equal(replica(original, 0.31).now(0.31).shape, "arrow");
+  assert.equal(replica(original, 0.2).now(0.2).shape, "hand");
+  assert.equal(replica(original, 0.2).now(0.31).shape, "arrow");
+});
+
+test("a held shape's message says how long ago it began and how long it lasts, or nothing for one held until the pointer moves (105)", () => {
+  assert.equal(agentMessage({ act: "held", x: 10, y: 20, shape: "hand", agoMs: 99.6, forMs: 300 }), "BB_AGENT,held,10,20,hand,100,300");
+  assert.equal(agentMessage({ act: "held", x: 10, y: 20, shape: "ibeam", agoMs: 50 }), "BB_AGENT,held,10,20,ibeam,50");
+  assert.equal(agentMessage({ act: "typing", x: 10, y: 20, agoMs: 1500 }), "BB_AGENT,typing,10,20,1500");
+  assert.deepEqual(agentPlaceOf("held,10,20,hand,100,300"), { act: "held", x: 10, y: 20, shape: "hand", agoMs: 100, forMs: 300 });
+  assert.deepEqual(agentPlaceOf("held,10,20,ibeam,50"), { act: "held", x: 10, y: 20, shape: "ibeam", agoMs: 50 });
+  assert.deepEqual(agentPlaceOf("typing,10,20,1500,2000"), { act: "typing", x: 10, y: 20, agoMs: 1500, forMs: 2000 });
+  assert.deepEqual(agentPlaceOf("typing,10,20"), { act: "typing", x: 10, y: 20 });
+});
+
+test("a held shape with a duration that is not a whole number of milliseconds is refused, not held until the pointer moves (105)", () => {
+  for (const rest of ["held,10,20", "held,10,20,ibeam", "held,10,20,grab,0,100", "held,10,20,hand,0", "held,10,20,ibeam,0,1,2"]) assert.equal(agentPlaceOf(rest), null, rest);
+  for (const bad of ["NaN", "Infinity", "-1", "1.5", "1e3", "", " 5", "abc"]) {
+    assert.equal(agentPlaceOf(`held,10,20,ibeam,${bad}`), null, `ago ${bad}`);
+    assert.equal(agentPlaceOf(`held,10,20,ibeam,0,${bad}`), null, `for ${bad}`);
+    assert.equal(agentPlaceOf(`typing,10,20,${bad}`), null, `typing ago ${bad}`);
+    assert.equal(agentPlaceOf(`typing,10,20,0,${bad}`), null, `typing for ${bad}`);
+  }
 });

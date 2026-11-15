@@ -62,13 +62,13 @@ describe("the agent's pointer on a Linux desktop (105)", () => {
   test("shows a shape a viewer is told of as it connects, for what is left of its hold", () => {
     const { pointer, shape } = watched();
     pointer.message("BB_AGENT,at,640,360");
-    pointer.message("BB_AGENT,held,640,360,hand,120");
+    pointer.message("BB_AGENT,held,640,360,hand,180,300");
     expect(shape()).toBe("hand");
     vi.advanceTimersByTime(110);
     expect(shape()).toBe("hand");
     vi.advanceTimersByTime(20);
     expect(shape()).toBe("arrow");
-    pointer.message("BB_AGENT,held,640,360,ibeam");
+    pointer.message("BB_AGENT,held,640,360,ibeam,0");
     vi.advanceTimersByTime(10_000);
     expect(shape()).toBe("ibeam");
     pointer.message("BB_AGENT,scroll,700,360");

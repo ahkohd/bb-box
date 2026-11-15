@@ -123,11 +123,11 @@ export function shapeAt(spans: readonly ShapeSpan[], t: number): PointerShape {
 
 type OpenUntil = "moved" | "typed";
 
+type HoldKind = "click" | "typing";
+
 interface HeldShape {
-  readonly shape: ActionShape;
-  readonly from: number;
+  readonly kind: HoldKind;
   readonly openUntil: OpenUntil | null;
-  readonly firm: boolean;
   readonly request: ShapeRequest;
 }
 
@@ -137,64 +137,72 @@ export interface ShapeNow {
 }
 
 const PAST_KEPT_S = 10;
+const REPLAY_PAST_S = 1;
 const OPEN_MARGIN_S = 1;
+const ORIGIN_LEAD_S = 3600;
 
 function asActionShape(shape: PointerShape): ActionShape {
   return shape === "hand" || shape === "ibeam" ? shape : "arrow";
 }
 
+function msOf(seconds: number): number {
+  return Math.round(seconds * 1000);
+}
+
 export class ShapeTimeline {
   #held: HeldShape[] = [];
   #place: { readonly x: number; readonly y: number } | null = null;
-  readonly #since: number;
+  readonly #origin: number;
 
   constructor(since: number) {
-    this.#since = since;
+    this.#origin = since - ORIGIN_LEAD_S;
   }
 
   act(place: AgentPlace, at: number): void {
-    const now = at - this.#since;
+    const now = at - this.#origin;
     const moved = !this.#place || this.#place.x !== place.x || this.#place.y !== place.y;
     this.#place = { x: place.x, y: place.y };
-    if (moved) this.#close("moved", (held) => clickHeld(held.shape, held.from, now));
-    if (place.act === "typed") this.#close("typed", (held) => typingHeld(held.from, now));
+    if (moved) this.#close("moved", (held) => clickHeld(asActionShape(held.request.shape), held.request.from, now));
+    if (place.act === "typed") this.#close("typed", (held) => typingHeld(held.request.from, now));
+    const from = now - (place.agoMs ?? 0) / 1000;
+    const lasting = place.forMs === undefined ? null : place.forMs / 1000;
     if (place.act === "click" && place.shape) {
       const open = place.shape === "ibeam";
       const request = clickHeld(place.shape, now, open ? Infinity : now);
-      if (request) this.#held.push({ shape: place.shape, from: now, openUntil: open ? "moved" : null, firm: false, request });
+      if (request) this.#held.push({ kind: "click", openUntil: open ? "moved" : null, request });
     }
     if (place.act === "held" && place.shape) {
-      const open = place.forMs === undefined && place.shape === "ibeam";
-      const to = open ? Infinity : now + (place.forMs ?? SHAPE_HOLD_S * 1000) / 1000;
-      this.#held.push({ shape: place.shape, from: now, openUntil: open ? "moved" : null, firm: !open, request: { from: now, to, shape: place.shape, rank: CLICK_RANK } });
+      const to = lasting === null ? Infinity : from + lasting;
+      this.#held.push({ kind: "click", openUntil: lasting === null ? "moved" : null, request: { from, to, shape: place.shape, rank: CLICK_RANK } });
     }
-    if (place.act === "typing" && !this.#held.some((held) => held.openUntil === "typed")) {
-      this.#held.push({ shape: "ibeam", from: now, openUntil: "typed", firm: false, request: typingHeld(now, Infinity) });
+    if (place.act === "typing" && lasting !== null) {
+      this.#held.push({ kind: "typing", openUntil: null, request: { from, to: from + lasting, shape: "ibeam", rank: TYPING_RANK } });
+    }
+    if (place.act === "typing" && lasting === null && !this.#held.some((held) => held.openUntil === "typed")) {
+      this.#held.push({ kind: "typing", openUntil: "typed", request: typingHeld(from, Infinity) });
     }
     this.#held = this.#held.filter((held) => held.openUntil || held.request.to > now - PAST_KEPT_S);
   }
 
   now(at: number): ShapeNow {
-    const now = at - this.#since;
+    const now = at - this.#origin;
     const spans = this.#spans(now);
     const next = spans.find((span) => span.from > now);
-    return { shape: asActionShape(shapeAt(spans, now)), changesAt: next ? next.from + this.#since : null };
+    return { shape: asActionShape(shapeAt(spans, now)), changesAt: next ? next.from + this.#origin : null };
   }
 
   replay(at: number): AgentPlace[] {
     const place = this.#place;
     if (!place) return [];
-    const now = at - this.#since;
-    const spans = this.#spans(now);
-    const current = spans.find((span) => now >= span.from && now < span.to);
-    const shape = asActionShape(current?.shape ?? "arrow");
-    const typing = this.#held.some((held) => held.openUntil === "typed");
-    const out: AgentPlace[] = typing ? [{ act: "typing", ...place }] : [];
-    if (!current || shape === "arrow") return out;
-    const open = current.to >= this.#horizon(now) - 1e-3;
-    if (open && typing && shape === "ibeam" && !this.#held.some((held) => held.openUntil === "moved")) return out;
-    if (open) return [...out, { act: "held", ...place, shape }];
-    return [...out, { act: "held", ...place, shape, forMs: Math.round((current.to - now) * 1000) }];
+    const now = at - this.#origin;
+    return this.#held
+      .filter((held) => held.openUntil || held.request.to > now - REPLAY_PAST_S)
+      .map((held): AgentPlace => {
+        const { from, to, shape } = held.request;
+        const lasting = held.openUntil ? {} : { forMs: msOf(to - from) };
+        const ago = { agoMs: msOf(now - from) };
+        return held.kind === "typing" ? { act: "typing", ...place, ...ago, ...lasting } : { act: "held", ...place, shape: shape === "hand" ? "hand" : "ibeam", ...ago, ...lasting };
+      });
   }
 
   #close(until: OpenUntil, closed: (held: HeldShape) => ShapeRequest | null): void {
@@ -205,14 +213,11 @@ export class ShapeTimeline {
     });
   }
 
-  #horizon(now: number): number {
-    return Math.max(now, ...this.#held.map((held) => held.request.to).filter(Number.isFinite)) + OPEN_MARGIN_S;
-  }
-
   #spans(now: number): ShapeSpan[] {
-    const horizon = this.#horizon(now);
-    const requests = this.#held.map((held) => ({ ...held.request, to: Math.min(held.request.to, horizon) }));
-    const firmEnds = this.#held.filter((held) => held.firm).map((held) => held.request.to);
-    return resolveShapes(requests, horizon, firmEnds);
+    const horizon = Math.max(now, ...this.#held.map((held) => held.request.to).filter(Number.isFinite)) + OPEN_MARGIN_S;
+    return resolveShapes(
+      this.#held.map((held) => ({ ...held.request, to: Math.min(held.request.to, horizon) })),
+      horizon,
+    );
   }
 }

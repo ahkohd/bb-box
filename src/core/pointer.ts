@@ -19,27 +19,46 @@ export interface AgentPlace {
   readonly x: number;
   readonly y: number;
   readonly shape?: AgentClickShape;
+  readonly agoMs?: number;
   readonly forMs?: number;
 }
 
 const AGENT_ACTS: readonly string[] = ["click", "scroll", "at", "typing", "typed", "held"] satisfies readonly AgentAct[];
 const AGENT_CLICK_SHAPES: readonly string[] = ["hand", "ibeam"] satisfies readonly AgentClickShape[];
 const SHAPED_ACTS: readonly AgentAct[] = ["click", "held"];
+const TIMED_ACTS: readonly AgentAct[] = ["held", "typing"];
+const WHOLE_MS = /^\d+$/;
+
+function timing(place: AgentPlace): string {
+  if (!TIMED_ACTS.includes(place.act) || place.agoMs === undefined) return "";
+  const ago = `,${Math.max(0, Math.round(place.agoMs))}`;
+  return place.forMs === undefined ? ago : `${ago},${Math.max(0, Math.round(place.forMs))}`;
+}
 
 export function agentMessage(place: AgentPlace): string {
-  const shaped = SHAPED_ACTS.includes(place.act) && place.shape;
-  const shape = shaped ? `,${place.shape}` : "";
-  const held = shaped && place.act === "held" && place.forMs !== undefined ? `,${Math.max(0, Math.round(place.forMs))}` : "";
-  return `${AGENT_VERB},${place.act},${Math.round(place.x)},${Math.round(place.y)}${shape}${held}`;
+  const shape = SHAPED_ACTS.includes(place.act) && place.shape ? `,${place.shape}` : "";
+  return `${AGENT_VERB},${place.act},${Math.round(place.x)},${Math.round(place.y)}${shape}${timing(place)}`;
+}
+
+function wholeMs(text: string | undefined): number | null | undefined {
+  if (text === undefined) return undefined;
+  return WHOLE_MS.test(text) ? Number(text) : null;
 }
 
 export function agentPlaceOf(rest: string): AgentPlace | null {
-  const [act, x, y, shape, forMs] = rest.split(",");
+  const [act, x, y, ...more] = rest.split(",");
   const at = { x: Number(x), y: Number(y) };
   if (!act || !AGENT_ACTS.includes(act) || !x || !y || !Number.isFinite(at.x) || !Number.isFinite(at.y)) return null;
-  const shaped = SHAPED_ACTS.includes(act as AgentAct) && shape && AGENT_CLICK_SHAPES.includes(shape);
-  if (act === "held" && !shaped) return null;
-  const held = Number(forMs);
-  const lasts = act === "held" && forMs && Number.isFinite(held) && held >= 0 ? { forMs: held } : {};
-  return { act: act as AgentAct, ...at, ...(shaped ? { shape: shape as AgentClickShape } : {}), ...lasts };
+  const known = act as AgentAct;
+  const shape = SHAPED_ACTS.includes(known) ? more.shift() : undefined;
+  const shaped = !!shape && AGENT_CLICK_SHAPES.includes(shape);
+  if (known === "held" && !shaped) return null;
+  const shapes = shaped ? { shape: shape as AgentClickShape } : {};
+  if (!TIMED_ACTS.includes(known)) return { act: known, ...at, ...shapes };
+  const [agoText, forText, ...extra] = more;
+  const agoMs = wholeMs(agoText);
+  const forMs = wholeMs(forText);
+  if (agoMs === null || forMs === null || extra.length || (agoMs === undefined && known === "held")) return null;
+  if (known === "held" && forMs === undefined && shape !== "ibeam") return null;
+  return { act: known, ...at, ...shapes, ...(agoMs !== undefined ? { agoMs } : {}), ...(forMs !== undefined ? { forMs } : {}) };
 }

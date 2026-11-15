@@ -302,6 +302,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       deps.controlChanged?.(boxId);
       // A person took control of a box with Selkies viewers: its input connection opens now, not at their first key.
       if (control.view(boxId).owner === "human") {
+        forgetAgent(boxId);
         selkiesBoxes.get(boxId)?.box.warm();
         deviceBoxes.get(boxId)?.box.warm();
       }
