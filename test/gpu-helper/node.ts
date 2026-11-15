@@ -161,11 +161,22 @@ export class FakeNode {
         'echo $$ >>"$root/smi.starts"',
         'if [ -f "$root/smi-fails" ]; then echo "NVIDIA-SMI has failed because it could not communicate with the NVIDIA driver." >&2; exit 9; fi',
         "loop=0",
+        "tick=0",
         'for argument; do [ "$argument" = -l ] && loop=1; done',
         'stall() { trap "" TERM; exec sleep 3600; }',
         '[ "$(cat "$root/smi-mode" 2>/dev/null)" = silent ] && stall',
         'while :; do',
-        '  cat "$root/smi" || exit 0',
+        '  reading="$root/smi"',
+        '  [ -f "$root/smi-other" ] && [ $((tick % 2)) = 1 ] && reading="$root/smi-other"',
+        "  tick=$((tick + 1))",
+        '  [ -f "$reading" ] || exit 0',
+        '  while IFS= read -r row; do',
+        '    case "$row" in',
+        '      "sleep "*) sleep "${row#sleep }" ;;',
+        "      stall) stall ;;",
+        '      *) printf "%s\\n" "$row" ;;',
+        "    esac",
+        '  done <"$reading"',
         '  [ "$(cat "$root/smi-mode" 2>/dev/null)" = stall ] && stall',
         '  [ -f "$root/smi-stderr" ] && cat "$root/smi-stderr" >&2',
         '  [ -f "$root/smi-killed" ] && kill -KILL $$',
@@ -238,6 +249,12 @@ export class FakeNode {
       if (value === undefined) rmSync(join(this.root, file), { force: true });
       else writeFileSync(join(this.root, file), `${value}\n`);
     }
+  }
+
+  smiOther(rows: readonly string[] | null): void {
+    const file = join(this.root, "smi-other");
+    if (rows === null) rmSync(file, { force: true });
+    else writeFileSync(file, rows.map((row) => `${row}\n`).join(""));
   }
 
   smiRow(card: FakeCard): string {
@@ -403,7 +420,7 @@ export class FakeNode {
     return join(this.root, "var/lib/bb-box-gpu/ledger");
   }
 
-  ledger(): { protocol: number; guests: Record<string, { box?: string | null; answered?: number; claim?: { generation: number; part: string; card: string | null; answer: string }; strip?: { why: string }; proposed_strip?: { why: string } }>; unsettled?: Record<string, { generation: number }>; answers: { vmid: number; generation: number; answer: string; reason?: string }[] } {
+  ledger(): { protocol: number; guests: Record<string, { box?: string | null; answered?: number; claim?: { generation: number; part: string; card: string | null; answer: string }; strip?: { why: string }; proposed_strip?: { why: string } }>; unsettled?: Record<string, { generation: number }>; answers: { vmid: number; generation: number; answer: string; reason?: string }[]; waiting?: Record<string, { nonce: string; at: number }> } {
     return JSON.parse(readFileSync(this.ledgerPath(), "utf8"));
   }
 

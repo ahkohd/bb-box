@@ -7,6 +7,8 @@ the owner](#questions-for-the-owner)). Not built yet: see [How it is
 built](#16-how-it-is-built) and its [gates](#gated-in-unit-n). It has the
 owner's direction of 31 October 2026 built in: see [The owner's
 direction](#the-owners-direction).
+[104](104-a-card-nvidia-smi-did-not-read-is-not-known-yet-and-blocks-only-itself.md)
+supersedes its rule for incomplete readings of the cards, set in unit 5.
 
 The prototype is [071-gpu-boxes/prototype.html](071-gpu-boxes/prototype.html):
 one file, opened in any browser, made from bb-box's own components with a

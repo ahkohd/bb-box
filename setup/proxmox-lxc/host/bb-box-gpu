@@ -9,7 +9,7 @@ use JSON::PP;
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(time sleep clock_gettime CLOCK_MONOTONIC);
 
-use constant VERSION => '0.4.3';
+use constant VERSION => '0.4.4';
 use constant PROTOCOL => 1;
 use constant TESTED_PVE_CONTAINER => ('6.1.14');
 use constant REPORT_VM_NAME => 'bb-box-gpu-memory';
@@ -34,6 +34,7 @@ use constant LONGEST_REQUIRED_LINE => 300;
 use constant STATS_EVERY_SECONDS => 3600;
 use constant ONE_READING_TIMEOUT_SECONDS => 15;
 use constant SHUTDOWN_SECONDS => 60;
+use constant UNREAD_START_WAIT_SECONDS => 60;
 use constant GUEST_LOCK_TIMEOUT_SECONDS => 2;
 use constant DEVICE_MODE => '0666';
 
@@ -187,7 +188,7 @@ sub pci_address {
 sub parse_smi_row {
     my ($line) = @_;
     my @fields = split /\s*,\s*/, ($line =~ s/^\s+|\s+$//gr);
-    return undef unless @fields == 5 && $fields[2] =~ /^\d+$/ && $fields[3] =~ /^\d+$/ && $fields[4] =~ /^\d+$/;
+    return undef unless @fields == 5 && $fields[2] =~ /^\d+$/ && $fields[3] =~ /^\d+$/ && $fields[4] =~ /^\d+$/ && $fields[4] > 0 && $fields[3] <= $fields[4];
     return { uuid => $fields[0], bus => $fields[1], index => $fields[2], free => $fields[3], total => $fields[4] };
 }
 
@@ -232,17 +233,21 @@ sub driver_cards {
 sub note_unread_cards {
     my ($ctx) = @_;
     $ctx->{unread} = {};
-    return unless $ctx->{cards_known};
     my %read = map { $_->{pci} => 1 } values %{ $ctx->{cards} };
     for my $card (driver_cards()) {
         next if $read{ $card->{pci} };
-        $ctx->{unread}{ $card->{uuid} // '*' } = $card->{pci};
-        push @{ $ctx->{errors} }, "nvidia-smi gave no reading of the card at $card->{pci}, so no request on it is decided and no guest's lines for it are changed";
+        $ctx->{unread}{ $card->{pci} } = card_nodes({ pci => $card->{pci}, uuid => $card->{uuid} // $ctx->{last_full}{ $card->{pci} } });
+        push @{ $ctx->{errors} }, "nvidia-smi gave no reading of the card at $card->{pci}, so a request or a start on it waits for one, and no guest's lines for it are changed"
+            if $ctx->{cards_known};
     }
-    if ($ctx->{reading_bad}) {
-        $ctx->{unread}{'*'} = 'every card';
-        push @{ $ctx->{errors} }, "nvidia-smi's reading was incomplete ($ctx->{reading_bad}), so no request on any card is decided and no guest's lines are changed";
-    }
+    push @{ $ctx->{errors} }, "nvidia-smi's reading was incomplete ($ctx->{reading_bad}), so only the cards it read are decided, and no guest's lines are put right until a full reading"
+        if $ctx->{cards_known} && $ctx->{reading_bad};
+}
+
+sub remember_full_reading {
+    my ($ctx) = @_;
+    return unless full_inventory($ctx);
+    $ctx->{last_full} = { map { $_->{pci} => $_->{uuid} } values %{ $ctx->{cards} } };
 }
 
 my %MAPPING_WORDS = (minor => 'its /dev/nvidia minor', drm_card => 'its DRM card node', drm_render => 'its DRM render node');
@@ -269,13 +274,22 @@ sub note_unmapped_cards {
 
 sub full_inventory {
     my ($ctx) = @_;
-    return $ctx->{cards_known} && !%{ $ctx->{unread} // {} } && !%{ $ctx->{unmapped} // {} } ? 1 : 0;
+    return $ctx->{cards_known} && !$ctx->{reading_bad} && !%{ $ctx->{unread} // {} } && !%{ $ctx->{unmapped} // {} } ? 1 : 0;
 }
 
 sub card_unread {
     my ($ctx, $uuid) = @_;
-    return 1 if exists $ctx->{unread}{'*'} || %{ $ctx->{unmapped} // {} };
-    return defined $uuid && exists $ctx->{unread}{$uuid} ? 1 : 0;
+    return 1 if %{ $ctx->{unmapped} // {} };
+    return 0 if defined $uuid && $ctx->{cards}{$uuid};
+    return 1 if $ctx->{reading_bad};
+    return defined unread_pci($ctx, $uuid) ? 1 : 0;
+}
+
+sub unread_pci {
+    my ($ctx, $uuid) = @_;
+    my $unread = $ctx->{unread} // {};
+    my ($pci) = grep { !defined $unread->{$_}{uuid} || (defined $uuid && $unread->{$_}{uuid} eq $uuid) } sort keys %$unread;
+    return $pci;
 }
 
 sub card_blocked {
@@ -628,7 +642,7 @@ sub refresh_guest {
 
 sub ledger_path { return host_path(STATE_DIR . '/ledger') }
 
-sub empty_ledger { return { protocol => PROTOCOL, guests => {}, answers => [], unsettled => {}, power => {} } }
+sub empty_ledger { return { protocol => PROTOCOL, guests => {}, answers => [], unsettled => {}, power => {}, waiting => {} } }
 
 sub load_ledger {
     my $path = ledger_path();
@@ -637,11 +651,12 @@ sub load_ledger {
     my $data = defined $text ? eval { JSON::PP->new->decode($text) } : undef;
     return (undef, 'corrupt') unless ref($data) eq 'HASH' && defined $data->{protocol} && $data->{protocol} =~ /^\d+$/;
     return (undef, 'newer', $data->{protocol}) if $data->{protocol} > PROTOCOL;
-    return (undef, 'corrupt') unless ref($data->{guests} // {}) eq 'HASH' && ref($data->{answers} // []) eq 'ARRAY' && ref($data->{unsettled} // {}) eq 'HASH' && ref($data->{power} // {}) eq 'HASH';
+    return (undef, 'corrupt') unless ref($data->{guests} // {}) eq 'HASH' && ref($data->{answers} // []) eq 'ARRAY' && ref($data->{unsettled} // {}) eq 'HASH' && ref($data->{power} // {}) eq 'HASH' && ref($data->{waiting} // {}) eq 'HASH';
     $data->{guests} //= {};
     $data->{answers} //= [];
     $data->{unsettled} //= {};
     $data->{power} //= {};
+    $data->{waiting} //= {};
     return ($data, 'ok');
 }
 
@@ -1185,7 +1200,10 @@ sub start_refusal {
     my $claims_card = $marker && $marker->{part} =~ /^(?:shared|whole)$/;
     return ['pending'] if $guest->{pending_devices};
     return undef unless $claims_card || %{ $guest->{named} } || %{ $guest->{devices} };
-    return ['no-cards'] unless full_inventory($ctx);
+    return ['wait', 'no-cards'] unless $ctx->{cards_known};
+    return ['card-nodes'] if %{ $ctx->{unmapped} };
+    my $unread = unread_card_for_start($ctx, $guest, $claims_card ? $marker->{card} : undef);
+    return ['wait', 'card-unread', $unread] if defined $unread;
     if ($claims_card) {
         my $claim = claim_of($ctx, $guest->{vmid});
         return ['no-claim'] unless $claim && $claim->{generation} == $marker->{generation} && $claim->{part} eq $marker->{part} && ($claim->{card} // '') eq ($marker->{card} // '');
@@ -1209,6 +1227,35 @@ sub start_refusal {
         return ['card-busy', $beside] if defined $beside;
     }
     return undef;
+}
+
+sub unread_card_for_start {
+    my ($ctx, $guest, $claimed) = @_;
+    return unread_pci($ctx, $claimed) // $claimed if defined $claimed && card_unread($ctx, $claimed);
+    my ($named) = sort keys %{ cards_named($guest->{conf}, $ctx->{unread}) };
+    return $named;
+}
+
+sub waits_for_reading {
+    my ($ctx, $vmid, $request, $reason, $detail) = @_;
+    my $waiting = $ctx->{ledger}{waiting} //= {};
+    my $since = $waiting->{$vmid};
+    if (!$since || ($since->{nonce} // '') ne $request->{nonce} || ($since->{at} // 0) > $ctx->{now}) {
+        $since = $waiting->{$vmid} = { nonce => $request->{nonce}, at => int($ctx->{now}) };
+        $ctx->{ledger_dirty} = 1;
+    }
+    my $what = $reason eq 'card-unread' ? "nvidia-smi has given no reading of the card at $detail" : 'nvidia-smi has given no reading of the cards';
+    if ($ctx->{now} - $since->{at} < UNREAD_START_WAIT_SECONDS) {
+        note_once("power waits $vmid $request->{nonce} $reason", "power CT $vmid $request->{action} n$request->{nonce} waits: $what, so it is tried again each pass for up to " . UNREAD_START_WAIT_SECONDS . ' s');
+        return 1;
+    }
+    return 0;
+}
+
+sub stop_waiting {
+    my ($ctx, $vmid) = @_;
+    return unless delete $ctx->{ledger}{waiting}{$vmid};
+    $ctx->{ledger_dirty} = 1;
 }
 
 sub running_beside {
@@ -1286,7 +1333,7 @@ sub decide_power {
             if ($action eq 'start') {
                 return ['done'] if $running;
                 if (my $why = start_refusal($ctx, $guests, $fresh)) {
-                    return ['refused', @$why];
+                    return $why->[0] eq 'wait' ? $why : ['refused', @$why];
                 }
                 PVE::LXC::vm_start($vmid, $conf, 0);
             } elsif ($action eq 'stop' || $action eq 'shutdown') {
@@ -1307,6 +1354,11 @@ sub decide_power {
     }, 1);
     return unless $outcome;
     my ($answer, $reason, $detail) = @$outcome;
+    if ($answer eq 'wait') {
+        return if waits_for_reading($ctx, $vmid, $request, $reason, $detail);
+        $answer = 'refused';
+    }
+    stop_waiting($ctx, $vmid);
     power_answer($ctx, $vmid, $request, $answer, $reason, $detail);
 }
 
@@ -1493,6 +1545,12 @@ sub prune_power {
         delete $power->{$vmid};
         $ctx->{ledger_dirty} = 1;
     }
+    my $waiting = $ctx->{ledger}{waiting} // {};
+    for my $vmid (keys %$waiting) {
+        my $asked = $guests->{$vmid} ? $guests->{$vmid}{power} : undef;
+        next if $asked && ($asked->{nonce} // '') eq ($waiting->{$vmid}{nonce} // '');
+        stop_waiting($ctx, $vmid);
+    }
 }
 
 sub power_lines {
@@ -1619,6 +1677,10 @@ sub report_lines {
         push @required, "card $uuid pci $card->{pci} " . card_mapping_text($card);
         my $was = $state->{previous_boot}{cards}{$uuid};
         push @required, "remapped $uuid was $was" if defined $was && $was ne card_mapping_text($card);
+    }
+    for my $pci (sort keys %{ $ctx->{unread} // {} }) {
+        my $card = $ctx->{unread}{$pci};
+        push @required, 'unread ' . ($card->{uuid} // '-') . " pci $pci " . card_mapping_text($card);
     }
     my @ledger = $ctx->{ledger_known} ? ledger_lines($ctx) : ();
     push @required, $ctx->{ledger_known} ? 'ledger entries ' . scalar(@ledger) : 'ledger unknown';
@@ -1831,6 +1893,7 @@ sub pass {
     $ctx->{cards} = $ctx->{cards_known} ? card_table($ctx->{reading}) : {};
     note_unread_cards($ctx);
     note_unmapped_cards($ctx);
+    remember_full_reading($ctx);
     update_host_state($ctx);
     my $guests = read_guests($ctx);
     if (!$guests) {
@@ -2035,11 +2098,20 @@ sub finish_group {
     my ($smi) = @_;
     return unless @{ $smi->{group} };
     $smi->{reading_bad} = delete $smi->{group_bad};
-    $smi->{reading} = $smi->{group};
-    $smi->{reading_at} = $smi->{group_at};
-    $smi->{reading_monotonic} = $smi->{group_monotonic};
+    my $rows = $smi->{rows} //= {};
+    $rows->{ $_->{uuid} } = { row => $_, at => $smi->{group_at}, monotonic => $smi->{group_monotonic} } for @{ $smi->{group} };
+    for my $uuid (keys %$rows) {
+        delete $rows->{$uuid} if $smi->{group_monotonic} - $rows->{$uuid}{monotonic} > READING_FRESH_SECONDS;
+    }
+    $smi->{reading} = [ map { $_->{row} } sort { $a->{row}{index} <=> $b->{row}{index} } values %$rows ];
     $smi->{group} = [];
     delete $smi->{failure};
+}
+
+sub fresh_rows {
+    my ($smi) = @_;
+    my $now = monotonic();
+    return sort { $a->{row}{index} <=> $b->{row}{index} } grep { $now - $_->{monotonic} <= READING_FRESH_SECONDS } values %{ $smi->{rows} // {} };
 }
 
 sub take_smi_line {
@@ -2058,7 +2130,13 @@ sub take_smi_line {
     }
     push @{ $smi->{group} }, $row;
     $smi->{last_line} = monotonic();
-    finish_group($smi) if $smi->{reading} && @{ $smi->{group} } == @{ $smi->{reading} };
+    finish_group($smi) if $smi->{reading} && @{ $smi->{group} } >= @{ $smi->{reading} };
+}
+
+sub cut_short_row {
+    my ($smi) = @_;
+    $smi->{failure} = 'nvidia-smi stopped partway through a row: ' . substr($smi->{buffer} =~ s/[^\x20-\x7e]//gr, 0, 120);
+    $smi->{group_bad} = $smi->{failure};
 }
 
 sub exited_cleanly {
@@ -2077,7 +2155,7 @@ sub read_smi {
     my ($smi) = @_;
     my $got = sysread($smi->{fh}, my $chunk, 65536);
     if (!$got) {
-        take_smi_line($smi, $smi->{buffer}) if length $smi->{buffer};
+        cut_short_row($smi) if $smi->{buffer} =~ /\S/;
         $smi->{buffer} = '';
         finish_group($smi);
         my $status = $smi->{pid} ? exit_status_soon($smi->{pid}, 0.5) : undef;
@@ -2129,9 +2207,11 @@ sub one_reading {
 
 sub context_from {
     my ($ctx, $smi) = @_;
-    $ctx->{reading} = $smi->{reading};
-    $ctx->{reading_at} = $smi->{reading_at} // 0;
-    $ctx->{reading_monotonic} = $smi->{reading_monotonic} // 0;
+    my @fresh = fresh_rows($smi);
+    my ($newest) = sort { $b->{monotonic} <=> $a->{monotonic} } @fresh;
+    $ctx->{reading} = @fresh ? [ map { $_->{row} } @fresh ] : undef;
+    $ctx->{reading_at} = $newest ? $newest->{at} : 0;
+    $ctx->{reading_monotonic} = $newest ? $newest->{monotonic} : 0;
     $ctx->{smi_failure} = $smi->{failure};
     $ctx->{reading_bad} = $smi->{reading_bad};
 }
@@ -2178,7 +2258,7 @@ sub print_preview {
     my @why;
     push @why, 'it read no card' unless $ctx->{cards_known};
     push @why, scalar(@{ $ctx->{errors} }) . ' error ' . (@{ $ctx->{errors} } == 1 ? 'line' : 'lines') if @{ $ctx->{errors} };
-    push @why, 'nvidia-smi gave no full reading of every card' if %{ $ctx->{unread} // {} };
+    push @why, 'nvidia-smi gave no full reading of every card' if $ctx->{cards_known} && (%{ $ctx->{unread} // {} } || $ctx->{reading_bad});
     push @why, 'it could not map every card to its device nodes' if %{ $ctx->{unmapped} // {} };
     push @why, 'it could not read every guest it would decide on' if %{ $ctx->{left} // {} };
     push @why, 'its pass did not finish' if $status;

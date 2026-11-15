@@ -70,6 +70,8 @@ export interface HelperCard {
   readonly drmRender: string | null;
 }
 
+export type CardNodes = Pick<HelperCard, "pci" | "minor" | "drmCard" | "drmRender">;
+
 export interface HelperHolder {
   readonly card: string;
   readonly vmid: number;
@@ -121,6 +123,7 @@ export interface LedgerEntry {
 
 export interface HelperLines {
   readonly cards: readonly HelperCard[];
+  readonly unread: readonly CardNodes[];
   readonly holders: readonly HelperHolder[];
   readonly ledgerReported: boolean;
   readonly ledgerUnknown: boolean;
@@ -132,7 +135,7 @@ export interface HelperLines {
   readonly omitted: readonly string[];
 }
 
-export const NO_HELPER_LINES: HelperLines = { cards: [], holders: [], ledgerReported: false, ledgerUnknown: false, ledger: new Map(), would: [], answers: [], unsettled: [], power: [], omitted: [] };
+export const NO_HELPER_LINES: HelperLines = { cards: [], unread: [], holders: [], ledgerReported: false, ledgerUnknown: false, ledger: new Map(), would: [], answers: [], unsettled: [], power: [], omitted: [] };
 
 const orNull = (value: string | undefined): string | null => (value === undefined || value === "-" ? null : value);
 const numberOrNull = (value: string | undefined): number | null => (value === undefined || value === "-" ? null : Number(value));
@@ -152,6 +155,7 @@ export function reportedDriver(notes: string): string | null {
 export function parseHelperLines(notes: string): HelperLines {
   const indexes = new Map<string, number>();
   const cards: HelperCard[] = [];
+  const unread: CardNodes[] = [];
   const holders: HelperHolder[] = [];
   const ledger = new Map<number, LedgerEntry>();
   const would: HelperWould[] = [];
@@ -166,6 +170,8 @@ export function parseHelperLines(notes: string): HelperLines {
     if ((match = /^gpu (?:GPU-)?(\S+) \S+ (\d+) \d+ \d+$/i.exec(line))) indexes.set(match[1]!.toLowerCase(), Number(match[2]));
     else if ((match = new RegExp(`^card (${UUID}) pci (\\S+) minor (\\d+|-) drm (\\S+) (\\S+)$`).exec(line))) {
       cards.push({ uuid: match[1]!, index: null, pci: match[2]!, minor: numberOrNull(match[3]), drmCard: orNull(match[4]), drmRender: orNull(match[5]) });
+    } else if ((match = new RegExp(`^unread (?:${UUID}|-) pci (\\S+) minor (\\d+|-) drm (\\S+) (\\S+)$`).exec(line))) {
+      unread.push({ pci: match[1]!, minor: numberOrNull(match[2]), drmCard: orNull(match[3]), drmRender: orNull(match[4]) });
     } else if ((match = new RegExp(`^holder (${UUID}) (\\d+) (shared|whole) (running|stopped) (?:install (\\S+)|other) (managed|unmanaged)$`).exec(line))) {
       holders.push({ card: match[1]!, vmid: Number(match[2]), part: match[3] as "shared" | "whole", running: match[4] === "running", install: match[5] ?? null, managed: match[6] === "managed" });
     } else if (/^ledger entries \d+$/.test(line)) ledgerReported = true;
@@ -188,7 +194,7 @@ export function parseHelperLines(notes: string): HelperLines {
       power.push({ vmid: Number(match[1]), nonce: match[2]!, action: match[3]!, answer: match[4] as "done" | "refused", reason: match[5] ?? null, detail: match[6] ?? null });
     } else if ((match = /^omitted (.+)$/.exec(line))) omitted.push(match[1]!);
   }
-  return { cards: cards.map((card) => ({ ...card, index: indexes.get(card.uuid) ?? null })), holders, ledgerReported, ledgerUnknown, ledger, would, answers, unsettled, power, omitted };
+  return { cards: cards.map((card) => ({ ...card, index: indexes.get(card.uuid) ?? null })), unread, holders, ledgerReported, ledgerUnknown, ledger, would, answers, unsettled, power, omitted };
 }
 
 export function cardName(card: HelperCard): string {
@@ -276,7 +282,7 @@ export function rawGpuLines(config: Readonly<Record<string, unknown>>): string[]
   });
 }
 
-function cardsNamedByPath(path: string, cards: readonly HelperCard[]): HelperCard[] | null {
+function cardsNamedByPath<Card extends CardNodes>(path: string, cards: readonly Card[]): Card[] | null {
   if (/^\/dev\/dri\/?$/.test(path)) return [...cards];
   let match: RegExpExecArray | null;
   if ((match = /^\/dev\/nvidia(\d+)$/.exec(path))) return cards.filter((card) => card.minor === Number(match![1]));
@@ -290,7 +296,7 @@ export function cardsNamedBy(devices: readonly DeviceLine[], cards: readonly Hel
   return cards.filter((card) => named.has(card));
 }
 
-export function nodesOfNoCard(devices: readonly DeviceLine[], cards: readonly HelperCard[]): string[] {
+export function nodesOfNoCard(devices: readonly DeviceLine[], cards: readonly CardNodes[]): string[] {
   return devices.filter((device) => cardsNamedByPath(device.path, cards)?.length === 0).map((device) => device.path);
 }
 
@@ -604,6 +610,10 @@ function unsettledWords(lines: HelperLines, ours: ReadonlySet<number>, guests: r
   return { ours: say(true), others: say(false) };
 }
 
+function lastFullReading(lines: HelperLines): CardNodes[] {
+  return [...lines.cards, ...lines.unread];
+}
+
 export function judgeGpuMigration(lines: HelperLines, guests: readonly MigrationGuest[], seen: Eligibility & { readonly node: string; readonly vmid: number }): GpuHelperVerdict {
   const journal = `journalctl -u bb-box-gpu on ${seen.node}`;
   if (lines.ledgerUnknown) {
@@ -630,7 +640,8 @@ export function judgeGpuMigration(lines: HelperLines, guests: readonly Migration
     return devices.length || raw.length ? [{ guest, devices, raw }] : [];
   });
   const ours = new Set(guests.map((guest) => guest.look.vmid));
-  const unknown = cardLines.filter(({ devices }) => nodesOfNoCard(devices, lines.cards).length).map(({ guest, devices }) => `${nameOf(guest)}, ${inWords(nodesOfNoCard(devices, lines.cards))}`);
+  const known = lastFullReading(lines);
+  const unknown = cardLines.filter(({ devices }) => nodesOfNoCard(devices, known).length).map(({ guest, devices }) => `${nameOf(guest)}, ${inWords(nodesOfNoCard(devices, known))}`);
   const unmarked = cardLines.filter(({ guest }) => !gpuTagsOf(tagsOf(guest.look)).length || markerOf(tagsOf(guest.look))?.part === "release").map(({ guest }) => nameOf(guest));
   const would = lines.would.filter((line) => ours.has(line.vmid));
   const othersWould = [...new Set(lines.would.filter((line) => !ours.has(line.vmid)).map((line) => line.vmid))];
