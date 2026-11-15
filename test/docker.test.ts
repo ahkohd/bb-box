@@ -148,8 +148,8 @@ test("refuses fields it cannot use, and says which, at each field", () => {
   assert.ok(!parsed.ok);
   for (const [path, pattern] of [
     ["host", /unix:\/\/\/path/],
-    ["linux-image", /linux image "--privileged"/],
-    ["wayland-desktop-image", /Wayland desktop image "-v \/:\/host"/],
+    ["linux-image", /linux image is not an image reference/],
+    ["wayland-desktop-image", /Wayland desktop image is not an image reference/],
     ["network", /network name/],
     ["boxes", /most boxes/],
     ["desktops-per-gpu", /boxes per card/],

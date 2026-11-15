@@ -434,15 +434,15 @@ function changeOf(state: ConfigState, path: Path, edit: Edit, edits: ReadonlyMap
   }
 }
 
-export function importChangeText(state: ConfigState, read: DraftRead, file: unknown): string {
+export function importChangeText(state: ConfigState, read: DraftRead, file: unknown, values = true): string {
   const plan = importPlan(state, read, file);
   const edits = new Map<Path, Edit>(plan.values.map(([path, value]) => [path, { value, base: { kind: "gone" } }]));
   const groups = importChanges(state, edits);
   if (!groups.length) return "It would change nothing.";
-  const lines = ["It would change:"];
+  const lines = [values ? "It would change:" : "It would change these, whose values are not shown while the file has problems:"];
   for (const group of groups) {
     lines.push(`  ${group.place}`);
-    for (const change of group.changes) lines.push(`    ${change.label}: ${change.before} → ${change.after}`);
+    for (const change of group.changes) lines.push(values ? `    ${change.label}: ${change.before} → ${change.after}` : `    ${change.label}`);
   }
   return lines.join("\n");
 }

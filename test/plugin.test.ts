@@ -460,7 +460,7 @@ test("box_image_set and bb box image set, list, show and remove keep a project's
   assert.ok(isError(tried));
   assert.match(text(tried), /No backend that is on builds linux images\. Proxmox LXC, Docker and Tart do; elsewhere boxes run the script as they start\./);
   const otherKind = await harness.behavior.runCli(["image", "try", "rust-tools", "--kind", "linux-desktop-cpu"]);
-  assert.deepEqual([otherKind.exitCode, /Image rust-tools covers linux, not linux-desktop-cpu\./.test(otherKind.stderr ?? "")], [1, true], otherKind.stderr);
+  assert.deepEqual([otherKind.exitCode, /Image rust-tools covers linux, and not the kind given\. The value is not shown, as it may be a secret\./.test(otherKind.stderr ?? "")], [1, true], otherKind.stderr);
   assert.match((await harness.behavior.runCli(["image", "try", "rust-tools"])).stderr ?? "", /No backend that is on builds linux images/);
 
   // From files, by the CLI: another image for the project's linux boxes is refused, and "standard" is no name.
@@ -7935,7 +7935,7 @@ test("bb box option sets each backend's ceiling on paid snapshots and the agents
   assert.match(cents.stderr ?? "", /in whole cents, such as 5 or 7\.50/);
   const nowhere = await harness.behavior.runCli(["option", "set", "general.snapshots.ceilings.nowhere=3"]);
   assert.notEqual(nowhere.exitCode, 0);
-  assert.match(nowhere.stderr ?? "", /There is no backend "nowhere"/);
+  assert.match(nowhere.stderr ?? "", /There is no backend by the ID a ceiling on paid snapshots names\. That name is not shown/);
   assert.equal((await harness.behavior.runCli(["option", "unset", "general.snapshots.ceilings.fake", "general.snapshots.agentsRestore", "general.snapshots.agentsMemory"])).exitCode, 0);
   assert.equal(app.configuration.exported().general.snapshots, undefined);
 });

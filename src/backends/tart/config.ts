@@ -309,26 +309,27 @@ const USER = /^[a-z_][a-z0-9_.-]{0,31}$/i;
 const VM_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /** One Mac per line: `name user@address[:port]`. */
-export function parseHosts(value: string): { hosts: TartHost[]; problems: string[]; skipped: string[] } {
+export function parseHosts(value: string): { hosts: TartHost[]; problems: string[]; skipped: number[] } {
   const hosts: TartHost[] = [];
   const problems: string[] = [];
   /** Lines in the wrong form, which give no Mac. */
-  const skipped: string[] = [];
-  for (const line of value.split("\n").map((entry) => entry.trim())) {
+  const skipped: number[] = [];
+  for (const [index, line] of value.split("\n").map((entry) => entry.trim()).entries()) {
     if (!line || line.startsWith("#")) continue;
+    const onLine = `on line ${index + 1} of the Macs`;
     const [name, target, ...rest] = line.split(/\s+/);
     const match = /^([^@\s]+)@(\[[0-9a-fA-F:.]+\]|[^:@\s]+)(?::(\d+))?$/.exec(target ?? "");
     if (!name || !match || rest.length) {
-      problems.push(`Tart: Mac line "${line}" must be a name, a space and user@address, for example mac1 bbbox-admin@192.0.2.20.`);
-      skipped.push(line);
+      problems.push(`Tart: line ${index + 1} of the Macs must be a name, a space and user@address, for example mac1 bbbox-admin@192.0.2.20.`);
+      skipped.push(index + 1);
       continue;
     }
     const [, user, rawAddress, rawPort] = match;
     const port = rawPort ? Number(rawPort) : 22;
-    if (!NAME.test(name)) problems.push(`Tart: Mac name "${name}" may hold only lower-case letters, digits and "-".`);
+    if (!NAME.test(name)) problems.push(`Tart: the Mac name ${onLine} may hold only lower-case letters, digits and "-".`);
     else if (hosts.some((host) => host.name === name)) problems.push(`Tart: Mac name "${name}" is listed twice.`);
-    if (!USER.test(user!)) problems.push(`Tart: "${user}" is not a user name.`);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) problems.push(`Tart: port ${rawPort} of ${name} is not a port.`);
+    if (!USER.test(user!)) problems.push(`Tart: the user ${onLine} is not a user name.`);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) problems.push(`Tart: the port ${onLine} is not a port.`);
     hosts.push({ name, user: user!, address: rawAddress!.replace(/^\[|\]$/g, ""), port });
   }
   return { hosts, problems, skipped };
@@ -361,9 +362,10 @@ function keyLines(value: string, problem: (message: string) => void): string[] {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"));
-  for (const line of lines) {
-    if (line.split(/\s+/).length < 3) problem(`Tart: host key line "${line}" must be a known_hosts line: address, key type and key.`);
-  }
+  value.split("\n").forEach((raw, index) => {
+    const line = raw.trim();
+    if (line && !line.startsWith("#") && line.split(/\s+/).length < 3) problem(`Tart: host key line ${index + 1} must be a known_hosts line: address, key type and key.`);
+  });
   return lines;
 }
 
@@ -372,14 +374,14 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
   const kinds = {} as Record<TartKind, TartKindConfig>;
   for (const kind of TART_KINDS) {
     const image = text(values, IMAGE_KEYS[kind], IMAGE_DEFAULTS[kind]);
-    if (image && !VM_NAME.test(image)) problem(IMAGE_KEYS[kind], `Tart: the ${kind} image "${image}" is not ${kind.startsWith("windows") ? "an image" : "a Tart VM"} name ${PRODUCT} can use.`);
+    if (image && !VM_NAME.test(image)) problem(IMAGE_KEYS[kind], `Tart: the ${kind} image is not ${kind.startsWith("windows") ? "an image" : "a Tart VM"} name ${PRODUCT} can use.`);
     kinds[kind] = { image: image || null };
   }
   if (TART_KINDS.every((kind) => !kinds[kind].image)) problem(TART_KEYS.macosImage, "Tart: give an image for macOS, Linux or Windows boxes.");
   const iosImage = text(values, TART_KEYS.iosImage);
-  if (iosImage && !VM_NAME.test(iosImage)) problem(TART_KEYS.iosImage, `Tart: the iOS image "${iosImage}" is not a Tart VM name ${PRODUCT} can use.`);
+  if (iosImage && !VM_NAME.test(iosImage)) problem(TART_KEYS.iosImage, `Tart: the iOS image is not a Tart VM name ${PRODUCT} can use.`);
   if (iosImage && !kinds.macos.image && !kinds["macos-desktop"].image) problem(TART_KEYS.iosImage, "Tart: the iOS image is built on the macOS image, so give a macOS image too.");
-  if (iosImage && TART_KINDS.some((kind) => kinds[kind].image === iosImage)) problem(TART_KEYS.iosImage, `Tart: "${iosImage}" is another kind's image; the iOS image is a VM of its own.`);
+  if (iosImage && TART_KINDS.some((kind) => kinds[kind].image === iosImage)) problem(TART_KEYS.iosImage, "Tart: the iOS image is another kind's image; the iOS image is a VM of its own.");
 
   const vmsPerHost = number(values, TART_KEYS.vmsPerHost, MACOS_VMS_PER_MAC);
   if (!Number.isInteger(vmsPerHost) || vmsPerHost < 1 || vmsPerHost > MACOS_VMS_PER_MAC) {
@@ -398,7 +400,7 @@ function checkTart(values: Readonly<Record<string, unknown>>, hosts: readonly Ta
   if (iosHosts.on && !iosImage) problem(TART_KEYS.iosHostsOn, "Tart: shared iOS hosts are made from the iOS image, so give the iOS image too.");
 
   const vmUser = text(values, TART_KEYS.vmUser, TART_DEFAULTS.vmUser);
-  if (!USER.test(vmUser)) problem(TART_KEYS.vmUser, `Tart: "${vmUser}" is not a user name.`);
+  if (!USER.test(vmUser)) problem(TART_KEYS.vmUser, "Tart: the VM user is not a user name.");
   const keyText = text(values, TART_KEYS.sshPrivateKey);
   const privateKey = keyText ? normalisePrivateKey(keyText) : null;
   if (keyText && !privateKey) problem(TART_KEYS.sshPrivateKey, `Tart: use an unencrypted OpenSSH private key, or leave it empty for ${PRODUCT} to make one.`);
@@ -598,8 +600,8 @@ export function readEarlierTart(values: Readonly<Record<string, unknown>>): Earl
     secrets,
     warm: {},
     notes: [
-      ...skipped.map((line) => `Tart: Mac line "${line}" is not a name, a space and user@address, so the Mac was left out; add it on the settings page.`),
-      ...problems.filter((problem) => !skipped.some((line) => problem.includes(`"${line}"`))).map((problem) => `${problem} Fix it on the settings page.`),
+      ...skipped.map((lineNumber) => `Tart: line ${lineNumber} of the Macs is not a name, a space and user@address, so the Mac was left out; add it on the settings page.`),
+      ...problems.filter((problem) => !skipped.some((lineNumber) => problem.startsWith(`Tart: line ${lineNumber} of the Macs `))).map((problem) => `${problem} Fix it on the settings page.`),
     ],
     hosts: hosts.map((host, n) => ({
       name: host.name,

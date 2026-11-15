@@ -226,12 +226,12 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
 
   const host = text(values, DOCKER_KEYS.host);
   if (host && !UNIX.test(host) && !SSH.test(host) && !BB_MACHINE.test(host) && !directHost(host)) {
-    problem(DOCKER_KEYS.host, `Docker: the host "${host}" must be unix:///path/to/docker.sock, ssh://user@host, tcp://host:port, wsl://distro or wsl://user@distro, or bb:<machine ID>, or empty for the docker CLI's default.`);
+    problem(DOCKER_KEYS.host, `Docker: the host must be unix:///path/to/docker.sock, ssh://user@host, tcp://host:port, wsl://distro or wsl://user@distro, or bb:<machine ID>, or empty for the docker CLI's default.`);
   }
   const machineTarget = text(values, DOCKER_KEYS.machineDockerHost);
   const machineId = BB_MACHINE.exec(host)?.[1] ?? null;
   if (machineTarget && !endpointOf(machineTarget)) {
-    problem(DOCKER_KEYS.machineDockerHost, `Docker: machine-docker-host "${machineTarget}" must be wsl://distro, wsl://user@distro, unix:///path/to/docker.sock or tcp://host:port.`);
+    problem(DOCKER_KEYS.machineDockerHost, `Docker: machine-docker-host must be wsl://distro, wsl://user@distro, unix:///path/to/docker.sock or tcp://host:port.`);
   } else if (machineTarget && !machineId) {
     problem(DOCKER_KEYS.machineDockerHost, "Docker: machine-docker-host is for a host of bb:<machine ID>. It names where Docker is on that machine.");
   }
@@ -244,7 +244,7 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
     [DOCKER_KEYS.desktopImage, "desktop", desktop],
     [DOCKER_KEYS.waylandImage, "Wayland desktop", wayland],
   ] as const) {
-    if (image && !IMAGE.test(image)) problem(key, `Docker: the ${what} image "${image}" is not an image reference ${PRODUCT} can use.`);
+    if (image && !IMAGE.test(image)) problem(key, `Docker: the ${what} image is not an image reference ${PRODUCT} can use.`);
   }
   if (!linux && !desktop && !wayland) problem(DOCKER_KEYS.linuxImage, "Docker: give a linux or a desktop image.");
   // On unless set to false (041).
@@ -258,7 +258,7 @@ export function parseDockerPart(part: BackendPart): ParsedBackend<DockerConfig> 
   };
 
   const network = text(values, DOCKER_KEYS.network, DOCKER_DEFAULTS.network);
-  if (!NETWORK.test(network)) problem(DOCKER_KEYS.network, `Docker: "${network}" is not a Docker network name.`);
+  if (!NETWORK.test(network)) problem(DOCKER_KEYS.network, "Docker: the network is not a Docker network name.");
   const boxes = number(values, DOCKER_KEYS.boxes, DOCKER_DEFAULTS.boxes);
   if (!Number.isInteger(boxes) || boxes < 1) problem(DOCKER_KEYS.boxes, "Docker: the most boxes must be a whole number, at least 1.");
   const perCardKey = isSet(values[DOCKER_KEYS.boxesPerCard]) ? DOCKER_KEYS.boxesPerCard : DOCKER_KEYS.desktopsPerGpu;

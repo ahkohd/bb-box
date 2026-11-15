@@ -162,7 +162,7 @@ test("the settings list Windows and Linux templates by VMID", () => {
   assert.equal(qemuConfig({}).kvm, false);
   assert.equal(qemuConfig({ "linux-kvm": true }).kvm, true);
   assert.deepEqual(problems({ "linux-templates": "9104" }), [{ path: "linux-templates", message: "Template 9104 is listed more than once. List each template once." }]);
-  assert.deepEqual(problems({ "windows-templates": "9104 win" }), [{ path: "windows-templates", message: 'Use VMIDs from 100 for the Windows templates. "win" is not one.' }]);
+  assert.deepEqual(problems({ "windows-templates": "9104 win" }), [{ path: "windows-templates", message: "Use VMIDs from 100 for the Windows templates. Entry 2 is not one." }]);
   assert.deepEqual(problems({ "windows-templates": "9104 9104" }), [{ path: "windows-templates", message: "Template 9104 is listed more than once. List each template once." }]);
   assert.deepEqual(problems({ "windows-templates": "9701" }), [{ path: "vmid-first", message: "Move template 9701 out of the box VMID range." }]);
   assert.deepEqual(problems({ "ssh-user": "Box User" }).map((problem) => problem.path), ["ssh-user"]);

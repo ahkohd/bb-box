@@ -25,7 +25,8 @@ import { isGpuPart } from "../core/gpu.ts";
 import { snapshotStatusLine } from "./snapshot-words.ts";
 import { importChangeText } from "../app/settings-import.ts";
 import { PRODUCT } from "../brand.ts";
-import { jsonFaultOf, readFailure, unnamedProblems, withUnquotedArguments } from "./unshown-input.ts";
+import { jsonFaultOf, readFailure, unnamedProblems, unquotedCli } from "./unshown-input.ts";
+import { VALUE_NOT_SHOWN } from "../core/problems.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -145,20 +146,26 @@ const fileArgument = [
 
 /** A configuration file, read where BB's server runs: the command runs there and gets no input. */
 /** A text file, read on the machine BB's server runs on, from where bb runs for a relative path. */
-async function readTextFile(path: string, ctx: PluginCliContext): Promise<string> {
-  const file = isAbsolute(path) ? path : resolve(ctx.cwd ?? process.cwd(), path);
+async function readTextFile(path: string, ctx: PluginCliContext, given: string): Promise<string> {
+  const folder = ctx.cwd ?? process.cwd();
   try {
-    return await readFile(file, "utf8");
+    return await readFile(isAbsolute(path) ? path : resolve(folder, path), "utf8");
   } catch (error) {
-    throw new PluginCliError(`Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`, {
+    throw new PluginCliError(`Cannot read the file given to ${given}: ${readFailure(error)}. Its path is not shown, as it may be a secret given by mistake.`, {
       code: "invalid_input",
-      hint: "The file is read on the machine BB's server runs on.",
+      hint: `A relative path is from ${folder}. The file is read on the machine BB's server runs on.`,
     });
   }
 }
 
 /** A comma-separated list, such as linux,linux-desktop-cpu. */
 const listOf = (value: unknown) => String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+
+const NO_SUCH_IMAGE = `There is no image by the name given. ${VALUE_NOT_SHOWN} bb box image list lists them.`;
+
+function gpuTakes(app: BbBox): string {
+  return `--gpu takes ${wholeCardsOn(app) ? "none, shared or whole" : "none or shared"}. ${VALUE_NOT_SHOWN}`;
+}
 
 const CONFIG_FILE_UNSHOWN = "Its path and text are not shown, as a configuration file may hold secrets.";
 
@@ -197,7 +204,7 @@ async function resizeBox(
   options: { size?: string; cores?: number; "memory-gib"?: number; "disk-gib"?: number; gpu?: string; restart?: boolean; check?: boolean; force?: boolean },
 ) {
   const gpu = options.gpu === undefined ? undefined : String(options.gpu);
-  if (gpu !== undefined && !isGpuPart(gpu)) throw new BoxError("unsupported", `--gpu takes ${wholeCardsOn(app) ? "none, shared or whole" : "none or shared"}, not ${gpu}.`);
+  if (gpu !== undefined && !isGpuPart(gpu)) throw new BoxError("unsupported", gpuTakes(app));
   return app.boxes.resize(threadId, ref, { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"], ...(gpu !== undefined ? { gpu } : {}) }, {
     restart: options.restart === true,
     check: options.check === true,
@@ -231,7 +238,7 @@ function resizeGpuOption(app: BbBox) {
 export function registerCli(bb: BbPluginApi, app: BbBox): void {
   const { boxes } = app;
   bb.cli.register(
-    withUnquotedArguments(defineCli({
+    unquotedCli({
       name: "box",
       summary: "Fast boxes for BB threads: list, acquire and release them, and check the backends.",
       commands: {
@@ -302,7 +309,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const projectId = await projectOfThread(app, threadId, options.thread, ctx);
               const size = { preset: options.size, cores: options.cores, memoryGiB: options["memory-gib"], diskGiB: options["disk-gib"] };
               const gpu = options.gpu === undefined ? undefined : String(options.gpu);
-              if (gpu !== undefined && gpu !== "none" && gpu !== "shared" && gpu !== "whole") throw new BoxError("unsupported", `--gpu takes ${wholeCardsOn(app) ? "none, shared or whole" : "none or shared"}, not ${gpu}.`);
+              if (gpu !== undefined && gpu !== "none" && gpu !== "shared" && gpu !== "whole") throw new BoxError("unsupported", gpuTakes(app));
               let box = await boxes.acquire({ threadId, projectId, kind: positionals.kind, size, ...(options.on ? { on: providersOf(options.on) } : {}), ...(options.image ? { image: String(options.image) } : {}), ...(options.device !== undefined ? { device: String(options.device) } : {}), ...(options["no-slim"] ? { slim: false } : {}), ...(gpu !== undefined ? { gpu } : {}), ...(options.dedicated ? { dedicated: true } : {}), ...(options.shared ? { shared: true } : {}), who: BY_COMMAND });
               if (!options["no-wait"]) box = (await boxes.settled(box)) ?? box;
               if (options.json) return json(app.view(box));
@@ -500,8 +507,8 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               if (!kinds.length || !projects.length || !options["script-file"]) {
                 throw new PluginCliError("Give --kinds, --project and --script-file.", { code: "invalid_input", hint: "bb box image set rust-tools --kinds linux --script-file .bb/box-setup.sh --project <id>" });
               }
-              const script = await readTextFile(String(options["script-file"]), ctx);
-              const check = options["check-file"] ? await readTextFile(String(options["check-file"]), ctx) : undefined;
+              const script = await readTextFile(String(options["script-file"]), ctx, "--script-file");
+              const check = options["check-file"] ? await readTextFile(String(options["check-file"]), ctx, "--check-file") : undefined;
               const bake = options.bake === undefined ? undefined : String(options.bake);
               const result = await app.setImage(positionals.name, {
                 kinds,
@@ -521,7 +528,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           positionals: [{ name: "name", description: "The image's name, from bb box image list.", required: true }],
           run: ({ positionals }) =>
             guard("Removing the image", async () => {
-              if (!app.configuration.exported().images?.[positionals.name]) throw new BoxError("not_found", `There is no image ${positionals.name}.`);
+              if (!app.configuration.exported().images?.[positionals.name]) throw new BoxError("not_found", NO_SUCH_IMAGE);
               const result = await app.setImage(positionals.name, null);
               if (!result.ok) return result.reason === "problems" ? refused(result.problems, "Nothing was saved. Fix these first:") : { exitCode: 1, stderr: "The configuration kept changing; try again.\n" };
               return out(`Removed image ${positionals.name}, at revision ${result.state.revision}.`);
@@ -551,7 +558,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           run: ({ positionals }) =>
             guard("Showing the image", async () => {
               const image = app.configuration.exported().images?.[positionals.name];
-              if (!image) throw new BoxError("not_found", `There is no image ${positionals.name}.`);
+              if (!image) throw new BoxError("not_found", NO_SUCH_IMAGE);
               return out(`${image.script.trimEnd()}${image.check ? `\n\n# The check, run as the box user:\n${image.check.trimEnd()}` : ""}`);
             }),
         }),
@@ -565,9 +572,9 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
           run: ({ positionals, options }, ctx) =>
             guard("Trying the image", async () => {
               const image = app.configuration.exported().images?.[positionals.name];
-              if (!image) throw new BoxError("not_found", `There is no image ${positionals.name}.`);
+              if (!image) throw new BoxError("not_found", NO_SUCH_IMAGE);
               const kind = options.kind === undefined ? image.kinds[0]! : String(options.kind);
-              if (!image.kinds.includes(kind)) throw new BoxError("unknown_kind", `Image ${positionals.name} covers ${image.kinds.join(", ")}, not ${kind}.`);
+              if (!image.kinds.includes(kind)) throw new BoxError("unknown_kind", `Image ${positionals.name} covers ${image.kinds.join(", ")}, and not the kind given. ${VALUE_NOT_SHOWN}`);
               const result = await app.imageBakes.try(
                 { name: positionals.name, kind, script: image.script, ...(image.check ? { check: image.check } : {}), ...(options.on ? { on: String(options.on) } : {}) },
                 ctx.signal,
@@ -585,7 +592,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               if (options.json) return json(views);
               if (options.output) {
                 const view = views.find((candidate) => candidate.name === options.output);
-                if (!view) throw new BoxError("not_found", `There is no image ${String(options.output)}.`);
+                if (!view) throw new BoxError("not_found", NO_SUCH_IMAGE);
                 return out(view.last?.output.length ? view.last.output.join("\n") : `${view.name} has no rebuild with output yet.`);
               }
               const own = (await app.imageJobs.ownImages(ctx.signal)).flatMap((of) => ownImageLines(of));
@@ -716,7 +723,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             guard("Building the images", async () => {
               // From BB's record and the configuration: listing would look at every machine's Docker.
               const host = await app.dockerHostOf(positionals.machine);
-              if (!host?.backend) throw new BoxError("not_found", `${positionals.machine} is not a Docker host in ${PRODUCT}'s settings. Add its Docker under Add backend first.`);
+              if (!host?.backend) throw new BoxError("not_found", `The machine given is not a Docker host in ${PRODUCT}'s settings. ${VALUE_NOT_SHOWN} Add its Docker under Add backend first.`);
               const build = await app.dockerImages.ensure(host.hostId);
               const took = build.endedAt ? ` in ${Math.round((build.endedAt - build.startedAt) / 1000)} s` : "";
               if (build.state === "failed") return { exitCode: 1, stderr: `Building the images on ${host.name} failed${took}: ${build.detail ?? "no reason given"}\n` };
@@ -754,7 +761,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const draft = await readConfigFile(positionals.file, ctx);
               const { configuration } = app;
               const result = await configuration.check(draft, undefined, ctx.signal, { read: true });
-              const changes = result.read ? importChangeText(await configuration.state(), result.read, draft) : null;
+              const changes = result.read ? importChangeText(await configuration.state(), result.read, draft, !result.problems.length) : null;
               const tested: { id: string; report: DoctorReport | null }[] = [];
               for (const id of options.test ? configuration.enabledIn(draft) : []) {
                 tested.push({ id, report: (await configuration.check(draft, id, ctx.signal)).doctor });
@@ -835,6 +842,6 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
       },
-    })),
+    }),
   );
 }

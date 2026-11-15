@@ -1,4 +1,4 @@
-import type { PluginCliContext, PluginCliResult } from "@get-bb/plugin-sdk";
+import { defineCli, type PluginCliContext } from "@get-bb/plugin-sdk";
 import type { Problem } from "../core/document.ts";
 
 const READ_FAILURES: Readonly<Record<string, string>> = {
@@ -175,52 +175,119 @@ export function unnamedProblems(problems: readonly Problem[]): Problem[] {
 }
 
 const QUOTED_BY_THE_SDK = ["unknown command", "unknown option", "invalid value", "unexpected argument"] as const;
+const WORD_MARK = "bbboxrefusedword";
 
-function argumentPieces(argv: readonly string[], index: number): string[] {
-  const token = argv[index]!;
-  const equals = token.indexOf("=");
-  const leadingWords = argv.slice(0, index + 1).join(" ");
-  return equals === -1 ? [token, leadingWords] : [token, token.slice(0, equals), token.slice(equals + 1), leadingWords];
+type CliSpec = Parameters<typeof defineCli>[0];
+type Cli = ReturnType<typeof defineCli>;
+
+interface Refusal {
+  readonly words: (typeof QUOTED_BY_THE_SDK)[number];
+  readonly quoted: string;
 }
 
-export function unquotedArguments(text: string, argv: readonly string[]): string {
-  const pieces = argv.flatMap((_token, index) => argumentPieces(argv, index).map((piece) => [piece, index] as const));
-  pieces.sort(([one], [other]) => other.length - one.length);
-  let unquoted = text;
-  for (const [piece, index] of pieces) {
-    for (const words of QUOTED_BY_THE_SDK) unquoted = unquoted.replaceAll(`${words} '${piece}'`, `${words} (word ${index + 1} after bb box, not shown, as it may be a secret)`);
+interface Variant {
+  readonly token: string;
+  readonly piece: string;
+}
+
+const SUGGESTION = / \(Did you mean [^()]*\?\)$/;
+const INVALID_VALUE_END = "' for --";
+
+function refusalIn(text: string): Refusal | null {
+  const message = text.split("\n\n")[0]!.replace(/\n$/, "").replace(SUGGESTION, "");
+  for (const words of QUOTED_BY_THE_SDK) {
+    const opening = `${words} '`;
+    if (!message.startsWith(opening)) continue;
+    const close = words === "invalid value" ? message.lastIndexOf(INVALID_VALUE_END) : message.lastIndexOf("'");
+    return { words, quoted: message.slice(opening.length, Math.max(close, opening.length)) };
   }
-  return unquoted;
+  return null;
 }
 
-function unquotedJson(stdout: string, argv: readonly string[]): string {
+function markOf(argv: readonly string[]): string {
+  let mark = WORD_MARK;
+  while (argv.some((token) => token.includes(mark))) mark = `${mark}x`;
+  return mark;
+}
+
+function variantsOf(token: string, mark: string): Variant[] {
+  const dashes = token.startsWith("--") ? "--" : token.startsWith("-") ? "-" : "";
+  const equals = token.indexOf("=");
+  const variants: Variant[] = [{ token: mark, piece: token }];
+  if (dashes) {
+    const name = token.slice(dashes.length, equals === -1 ? undefined : equals);
+    variants.push({ token: `${dashes}${mark}${equals === -1 ? "" : token.slice(equals)}`, piece: name });
+  }
+  if (equals !== -1) variants.push({ token: `${token.slice(0, equals + 1)}${mark}`, piece: token.slice(equals + 1) });
+  return variants;
+}
+
+function refusalWithPiece(text: string, mark: string, piece: string): Refusal | null {
+  const refusal = refusalIn(text);
+  if (!refusal || !refusal.quoted.includes(mark)) return null;
+  return { words: refusal.words, quoted: refusal.quoted.replaceAll(mark, piece) };
+}
+
+async function refusedPositions(probe: Cli, argv: string[], ctx: PluginCliContext, refusal: Refusal): Promise<number[]> {
+  const mark = markOf(argv);
+  for (const [index, token] of argv.entries()) {
+    for (const variant of variantsOf(token, mark)) {
+      const tried = argv.map((each, at) => (at === index ? variant.token : each));
+      const probed = refusalWithPiece((await probe.run(tried, ctx)).stderr ?? "", mark, variant.piece);
+      if (probed && probed.words === refusal.words && probed.quoted === refusal.quoted) return [index];
+    }
+  }
+  return argv.flatMap((token, index) => (variantsOf(token, mark).some((variant) => refusal.quoted === variant.piece || refusal.quoted.endsWith(` ${variant.piece}`)) ? [index] : []));
+}
+
+function placeWords(positions: readonly number[]): string {
+  if (!positions.length) return "not shown, as it may be a secret";
+  const words = positions.map((index) => String(index + 1));
+  const listed = words.length === 1 ? words[0]! : `${words.slice(0, -1).join(", ")} or ${words.at(-1)}`;
+  return `word ${listed} after bb box, not shown, as it may be a secret`;
+}
+
+function unquoted(text: string, refusal: Refusal, positions: readonly number[]): string {
+  return text.replaceAll(`${refusal.words} '${refusal.quoted}'`, `${refusal.words} (${placeWords(positions)})`);
+}
+
+function unquotedJson(stdout: string, refusal: Refusal, positions: readonly number[]): string {
   let parsed: { ok?: unknown; error?: { message?: unknown; hint?: unknown } };
   try {
     parsed = JSON.parse(stdout);
   } catch {
-    return unquotedArguments(stdout, argv);
+    return unquoted(stdout, refusal, positions);
   }
   if (parsed?.ok !== false || typeof parsed.error !== "object" || parsed.error === null) return stdout;
   const { message, hint } = parsed.error;
   const error = {
     ...parsed.error,
-    ...(typeof message === "string" ? { message: unquotedArguments(message, argv) } : {}),
-    ...(typeof hint === "string" ? { hint: unquotedArguments(hint, argv) } : {}),
+    ...(typeof message === "string" ? { message: unquoted(message, refusal, positions) } : {}),
+    ...(typeof hint === "string" ? { hint: unquoted(hint, refusal, positions) } : {}),
   };
   return `${JSON.stringify({ ...parsed, error }, null, 2)}\n`;
 }
 
-function unquotedFailure(result: PluginCliResult, argv: readonly string[]): PluginCliResult {
-  if (result.exitCode === 0) return result;
-  return {
-    ...result,
-    ...(result.stdout === undefined ? {} : { stdout: unquotedJson(result.stdout, argv) }),
-    ...(result.stderr === undefined ? {} : { stderr: unquotedArguments(result.stderr, argv) }),
-  };
+function parseOnly(spec: CliSpec): CliSpec {
+  const commands = Object.fromEntries(Object.entries(spec.commands).map(([path, command]) => [path, { ...command, run: () => ({ exitCode: 0 }) }]));
+  return { ...spec, commands } as CliSpec;
 }
 
-type CliRun = (argv: string[], ctx: PluginCliContext) => PluginCliResult | Promise<PluginCliResult>;
-
-export function withUnquotedArguments<Cli extends { readonly run: CliRun }>(cli: Cli): Cli {
-  return { ...cli, run: async (argv: string[], ctx: PluginCliContext) => unquotedFailure(await cli.run(argv, ctx), argv) };
+export function unquotedCli(spec: CliSpec): Cli {
+  const cli = defineCli(spec);
+  const probe = defineCli(parseOnly(spec));
+  return {
+    ...cli,
+    run: async (argv: string[], ctx: PluginCliContext) => {
+      const result = await cli.run(argv, ctx);
+      const refusal = result.exitCode === 0 ? null : refusalIn(result.stderr ?? "");
+      if (!refusal) return result;
+      const positions = await refusedPositions(probe, argv, ctx, refusal);
+      return {
+        ...result,
+        ...(result.stdout === undefined ? {} : { stdout: unquotedJson(result.stdout, refusal, positions) }),
+        ...(result.stderr === undefined ? {} : { stderr: unquoted(result.stderr, refusal, positions) }),
+      };
+    },
+  };
 }

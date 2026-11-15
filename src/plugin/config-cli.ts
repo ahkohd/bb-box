@@ -37,7 +37,7 @@ import {
   unshownPairOf,
 } from "./config-edits.ts";
 import { readFailure, unnamedProblems } from "./unshown-input.ts";
-import { ordinal } from "../core/problems.ts";
+import { VALUE_NOT_SHOWN, ordinal } from "../core/problems.ts";
 import { doctorText, problemsText } from "./views.ts";
 import { PRODUCT } from "../brand.ts";
 
@@ -96,15 +96,6 @@ function workingFolder(ctx: PluginCliContext): string {
 
 function pathFrom(path: string, ctx: PluginCliContext): string {
   return isAbsolute(path) ? path : resolve(workingFolder(ctx), path);
-}
-
-async function readText(path: string, ctx: PluginCliContext): Promise<string> {
-  const file = pathFrom(path, ctx);
-  try {
-    return await readFile(file, "utf8");
-  } catch (error) {
-    throw new PluginCliError(`Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`, { code: "invalid_input", hint: READ_HINT });
-  }
 }
 
 async function readSecretText(path: string, ctx: PluginCliContext, file: string): Promise<string> {
@@ -234,9 +225,9 @@ interface FieldInput extends SecretInput {
 
 async function fieldEdits(options: FieldInput, ctx: PluginCliContext): Promise<{ edits: FieldEdits; submission: unknown }> {
   const fileFields: [string, string][] = [];
-  for (const text of listOf(options["field-file"])) {
+  for (const [index, text] of listOf(options["field-file"]).entries()) {
     const [key, path] = pairOf(text, "--field-file");
-    fileFields.push([key, await readText(path, ctx)]);
+    fileFields.push([key, await readSecretText(path, ctx, `the file the ${ordinal(index + 1)} --field-file gives`)]);
   }
   const { values: secrets, unresolved } = await secretValues(options, ctx);
   const edits: FieldEdits = {
@@ -401,7 +392,7 @@ function warmOf(value: unknown): [string, number][] {
   return listOf(value).map((text) => {
     const [kind, count] = pairOf(text, "--warm");
     const number = Number(count);
-    if (!Number.isInteger(number) || number < 0) throw new PluginCliError(`Give --warm as <kind>=<count>, a whole number, not "${text}".`, { code: "invalid_input" });
+    if (!Number.isInteger(number) || number < 0) throw new PluginCliError(`Give --warm as <kind>=<count>, a whole number. ${VALUE_NOT_SHOWN}`, { code: "invalid_input" });
     return [kind, number];
   });
 }
@@ -410,7 +401,7 @@ function sizeOf(text: string | undefined, name: string, base: boolean): number |
   if (text === undefined) return undefined;
   if (base && text.trim() === "base") return null;
   const value = Number(text);
-  if (!Number.isFinite(value) || value <= 0) throw new PluginCliError(`Give ${name} as a number above 0${base ? ', or "base" for the image\'s own disk' : ""}, not "${text}".`, { code: "invalid_input" });
+  if (!Number.isFinite(value) || value <= 0) throw new PluginCliError(`Give ${name} as a number above 0${base ? ', or "base" for the image\'s own disk' : ""}. ${VALUE_NOT_SHOWN}`, { code: "invalid_input" });
   return value;
 }
 

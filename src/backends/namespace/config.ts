@@ -167,7 +167,7 @@ export function parseNamespacePart(part: BackendPart): ParsedBackend<NamespaceCo
   const region = text(values, NAMESPACE_KEYS.region, NAMESPACE_DEFAULTS.region);
   if (!isRegion(region)) problem(NAMESPACE_KEYS.region, `Namespace: the API region must be ${NAMESPACE_REGIONS.join(" or ")}.`);
   const macosVersion = text(values, NAMESPACE_KEYS.macosVersion, NAMESPACE_DEFAULTS.macosVersion);
-  if (!VERSION.test(macosVersion)) problem(NAMESPACE_KEYS.macosVersion, `Namespace: "${macosVersion}" is not a macOS version such as 26.x.`);
+  if (!VERSION.test(macosVersion)) problem(NAMESPACE_KEYS.macosVersion, "Namespace: the macOS version is not one such as 26.x.");
   const machines = number(values, NAMESPACE_KEYS.machines, NAMESPACE_DEFAULTS.machines);
   if (!Number.isInteger(machines) || machines < 1) problem(NAMESPACE_KEYS.machines, "Namespace: the most machines must be a whole number, at least 1.");
   const longestLifeHours = number(values, NAMESPACE_KEYS.longestLifeHours, NAMESPACE_DEFAULTS.longestLifeHours);
@@ -175,7 +175,7 @@ export function parseNamespacePart(part: BackendPart): ParsedBackend<NamespaceCo
 
   const largestText = text(values, NAMESPACE_KEYS.largestMachine);
   const largestMachine = largestText ? parseMacShape(largestText) : null;
-  if (largestText && !largestMachine) problem(NAMESPACE_KEYS.largestMachine, `Namespace: "${largestText}" is not a machine such as 6x14, cores x memory in GB.`);
+  if (largestText && !largestMachine) problem(NAMESPACE_KEYS.largestMachine, "Namespace: the largest machine is not one such as 6x14, cores x memory in GB.");
 
   const on = values[NAMESPACE_KEYS.iosHostsOn];
   const mostText = values[NAMESPACE_KEYS.iosHostsMost];

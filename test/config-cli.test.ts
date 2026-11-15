@@ -354,6 +354,110 @@ const UNKNOWN_KEY_PLACES: ((draft: DraftObject, key: string) => void)[] = [
   },
 ];
 
+const REJECTED_VALUE_PLACES: ((draft: DraftObject, value: string) => void)[] = [
+  (draft, value) => {
+    draft.schema = value;
+  },
+  (draft, value) => {
+    draft.general = { defaultKind: value };
+  },
+  (draft, value) => {
+    draft.images = { valid: { kinds: [value], script: "true", projects: ["prj_cli"] } };
+  },
+  (draft, value) => {
+    draft.backends.push({ id: "other", type: value, enabled: false });
+  },
+  (draft, value) => {
+    draft.general = { files: [{ path: `/${value}`, content: "made up" }] };
+  },
+  (draft, value) => {
+    draft.backends.push({ id: "ssh-pool", type: "ssh-pool", enabled: true, fields: { machines: value, "known-hosts": value } });
+  },
+];
+
+function draftWithRejectedValue(token: string, value: string, place: number): string {
+  const draft = JSON.parse(draftWithToken(token)) as DraftObject;
+  REJECTED_VALUE_PLACES[place]!(draft, value);
+  return JSON.stringify(draft, null, 2);
+}
+
+test("a rejected value in a configuration file is named by its place, and never reaches the change summary, plain or --json", async () => {
+  const { cli, seen, dir } = await start();
+  for (const [place] of REJECTED_VALUE_PLACES.entries()) {
+    writeFileSync(join(dir, `rejected-${place}.json`), draftWithRejectedValue("made-up-token-value", NAME_SHAPED_VALUE, place));
+    for (const command of ["check", "apply"]) {
+      for (const json of [[], ["--json"]]) {
+        const ran = await cli(["config", command, `rejected-${place}.json`, ...json], dir);
+        if (!json.length) assert.equal(ran.exitCode, 1, `place ${place}: ${JSON.stringify(ran)}`);
+        assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, /is not shown, as it may be a secret|No backend offers|not one BB Box knows|on line 1/, `place ${place}`);
+      }
+    }
+  }
+  const defaultKind = await cli(["config", "check", "rejected-1.json"], dir);
+  assert.match(defaultKind.stdout ?? "", /  general\.defaultKind: There is no kind by the name general\.defaultKind gives\. The kinds are /);
+  assert.ok(!(defaultKind.stdout ?? "").includes("It would change"), "a rejected value never reaches the change summary");
+  const offBackend = await cli(["config", "check", `rejected-${REJECTED_VALUE_PLACES.length - 1}.json`], dir);
+  assert.match(offBackend.stdout ?? "", /It would change these, whose values are not shown while the file has problems:\n/);
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `a rejected value was printed: ${text}`);
+});
+
+test("a rejected command line value is never printed, as a field, kind, option, backend, host, project, line, path or number", async () => {
+  const { cli, seen, dir } = await start();
+  assert.equal((await cli(["backend", "add", "fake"])).exitCode, 0);
+  assert.equal((await cli(["backend", "add", "ssh-pool", "--off", "--no-doctor"])).exitCode, 0);
+  const value = NAME_SHAPED_VALUE;
+  const refusals = [
+    ["backend", "set", value],
+    ["backend", "add", value],
+    ["backend", "set", "fake", "--field", `${value}=one`],
+    ["backend", "set", "fake", "--unset", value],
+    ["backend", "set", "fake", "--field", value],
+    ["backend", "set", "ssh-pool", "--field", `ios-hosts-most=${value}`],
+    ["backend", "set", "ssh-pool", "--remove-line", `machines=${value}`],
+    ["backend", "set", "ssh-pool", "--add-line", `${value}=line`],
+    ["backend", "set", "fake", "--warm", `${value}=1`],
+    ["backend", "set", "fake", "--warm", `linux=${value}`],
+    ["backend", "set", "fake", "--projects", value],
+    ["backend", "set", "fake", "--field-file", `address=${value}`],
+    ["backend", "host", "set", "fake", value],
+    ["backend", "host", "add", "fake", value],
+    ["kind", "set", value, "--spares", "1"],
+    ["kind", "set", "linux", "--cores", value],
+    ["option", "set", `${value}=1`],
+    ["option", "set", `boxesPerThread=${value}`],
+    ["option", "set", `general.snapshots.ceilings.${value}=abc`],
+    ["option", "get", value],
+    ["image", "remove", value],
+    ["image", "show", value],
+    ["image", "set", "made-up", "--kinds", "linux", "--projects", "prj_cli", "--script-file", value],
+    ["acquire", "linux", "--gpu", value],
+  ];
+  for (const args of refusals) {
+    for (const json of [[], ["--json"]]) {
+      const ran = await cli([...args, ...json], dir);
+      assert.notEqual(ran.exitCode, 0, `${args.join(" ")} was not refused: ${JSON.stringify(ran)}`);
+    }
+  }
+  for (const text of seen) assert.ok(!text.includes(value), `a rejected value was printed: ${text}`);
+});
+
+test("a word the parser refuses is named by its own place when the same text comes earlier, plain or --json", async () => {
+  const { cli, seen } = await start();
+  const cases: [string[], RegExp][] = [
+    [["backend", "set", "fake", "--revision", "fake"], /invalid value \(word 5 after bb box, not shown, as it may be a secret\) for --revision/],
+    [["list", "--thread", "extra", "extra"], /unexpected argument \(word 4 after bb box, not shown, as it may be a secret\)/],
+    [["backend", "set", "fake", "--revision=fake"], /invalid value \(word 4 after bb box, not shown, as it may be a secret\) for --revision/],
+    [["backend", "set", "--zzz", "fake", "--zzz"], /unknown option \(word 3 after bb box, not shown, as it may be a secret\)/],
+  ];
+  for (const [args, words] of cases) {
+    for (const json of [[], ["--json"]]) {
+      const ran = await cli([...args, ...json]);
+      assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, words, args.join(" "));
+    }
+  }
+  for (const text of seen) assert.ok(!text.includes("'extra'") && !text.includes("'fake'"), `a refused word was quoted: ${text}`);
+});
+
 function draftWithUnknownKey(token: string, key: string, place: number): string {
   const draft = JSON.parse(draftWithToken(token)) as DraftObject;
   UNKNOWN_KEY_PLACES[place]!(draft, key);
@@ -496,6 +600,7 @@ test("fuzzed secret input, arguments and configuration files never put 8 or more
     (draft, value) => `${draft}\n${value}`,
     (_draft, value) => draftWithUnknownKey("made-up-token-value", value, Math.floor(random() * UNKNOWN_KEY_PLACES.length)),
     (_draft, value) => draftWithUnknownKey(value, value, Math.floor(random() * UNKNOWN_KEY_PLACES.length)),
+    (_draft, value) => draftWithRejectedValue("made-up-token-value", value, Math.floor(random() * REJECTED_VALUE_PLACES.length)),
   ];
   const parserRefusals: ((value: string) => string[])[] = [
     (value) => ["backend", "add", "fake", value],
@@ -505,6 +610,8 @@ test("fuzzed secret input, arguments and configuration files never put 8 or more
     (value) => ["config", "check", "draft-0.json", value],
     (value) => ["config", value],
     (value) => [value],
+    (value) => ["backend", "set", value, "--revision", value],
+    (value) => ["list", "--thread", value, value],
   ];
   for (let round = 0; round < PARSER_FUZZ_ROUNDS; round += 1) {
     const value = madeUpValue();
@@ -616,11 +723,11 @@ test("--field, --unset, --add-line and --remove-line edit fields, and an unknown
   assert.equal(document().backends[0]!.fields["known-hosts"], "192.0.2.22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMadeUp");
   const unknown = await cli(["backend", "set", "ssh-pool", "--field", "hosts=1"]);
   assert.equal(unknown.exitCode, 1);
-  assert.match(unknown.stderr ?? "", /Backend ssh-pool has no field "hosts"\. Its fields are machines, known-hosts, ssh-private-key, /);
+  assert.match(unknown.stderr ?? "", /Backend ssh-pool has no field by the name a --field gives\. That name is not shown, as it may be a secret\. Its fields are machines, known-hosts, ssh-private-key, /);
   const none = await cli(["backend", "set", "ssh-pool", "--remove-line", "machines=build-9"]);
-  assert.match(none.stderr ?? "", /No line of Machines \(machines\) is "build-9" or starts with it\./);
+  assert.match(none.stderr ?? "", /No line of Machines \(machines\) is the text a --remove-line gives, or starts with it\. What was given is not shown, as it may be a secret\./);
   const notNumber = await cli(["backend", "set", "ssh-pool", "--field", "ios-hosts-ahead=two"]);
-  assert.match(notNumber.stderr ?? "", /Ready slots kept on a shared iOS host \(ios-hosts-ahead\) is a number, not "two"\./);
+  assert.match(notNumber.stderr ?? "", /Ready slots kept on a shared iOS host \(ios-hosts-ahead\) is a number\. The value is not shown, as it may be a secret\./);
 });
 
 test("remove asks for --yes, is refused while the backend has boxes, and then removes it with its secret", async () => {
@@ -672,7 +779,7 @@ test("list, types and fields describe the backends without a secret's value", as
   assert.match(fields.stdout ?? "", /^Backend fake, Fake host \(fake\)\. Its guide: setup\/fake\/README\.md\.\nFields:\n {2}address \(string\) \[connection\]: Address\. Where the fake host is\. Now: unset, so "here"\.\n {2}token \(string, secret\) \[credentials\]: Token\. {2}Now: set\./);
   const typeFields = await cli(["backend", "fields", "tart"]);
   assert.match(typeFields.stdout ?? "", /Each host's fields, with bb box backend host add:\n {2}address \(string\) \[connection\]: Address\./);
-  assert.match((await cli(["backend", "fields", "nothing"])).stderr ?? "", /There is no backend type "nothing"\. The types are fake, ssh-pool, tart\./);
+  assert.match((await cli(["backend", "fields", "nothing"])).stderr ?? "", /There is no backend type by the name given\. That name is not shown, as it may be a secret\. The types are fake, ssh-pool, tart\./);
   assertNoSecret(seen);
 });
 
@@ -696,7 +803,7 @@ test("kind set changes the default preset's size, the default, spares and the sw
   assert.equal(document().kinds.linux?.enabled, false);
   const big = await cli(["kind", "set", "linux-desktop", "--cores", "999"]);
   assert.match(big.stderr ?? "", /kinds\.linux-desktop\.presets\.small: The small linux-desktop preset, 999 cores, 8 GiB memory, is above the largest size/);
-  assert.match((await cli(["kind", "set", "linux-gpu"])).stderr ?? "", /There is no kind "linux-gpu"\. The kinds are /);
+  assert.match((await cli(["kind", "set", "linux-gpu"])).stderr ?? "", /There is no kind by the name given\. That name is not shown, as it may be a secret\. The kinds are /);
   assert.equal((await cli(["kind", "set", "linux", "--reset"])).exitCode, 0);
   assert.equal(document().kinds.linux, undefined);
 });
@@ -719,10 +826,10 @@ test("option set and unset change general and Monitor options in one save, and l
   assert.match(back.stdout ?? "", /monitor\.enabled: false → true, the default/);
   assert.equal(document().monitor, undefined);
   assert.equal(document().general.boxesPerThread, undefined);
-  assert.match((await cli(["option", "set", "monitor.refreshIntervalSeconds=1"])).stderr ?? "", /monitor\.refreshIntervalSeconds is a whole number from 2 to 60, not "1"\./);
-  assert.match((await cli(["option", "set", "colour=blue"])).stderr ?? "", /There is no option "colour"\. The options are general\.defaultKind, /);
+  assert.match((await cli(["option", "set", "monitor.refreshIntervalSeconds=1"])).stderr ?? "", /monitor\.refreshIntervalSeconds is a whole number from 2 to 60\. The value is not shown, as it may be a secret\./);
+  assert.match((await cli(["option", "set", "colour=blue"])).stderr ?? "", /There is no option by the name given\. That name is not shown, as it may be a secret\. The options are general\.defaultKind, /);
   const kind = await cli(["option", "set", "defaultKind=plan9"]);
-  assert.match(kind.stderr ?? "", /^Nothing was saved\. Fix these first:\n  general\.defaultKind: There is no kind "plan9"\./);
+  assert.match(kind.stderr ?? "", /^Nothing was saved\. Fix these first:\n  general\.defaultKind: There is no kind by the name general\.defaultKind gives\. The kinds are /);
 });
 
 test("bb box option sets and unsets the snapshot settings that bite, within their ranges (070 unit 4)", async () => {
@@ -732,7 +839,7 @@ test("bb box option sets and unsets the snapshot settings that bite, within thei
   assert.match(set.stdout ?? "", /general\.snapshots\.perBox: 5, the default → 3/);
   assert.deepEqual(document().general.snapshots, { perBox: 3, roomPercent: 70 });
   assert.match((await cli(["option", "get", "general.snapshots.roomPercent"])).stdout ?? "", /^general\.snapshots\.roomPercent = 70: How full a host's storage may be/);
-  assert.match((await cli(["option", "set", "general.snapshots.roomPercent=95"])).stderr ?? "", /general\.snapshots\.roomPercent is a whole number from 50 to 90, not "95"\./);
+  assert.match((await cli(["option", "set", "general.snapshots.roomPercent=95"])).stderr ?? "", /general\.snapshots\.roomPercent is a whole number from 50 to 90\. The value is not shown, as it may be a secret\./);
   assert.equal((await cli(["option", "unset", "general.snapshots.perBox", "general.snapshots.roomPercent"])).exitCode, 0);
   assert.equal(document().general.snapshots, undefined);
 });
@@ -880,7 +987,7 @@ test("backend set --projects keeps a backend for BB projects by name or ID, stor
 
   const unknown = await cli(["backend", "set", "fake", "--projects", "Nope"]);
   assert.equal(unknown.exitCode, 1);
-  assert.match(unknown.stderr ?? "", /BB has no project called "Nope"\. Its projects are: Client work, Home, Twin, Twin\./);
+  assert.match(unknown.stderr ?? "", /BB has no project by the 1st name or ID given\. That name is not shown, as it may be a secret\. Its projects are: Client work, Home, Twin, Twin\./);
   const twice = await cli(["backend", "set", "fake", "--projects", "twin"]);
   assert.equal(twice.exitCode, 1);
   assert.match(twice.stderr ?? "", /2 projects are called "twin": prj_twin_a, prj_twin_b\. Give its ID\./);

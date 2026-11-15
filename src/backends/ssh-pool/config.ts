@@ -202,16 +202,16 @@ export function hostKeysFor(lines: readonly string[], host: { readonly host: str
 
 export const EXAMPLE = '"build-1 bbbox-admin@192.0.2.21 linux"';
 
-function parseMachine(line: string, problems: { push(message: string): void }): SshPoolMachine | null {
+function parseMachine(line: string, lineNumber: number, problems: { push(message: string): void }): SshPoolMachine | null {
   const [name = "", target = "", kindList = "", ...options] = line.split(/\s+/);
   const bad = (why: string) => {
-    problems.push(`${why} In the machines list, "${line}" should be like ${EXAMPLE}.`);
+    problems.push(`${why} Lines of the machines list should be like ${EXAMPLE}.`);
     return null;
   };
-  if (!NAME.test(name)) return bad(`Name each machine with lower-case letters, digits and "-".`);
+  if (!NAME.test(name)) return bad(`Name the machine on line ${lineNumber} with lower-case letters, digits and "-".`);
   const admin = parseTarget(target, SSH_POOL_DEFAULTS.adminUser);
-  if (!admin) return bad(`Give machine ${name} an address as [user@]host[:port].`);
-  if (!kindList) return bad(`Give machine ${name} the kinds it serves.`);
+  if (!admin) return bad(`Give the machine on line ${lineNumber} an address as [user@]host[:port].`);
+  if (!kindList) return bad(`Give the machine on line ${lineNumber} the kinds it serves.`);
   const kinds: SshPoolKind[] = [];
   let listsDocker = false;
   let slotsMost: number | undefined;
@@ -219,14 +219,14 @@ function parseMachine(line: string, problems: { push(message: string): void }): 
     const slots = /^ios:(.*)$/.exec(listed);
     if (slots) {
       const most = Number(slots[1]);
-      if (!/^\d+$/.test(slots[1]!) || most < 1 || most > MOST_SLOTS) return bad(`Give machine ${name}'s iOS slots as ios:<slots>, a whole number from 1 to ${MOST_SLOTS}, or ios for ${PRODUCT}'s estimate.`);
+      if (!/^\d+$/.test(slots[1]!) || most < 1 || most > MOST_SLOTS) return bad(`Give the machine on line ${lineNumber}'s iOS slots as ios:<slots>, a whole number from 1 to ${MOST_SLOTS}, or ios for ${PRODUCT}'s estimate.`);
       slotsMost = most;
     }
     const word = slots ? "ios" : listed;
     const asked = kindRequest(word);
     const kind = SSH_POOL_KINDS.includes(asked.kind as SshPoolKind) ? (asked.kind as SshPoolKind) : null;
     if (!kind || asked.features.some((feature) => feature !== "docker")) {
-      return bad(`Machine ${name} cannot serve kind "${word}": the SSH host pool offers linux, with Docker on a machine with reset=machine, and macos, macos-desktop and ios slots on a Mac.`);
+      return bad(`The machine on line ${lineNumber} lists a kind it cannot serve: the SSH host pool offers linux, with Docker on a machine with reset=machine, and macos, macos-desktop and ios slots on a Mac.`);
     }
     if (!kinds.includes(kind)) kinds.push(kind);
     if (asked.features.includes("docker")) listsDocker = true;
@@ -238,28 +238,28 @@ function parseMachine(line: string, problems: { push(message: string): void }): 
     const [key, value = ""] = option.split(/=(.*)/s);
     if (key === "via") {
       jump = parseTarget(value, admin.user);
-      if (!jump) return bad(`Give machine ${name}'s jump host as via=[user@]host[:port].`);
+      if (!jump) return bad(`Give the machine on line ${lineNumber}'s jump host as via=[user@]host[:port].`);
     } else if (key === "reset") {
-      if (value !== "home" && value !== "machine") return bad(`Use reset=home or reset=machine for machine ${name}.`);
+      if (value !== "home" && value !== "machine") return bad(`Use reset=home or reset=machine for the machine on line ${lineNumber}.`);
       reset = value;
     } else if (key === "labels" || key === "label") {
       for (const label of value.split(",")) {
-        if (!LABEL.test(label)) return bad(`Use letters, digits, ".", "_" and "-" in machine ${name}'s labels.`);
+        if (!LABEL.test(label)) return bad(`Use letters, digits, ".", "_" and "-" in the machine on line ${lineNumber}'s labels.`);
         if (!labels.includes(label)) labels.push(label);
       }
-    } else return bad(`Machine ${name} has an unknown option "${option}".`);
+    } else return bad(`The machine on line ${lineNumber} has an option the SSH host pool does not know.`);
   }
   const os = kinds[0] === "linux" ? "linux" : "macos";
   if (kinds.some((kind) => (kind === "linux" ? "linux" : "macos") !== os)) {
-    return bad(`Machine ${name} lists Linux and macOS kinds. List linux on a Linux machine, and macos, macos-desktop or ios on a Mac.`);
+    return bad(`The machine on line ${lineNumber} lists Linux and macOS kinds. List linux on a Linux machine, and macos, macos-desktop or ios on a Mac.`);
   }
   if (os === "macos" && reset === "machine") {
-    problems.push(`Machine ${name} is a Mac, which has no whole-machine reset. Remove reset=machine: its reset removes the box's user and makes a new one.`);
+    problems.push(`The machine on line ${lineNumber} is a Mac, which has no whole-machine reset. Remove reset=machine: its reset removes the box's user and makes a new one.`);
     return null;
   }
   if (listsDocker && reset !== "machine") {
     problems.push(
-      `Machine ${name} serves linux-docker, which needs reset=machine: Docker gives the box root, so only a whole-machine reset makes the machine clean. Remove linux-docker, or set up reset-machine as the setup guide says and add reset=machine, which gives its boxes Docker.`,
+      `The machine on line ${lineNumber} serves linux-docker, which needs reset=machine: Docker gives the box root, so only a whole-machine reset makes the machine clean. Remove linux-docker, or set up reset-machine as the setup guide says and add reset=machine, which gives its boxes Docker.`,
     );
     return null;
   }
@@ -324,10 +324,10 @@ function checkSshPool(values: Readonly<Record<string, unknown>>): { config: SshP
   const problems = at(SSH_POOL_KEYS.machines);
 
   const machines: SshPoolMachine[] = [];
-  for (const raw of text(values, SSH_POOL_KEYS.machines).split("\n")) {
+  for (const [index, raw] of text(values, SSH_POOL_KEYS.machines).split("\n").entries()) {
     const line = raw.replace(/#.*/, "").trim();
     if (!line) continue;
-    const machine = parseMachine(line, problems);
+    const machine = parseMachine(line, index + 1, problems);
     if (!machine) continue;
     if (machines.some((other) => other.name === machine.name)) problems.push(`Machine ${machine.name} is listed twice. Give each machine its own name.`);
     else if (machines.some((other) => other.admin.host === machine.admin.host && other.admin.port === machine.admin.port)) {
@@ -336,14 +336,15 @@ function checkSshPool(values: Readonly<Record<string, unknown>>): { config: SshP
   }
   // A pool with no machines yet is valid, so its doctor can show the public key that setup.sh needs first.
 
-  const knownHosts = text(values, SSH_POOL_KEYS.knownHosts)
+  const knownHostsLines = text(values, SSH_POOL_KEYS.knownHosts)
     .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith("#"));
+    .map((line, index) => ({ line: line.trim(), lineNumber: index + 1 }))
+    .filter(({ line }) => line && !line.startsWith("#"));
+  const knownHosts = knownHostsLines.map(({ line }) => line);
   const keys = at(SSH_POOL_KEYS.knownHosts);
-  for (const line of knownHosts) {
+  for (const { line, lineNumber } of knownHostsLines) {
     const fields = line.split(/\s+/);
-    if (fields.length < (fields[0]!.startsWith("@") ? 4 : 3)) keys.push(`Use whole known_hosts lines for the host keys, like setup.sh prints. "${line.slice(0, 40)}" is not one.`);
+    if (fields.length < (fields[0]!.startsWith("@") ? 4 : 3)) keys.push(`Use whole known_hosts lines for the host keys, like setup.sh prints. Line ${lineNumber} is not one.`);
   }
   for (const machine of machines) {
     for (const [what, host] of [["machine", machine.admin], ["jump host", machine.jump]] as const) {

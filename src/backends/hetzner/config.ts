@@ -124,15 +124,15 @@ export function parseHetznerPart(part: BackendPart): ParsedBackend<HetznerConfig
   else if (!/^\S{20,200}$/.test(token)) problem(HETZNER_KEYS.token, "Hetzner Cloud: the API token is one word, as the Console gives it.");
 
   const location = text(values, HETZNER_KEYS.location, HETZNER_DEFAULTS.location);
-  if (!LOCATION.test(location)) problem(HETZNER_KEYS.location, `Hetzner Cloud: "${location}" is not a location, such as nbg1.`);
+  if (!LOCATION.test(location)) problem(HETZNER_KEYS.location, "Hetzner Cloud: the location is not one, such as nbg1.");
   const serverType = text(values, HETZNER_KEYS.serverType, HETZNER_DEFAULTS.serverType);
-  if (!SERVER_TYPE.test(serverType)) problem(HETZNER_KEYS.serverType, `Hetzner Cloud: "${serverType}" is not a server type, such as cpx42.`);
-  else if (/^cax/.test(serverType)) problem(HETZNER_KEYS.serverType, `Hetzner Cloud: ${serverType} is an Arm server type. Set it as the Arm server type, and an x86 type such as cpx42 here.`);
+  if (!SERVER_TYPE.test(serverType)) problem(HETZNER_KEYS.serverType, "Hetzner Cloud: the server type is not one, such as cpx42.");
+  else if (/^cax/.test(serverType)) problem(HETZNER_KEYS.serverType, "Hetzner Cloud: the server type is an Arm one. Set it as the Arm server type, and an x86 type such as cpx42 here.");
   const armServerType = text(values, HETZNER_KEYS.armServerType);
-  if (armServerType && !/^cax[0-9a-z-]{1,29}$/.test(armServerType)) problem(HETZNER_KEYS.armServerType, `Hetzner Cloud: "${armServerType}" is not an Arm server type, such as cax31.`);
+  if (armServerType && !/^cax[0-9a-z-]{1,29}$/.test(armServerType)) problem(HETZNER_KEYS.armServerType, "Hetzner Cloud: the Arm server type is not one, such as cax31.");
   const imageText = text(values, HETZNER_KEYS.hostImage, HETZNER_DEFAULTS.hostImage);
   const hostImage = /^\d+$/.test(imageText) ? Number(imageText) : imageText;
-  if (typeof hostImage === "string" && !IMAGE_NAME.test(hostImage)) problem(HETZNER_KEYS.hostImage, `Hetzner Cloud: "${imageText}" is not an image name or a snapshot's ID.`);
+  if (typeof hostImage === "string" && !IMAGE_NAME.test(hostImage)) problem(HETZNER_KEYS.hostImage, "Hetzner Cloud: the host image is not an image name or a snapshot's ID.");
 
   const mostHosts = number(values, HETZNER_KEYS.mostHosts, HETZNER_DEFAULTS.mostHosts);
   if (!Number.isInteger(mostHosts) || mostHosts < 1 || mostHosts > 20) problem(HETZNER_KEYS.mostHosts, "Hetzner Cloud: the most hosts must be a whole number from 1 to 20.");
@@ -143,7 +143,7 @@ export function parseHetznerPart(part: BackendPart): ParsedBackend<HetznerConfig
   const sshFrom = text(values, HETZNER_KEYS.sshFrom)
     .split(/[\s,]+/)
     .filter(Boolean);
-  for (const cidr of sshFrom) if (!CIDR.test(cidr)) problem(HETZNER_KEYS.sshFrom, `Hetzner Cloud: "${cidr}" is not an address range such as 203.0.113.7/32.`);
+  for (const [index, cidr] of sshFrom.entries()) if (!CIDR.test(cidr)) problem(HETZNER_KEYS.sshFrom, `Hetzner Cloud: address range ${index + 1} is not one, such as 203.0.113.7/32.`);
 
   const docker = parseDockerPart({ id: part.id, hosts: [], fields: { ...values, [DOCKER_KEYS.host]: "", [DOCKER_KEYS.gpus]: false } });
   if (!docker.ok) problems.push(...docker.problems.map((each) => ({ ...each, message: each.message.replace(/^Docker:/, "Hetzner Cloud:") })));

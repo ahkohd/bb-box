@@ -13,7 +13,7 @@ import { TAILNET_CLIENT_ID, TAILNET_CLIENT_SECRET, exportedTailnet, keptTailnetS
 import { GENERAL_SECRETS, MAX_BOX_FILES, MAX_BOX_FILE_BYTES, contentKey, pathProblem, type BoxFileSetting } from "./box-files.ts";
 import { PRESETS, belowLeast, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
 import { PRODUCT } from "../brand.ts";
-import { keyPath, unknownKey, type ProblemAt, type UnnamedProblem } from "./problems.ts";
+import { keyPath, ordinal, unknownKey, unnamedValue, type ProblemAt, type UnnamedProblem } from "./problems.ts";
 
 export const SCHEMA = 1;
 
@@ -539,7 +539,9 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
   }
   const known = new Set(["schema", "revision", "backends", "kinds", "general", "images", "monitor"]);
   for (const key of Object.keys(input)) if (!known.has(key)) problem(key, `There is no "${key}" in the configuration. ${TOP_LEVEL_SETTINGS}`, unknownKey("", Object.keys(input), key, TOP_LEVEL_SETTINGS));
-  if (input.schema !== undefined && input.schema !== SCHEMA) problem("schema", `This ${PRODUCT} reads schema ${SCHEMA}, not ${String(input.schema)}.`);
+  if (input.schema !== undefined && input.schema !== SCHEMA) {
+    problem("schema", `This ${PRODUCT} reads schema ${SCHEMA}, not ${String(input.schema)}.`, unnamedValue("schema", `This ${PRODUCT} reads schema ${SCHEMA}, and the file names another.`));
+  }
   const revision = isWhole(input.revision, 0) ? input.revision : 0;
 
   const general: Record<string, unknown> = {};
@@ -555,7 +557,10 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
           if (typeof value === "boolean") general[key] = value;
           else problem("general.enrol", "enrol is true or false.");
         } else if (key === "defaultKind") {
-          if (typeof value === "string" && value) general[key] = value;
+          if (typeof value === "string" && isUnknownKind(value, drivers)) {
+            const known = `The kinds are ${anyKnownKind(drivers).join(", ")}.`;
+            problem("general.defaultKind", `There is no kind "${value}". ${known}`, unnamedValue("general.defaultKind", `There is no kind by the name general.defaultKind gives. ${known}`));
+          } else if (typeof value === "string" && value) general[key] = value;
           else problem("general.defaultKind", "Name the default kind, such as linux.");
         } else if (key === "files") {
           const files = readFiles(value, problem, secrets);
@@ -625,7 +630,11 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         continue;
       }
       const image = readImage(`images.${name}`, value, problem);
-      if (image) images[name] = image;
+      const unknown = image?.kinds.findIndex((kind) => isUnknownKind(kind, drivers)) ?? -1;
+      if (image && unknown !== -1) {
+        const known = `The kinds are ${anyKnownKind(drivers).join(", ")}.`;
+        problem(`images.${name}.kinds`, `There is no kind "${image.kinds[unknown]}". ${known}`, unnamedValue(`images.${name}.kinds`, `The ${ordinal(unknown + 1)} kind of image ${name} is not one ${PRODUCT} knows. ${known}`));
+      } else if (image) images[name] = image;
     }
   }
   const monitor = readMonitor(input.monitor, problem);
@@ -657,7 +666,7 @@ function readFiles(value: unknown, problem: ProblemAt, secrets: Record<string, R
     }
     const path = entry.path.trim();
     const wrong = pathProblem(path);
-    if (wrong) return problem(`${at}.path`, wrong);
+    if (wrong) return problem(`${at}.path`, wrong, unnamedValue(`${at}.path`, pathProblem(path, "This path")!));
     if (seen.has(path)) return problem(`${at}.path`, `${path} is in the list twice.`);
     seen.add(path);
     const content = entry.content;
@@ -864,7 +873,8 @@ function readBackend(
   }
   const name = match[2];
   if (name !== undefined && driver.longestName !== undefined && name.length > driver.longestName) {
-    problem(`backends.${index}.id`, `A ${driver.label} backend's name is at most ${driver.longestName} characters, so its tailnet names have room for each box's own name. Give ${id} a shorter name.`);
+    const rule = `A ${driver.label} backend's name is at most ${driver.longestName} characters, so its tailnet names have room for each box's own name.`;
+    problem(`backends.${index}.id`, `${rule} Give ${id} a shorter name.`, unnamedValue(`backends.${index}.id`, `${rule} Give this one a shorter name.`));
     return null;
   }
   const path = `backends.${id}`;
@@ -953,7 +963,8 @@ function unknownBackend(
   const type = value.type;
   const match = typeof value.id === "string" ? ID.exec(value.id) : null;
   if (typeof type !== "string" || !match || match[1] !== type) {
-    problem(`backends.${index}.type`, `There is no backend type "${String(type)}". The types are ${drivers.map((each) => each.type).join(", ")}.`);
+    const types = `The types are ${drivers.map((each) => each.type).join(", ")}.`;
+    problem(`backends.${index}.type`, `There is no backend type "${String(type)}". ${types}`, unnamedValue(`backends.${index}.type`, `There is no backend type by the name backend ${index + 1} gives. ${types}`));
     return null;
   }
   const fields: Record<string, FieldValue> = {};
@@ -1128,7 +1139,7 @@ export function checkDocument(
   inUse: InUse = NOTHING_IN_USE,
 ): Problem[] {
   const problems: Problem[] = [];
-  const problem = (path: string, message: string) => problems.push({ path, message });
+  const problem: ProblemAt = (path, message, unnamed) => problems.push({ path, message, ...(unnamed ? { unnamed } : {}) });
   const kinds = knownKinds(drivers);
 
   for (const [id, kind] of Object.entries(document.kinds)) {
@@ -1138,7 +1149,7 @@ export function checkDocument(
       continue;
     }
     if (!kinds.includes(id)) {
-      problem(path, `There is no kind "${id}". The kinds are ${kinds.join(", ")}.`);
+      problem(path, `There is no kind "${id}". The kinds are ${kinds.join(", ")}.`, isUnknownKind(id, drivers) ? unknownKey("kinds", Object.keys(document.kinds), id, `The kinds are ${kinds.join(", ")}.`) : undefined);
       continue;
     }
     const sizes = kindSizes(id, sizeChanges({ [id]: kind }));
@@ -1158,7 +1169,7 @@ export function checkDocument(
   const defaultKind = document.general.defaultKind;
   if (defaultKind !== undefined) {
     if (isEarlierKindId(defaultKind)) problem("general.defaultKind", earlierWords(defaultKind));
-    else if (!kinds.includes(defaultKind)) problem("general.defaultKind", `There is no kind "${defaultKind}". The kinds are ${kinds.join(", ")}.`);
+    else if (!kinds.includes(defaultKind)) problem("general.defaultKind", `There is no kind "${defaultKind}". The kinds are ${kinds.join(", ")}.`, isUnknownKind(defaultKind, drivers) ? unnamedValue("general.defaultKind", `No backend offers the kind general.defaultKind names. The kinds are ${kinds.join(", ")}.`) : undefined);
     else if (!kindOn(document, defaultKind)) problem("general.defaultKind", `The default kind, ${defaultKind}, is off. Turn it on, or pick another.`);
   }
 
@@ -1175,7 +1186,7 @@ export function checkDocument(
     }
     seen.add(backend.id);
     if (!driver) {
-      problem(path, `This version of ${PRODUCT} has no ${backend.type} backend, so ${backend.id} does not run. Its boxes wait for a version that has it.`);
+      problem(path, `This version of ${PRODUCT} has no ${backend.type} backend, so ${backend.id} does not run. Its boxes wait for a version that has it.`, unnamedValue(`backends.${document.backends.indexOf(backend)}`, `This version of ${PRODUCT} has no backend of the type backend ${document.backends.indexOf(backend) + 1} gives, so it does not run. Its boxes wait for a version that has it.`));
       continue;
     }
     for (const [kind, count] of Object.entries(backend.warm ?? {})) {
@@ -1229,9 +1240,9 @@ export function checkDocument(
   const claimed = new Map<string, string>();
   for (const [name, image] of Object.entries(document.images ?? {})) {
     const path = `images.${name}`;
-    if (!IMAGE_NAME.test(name) || name === "standard") problem(path, `Name an image with a lower-case letter first, then letters, digits and "-", up to 40, and not "standard". "${name}" is not one.`);
+    if (!IMAGE_NAME.test(name) || name === "standard") problem(path, `${IMAGE_NAME_RULE} "${name}" is not one.`, unknownKey("images", Object.keys(document.images ?? {}), name, IMAGE_NAME_RULE));
     for (const kind of image.kinds) {
-      if (!kinds.includes(kind)) problem(`${path}.kinds`, `There is no kind "${kind}". The kinds are ${kinds.join(", ")}.`);
+      if (!kinds.includes(kind)) problem(`${path}.kinds`, `There is no kind "${kind}". The kinds are ${kinds.join(", ")}.`, isUnknownKind(kind, drivers) ? unnamedValue(`${path}.kinds`, `No backend offers a kind image ${name} lists. The kinds are ${kinds.join(", ")}.`) : undefined);
       else if (!kind.startsWith("linux")) problem(`${path}.kinds`, `An image's script is a Linux one for now, and ${kind} is not a Linux kind.`);
     }
     for (const [key, text] of [["script", image.script], ["check", image.check ?? ""]] as const) {

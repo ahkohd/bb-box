@@ -95,7 +95,7 @@ test("the CPU Wayland desktop templates are a field of the configuration, never 
   assert.deepEqual(parsed.config.flavours["desktop-wayland-cpu"].templates, [{ vmid: 9006, gpu: null }]);
   const wrong = parseLxcPart({ id: "proxmox-lxc", fields: { ...fields, "desktop-wayland-cpu-templates": "9006 sway" }, hosts: [] });
   assert.deepEqual(!wrong.ok && wrong.problems, [
-    { path: "desktop-wayland-cpu-templates", message: 'Use VMIDs from 100 for the CPU Wayland desktop templates. "sway" is not one.' },
+    { path: "desktop-wayland-cpu-templates", message: "Use VMIDs from 100 for the CPU Wayland desktop templates. Entry 2 is not one." },
   ]);
 });
 

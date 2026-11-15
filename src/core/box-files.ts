@@ -34,13 +34,13 @@ export function contentKey(path: string): string {
 const SEGMENT = /^[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*$/;
 
 /** Why a path is not one of a file under the box user's home, or null when it is. */
-export function pathProblem(path: string): string | null {
+export function pathProblem(path: string, shown = `"${path}"`): string | null {
   if (!path) return "Give the file's path under the box user's home, such as .pi/agent/models.json.";
   if (path.length > 200) return "A file's path is at most 200 characters.";
-  if (path.startsWith("/") || path.startsWith("~")) return `"${path}" is not under the box user's home: give it from there, such as .pi/agent/models.json.`;
+  if (path.startsWith("/") || path.startsWith("~")) return `${shown} is not under the box user's home: give it from there, such as .pi/agent/models.json.`;
   const segments = path.split("/");
   if (segments.some((segment) => segment === "." || segment === ".." || !SEGMENT.test(segment.replace(/^\./, "a")))) {
-    return `"${path}" is not a plain path: use letters, digits, ".", "_", "-", "+" and "@", folders separated by "/", and no "." or ".." folder.`;
+    return `${shown} is not a plain path: use letters, digits, ".", "_", "-", "+" and "@", folders separated by "/", and no "." or ".." folder.`;
   }
   return null;
 }

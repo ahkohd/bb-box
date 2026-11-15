@@ -251,7 +251,7 @@ test("a take that was to replace one past the limit finishes the replacement aft
 test("bb box option unsets a ceiling whose backend is gone, and refuses to set one", () => {
   const document = { ...emptyDocument(1), general: { snapshots: { ceilings: { gone: 3 } } } } as ConfigDocument;
   assert.equal(setOptions(document, [], new Map(), ["general.snapshots.ceilings.gone"]).document.general.snapshots, undefined);
-  assert.throws(() => setOptions(document, [["general.snapshots.ceilings.gone", "4"]], new Map()), /There is no backend "gone"/);
+  assert.throws(() => setOptions(document, [["general.snapshots.ceilings.gone", "4"]], new Map()), /There is no backend by the ID a ceiling on paid snapshots names\./);
 });
 
 test("the turn hold asks BB again when a form's hold ends with no restore on the box, and says when BB Box could not confirm a restore", async () => {

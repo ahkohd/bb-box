@@ -158,11 +158,11 @@ describe("SSH host pool settings", () => {
     const empty = parseSshPoolSettings(settings(""));
     assert.ok(empty.enabled && empty.ok, "a pool with no machines yet parses, so its doctor can give the public key");
     assert.match(problems(settings("Build 192.0.2.21 linux")), /lower-case letters/);
-    assert.match(problems(settings("a 192.0.2.21 linux-desktop")), /cannot serve kind "linux-desktop"/);
+    assert.match(problems(settings("a 192.0.2.21 linux-desktop")), /The machine on line 1 lists a kind it cannot serve/);
     assert.match(problems(settings("a 192.0.2.21 linux-docker")), /needs reset=machine/);
-    assert.match(problems(settings("a 192.0.2.21 linux-arm64-docker reset=machine")), /cannot serve kind "linux-arm64-docker"/);
+    assert.match(problems(settings("a 192.0.2.21 linux-arm64-docker reset=machine")), /The machine on line 1 lists a kind it cannot serve/);
     assert.match(problems(settings("a 192.0.2.21 linux reset=sometimes")), /reset=home or reset=machine/);
-    assert.match(problems(settings("a 192.0.2.21 linux colour=blue")), /unknown option "colour=blue"/);
+    assert.match(problems(settings("a 192.0.2.21 linux colour=blue")), /The machine on line 1 has an option the SSH host pool does not know\./);
     assert.match(problems(settings("a 192.0.2.21 linux\na 192.0.2.22 linux")), /listed twice/);
     assert.match(problems(settings("a 192.0.2.21 linux\nb bbbox-admin@192.0.2.21 linux")), /same address/);
     assert.match(problems(settings("a 192.0.2.21 linux", { "ssh-pool-known-hosts": "" })), /host key of machine a, 192\.0\.2\.21/);
@@ -766,9 +766,9 @@ describe("An SSH host pool of Macs (047)", () => {
   it("parses a Mac's line, and refuses one that mixes Linux and macOS kinds or asks for a whole-machine reset", () => {
     const parsed = config("mac-mini bbbox-admin@192.0.2.80 macos,macos-desktop").machines[0]!;
     assert.deepEqual([parsed.os, parsed.kinds, parsed.docker, parsed.reset], ["macos", ["macos", "macos-desktop"], false, "home"]);
-    assert.match(problems(settings("m 192.0.2.80 linux,macos")), /Machine m lists Linux and macOS kinds\. List linux on a Linux machine, and macos, macos-desktop or ios on a Mac\./);
-    assert.match(problems(settings("m 192.0.2.80 macos reset=machine")), /Machine m is a Mac, which has no whole-machine reset\. Remove reset=machine/);
-    assert.match(problems(settings("m 192.0.2.80 macos-docker")), /cannot serve kind "macos-docker": .*, and macos, macos-desktop and ios slots on a Mac\./);
+    assert.match(problems(settings("m 192.0.2.80 linux,macos")), /The machine on line 1 lists Linux and macOS kinds\. List linux on a Linux machine, and macos, macos-desktop or ios on a Mac\./);
+    assert.match(problems(settings("m 192.0.2.80 macos reset=machine")), /The machine on line 1 is a Mac, which has no whole-machine reset\. Remove reset=machine/);
+    assert.match(problems(settings("m 192.0.2.80 macos-docker")), /lists a kind it cannot serve: .*, and macos, macos-desktop and ios slots on a Mac\./);
   });
 
   it("offers the kinds its lines list, says which OS its machines run, and gives Docker by its Linux machines alone", () => {
