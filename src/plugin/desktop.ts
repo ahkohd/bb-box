@@ -512,17 +512,13 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
   const listenAgent = (boxId: string, send: (message: string) => void): (() => void) => {
     const listeners = agentListeners.get(boxId) ?? new Set<(message: string) => void>();
     agentListeners.set(boxId, listeners);
-    let told = false;
-    const tell = (message: string) => {
-      told = true;
-      send(message);
-    };
+    const tell = (message: string) => send(message);
     listeners.add(tell);
     void boxes
       .find(boxId)
       .then((box) => {
         const last = agentPlaces.get(boxId);
-        if (told || !last || !listeners.has(tell) || box?.state !== "ready" || !viewerDrawsAgentCursor(box)) return;
+        if (!last || !listeners.has(tell) || box?.state !== "ready" || !viewerDrawsAgentCursor(box)) return;
         tell(last);
         for (const message of agentShapes.told(boxId)) tell(message);
       })

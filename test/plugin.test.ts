@@ -4611,6 +4611,49 @@ test("a viewer that connects is told where the agent is and the shape showing no
   await watching.close();
 });
 
+function holdJoinLookups(app: { boxes: { find: (id: string) => Promise<unknown> } }) {
+  const boxes = app.boxes;
+  const find = boxes.find.bind(boxes);
+  let release: () => void = () => undefined;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let held = 0;
+  boxes.find = (id: string) => {
+    if (!new Error().stack?.includes("listenAgent")) return find(id);
+    held++;
+    return gate.then(() => find(id));
+  };
+  return { held: () => held, release, restore: () => (boxes.find = find) };
+}
+
+for (const [what, second, place] of [
+  ["leaves the shape as it was", { x: 10, y: 20, role: "text" }, "10,20"],
+  ["changes the shape", { x: 30, y: 40, role: "heading" }, "30,40"],
+] as const) {
+  test(`a viewer whose first lookup is still running when the agent clicks, in a way that ${what}, ends with the place and the shape showing now (105)`, async (t) => {
+    const { harness, app, box } = await desktopBox();
+    t.after(() => harness.lifecycle.dispose());
+    const running = (await only(app))!;
+    const click = (at: { x: number; y: number; role: string }) =>
+      app.desktops.agentActed(running, { type: "click", button: "left", count: 1, point: { x: at.x, y: at.y }, area: null, role: at.role, window: null }, Date.now());
+    const watching = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
+    click({ x: 10, y: 20, role: "text" });
+    await until("the watching viewer told", async () => shapesSaid(watching).includes("BB_AGENT,shape,10,20,ibeam"));
+    const lookups = holdJoinLookups(app as never);
+    t.after(lookups.restore);
+    const joining = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
+    await until("the joining viewer's lookup held", async () => lookups.held() > 0);
+    click(second);
+    await until("the click told to the joining viewer", async () => clicksSaid(joining).length === 1);
+    lookups.release();
+    const expected = second.role === "text" ? "ibeam" : "arrow";
+    await until("the joining viewer told the shape now", async () => shapesSaid(joining).at(-1) === `BB_AGENT,shape,${place},${expected}`);
+    assert.equal(agentSaid(joining).filter((message) => message.startsWith("BB_AGENT,at,")).at(-1), `BB_AGENT,at,${place}`);
+    assert.equal(shapesSaid(watching).at(-1), shapesSaid(joining).at(-1), "the same as the viewer watching all along");
+    await joining.close();
+    await watching.close();
+  });
+}
+
 test("a person who takes control ends the agent's shape: watching viewers see the arrow, and a viewer after they hand back is told nothing from before (105)", async (t) => {
   const { harness, box, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
