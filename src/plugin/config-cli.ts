@@ -86,16 +86,53 @@ function json(value: unknown, exitCode = 0): PluginCliResult {
   return { exitCode, stdout: `${JSON.stringify(value, null, 2)}\n` };
 }
 
+const READ_HINT = "The file is read on the machine BB's server runs on. From another machine, pipe a secret in with --secrets-stdin.";
+const READ_FAILURES: Readonly<Record<string, string>> = {
+  ENOENT: "it was not found",
+  EACCES: "it is not readable",
+  EPERM: "it is not readable",
+  EISDIR: "it is a folder",
+  ENOTDIR: "part of its path is not a folder",
+};
+
+function workingFolder(ctx: PluginCliContext): string {
+  return ctx.cwd ?? process.cwd();
+}
+
+function pathFrom(path: string, ctx: PluginCliContext): string {
+  return isAbsolute(path) ? path : resolve(workingFolder(ctx), path);
+}
+
+function readFailure(error: unknown): string {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return (code && READ_FAILURES[code]) || "it could not be read";
+}
+
 async function readText(path: string, ctx: PluginCliContext): Promise<string> {
-  const file = isAbsolute(path) ? path : resolve(ctx.cwd ?? process.cwd(), path);
+  const file = pathFrom(path, ctx);
   try {
     return await readFile(file, "utf8");
   } catch (error) {
-    throw new PluginCliError(`Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`, {
+    throw new PluginCliError(`Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`, { code: "invalid_input", hint: READ_HINT });
+  }
+}
+
+async function readSecretText(path: string, ctx: PluginCliContext, file: string): Promise<string> {
+  try {
+    return await readFile(pathFrom(path, ctx), "utf8");
+  } catch (error) {
+    throw new PluginCliError(`Cannot read ${file}: ${readFailure(error)}. Its path is not shown, as it may be a secret given by mistake.`, {
       code: "invalid_input",
-      hint: "The file is read on the machine BB's server runs on. From another machine, pipe a secret in with --secrets-stdin.",
+      hint: `A relative path is from ${workingFolder(ctx)}. ${READ_HINT}`,
     });
   }
+}
+
+function ordinal(position: number): string {
+  const lastTwo = position % 100;
+  const last = position % 10;
+  const suffix = lastTwo >= 11 && lastTwo <= 13 ? "th" : last === 1 ? "st" : last === 2 ? "nd" : last === 3 ? "rd" : "th";
+  return `${position}${suffix}`;
 }
 
 const listOf = (value: unknown): string[] => (Array.isArray(value) ? value.map(String) : value === undefined ? [] : [String(value)]);
@@ -115,8 +152,10 @@ interface SecretInput {
 const DOTENV_LINE = /^\s*(export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=/;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const BASE64_LENGTH_NEVER_MADE = 1;
+const STDIN = "stdin";
 const STDIN_LINE = "the line on stdin";
 const STDIN_FILE = "the dotenv file in base64 on stdin";
+const SECRETS_FILE = "the file given to --secrets-file";
 const STDIN_HINT = "Pipe one line: grep '^NAME=' secrets.env | bb box ... --secrets-stdin, or base64 < secrets.env | tr -d '\\n' | bb box ... --secrets-stdin. The line is not shown, as it may hold a secret.";
 
 function strictBase64(text: string): Buffer | null {
@@ -143,7 +182,7 @@ function stdinSecrets(line: string): { env: Map<string, string>; source: string 
   const text = line.trim();
   const decoded = base64Dotenv(text);
   if (decoded !== null) return { env: parseDotenv(decoded, STDIN_FILE), source: STDIN_FILE };
-  if (!BASE64.test(text) && DOTENV_LINE.test(text)) return { env: parseDotenv(text, STDIN_LINE), source: STDIN_LINE };
+  if (!BASE64.test(text) && DOTENV_LINE.test(text)) return { env: parseDotenv(text, STDIN), source: STDIN_LINE };
   throw new PluginCliError("The line on stdin is neither a VARIABLE=value line nor a dotenv file in base64.", { code: "invalid_input", hint: STDIN_HINT });
 }
 
@@ -154,8 +193,7 @@ function variableCount(count: number): string {
 async function secretSource(options: SecretInput, ctx: PluginCliContext): Promise<{ env: Map<string, string>; source: string }> {
   const path = options["secrets-file"];
   if (path === undefined) return stdinSecrets(String(options.secrets));
-  const source = `the file ${path}`;
-  return { env: parseDotenv(await readText(path, ctx), source), source };
+  return { env: parseDotenv(await readSecretText(path, ctx, SECRETS_FILE), SECRETS_FILE), source: SECRETS_FILE };
 }
 
 async function secretValues(options: SecretInput, ctx: PluginCliContext): Promise<Map<string, string>> {
@@ -170,12 +208,12 @@ async function secretValues(options: SecretInput, ctx: PluginCliContext): Promis
       });
     }
     const { env, source } = await secretSource(options, ctx);
-    for (const [field, variable] of pairs) {
+    for (const [index, [field, variable]] of pairs.entries()) {
       const value = env.get(variable);
       if (value === undefined) {
-        throw new PluginCliError(`The variable that --secret ${field} names is not in ${source}.`, {
+        throw new PluginCliError(`The variable that the ${ordinal(index + 1)} --secret names is not in ${source}.`, {
           code: "invalid_input",
-          hint: `It has ${variableCount(env.size)}. Check the name after ${field}= against it. Names and values from it are not shown, as they may hold secrets.`,
+          hint: `It has ${variableCount(env.size)}. Check the name after the = of that --secret against it. Names and values are not shown, as they may hold secrets.`,
         });
       }
       values.set(field, value);
@@ -183,9 +221,9 @@ async function secretValues(options: SecretInput, ctx: PluginCliContext): Promis
   } else if (options["secrets-file"] !== undefined || options.secrets !== undefined) {
     throw new PluginCliError("Name the secret fields to take from it with --secret <field>=<VARIABLE>.", { code: "missing_required" });
   }
-  for (const text of listOf(options["secret-file"])) {
+  for (const [index, text] of listOf(options["secret-file"]).entries()) {
     const [field, path] = unshownPairOf(text, "--secret-file");
-    values.set(field, (await readText(path, ctx)).replace(/\r\n/g, "\n").replace(/\n+$/, "\n"));
+    values.set(field, (await readSecretText(path, ctx, `the file the ${ordinal(index + 1)} --secret-file gives`)).replace(/\r\n/g, "\n").replace(/\n+$/, "\n"));
   }
   return values;
 }

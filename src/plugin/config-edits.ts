@@ -128,6 +128,14 @@ function fieldNamed(fields: readonly FieldView[], key: string, owner: string): F
   return field;
 }
 
+const NOT_SHOWN = "That name is not shown, as it may be a secret.";
+
+function secretFieldNamed(fields: readonly FieldView[], key: string, owner: string): FieldView {
+  const field = fields.find((candidate) => candidate.key === key);
+  if (!field) throw invalid(`${owner} has no field by the name a --secret or --secret-file gives. ${NOT_SHOWN}`, `Its secret fields are ${fields.filter(isSecretField).map((each) => each.key).join(", ") || "none"}.`);
+  return field;
+}
+
 function plainField(fields: readonly FieldView[], key: string, owner: string): FieldView {
   const field = fieldNamed(fields, key, owner);
   if (isSecretField(field)) throw invalid(`${field.label} (${key}) is a secret, so it is never given on the command line, where other processes can read it.`, SECRET_INPUT_HINT);
@@ -221,7 +229,7 @@ function editedFields(
     for (const line of lines.filter((each) => lineMatches(each, text))) note(key, `removed the line "${line.trim()}"`);
   }
   for (const [key, value] of edits.secrets ?? []) {
-    const field = fieldNamed(fields, key, owner);
+    const field = secretFieldNamed(fields, key, owner);
     if (!isSecretField(field)) throw invalid(`${field.label} (${key}) is not a secret: give it with --field ${key}=<value>.`);
     if (!secretsAllowed) throw invalid(`${owner} keeps no secrets.`);
     if (!value.trim()) throw invalid(`The value for ${key} is empty. To clear a secret, use --clear-secret ${key}.`);
@@ -519,8 +527,18 @@ export function optionsOf(document: ConfigDocument): OptionInfo[] {
   return [...OPTIONS, ...document.backends.map((backend) => ceilingOption(backend.id))];
 }
 
+function fullOptionName(name: string): string {
+  return name.startsWith("general.") || name.startsWith("monitor.") ? name : `general.${name}`;
+}
+
+function secretOptionNamed(name: string): OptionInfo {
+  const option = OPTIONS.find((candidate) => candidate.name === fullOptionName(name));
+  if (!option) throw invalid(`A --secret names no option. ${NOT_SHOWN}`, `The secret options are ${OPTIONS.filter((each) => each.type.kind === "secret").map((each) => each.name).join(", ")}.`);
+  return option;
+}
+
 export function optionNamed(name: string): OptionInfo {
-  const full = name.startsWith("general.") || name.startsWith("monitor.") ? name : `general.${name}`;
+  const full = fullOptionName(name);
   const ceiling = CEILING_OPTION.exec(full);
   if (ceiling) return ceilingOption(ceiling[1]!);
   const option = OPTIONS.find((candidate) => candidate.name === full);
@@ -614,7 +632,7 @@ export function setOptions(document: ConfigDocument, values: readonly (readonly 
   }
   for (const [name, raw] of values) put(optionNamed(name), optionValue(optionNamed(name), raw));
   for (const [name, value] of secrets) {
-    const option = optionNamed(name);
+    const option = secretOptionNamed(name);
     if (option.type.kind !== "secret") throw invalid(`${option.name} is not a secret: give it as ${option.name}=<value>.`);
     if (!value.trim()) throw invalid(`The value for ${option.name} is empty. To clear it, use bb box option unset ${option.name}.`);
     put(option, value);
@@ -650,7 +668,7 @@ export function parseDotenv(text: string, source = "the dotenv file"): Map<strin
         body += `\n${lines[index]}`;
       }
       const end = closingAt(body, quote);
-      if (end === -1) throw invalid(`The quoted value of ${name}, on line ${lineNumber} of ${source}, has no closing quote. Nothing was saved.`, DOTENV_HINT);
+      if (end === -1) throw invalid(`The quoted value on line ${lineNumber} of ${source} has no closing quote. Nothing was saved.`, DOTENV_HINT);
       const inner = body.slice(0, end);
       values.set(name, quote === '"' ? unescaped(inner) : inner);
       continue;

@@ -154,7 +154,7 @@ test("a secret on the command line is refused without echoing it, and nothing is
   const plain = await cli(["backend", "add", "fake", "--secret", "address=FAKE_TOKEN", "--secrets", `FAKE_TOKEN=${TOKEN}`]);
   assert.match(plain.stderr ?? "", /Address \(address\) is not a secret: give it with --field address=<value>\./);
   const missing = await cli(["backend", "add", "fake", "--secret", "token=NOPE", "--secrets", `FAKE_TOKEN=${TOKEN}`]);
-  assert.match(missing.stderr ?? "", /The variable that --secret token names is not in the line on stdin\./);
+  assert.match(missing.stderr ?? "", /The variable that the 1st --secret names is not in the line on stdin\./);
   assert.match(missing.stderr ?? "", /It has 1 variable\./);
   assert.ok(!(missing.stderr ?? "").includes("FAKE_TOKEN"), "no name from the input is shown");
   const noSource = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN"]);
@@ -225,7 +225,7 @@ test("a malformed line on stdin or in a file is refused by its line number, with
   writeFileSync(join(dir, "malformed.env"), malformed);
   const filed = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets-file", "malformed.env"], dir);
   assert.equal(filed.exitCode, 1);
-  assert.match(filed.stderr ?? "", /^Line 2 of the file malformed\.env is not a VARIABLE=value line\. Nothing was saved\./);
+  assert.match(filed.stderr ?? "", /^Line 2 of the file given to --secrets-file is not a VARIABLE=value line\. Nothing was saved\./);
   const rawSecret = Buffer.from(value).toString("base64");
   assert.match(rawSecret, ALPHANUMERIC_THEN_PADDING);
   const raw = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets", rawSecret]);
@@ -244,10 +244,51 @@ test("a malformed line on stdin or in a file is refused by its line number, with
   assert.equal(revision(), before);
 });
 
-const FUZZ_ROUNDS = 150;
+const NAME_SHAPED_VALUE = "RegressionCanaryV8m3";
+
+test("a value in the name position of a malformed line is never printed, from a file, stdin or base64, with or without --json", async () => {
+  const { cli, seen, dir } = await start();
+  const twoEntries = `FAKE_TOKEN=${NAME_SHAPED_VALUE}\n${NAME_SHAPED_VALUE}="unfinished`;
+  writeFileSync(join(dir, "unclosed.env"), twoEntries);
+  const sources = [
+    ["--secrets", Buffer.from(twoEntries).toString("base64")],
+    ["--secrets-file", "unclosed.env"],
+    ["--secrets", `${NAME_SHAPED_VALUE}="unfinished`],
+  ];
+  for (const source of sources) {
+    for (const json of [[], ["--json"]]) {
+      const ran = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", ...source, ...json], dir);
+      assert.equal(ran.exitCode, 1, JSON.stringify(ran));
+      assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, /The quoted value on line \d of (the file given to --secrets-file|the dotenv file in base64 on stdin|stdin) has no closing quote/);
+    }
+  }
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `a name from the input was printed: ${text}`);
+});
+
+test("a value given by mistake as a --secret, a --secret-file or a --secrets-file is never printed, as a field, an option or a path", async () => {
+  const { cli, seen, dir } = await start();
+  const missing = await cli(["backend", "add", "fake", "--secret", `${NAME_SHAPED_VALUE}==`, "--secrets", "OTHER=one"]);
+  assert.match(missing.stderr ?? "", /^The variable that the 1st --secret names is not in the line on stdin\./);
+  const unknownField = await cli(["backend", "add", "fake", "--secret", `${NAME_SHAPED_VALUE}=OTHER`, "--secrets", "OTHER=one", "--json"]);
+  assert.match(`${unknownField.stdout}${unknownField.stderr}`, /Backend fake has no field by the name a --secret or --secret-file gives\. That name is not shown/);
+  const unknownOption = await cli(["option", "set", "general.tailnet.mode=oauth", "--secret", `${NAME_SHAPED_VALUE}=OTHER`, "--secrets", "OTHER=one"]);
+  assert.match(unknownOption.stderr ?? "", /^A --secret names no option\. That name is not shown/);
+  assert.match(unknownOption.stderr ?? "", /The secret options are general\.tailnet\.clientId, general\.tailnet\.clientSecret/);
+  const secretFile = await cli(["backend", "add", "fake", "--secret-file", `token=${NAME_SHAPED_VALUE}`], dir);
+  assert.match(secretFile.stderr ?? "", /^Cannot read the file the 1st --secret-file gives: it was not found\. Its path is not shown/);
+  const secretsFile = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets-file", NAME_SHAPED_VALUE, "--json"], dir);
+  assert.match(`${secretsFile.stdout}${secretsFile.stderr}`, /Cannot read the file given to --secrets-file: it was not found\./);
+  const folder = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets-file", dir], dir);
+  assert.match(folder.stderr ?? "", /^Cannot read the file given to --secrets-file: it is a folder\./);
+  for (const ran of [missing, unknownField, unknownOption, secretFile, secretsFile, folder]) assert.equal(ran.exitCode, 1);
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `a value given by mistake was printed: ${text}`);
+});
+
+const FUZZ_ROUNDS = 300;
 const FUZZ_SEED = 0x5eed_b0c5;
 const SHORTEST_LEAK = 8;
 const VALUE_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-.";
+const NAME_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_";
 
 function seededRandom(seed: number): () => number {
   let state = seed >>> 0;
@@ -269,12 +310,16 @@ function leakedPiece(output: string, values: readonly string[]): string | null {
   return null;
 }
 
-test("fuzzed dotenv input never puts 8 or more characters of a secret value in the output", async () => {
+test("fuzzed secret input and arguments never put 8 or more characters of a secret value in the output, plain or --json", async () => {
   const { cli, dir } = await start();
   const random = seededRandom(FUZZ_SEED);
   const pick = <T,>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!;
   const madeUpValue = () => Array.from({ length: 12 + Math.floor(random() * 30) }, () => pick([...VALUE_CHARACTERS])).join("");
+  const madeUpName = () => `V${Array.from({ length: 11 + Math.floor(random() * 20) }, () => pick([...NAME_CHARACTERS])).join("")}`;
   const breakings: ((lines: string[], values: string[]) => string[])[] = [
+    (lines, values) => [...lines, `${values[0]}="unfinished`],
+    (lines, values) => [...lines, `${values[0]} unfinished`],
+    (lines, values) => [...lines, `${values[0]}=named-by-a-value`],
     (lines) => lines,
     (lines) => lines.map((line, index) => (index === lines.length - 1 ? line.replace("=", " ") : line)),
     (lines, values) => [...lines, values[0]!],
@@ -282,7 +327,19 @@ test("fuzzed dotenv input never puts 8 or more characters of a secret value in t
     (lines, values) => [...lines.slice(0, -1), `${lines.at(-1)!.split("=")[0]}=${values.at(-1)!.slice(0, 6)}`, values.at(-1)!.slice(6)],
     (_lines, values) => [values[0]!],
   ];
-  const deliveries: ((file: string, round: number) => string[])[] = [
+  const commands: { readonly args: string[]; readonly field: string }[] = [
+    { args: ["backend", "add", "fake", "--check"], field: "token" },
+    { args: ["option", "set", "general.tailnet.mode=oauth", "--check"], field: "general.tailnet.clientSecret" },
+  ];
+  const secretArguments: ((field: string, values: string[]) => string[])[] = [
+    (field, values) => ["--secret", `${field}=${pick(["SECRET_0", "MISSING", values[0]!])}`],
+    (_field, values) => ["--secret", `${values[0]}==`],
+    (_field, values) => ["--secret", `${values[0]}=SECRET_0`],
+    (_field, values) => ["--secret", values[0]!],
+    (field, values) => ["--secret", `${field}=SECRET_0`, "--secret-file", `${field}=${values[0]}`],
+  ];
+  const deliveries: ((file: string, round: number, values: string[]) => string[])[] = [
+    (_file, _round, values) => ["--secrets-file", values[0]!],
     (file) => ["--secrets", Buffer.from(file).toString("base64")],
     (file) => ["--secrets", file.split("\n")[0]!],
     (file, round) => {
@@ -292,11 +349,12 @@ test("fuzzed dotenv input never puts 8 or more characters of a secret value in t
   ];
   let refused = 0;
   for (let round = 0; round < FUZZ_ROUNDS; round += 1) {
-    const values = Array.from({ length: 1 + Math.floor(random() * 3) }, madeUpValue);
+    const values = Array.from({ length: 1 + Math.floor(random() * 3) }, () => pick([madeUpValue, madeUpName])());
     const lines = values.map((value, index) => `SECRET_${index}=${value}`);
     const file = pick(breakings)(lines, values).join("\n");
-    const variable = pick(["SECRET_0", "MISSING", values[0]!]);
-    const ran = await cli(["backend", "add", "fake", "--check", "--secret", `token=${variable}`, ...pick(deliveries)(file, round)], dir);
+    const command = pick(commands);
+    const json = pick([[], ["--json"]]);
+    const ran = await cli([...command.args, ...pick(secretArguments)(command.field, values), ...pick(deliveries)(file, round, values), ...json], dir);
     if (ran.exitCode !== 0) refused += 1;
     const output = `${ran.stdout ?? ""}${ran.stderr ?? ""}`;
     assert.equal(leakedPiece(output, values), null, `round ${round} printed part of a value: ${output}`);
@@ -613,7 +671,7 @@ test("a dotenv line that is not VARIABLE=value, or a quote never closed, is refu
   });
   const opened = "made-up-unclosed-value-77c0";
   assert.throws(() => parseDotenv(`FIRST=one\nSECOND="${opened}\nTHIRD=three\n`), (error: Error) => {
-    assert.equal(error.message, "The quoted value of SECOND, on line 2 of the dotenv file, has no closing quote. Nothing was saved.");
+    assert.equal(error.message, "The quoted value on line 2 of the dotenv file has no closing quote. Nothing was saved.");
     assert.ok(!JSON.stringify(error).includes(opened.slice(0, 8)));
     return true;
   });
