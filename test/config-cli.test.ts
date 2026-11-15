@@ -154,8 +154,9 @@ test("a secret on the command line is refused without echoing it, and nothing is
   const plain = await cli(["backend", "add", "fake", "--secret", "address=FAKE_TOKEN", "--secrets", `FAKE_TOKEN=${TOKEN}`]);
   assert.match(plain.stderr ?? "", /Address \(address\) is not a secret: give it with --field address=<value>\./);
   const missing = await cli(["backend", "add", "fake", "--secret", "token=NOPE", "--secrets", `FAKE_TOKEN=${TOKEN}`]);
-  assert.match(missing.stderr ?? "", /NOPE is not in the line on stdin\./);
-  assert.match(missing.stderr ?? "", /The variable names in it are FAKE_TOKEN\./);
+  assert.match(missing.stderr ?? "", /The variable that --secret token names is not in the line on stdin\./);
+  assert.match(missing.stderr ?? "", /It has 1 variable\./);
+  assert.ok(!(missing.stderr ?? "").includes("FAKE_TOKEN"), "no name from the input is shown");
   const noSource = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN"]);
   assert.match(noSource.stderr ?? "", /give the dotenv file that holds it with --secrets-file, or pipe its line in with --secrets-stdin/);
   assert.equal(revision(), before);
@@ -188,6 +189,119 @@ test("several secrets come through one stdin line as a dotenv file in base64, an
   assert.equal(neither.exitCode, 1);
   assert.match(neither.stderr ?? "", /The line on stdin is neither a VARIABLE=value line nor a dotenv file in base64\./);
   assertNoSecret(seen);
+});
+
+const PADDED_VALUE = "bWFkZS11cC12YWx1ZQ==";
+const ALPHANUMERIC_THEN_PADDING = /^[A-Za-z0-9]+={1,2}$/;
+
+test("a dotenv file in base64 that ends in = padding is read as base64, and a value may hold = signs", async () => {
+  for (const file of [`FAKE_TOKEN=${PADDED_VALUE}\n`, `FAKE_TOKEN=${PADDED_VALUE}`]) {
+    const { cli, seen, app } = await start();
+    const line = Buffer.from(file).toString("base64");
+    assert.match(line, ALPHANUMERIC_THEN_PADDING, "the base64 looks like a VARIABLE= line");
+    const set = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets", line]);
+    assert.equal(set.exitCode, 0, set.stderr);
+    assert.equal(app.configuration.secrets.fake?.token, PADDED_VALUE);
+    for (const text of seen) assert.ok(!text.includes(line.slice(0, 8)), `the input was printed: ${text}`);
+  }
+  const { cli, app, dir } = await start();
+  const single = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets", "FAKE_TOKEN=made=up=value=="]);
+  assert.equal(single.exitCode, 0, single.stderr);
+  assert.equal(app.configuration.secrets.fake?.token, "made=up=value==");
+  writeFileSync(join(dir, "padded.env"), `FIRST=one\nFAKE_TOKEN=${PADDED_VALUE}`);
+  const fromFile = await cli(["backend", "set", "fake", "--secret", "token=FAKE_TOKEN", "--secrets-file", "padded.env"], dir);
+  assert.equal(fromFile.exitCode, 0, fromFile.stderr);
+  assert.equal(app.configuration.secrets.fake?.token, PADDED_VALUE);
+});
+
+test("a malformed line on stdin or in a file is refused by its line number, with neither its value nor the line", async () => {
+  const { cli, seen, dir, revision } = await start();
+  const before = revision();
+  const value = "made-up-malformed-value-3b9e";
+  const malformed = `FIRST=one\nFAKE_TOKEN ${value}\n`;
+  const piped = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets", Buffer.from(malformed).toString("base64")]);
+  assert.equal(piped.exitCode, 1);
+  assert.match(piped.stderr ?? "", /^Line 2 of the dotenv file in base64 on stdin is not a VARIABLE=value line\. Nothing was saved\./);
+  writeFileSync(join(dir, "malformed.env"), malformed);
+  const filed = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets-file", "malformed.env"], dir);
+  assert.equal(filed.exitCode, 1);
+  assert.match(filed.stderr ?? "", /^Line 2 of the file malformed\.env is not a VARIABLE=value line\. Nothing was saved\./);
+  const rawSecret = Buffer.from(value).toString("base64");
+  assert.match(rawSecret, ALPHANUMERIC_THEN_PADDING);
+  const raw = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets", rawSecret]);
+  assert.equal(raw.exitCode, 1);
+  assert.match(raw.stderr ?? "", /neither a VARIABLE=value line nor a dotenv file in base64/);
+  const valueAsVariable = await cli(["backend", "add", "fake", "--secret", `token=${value}`, "--secrets", "FIRST=one"]);
+  assert.equal(valueAsVariable.exitCode, 1);
+  const valueAsPair = await cli(["backend", "add", "fake", "--secret", value, "--secrets", "FIRST=one"]);
+  assert.equal(valueAsPair.exitCode, 1);
+  assert.match(valueAsPair.stderr ?? "", /Give --secret as <name>=<value>\. What was given is not shown/);
+  for (const text of seen) {
+    assert.ok(!text.includes(value), `the value was printed: ${text}`);
+    assert.ok(!text.includes(rawSecret.slice(0, 8)), `the input was printed: ${text}`);
+    assert.ok(!text.includes("FAKE_TOKEN made"), `the line was printed: ${text}`);
+  }
+  assert.equal(revision(), before);
+});
+
+const FUZZ_ROUNDS = 150;
+const FUZZ_SEED = 0x5eed_b0c5;
+const SHORTEST_LEAK = 8;
+const VALUE_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-.";
+
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function leakedPiece(output: string, values: readonly string[]): string | null {
+  for (const value of values) {
+    for (let at = 0; at + SHORTEST_LEAK <= value.length; at += 1) {
+      const piece = value.slice(at, at + SHORTEST_LEAK);
+      if (output.includes(piece)) return piece;
+    }
+  }
+  return null;
+}
+
+test("fuzzed dotenv input never puts 8 or more characters of a secret value in the output", async () => {
+  const { cli, dir } = await start();
+  const random = seededRandom(FUZZ_SEED);
+  const pick = <T,>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!;
+  const madeUpValue = () => Array.from({ length: 12 + Math.floor(random() * 30) }, () => pick([...VALUE_CHARACTERS])).join("");
+  const breakings: ((lines: string[], values: string[]) => string[])[] = [
+    (lines) => lines,
+    (lines) => lines.map((line, index) => (index === lines.length - 1 ? line.replace("=", " ") : line)),
+    (lines, values) => [...lines, values[0]!],
+    (lines, values) => [...lines.slice(0, -1), `${lines.at(-1)!.split("=")[0]}="${values.at(-1)}`],
+    (lines, values) => [...lines.slice(0, -1), `${lines.at(-1)!.split("=")[0]}=${values.at(-1)!.slice(0, 6)}`, values.at(-1)!.slice(6)],
+    (_lines, values) => [values[0]!],
+  ];
+  const deliveries: ((file: string, round: number) => string[])[] = [
+    (file) => ["--secrets", Buffer.from(file).toString("base64")],
+    (file) => ["--secrets", file.split("\n")[0]!],
+    (file, round) => {
+      writeFileSync(join(dir, `fuzz-${round}.env`), file);
+      return ["--secrets-file", `fuzz-${round}.env`];
+    },
+  ];
+  let refused = 0;
+  for (let round = 0; round < FUZZ_ROUNDS; round += 1) {
+    const values = Array.from({ length: 1 + Math.floor(random() * 3) }, madeUpValue);
+    const lines = values.map((value, index) => `SECRET_${index}=${value}`);
+    const file = pick(breakings)(lines, values).join("\n");
+    const variable = pick(["SECRET_0", "MISSING", values[0]!]);
+    const ran = await cli(["backend", "add", "fake", "--check", "--secret", `token=${variable}`, ...pick(deliveries)(file, round)], dir);
+    if (ran.exitCode !== 0) refused += 1;
+    const output = `${ran.stdout ?? ""}${ran.stderr ?? ""}`;
+    assert.equal(leakedPiece(output, values), null, `round ${round} printed part of a value: ${output}`);
+  }
+  assert.ok(refused > FUZZ_ROUNDS / 4, `only ${refused} of ${FUZZ_ROUNDS} rounds were refused, so few error paths ran`);
 });
 
 test("a stale --revision is refused with the revision it is at, and the right one saves", async () => {
@@ -471,7 +585,9 @@ test("a dotenv file is read as bb secret request writes one, and as people write
       'SPLIT="first',
       'second"',
       "EMPTY=",
-      "not a line",
+      "PADDED=bWFkZS11cA==",
+      "",
+      "LAST=a=b=c=",
     ].join("\n"),
   );
   assert.deepEqual(Object.fromEntries(values), {
@@ -483,7 +599,25 @@ test("a dotenv file is read as bb secret request writes one, and as people write
     KEY: "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n",
     SPLIT: "first\nsecond",
     EMPTY: "",
+    PADDED: "bWFkZS11cA==",
+    LAST: "a=b=c=",
   });
+});
+
+test("a dotenv line that is not VARIABLE=value, or a quote never closed, is refused by its line number alone", () => {
+  const raw = "made-up-line-without-equals-5e1d";
+  assert.throws(() => parseDotenv(`# made up\nFIRST=one\n${raw}\n`, "the file secrets.env"), (error: Error) => {
+    assert.equal(error.message, "Line 3 of the file secrets.env is not a VARIABLE=value line. Nothing was saved.");
+    assert.ok(!JSON.stringify(error).includes(raw));
+    return true;
+  });
+  const opened = "made-up-unclosed-value-77c0";
+  assert.throws(() => parseDotenv(`FIRST=one\nSECOND="${opened}\nTHIRD=three\n`), (error: Error) => {
+    assert.equal(error.message, "The quoted value of SECOND, on line 2 of the dotenv file, has no closing quote. Nothing was saved.");
+    assert.ok(!JSON.stringify(error).includes(opened.slice(0, 8)));
+    return true;
+  });
+  assert.deepEqual(Object.fromEntries(parseDotenv("\uFEFFFIRST=one\r\n")), { FIRST: "one" });
 });
 
 test("an empty value for an image field is saved as itself, so it turns its kind off rather than taking the default", async () => {

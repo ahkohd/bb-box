@@ -86,10 +86,21 @@ function invalid(message: string, hint?: string): PluginCliError {
   return new PluginCliError(message, { code: "invalid_input", ...(hint ? { hint } : {}) });
 }
 
-export function pairOf(text: string, what: string): [string, string] {
+function splitPair(text: string): [string, string] | null {
   const at = text.indexOf("=");
-  if (at <= 0) throw invalid(`Give ${what} as <name>=<value>, not "${text.length > 40 ? `${text.slice(0, 40)}…` : text}".`);
-  return [text.slice(0, at).trim(), text.slice(at + 1)];
+  return at <= 0 ? null : [text.slice(0, at).trim(), text.slice(at + 1)];
+}
+
+export function pairOf(text: string, what: string): [string, string] {
+  const pair = splitPair(text);
+  if (!pair) throw invalid(`Give ${what} as <name>=<value>, not "${text.length > 40 ? `${text.slice(0, 40)}…` : text}".`);
+  return pair;
+}
+
+export function unshownPairOf(text: string, what: string): [string, string] {
+  const pair = splitPair(text);
+  if (!pair) throw invalid(`Give ${what} as <name>=<value>. What was given is not shown, as it may be a secret.`);
+  return pair;
 }
 
 function isSecretState(value: unknown): value is SecretState {
@@ -614,13 +625,21 @@ export function setOptions(document: ConfigDocument, values: readonly (readonly 
   return { document: rebuilt(document, parts, tailnetTouched), changes };
 }
 
-export function parseDotenv(text: string): Map<string, string> {
+const DOTENV_ENTRY = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/;
+const DOTENV_SKIPPED = /^\s*(#.*)?$/;
+const BYTE_ORDER_MARK = /^\uFEFF/;
+const DOTENV_HINT =
+  "Each line is VARIABLE=value, a comment that starts with #, or blank. Only the first = ends the name, so a value may hold = signs. A value of several lines goes in quotes. The line is not shown, as it may hold a secret.";
+
+export function parseDotenv(text: string, source = "the dotenv file"): Map<string, string> {
   const values = new Map<string, string>();
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const lines = text.replace(BYTE_ORDER_MARK, "").replace(/\r\n/g, "\n").split("\n");
   for (let index = 0; index < lines.length; index += 1) {
+    const lineNumber = index + 1;
     const line = lines[index]!.replace(/^\s*export\s+/, "");
-    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
-    if (!match) continue;
+    if (DOTENV_SKIPPED.test(line)) continue;
+    const match = DOTENV_ENTRY.exec(line);
+    if (!match) throw invalid(`Line ${lineNumber} of ${source} is not a VARIABLE=value line. Nothing was saved.`, DOTENV_HINT);
     const name = match[1]!;
     let rest = match[2]!.replace(/^\s+/, "");
     if (rest.startsWith('"') || rest.startsWith("'")) {
@@ -631,7 +650,8 @@ export function parseDotenv(text: string): Map<string, string> {
         body += `\n${lines[index]}`;
       }
       const end = closingAt(body, quote);
-      const inner = end === -1 ? body : body.slice(0, end);
+      if (end === -1) throw invalid(`The quoted value of ${name}, on line ${lineNumber} of ${source}, has no closing quote. Nothing was saved.`, DOTENV_HINT);
+      const inner = body.slice(0, end);
       values.set(name, quote === '"' ? unescaped(inner) : inner);
       continue;
     }

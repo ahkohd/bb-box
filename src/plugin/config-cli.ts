@@ -34,6 +34,7 @@ import {
   type HostEdit,
   type KindEdit,
   type ProjectChoice,
+  unshownPairOf,
 } from "./config-edits.ts";
 import { doctorText, problemsText } from "./views.ts";
 import { PRODUCT } from "../brand.ts";
@@ -113,44 +114,77 @@ interface SecretInput {
 
 const DOTENV_LINE = /^\s*(export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=/;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+const BASE64_LENGTH_NEVER_MADE = 1;
+const STDIN_LINE = "the line on stdin";
+const STDIN_FILE = "the dotenv file in base64 on stdin";
+const STDIN_HINT = "Pipe one line: grep '^NAME=' secrets.env | bb box ... --secrets-stdin, or base64 < secrets.env | tr -d '\\n' | bb box ... --secrets-stdin. The line is not shown, as it may hold a secret.";
 
-function stdinSecrets(line: string): Map<string, string> {
-  const text = line.trim();
-  if (DOTENV_LINE.test(text)) return parseDotenv(text);
-  const decoded = BASE64.test(text) ? Buffer.from(text, "base64").toString("utf8") : "";
-  const env = parseDotenv(decoded);
-  if (!env.size) {
-    throw new PluginCliError("The line on stdin is neither a VARIABLE=value line nor a dotenv file in base64.", {
-      code: "invalid_input",
-      hint: "Pipe one line: grep '^NAME=' secrets.env | bb box ... --secrets-stdin, or base64 < secrets.env | tr -d '\\n' | bb box ... --secrets-stdin.",
-    });
+function strictBase64(text: string): Buffer | null {
+  if (!BASE64.test(text) || text.length % 4 === BASE64_LENGTH_NEVER_MADE) return null;
+  const bytes = Buffer.from(text, "base64");
+  return bytes.toString("base64").replace(/=+$/, "") === text.replace(/=+$/, "") ? bytes : null;
+}
+
+function utf8(bytes: Buffer): string | null {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
   }
-  return env;
+}
+
+function base64Dotenv(text: string): string | null {
+  const bytes = strictBase64(text);
+  const decoded = bytes && utf8(bytes);
+  return decoded && decoded.split(/\r?\n/).some((line) => DOTENV_LINE.test(line)) ? decoded : null;
+}
+
+function stdinSecrets(line: string): { env: Map<string, string>; source: string } {
+  const text = line.trim();
+  const decoded = base64Dotenv(text);
+  if (decoded !== null) return { env: parseDotenv(decoded, STDIN_FILE), source: STDIN_FILE };
+  if (!BASE64.test(text) && DOTENV_LINE.test(text)) return { env: parseDotenv(text, STDIN_LINE), source: STDIN_LINE };
+  throw new PluginCliError("The line on stdin is neither a VARIABLE=value line nor a dotenv file in base64.", { code: "invalid_input", hint: STDIN_HINT });
+}
+
+function variableCount(count: number): string {
+  return count === 1 ? "1 variable" : `${count} variables`;
+}
+
+async function secretSource(options: SecretInput, ctx: PluginCliContext): Promise<{ env: Map<string, string>; source: string }> {
+  const path = options["secrets-file"];
+  if (path === undefined) return stdinSecrets(String(options.secrets));
+  const source = `the file ${path}`;
+  return { env: parseDotenv(await readText(path, ctx), source), source };
 }
 
 async function secretValues(options: SecretInput, ctx: PluginCliContext): Promise<Map<string, string>> {
   const values = new Map<string, string>();
-  const pairs = listOf(options.secret).map((text) => pairOf(text, "--secret"));
+  const pairs = listOf(options.secret).map((text) => unshownPairOf(text, "--secret"));
   if (pairs.length) {
     if (options["secrets-file"] !== undefined && options.secrets !== undefined) throw new PluginCliError("Give --secrets-file or --secrets-stdin, not both.", { code: "invalid_input" });
-    const source = options["secrets-file"] !== undefined ? `the file ${options["secrets-file"]}` : options.secrets !== undefined ? "the line on stdin" : null;
-    if (!source) {
+    if (options["secrets-file"] === undefined && options.secrets === undefined) {
       throw new PluginCliError("--secret names a variable; give the dotenv file that holds it with --secrets-file, or pipe its line in with --secrets-stdin.", {
         code: "missing_required",
         hint: "bb secret request HCLOUD_TOKEN --write-env secrets.env asks the person for it, then: bb box backend add hetzner --secret token=HCLOUD_TOKEN --secrets-file secrets.env",
       });
     }
-    const env = options["secrets-file"] !== undefined ? parseDotenv(await readText(options["secrets-file"], ctx)) : stdinSecrets(String(options.secrets));
+    const { env, source } = await secretSource(options, ctx);
     for (const [field, variable] of pairs) {
       const value = env.get(variable);
-      if (value === undefined) throw new PluginCliError(`${variable} is not in ${source}.`, { code: "invalid_input", hint: `The variable names in it are ${[...env.keys()].join(", ") || "none"}.` });
+      if (value === undefined) {
+        throw new PluginCliError(`The variable that --secret ${field} names is not in ${source}.`, {
+          code: "invalid_input",
+          hint: `It has ${variableCount(env.size)}. Check the name after ${field}= against it. Names and values from it are not shown, as they may hold secrets.`,
+        });
+      }
       values.set(field, value);
     }
   } else if (options["secrets-file"] !== undefined || options.secrets !== undefined) {
     throw new PluginCliError("Name the secret fields to take from it with --secret <field>=<VARIABLE>.", { code: "missing_required" });
   }
   for (const text of listOf(options["secret-file"])) {
-    const [field, path] = pairOf(text, "--secret-file");
+    const [field, path] = unshownPairOf(text, "--secret-file");
     values.set(field, (await readText(path, ctx)).replace(/\r\n/g, "\n").replace(/\n+$/, "\n"));
   }
   return values;
