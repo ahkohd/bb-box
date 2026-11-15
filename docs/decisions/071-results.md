@@ -1635,6 +1635,9 @@ before. Writes stay off on the node until the lead runs
   closed with no exit, or cut short), decides no request on any card and
   changes no guest's lines. Each is named in an `error` line, so the preview
   fails.
+  [104](104-a-card-nvidia-smi-did-not-read-is-not-known-yet-and-blocks-only-itself.md)
+  supersedes this rule: a card `nvidia-smi` did not read blocks decisions
+  on itself alone, and a start on it waits up to 60 s.
 - **A lost ledger** is rebuilt from the guests only from a full reading of
   every card: until `nvidia-smi` gives one, the report says `ledger
   unknown`, nothing is decided, and bb-box places and starts no GPU desktop.

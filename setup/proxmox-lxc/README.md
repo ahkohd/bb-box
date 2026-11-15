@@ -558,6 +558,18 @@ and waits up to 10 s for the helper's answer before it starts the box
   running on the card holds or claims it whole beside it. Then it calls
   Proxmox's own start, stop or delete. Its answer is a `power` line in the
   report, and bb-box takes the tag off. It does this with writes off too.
+- From bb-box-gpu 0.4.4, a card `nvidia-smi` leaves out of a reading, or
+  gives no reading of, is not known yet, and only that card. The service
+  keeps each card's last row for up to 10 s, so a card left out of one
+  tick, or a row that comes late, changes nothing. A start or a claim on a
+  card it read goes ahead. A start on a card it has not read
+  waits, tried again each pass, and goes ahead once the card is read; after
+  60 s it is refused `card-unread`, or `no-cards` when `nvidia-smi` read no
+  card at all. A claim on such a card waits too. No guest's lines for a card
+  it has not read are changed, and no guest's lines are put right until a
+  full reading. The report names each such card in an `unread` line with
+  its device nodes, which the doctor's "Markers on GPU guests" check uses,
+  and its error line goes at the next full reading.
   On a pve-container its release was not tested on, the helper only stops
   guests, and bb-box sends boxes with no GPU through the API. bb-box keeps in its storage which nodes' helpers do this, so after
   a restart too, while the helper is stopped, its report is 3 minutes old,

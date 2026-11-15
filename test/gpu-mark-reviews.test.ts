@@ -5,7 +5,7 @@ import type { GpuMarking } from "../src/backends/types.ts";
 import { markingText } from "../src/plugin/gpu-cli.ts";
 import type { FetchResponse } from "../src/backends/proxmox/api.ts";
 import { Bridge, desktop, request } from "./gpu-helper/bridge.ts";
-import { CARD_A, CARD_B, INSTALL, REPORT_VMID, cardLines, marker } from "./gpu-helper/node.ts";
+import { CARD_A, CARD_B, INSTALL, REPORT_VMID, cardLines, helperVersion, marker } from "./gpu-helper/node.ts";
 
 const A = CARD_A.uuid;
 const B = CARD_B.uuid;
@@ -219,7 +219,7 @@ test("the doctor never passes a report that leaves lines out, or one with no led
   assert.deepEqual((await migration(bridge)).slice(0, 2), ["fail", "VM 9190's report has no ledger lines, which bb-box-gpu 0.2.0 and later write, so BB Box cannot show the helper granted each marker as it stands."]);
   bridge.guest(7301, desktop("bx7301", "new", CARD_B));
   const refused = await bridge.backend().markGpus(request());
-  assert.equal(refused.refused?.detail, "bb-box-gpu 0.4.3 on pve does not report its ledger, which bb box gpu mark needs to ask above each guest's last answered generation and to read each grant.");
+  assert.equal(refused.refused?.detail, `bb-box-gpu ${helperVersion()} on pve does not report its ledger, which bb box gpu mark needs to ask above each guest's last answered generation and to read each grant.`);
   assert.ok(!bridge.tags(7301).some((tag) => tag.startsWith("gpu.")));
 });
 
@@ -241,4 +241,20 @@ test("--undo says plainly that it clears the helper's claims and leaves the devi
   assert.match(markingText([undone]), /cleared the claim of 1 guest\. Each claim is cleared by the GPU helper first, through a gpu\.release marker, which then comes off: the guest keeps its device lines, and the helper no longer writes them\./);
   assert.match(markingText([undone]), /CT 7001 amber-fox, running: took off gpu\.shared\.[0-9a-f-]+\.g1\. The GPU helper cleared its claim; its device lines stay as they are\./);
   assert.match(markingText([{ ...undone, check: true, guests: [{ ...undone.guests[0]!, outcome: "would-unmark", answer: null }] }]), /would clear the claim of 1 guest; changes nothing \(--check\)\./);
+});
+
+test("104: while nvidia-smi leaves a card out, the doctor's marker check knows that card's device nodes from the helper's report, so it fails no guest on it for naming nodes no card has", async () => {
+  const bridge = new Bridge();
+  bridge.guest(7310, desktop("bx7310", "on-zero", CARD_A));
+  bridge.guest(7311, desktop("bx7311", "on-one", CARD_B));
+  bridge.helper();
+  await bridge.backend().markGpus(request());
+  assert.equal((await migration(bridge))[0], "ok");
+  bridge.node.smiReading([bridge.node.smiRow(CARD_B)]);
+  bridge.helper();
+  assert.ok(!bridge.node.reportLines().some((line) => line.startsWith(`card ${A} `)), "card 0 is not read");
+  assert.ok(bridge.node.reportLines().includes(`unread ${A} pci 0000:21:00.0 minor 1 drm card2 renderD129`), bridge.node.reportLines().join("\n"));
+  const check = await migration(bridge);
+  assert.doesNotMatch(String(check[1]), /name nodes no card/);
+  assert.equal(check[0], "ok", String(check[1]));
 });

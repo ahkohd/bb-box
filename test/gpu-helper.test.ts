@@ -128,10 +128,10 @@ test("--help and --version say what the helper is, and an argument it cannot rea
   const node = new FakeNode();
   const help = node.run(["--help"]);
   assert.equal(help.status, 0);
-  assert.match(help.stdout, /^bb-box-gpu 0\.4\.3, protocol 1: the host's GPU helper for bb-box\./);
+  assert.match(help.stdout, /^bb-box-gpu 0\.4\.4, protocol 1: the host's GPU helper for bb-box\./);
   assert.match(help.stdout, /Writes are off\s+unless/);
   assert.match(help.stdout, /bb-box-gpu --preview\n\s+one pass as writes on would make it, changing nothing/);
-  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.4.3 protocol 1\n");
+  assert.equal(node.run(["--version"]).stdout, "bb-box-gpu 0.4.4 protocol 1\n");
   const wrong = node.run(["--writes-on"]);
   assert.equal(wrong.status, 2);
   assert.match(wrong.stderr, /cannot read '--writes-on'/);
@@ -503,7 +503,7 @@ test("the report: today's BB Box reads its at and gpu lines, it names the helper
   assert.ok(Math.abs(read.at - Date.now()) < 60_000);
   const body = node.reportLines();
   assert.deepEqual(body.slice(3, 8), [
-    "helper bb-box-gpu 0.4.3 protocol 1 writes off pve-container 6.1.14 tested",
+    "helper bb-box-gpu 0.4.4 protocol 1 writes off pve-container 6.1.14 tested",
     "serves bbbox",
     body.find((line) => line.startsWith("driver "))!,
     `card ${A} pci 0000:21:00.0 minor 1 drm card2 renderD129`,
@@ -958,7 +958,7 @@ test("071 unit 5: --preview shows what the first pass with writes on would do, a
   const writesBefore = node.writes().length;
   const preview = node.run(["--preview"]);
   assert.equal(preview.status, 0, preview.stderr);
-  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.4\.3 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
+  assert.match(preview.stdout, /^preview: bb-box-gpu 0\.4\.4 on pve-container 6\.1\.14, as its first pass with writes on would go; nothing was written\n/);
   assert.match(preview.stdout, /^would write CT 2301 for request g1: remove dev0 \/dev\/nvidia1,mode=0666, .*; add \/dev\/nvidia0,mode=0666, .*$/m);
   assert.match(preview.stdout, new RegExp(`^would answer: claim 2301 g1 granted shared ${B}$`, "m"));
   assert.match(preview.stdout, /^preview: writes on would write 1 guest$/m);
@@ -1114,36 +1114,40 @@ test("071 unit 5, Astra 4 and Opus 2: the preview fails, and says why, when it r
   assert.match(reading.stdout, /^would write CT 2530 for request g1: /m, "with the cards read, the write it would make shows");
 });
 
-test("071 unit 5, re-review R1: a reading that leaves out a card, has a row it cannot read or ends in an error decides nothing on a card it did not read, writes no guest for one, and fails the preview", () => {
+test("071 unit 5, re-review R1, as 104 changes it: a reading that leaves out a card, has a row it cannot read or ends in an error decides only the cards it read, writes no guest for a card it did not read, and fails the preview", () => {
   const node = new FakeNode({ writes: "on" });
   node.guest(2540, { box: "bx2540", kind: "linux-desktop", marker: marker("shared", CARD_A, 1) });
   node.guest(2541, { box: "bx2541", kind: "linux-desktop", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_A, "desktop") });
   node.guest(2542, { box: "bx2542", kind: "linux-desktop", lines: cardLines(CARD_B, "desktop"), running: true });
-  const guests = snapshot(node, [2540, 2541, 2542]);
-  const partials: readonly { readonly name: string; readonly rows: readonly string[]; readonly ending?: { readonly exit?: number; readonly stderr?: string }; readonly read: "A" | "none"; readonly error: RegExp }[] = [
-    { name: "B's memory unknown, an error and exit 9", rows: [node.smiRow(CARD_A), `GPU-${CARD_B.uuid}, ${CARD_B.bus}, ${CARD_B.index}, [N/A], [N/A]`], ending: { exit: 9, stderr: "Unable to determine the device handle for GPU 00000000:D1:00.0: Unknown Error" }, read: "none", error: /^error nvidia-smi's reading was incomplete \(nvidia-smi gave no GPU memory: GPU-8c41d7b2.*\), so no request on any card is decided and no guest's lines are changed$/ },
-    { name: "every row, then exit 9", rows: [node.smiRow(CARD_A), node.smiRow(CARD_B)], ending: { exit: 9 }, read: "none", error: /^error nvidia-smi's reading was incomplete \(nvidia-smi exited with status 9\), so no request on any card is decided and no guest's lines are changed$/ },
-    { name: "B left out", rows: [node.smiRow(CARD_A)], read: "A", error: new RegExp(`^error nvidia-smi gave no reading of the card at ${pciOf(CARD_B).replace(/\./g, "\\.")}, so no request on it is decided and no guest's lines for it are changed$`) },
+  const unmarked = snapshot(node, [2542]);
+  const incomplete = (why: string) => new RegExp(`^error nvidia-smi's reading was incomplete \\(${why}\\), so only the cards it read are decided, and no guest's lines are put right until a full reading$`);
+  const partials: readonly { readonly name: string; readonly rows: readonly string[]; readonly ending?: { readonly exit?: number; readonly stderr?: string }; readonly read: "A" | "both"; readonly error: RegExp }[] = [
+    { name: "B's memory unknown, an error and exit 9", rows: [node.smiRow(CARD_A), `GPU-${CARD_B.uuid}, ${CARD_B.bus}, ${CARD_B.index}, [N/A], [N/A]`], ending: { exit: 9, stderr: "Unable to determine the device handle for GPU 00000000:D1:00.0: Unknown Error" }, read: "A", error: incomplete("nvidia-smi gave no GPU memory: GPU-8c41d7b2.*") },
+    { name: "B left out", rows: [node.smiRow(CARD_A)], read: "A", error: new RegExp(`^error nvidia-smi gave no reading of the card at ${pciOf(CARD_B).replace(/\./g, "\\.")}, so a request or a start on it waits for one, and no guest's lines for it are changed$`) },
+    { name: "every row, then exit 9", rows: [node.smiRow(CARD_A), node.smiRow(CARD_B)], ending: { exit: 9 }, read: "both", error: incomplete("nvidia-smi exited with status 9") },
   ];
   for (const partial of partials) {
     node.smiReading(partial.rows, partial.ending);
     const preview = node.run(["--preview"]);
     assert.equal(preview.status, 1, `${partial.name}: ${preview.stdout}`);
     assert.match(preview.stdout, /^preview: incomplete, as .*nvidia-smi gave no full reading of every card.*, so it cannot show what writes on would do$/m, partial.name);
-    assert.doesNotMatch(preview.stdout, /^would write CT 2541 /m, `${partial.name}: no write for a card it did not read`);
+    if (partial.read === "A") assert.doesNotMatch(preview.stdout, /^would write CT 2541 /m, `${partial.name}: no write for a card it did not read`);
     ran(node);
     assert.ok(lines(node, "error").some((line) => partial.error.test(line)), `${partial.name}: ${lines(node, "error").join(" | ")}`);
-    assert.ok(!claims(node).some((line) => line.startsWith("claim 2541 ")), `${partial.name}: the request on B waits: ${claims(node).join(" | ")}`);
-    assert.equal(claims(node).some((line) => line.startsWith(`claim 2540 g1 granted shared ${A}`)), partial.read === "A", `${partial.name}: the request on A is decided only when A's reading is whole`);
-    assert.deepEqual(node.lines(2541), cardLines(CARD_A, "desktop"), `${partial.name}: CT 2541 keeps its lines`);
+    assert.ok(claims(node).includes(`claim 2540 g1 granted shared ${A}`), `${partial.name}: the request on A, which read, is decided: ${claims(node).join(" | ")}`);
+    if (partial.read === "A") {
+      assert.ok(!claims(node).some((line) => line.startsWith("claim 2541 ")), `${partial.name}: the request on B waits: ${claims(node).join(" | ")}`);
+      assert.deepEqual(node.lines(2541), cardLines(CARD_A, "desktop"), `${partial.name}: CT 2541 keeps its lines`);
+    } else {
+      assert.ok(claims(node).includes(`claim 2541 g1 granted shared ${B}`), `${partial.name}: with B read, its request is decided: ${claims(node).join(" | ")}`);
+      assert.deepEqual(node.lines(2541), cardLines(CARD_B, "desktop"));
+    }
   }
-  assertUnchanged(node, new Map([...guests].filter(([vmid]) => vmid !== 2540)));
+  assertUnchanged(node, unmarked);
   node.smiReading([node.smiRow(CARD_A), node.smiRow(CARD_B)]);
   const whole = node.run(["--preview"]);
   assert.equal(whole.status, 0, whole.stdout);
-  assert.match(whole.stdout, /^would write CT 2541 for request g1: /m, "with every card read, the write it would make shows");
   ran(node);
-  assert.ok(claims(node).includes(`claim 2541 g1 granted shared ${B}`), claims(node).join("\n"));
   assert.deepEqual(lines(node, "error"), []);
 });
 
@@ -1304,21 +1308,22 @@ test("071 unit 5, final review F2: a lost ledger is rebuilt only from a full rea
   assert.deepEqual(Object.keys(gone.ledger().unsettled ?? {}), [], "a full reading that shows it holds no card lets it go");
 });
 
-test("071 unit 5, final review F3: an nvidia-smi query killed by a signal after every row is an incomplete reading: an error line, nothing decided, and the preview fails", () => {
+test("071 unit 5, final review F3, as 104 changes it: an nvidia-smi query killed by a signal after every row is an incomplete reading: an error line and a failed preview, though the cards it read are decided", () => {
   const node = new FakeNode({ writes: "on" });
   node.guest(2630, { box: "bx2630", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
   node.smiKilled(true);
+  const killed = "error nvidia-smi's reading was incomplete (nvidia-smi was killed by signal 9), so only the cards it read are decided, and no guest's lines are put right until a full reading";
   const preview = node.run(["--preview"]);
   assert.equal(preview.status, 1, preview.stdout);
-  assert.match(preview.stdout, /^error: nvidia-smi's reading was incomplete \(nvidia-smi was killed by signal 9\), so no request on any card is decided and no guest's lines are changed$/m);
+  assert.ok(preview.stdout.split("\n").includes(killed.replace(/^error /, "error: ")), preview.stdout);
   assert.match(preview.stdout, /^preview: incomplete, as .*nvidia-smi gave no full reading of every card/m);
   ran(node);
-  assert.ok(!claims(node).some((line) => line.startsWith("claim 2630 ")), claims(node).join("\n"));
-  assert.ok(lines(node, "error").includes("error nvidia-smi's reading was incomplete (nvidia-smi was killed by signal 9), so no request on any card is decided and no guest's lines are changed"));
+  assert.ok(lines(node, "error").includes(killed), lines(node, "error").join("\n"));
+  assert.ok(claims(node).includes(`claim 2630 g1 granted shared ${A}`), claims(node).join("\n"));
   node.smiKilled(false);
   assert.equal(node.run(["--preview"]).status, 0);
   ran(node);
-  assert.ok(claims(node).includes(`claim 2630 g1 granted shared ${A}`));
+  assert.deepEqual(lines(node, "error"), []);
 });
 
 function loseMapping(node: FakeNode, card: FakeCard, parts: readonly ("minor" | "drm")[]): void {
@@ -1763,4 +1768,131 @@ test("071 unit 6 round 2, Astra 1: a fork's copy cut short before its re-arm, fr
   const said = ran(dry);
   assertUnchanged(dry, before);
   assert.match(said, /would write CT 1621 for not re-armed: remove .*; add nothing; start at boot off/);
+});
+
+function cardsListed(node: FakeNode): string[] {
+  return lines(node, "card").map((line) => line.split(" ")[1]!).sort();
+}
+
+async function holds(what: string, check: () => boolean, ms: number, output: () => string): Promise<void> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    assert.ok(check(), `${what}\n${output()}`);
+    await sleep(100);
+  }
+}
+
+function waitedSince(node: FakeNode, vmid: number, seconds: number): void {
+  const ledger = JSON.parse(readFileSync(node.ledgerPath(), "utf8"));
+  ledger.waiting[String(vmid)].at -= seconds;
+  writeFileSync(node.ledgerPath(), JSON.stringify(ledger));
+}
+
+const PCI_A = pciOf(CARD_A);
+const PCI_B = pciOf(CARD_B);
+
+test("104: a tick whose rows come over a quarter second apart, or a card left out of every other tick, never leaves the service reading one card; a card left out for longer is an error that clears at the next full reading", async () => {
+  const node = new FakeNode({ writes: "on" });
+  const both = [A, B].sort();
+  node.smiReading([node.smiRow(CARD_A), "sleep 0.4", node.smiRow(CARD_B)]);
+  const service = node.start();
+  const whole = () => JSON.stringify(cardsListed(node)) === JSON.stringify(both) && !lines(node, "error").length && !lines(node, "unread").length;
+  const said = () => `${node.reportLines().join("\n")}\n${service.output()}`;
+  try {
+    await until("both cards listed with rows 0.4 s apart", whole, 5_000, said);
+    await holds("both cards stay listed with rows 0.4 s apart", whole, 3_000, said);
+
+    node.smiReading([node.smiRow(CARD_A), node.smiRow(CARD_B)]);
+    node.smiOther([node.smiRow(CARD_A)]);
+    await holds("both cards stay listed with card 1 left out of every other tick", whole, 3_000, said);
+
+    node.smiOther(null);
+    node.smiReading([node.smiRow(CARD_A)]);
+    const leftOut = () => lines(node, "error").includes(`error nvidia-smi gave no reading of the card at ${PCI_B}, so a request or a start on it waits for one, and no guest's lines for it are changed`);
+    await until("card 1 left out for over 10 s is an error", leftOut, helperConstant("READING_FRESH_SECONDS") * 1000 + 5_000, said);
+    assert.deepEqual(cardsListed(node), [A]);
+    assert.deepEqual(lines(node, "unread"), [`unread ${B} pci ${PCI_B} minor 0 drm card1 renderD128`], "the card left out is named with its device nodes");
+
+    node.smiReading([node.smiRow(CARD_A), node.smiRow(CARD_B)]);
+    await until("the error clears at the next full reading", whole, 3_000, said);
+  } finally {
+    service.kill("SIGTERM");
+    assert.equal(await exited(service), 0);
+  }
+});
+
+test("104: with a card left out of nvidia-smi's reading, a start or a claim on a card it read goes ahead; a start on the card left out waits, starts once the card is read, and is refused card-unread after 60 s", () => {
+  const node = new FakeNode({ writes: "on" });
+  node.guest(3110, { box: "bx3110", kind: "linux-desktop", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "desktop") });
+  node.guest(3111, { box: "bx3111", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  ran(node);
+  assert.ok(claims(node).includes(`claim 3110 g1 granted shared ${B}`) && claims(node).includes(`claim 3111 g1 granted shared ${A}`), claims(node).join("\n"));
+
+  node.smiReading([node.smiRow(CARD_B)]);
+  node.guest(3112, { box: "bx3112", kind: "linux-desktop", marker: marker("shared", CARD_B, 1) });
+  node.guest(3113, { box: "bx3113", kind: "linux-desktop", marker: marker("shared", CARD_A, 1) });
+  node.ask(3110, asked("start", "bx3110", 1, "4a4a4a4a"));
+  node.ask(3111, asked("start", "bx3111", 1, "4b4b4b4b"));
+  const said = ran(node) + ran(node);
+  assert.deepEqual(node.powerLog(), ["start 3110"], "the box on card 1, which read, starts");
+  assert.deepEqual(powered(node), ["power 3110 n4a4a4a4a start done"], "the box on card 0, left out, is not answered yet");
+  assert.match(said, new RegExp(`power CT 3111 start n4b4b4b4b waits: nvidia-smi has given no reading of the card at ${PCI_A.replace(/\./g, "\\.")}, so it is tried again each pass for up to 60 s`));
+  assert.ok(claims(node).includes(`claim 3112 g1 granted shared ${B}`), `a claim on the card that read is granted: ${claims(node).join(" | ")}`);
+  assert.deepEqual(node.lines(3112), cardLines(CARD_B, "desktop"));
+  assert.ok(!claims(node).some((line) => line.startsWith("claim 3113 ")), "a claim on the card left out waits");
+  assert.deepEqual(node.lines(3113), []);
+  assert.deepEqual(lines(node, "unread"), [`unread ${A} pci ${PCI_A} minor 1 drm card2 renderD129`]);
+
+  node.smiReading([node.smiRow(CARD_A), node.smiRow(CARD_B)]);
+  ran(node);
+  assert.deepEqual(node.powerLog(), ["start 3110", "start 3111"], "the box on card 0 starts once card 0 is read");
+  assert.ok(powered(node).includes("power 3111 n4b4b4b4b start done"));
+  assert.ok(claims(node).includes(`claim 3113 g1 granted shared ${A}`));
+  assert.deepEqual([lines(node, "error"), lines(node, "unread")], [[], []]);
+  assert.deepEqual(node.ledger().waiting, {}, "nothing waits");
+
+  node.setRunning(3111, false);
+  node.smiReading([node.smiRow(CARD_B)]);
+  node.ask(3111, asked("start", "bx3111", 1, "4c4c4c4c"));
+  ran(node);
+  assert.ok(!powered(node).some((line) => line.startsWith("power 3111 n4c4c4c4c")), powered(node).join("\n"));
+  waitedSince(node, 3111, helperConstant("UNREAD_START_WAIT_SECONDS") - 5);
+  ran(node);
+  assert.ok(!powered(node).some((line) => line.startsWith("power 3111 n4c4c4c4c")), "it still waits within 60 s");
+  waitedSince(node, 3111, 6);
+  ran(node);
+  assert.ok(powered(node).includes(`power 3111 n4c4c4c4c start refused card-unread ${PCI_A}`), powered(node).join("\n"));
+  assert.ok(!node.isRunning(3111));
+  assert.deepEqual(node.ledger().waiting, {});
+
+  node.smiReading([node.smiRow(CARD_A), node.smiRow(CARD_B)]);
+  loseMapping(node, CARD_A, ["drm"]);
+  node.setRunning(3110, false);
+  node.ask(3110, asked("start", "bx3110", 1, "4d4d4d4d"));
+  ran(node);
+  assert.ok(powered(node).includes("power 3110 n4d4d4d4d start refused card-nodes"), `a card the helper cannot map still refuses every start at once: ${powered(node).join(" | ")}`);
+});
+
+test("104: when nvidia-smi fails, or times out, a start on a GPU box waits rather than is refused no-cards, and goes ahead at the next reading", () => {
+  const node = new FakeNode({ writes: "on" });
+  node.guest(3120, { box: "bx3120", kind: "linux-desktop", marker: marker("shared", CARD_A, 1), lines: cardLines(CARD_A, "desktop") });
+  node.guest(3121, { box: "bx3121", kind: "linux-desktop", marker: marker("shared", CARD_B, 1), lines: cardLines(CARD_B, "desktop") });
+  ran(node);
+
+  node.smiFails(true);
+  node.ask(3121, asked("start", "bx3121", 1, "5a5a5a5a"));
+  assert.match(ran(node), /power CT 3121 start n5a5a5a5a waits: nvidia-smi has given no reading of the cards, so it is tried again each pass for up to 60 s/);
+  assert.deepEqual(powered(node), [], "a failed reading is not known yet, so the start is not refused");
+  assert.deepEqual(lines(node, "unread"), [`unread ${A} pci ${PCI_A} minor 1 drm card2 renderD129`, `unread ${B} pci ${PCI_B} minor 0 drm card1 renderD128`], "with no reading, each card the driver lists is named with its device nodes");
+  node.smiFails(false);
+
+  node.smiReading([node.smiRow(CARD_A), "stall"]);
+  node.ask(3120, asked("start", "bx3120", 1, "5b5b5b5b"));
+  assert.match(ran(node), /power CT 3120 start n5b5b5b5b waits: nvidia-smi has given no reading of the cards/, "a reading that timed out is too old to use");
+  assert.deepEqual(powered(node), []);
+
+  node.smiReading([node.smiRow(CARD_A), node.smiRow(CARD_B)]);
+  ran(node);
+  assert.deepEqual(node.powerLog(), ["start 3120", "start 3121"], "both starts that waited go ahead once their cards are read");
+  assert.deepEqual(powered(node), ["power 3120 n5b5b5b5b start done", "power 3121 n5a5a5a5a start done"]);
 });
