@@ -36,6 +36,7 @@ import {
   type ProjectChoice,
   unshownPairOf,
 } from "./config-edits.ts";
+import { readFailure } from "./unshown-input.ts";
 import { doctorText, problemsText } from "./views.ts";
 import { PRODUCT } from "../brand.ts";
 
@@ -87,13 +88,6 @@ function json(value: unknown, exitCode = 0): PluginCliResult {
 }
 
 const READ_HINT = "The file is read on the machine BB's server runs on. From another machine, pipe a secret in with --secrets-stdin.";
-const READ_FAILURES: Readonly<Record<string, string>> = {
-  ENOENT: "it was not found",
-  EACCES: "it is not readable",
-  EPERM: "it is not readable",
-  EISDIR: "it is a folder",
-  ENOTDIR: "part of its path is not a folder",
-};
 
 function workingFolder(ctx: PluginCliContext): string {
   return ctx.cwd ?? process.cwd();
@@ -101,11 +95,6 @@ function workingFolder(ctx: PluginCliContext): string {
 
 function pathFrom(path: string, ctx: PluginCliContext): string {
   return isAbsolute(path) ? path : resolve(workingFolder(ctx), path);
-}
-
-function readFailure(error: unknown): string {
-  const code = (error as NodeJS.ErrnoException | null)?.code;
-  return (code && READ_FAILURES[code]) || "it could not be read";
 }
 
 async function readText(path: string, ctx: PluginCliContext): Promise<string> {

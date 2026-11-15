@@ -25,6 +25,7 @@ import { isGpuPart } from "../core/gpu.ts";
 import { snapshotStatusLine } from "./snapshot-words.ts";
 import { importChangeText } from "../app/settings-import.ts";
 import { PRODUCT } from "../brand.ts";
+import { jsonFaultOf, readFailure } from "./unshown-input.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -159,21 +160,28 @@ async function readTextFile(path: string, ctx: PluginCliContext): Promise<string
 /** A comma-separated list, such as linux,linux-desktop-cpu. */
 const listOf = (value: unknown) => String(value ?? "").split(",").map((item) => item.trim()).filter(Boolean);
 
+const CONFIG_FILE_UNSHOWN = "Its path and text are not shown, as a configuration file may hold secrets.";
+
 async function readConfigFile(path: string, ctx: PluginCliContext): Promise<unknown> {
-  const file = isAbsolute(path) ? path : resolve(ctx.cwd ?? process.cwd(), path);
+  const folder = ctx.cwd ?? process.cwd();
   let text: string;
   try {
-    text = await readFile(file, "utf8");
+    text = await readFile(isAbsolute(path) ? path : resolve(folder, path), "utf8");
   } catch (error) {
-    throw new PluginCliError(`Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`, {
+    throw new PluginCliError(`Cannot read the configuration file: ${readFailure(error)}. ${CONFIG_FILE_UNSHOWN}`, {
       code: "invalid_input",
-      hint: "The file is read on the machine BB's server runs on.",
+      hint: `A relative path is from ${folder}. The file is read on the machine BB's server runs on.`,
     });
   }
   try {
     return JSON.parse(text);
-  } catch (error) {
-    throw new PluginCliError(`${file} is not JSON: ${error instanceof Error ? error.message : String(error)}`, { code: "invalid_input" });
+  } catch {
+    const fault = jsonFaultOf(text);
+    const where = fault ? `, at line ${fault.line}, column ${fault.column}: ${fault.words}` : "";
+    throw new PluginCliError(`The configuration file is not valid JSON${where}. ${CONFIG_FILE_UNSHOWN}`, {
+      code: "invalid_input",
+      hint: "bb box config show --json prints the configuration as JSON to start from.",
+    });
   }
 }
 

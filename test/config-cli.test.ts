@@ -17,7 +17,7 @@ import { parseDotenv } from "../src/plugin/config-edits.ts";
 import type { ApplyResult } from "../src/plugin/configuration.ts";
 import { setup, type BbBox } from "../src/plugin/setup.ts";
 import { FakeBackend, fakeDriver } from "./fake-backend.ts";
-import { tempDir } from "./helpers.ts";
+import { seededRandom, tempDir } from "./helpers.ts";
 
 const THREAD = "thr_config_cli";
 const TOKEN = "made-up-cli-token-7f3a";
@@ -284,21 +284,34 @@ test("a value given by mistake as a --secret, a --secret-file or a --secrets-fil
   for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `a value given by mistake was printed: ${text}`);
 });
 
+function draftWithToken(token: string): string {
+  return JSON.stringify({ backends: [{ id: "fake", type: "fake", enabled: true, fields: { token } }] }, null, 2);
+}
+
+test("a configuration file that is not JSON is refused by line, column and kind, never its path or text, plain or --json", async () => {
+  const { cli, seen, dir } = await start();
+  const broken = draftWithToken(NAME_SHAPED_VALUE).replace(`"${NAME_SHAPED_VALUE}"`, `"${NAME_SHAPED_VALUE}"x`);
+  const faultLine = broken.split("\n").findIndex((line) => line.includes(NAME_SHAPED_VALUE));
+  const faultColumn = broken.split("\n")[faultLine]!.indexOf(`"x`) + 2;
+  writeFileSync(join(dir, `${NAME_SHAPED_VALUE}.json`), broken);
+  for (const command of ["check", "apply"]) {
+    for (const json of [[], ["--json"]]) {
+      const ran = await cli(["config", command, `${NAME_SHAPED_VALUE}.json`, ...json], dir);
+      assert.equal(ran.exitCode, 1);
+      assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, new RegExp(`The configuration file is not valid JSON, at line ${faultLine + 1}, column ${faultColumn}: a character JSON does not allow there\\. Its path and text are not shown`));
+    }
+  }
+  const missing = await cli(["config", "check", NAME_SHAPED_VALUE], dir);
+  assert.match(missing.stderr ?? "", /^Cannot read the configuration file: it was not found\. Its path and text are not shown/);
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `the configuration file's path or text was printed: ${text}`);
+});
+
 const FUZZ_ROUNDS = 300;
+const JSON_FUZZ_ROUNDS = 150;
 const FUZZ_SEED = 0x5eed_b0c5;
 const SHORTEST_LEAK = 8;
 const VALUE_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-.";
 const NAME_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_";
-
-function seededRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let mixed = Math.imul(state ^ (state >>> 15), 1 | state);
-    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
-    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 function leakedPiece(output: string, values: readonly string[]): string | null {
   for (const value of values) {
@@ -310,7 +323,7 @@ function leakedPiece(output: string, values: readonly string[]): string | null {
   return null;
 }
 
-test("fuzzed secret input and arguments never put 8 or more characters of a secret value in the output, plain or --json", async () => {
+test("fuzzed secret input, arguments and configuration files never put 8 or more characters of a secret value in the output, plain or --json", async () => {
   const { cli, dir } = await start();
   const random = seededRandom(FUZZ_SEED);
   const pick = <T,>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!;
@@ -360,6 +373,28 @@ test("fuzzed secret input and arguments never put 8 or more characters of a secr
     assert.equal(leakedPiece(output, values), null, `round ${round} printed part of a value: ${output}`);
   }
   assert.ok(refused > FUZZ_ROUNDS / 4, `only ${refused} of ${FUZZ_ROUNDS} rounds were refused, so few error paths ran`);
+  const jsonBreakings: ((draft: string, value: string) => string)[] = [
+    (draft) => draft,
+    (draft) => draft.slice(0, Math.floor(random() * draft.length)),
+    (draft, value) => draft.replace(`"${value}"`, `"${value}`),
+    (draft, value) => draft.replace(`"${value}"`, `"${value}"${pick(["x", "'", ",", "\\", "\u0001"])}`),
+    (draft, value) => draft.replace(`"${value}"`, value),
+    (draft, value) => draft.replace(`"${value}"`, `"${value.slice(0, 6)}\\q${value.slice(6)}"`),
+    (draft, value) => draft.replace(`"${value}"`, `"${value.slice(0, 6)}\n${value.slice(6)}"`),
+    (draft, value) => draft.replace(`"token"`, `"${value}" ${value}`),
+    (draft, value) => `${draft}\n${value}`,
+  ];
+  let jsonRefused = 0;
+  for (let round = 0; round < JSON_FUZZ_ROUNDS; round += 1) {
+    const value = madeUpValue();
+    const name = `draft-${round}.json`;
+    writeFileSync(join(dir, name), pick(jsonBreakings)(draftWithToken(value), value));
+    const ran = await cli(["config", pick(["check", "apply"]), pick([name, value]), ...pick([[], ["--json"]])], dir);
+    if (ran.exitCode !== 0) jsonRefused += 1;
+    const output = `${ran.stdout ?? ""}${ran.stderr ?? ""}`;
+    assert.equal(leakedPiece(output, [value]), null, `JSON round ${round} printed part of a value: ${output}`);
+  }
+  assert.ok(jsonRefused > JSON_FUZZ_ROUNDS / 2, `only ${jsonRefused} of ${JSON_FUZZ_ROUNDS} JSON rounds were refused, so few error paths ran`);
 });
 
 test("a stale --revision is refused with the revision it is at, and the right one saves", async () => {
