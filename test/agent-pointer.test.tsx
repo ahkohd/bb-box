@@ -59,6 +59,23 @@ describe("the agent's pointer on a Linux desktop (105)", () => {
     expect(shape()).toBe("arrow");
   });
 
+  test("shows a shape a viewer is told of as it connects, for what is left of its hold", () => {
+    const { pointer, shape } = watched();
+    pointer.message("BB_AGENT,at,640,360");
+    pointer.message("BB_AGENT,held,640,360,hand,120");
+    expect(shape()).toBe("hand");
+    vi.advanceTimersByTime(110);
+    expect(shape()).toBe("hand");
+    vi.advanceTimersByTime(20);
+    expect(shape()).toBe("arrow");
+    pointer.message("BB_AGENT,held,640,360,ibeam");
+    vi.advanceTimersByTime(10_000);
+    expect(shape()).toBe("ibeam");
+    pointer.message("BB_AGENT,scroll,700,360");
+    vi.advanceTimersByTime(310);
+    expect(shape()).toBe("arrow");
+  });
+
   test("is the arrow for a click whose element's role is not known, and for a shape it does not know", () => {
     const { pointer, shape } = watched();
     pointer.message("BB_AGENT,click,640,360");

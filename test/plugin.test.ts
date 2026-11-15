@@ -4524,11 +4524,65 @@ test("on a Linux desktop, the agent's pointer is a hand on a link or button it c
   await until("three clicks told", async () => agentShapes(vnc).length === 3);
   assert.deepEqual(agentShapes(vnc), ["BB_AGENT,click,170,680,hand", "BB_AGENT,click,500,115", "BB_AGENT,click,400,640,ibeam"]);
 
-  await tool("computer_screenshot", { box: box.name, window: 100 });
-  await tool("computer_act", { box: box.name, action: "click", window: 100, x: 750, y: 540 });
-  await until("the button told", async () => agentShapes(vnc).length === 4);
-  assert.equal(agentShapes(vnc)[3], "BB_AGENT,click,850,640,hand", "a click by the window's own pixels hit-tests the tree it read");
   await vnc.close();
+});
+
+test("a click by a window's pixels takes its shape from the window's tree when the click itself read it (105)", async (t) => {
+  const { harness, app, box, tool } = await desktopBox({ computer: { idleMs: 100 } });
+  t.after(() => harness.lifecycle.dispose());
+  const vnc = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
+  await tool("computer_screenshot", { box: box.name, window: 100 });
+  await until("the idle session to close", async () => !app.computer.connected(box.id));
+  await tool("computer_act", { box: box.name, action: "click", window: 100, x: 750, y: 540 });
+  await until("the button told", async () => agentShapes(vnc).length === 1);
+  assert.deepEqual(agentShapes(vnc), ["BB_AGENT,click,850,640,hand"]);
+  await vnc.close();
+});
+
+test("a click by a window's pixels takes no shape from a tree read before the action, which may be out of date (105)", async (t) => {
+  const { harness, app, box, file, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  editDesktop(file, (desktop) => {
+    desktop.windows[0]!.helpLink = true;
+  });
+  const vnc = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
+  await tool("computer_screenshot", { box: box.name, window: 100 });
+  editDesktop(file, (desktop) => {
+    desktop.windows[0]!.helpLink = false;
+  });
+  app.recordings.begin(box.id, 0, "linux");
+  await tool("computer_act", { box: box.name, action: "click", window: 100, x: 70, y: 580 });
+  await until("the click told", async () => agentShapes(vnc).length === 1);
+  assert.deepEqual(agentShapes(vnc), ["BB_AGENT,click,170,680"], "the link was in the tree read with the image, but has gone since");
+  const clicks = app.recordings.end(box.id)!.filter((event) => event.type === "click");
+  assert.deepEqual(
+    clicks.map((event) => event.type === "click" && event.role),
+    [null],
+  );
+  await vnc.close();
+});
+
+test("a viewer that connects while the agent types, or while an I-beam is held after a click on a text field, is shown that shape (105)", async (t) => {
+  const { harness, app, box, tool } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const running = (await only(app))!;
+  const agentSaid = (session: { sent: readonly (string | Uint8Array)[] }) => session.sent.filter((message): message is string => typeof message === "string" && message.startsWith("BB_AGENT,"));
+  const viewer = async (number: number, count: number) => {
+    const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-0000${number}&stream=pointer`);
+    await until(`viewer ${number} told`, async () => agentSaid(session).length >= count);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const told = agentSaid(session);
+    await session.close();
+    return told;
+  };
+  await tool("computer_screenshot", { box: box.name });
+  await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 327, y: 523 });
+  assert.deepEqual(await viewer(1, 2), ["BB_AGENT,at,400,640", "BB_AGENT,held,400,640,ibeam"], "the I-beam held after a click on a text field, until the pointer moves");
+
+  await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 408, y: 94 });
+  app.desktops.agentTyping(running, { characters: 8, secret: false, role: "text" }, Date.now());
+  assert.deepEqual(await viewer(2, 2), ["BB_AGENT,at,500,115", "BB_AGENT,typing,500,115"], "the I-beam while the agent types");
+
 });
 
 test("on a Linux desktop, the agent's pointer is an I-beam while it types into a known text field, at its last place, and nowhere when it has none (105)", async (t) => {

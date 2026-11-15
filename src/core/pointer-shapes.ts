@@ -1,3 +1,4 @@
+import type { AgentPlace } from "./pointer.ts";
 import type { PointerShape } from "./record-cursors.ts";
 import { TYPING_AFTER_S, TYPING_LEAST_S } from "./record-keys.ts";
 
@@ -118,4 +119,100 @@ export function resolveShapes(requests: readonly ShapeRequest[], length: number,
 
 export function shapeAt(spans: readonly ShapeSpan[], t: number): PointerShape {
   return (spans.find((span) => t >= span.from && t < span.to) ?? spans.at(-1))?.shape ?? "arrow";
+}
+
+type OpenUntil = "moved" | "typed";
+
+interface HeldShape {
+  readonly shape: ActionShape;
+  readonly from: number;
+  readonly openUntil: OpenUntil | null;
+  readonly firm: boolean;
+  readonly request: ShapeRequest;
+}
+
+export interface ShapeNow {
+  readonly shape: ActionShape;
+  readonly changesAt: number | null;
+}
+
+const PAST_KEPT_S = 10;
+const OPEN_MARGIN_S = 1;
+
+function asActionShape(shape: PointerShape): ActionShape {
+  return shape === "hand" || shape === "ibeam" ? shape : "arrow";
+}
+
+export class ShapeTimeline {
+  #held: HeldShape[] = [];
+  #place: { readonly x: number; readonly y: number } | null = null;
+  readonly #since: number;
+
+  constructor(since: number) {
+    this.#since = since;
+  }
+
+  act(place: AgentPlace, at: number): void {
+    const now = at - this.#since;
+    const moved = !this.#place || this.#place.x !== place.x || this.#place.y !== place.y;
+    this.#place = { x: place.x, y: place.y };
+    if (moved) this.#close("moved", (held) => clickHeld(held.shape, held.from, now));
+    if (place.act === "typed") this.#close("typed", (held) => typingHeld(held.from, now));
+    if (place.act === "click" && place.shape) {
+      const open = place.shape === "ibeam";
+      const request = clickHeld(place.shape, now, open ? Infinity : now);
+      if (request) this.#held.push({ shape: place.shape, from: now, openUntil: open ? "moved" : null, firm: false, request });
+    }
+    if (place.act === "held" && place.shape) {
+      const open = place.forMs === undefined && place.shape === "ibeam";
+      const to = open ? Infinity : now + (place.forMs ?? SHAPE_HOLD_S * 1000) / 1000;
+      this.#held.push({ shape: place.shape, from: now, openUntil: open ? "moved" : null, firm: !open, request: { from: now, to, shape: place.shape, rank: CLICK_RANK } });
+    }
+    if (place.act === "typing" && !this.#held.some((held) => held.openUntil === "typed")) {
+      this.#held.push({ shape: "ibeam", from: now, openUntil: "typed", firm: false, request: typingHeld(now, Infinity) });
+    }
+    this.#held = this.#held.filter((held) => held.openUntil || held.request.to > now - PAST_KEPT_S);
+  }
+
+  now(at: number): ShapeNow {
+    const now = at - this.#since;
+    const spans = this.#spans(now);
+    const next = spans.find((span) => span.from > now);
+    return { shape: asActionShape(shapeAt(spans, now)), changesAt: next ? next.from + this.#since : null };
+  }
+
+  replay(at: number): AgentPlace[] {
+    const place = this.#place;
+    if (!place) return [];
+    const now = at - this.#since;
+    const spans = this.#spans(now);
+    const current = spans.find((span) => now >= span.from && now < span.to);
+    const shape = asActionShape(current?.shape ?? "arrow");
+    const typing = this.#held.some((held) => held.openUntil === "typed");
+    const out: AgentPlace[] = typing ? [{ act: "typing", ...place }] : [];
+    if (!current || shape === "arrow") return out;
+    const open = current.to >= this.#horizon(now) - 1e-3;
+    if (open && typing && shape === "ibeam" && !this.#held.some((held) => held.openUntil === "moved")) return out;
+    if (open) return [...out, { act: "held", ...place, shape }];
+    return [...out, { act: "held", ...place, shape, forMs: Math.round((current.to - now) * 1000) }];
+  }
+
+  #close(until: OpenUntil, closed: (held: HeldShape) => ShapeRequest | null): void {
+    this.#held = this.#held.flatMap((held) => {
+      if (held.openUntil !== until) return [held];
+      const request = closed(held);
+      return request ? [{ ...held, openUntil: null, request }] : [];
+    });
+  }
+
+  #horizon(now: number): number {
+    return Math.max(now, ...this.#held.map((held) => held.request.to).filter(Number.isFinite)) + OPEN_MARGIN_S;
+  }
+
+  #spans(now: number): ShapeSpan[] {
+    const horizon = this.#horizon(now);
+    const requests = this.#held.map((held) => ({ ...held.request, to: Math.min(held.request.to, horizon) }));
+    const firmEnds = this.#held.filter((held) => held.firm).map((held) => held.request.to);
+    return resolveShapes(requests, horizon, firmEnds);
+  }
 }

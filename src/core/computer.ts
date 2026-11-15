@@ -332,6 +332,7 @@ interface Target {
   readonly element: Element | null;
   readonly coordinates?: string;
   readonly screen?: Point;
+  readonly readByAction?: boolean;
 }
 
 interface Image extends Size {
@@ -1192,7 +1193,8 @@ export class Computer {
     const window = target.snapshot?.window ? toArea(target.snapshot.window) : null;
     const area = framesPlaceActions(use.box.capabilities.os) ? (target.element?.frame ?? null) : null;
     const point = area ? { x: area.x + area.width / 2, y: area.y + area.height / 2 } : (target.screen ?? this.#windowPoint(use, target));
-    const role = target.element?.role ?? (input.action === "set_value" ? null : shapingRoleAt(target.snapshot ?? treeUnder, point));
+    const treeReadByAction = target.readByAction ? target.snapshot : treeUnder;
+    const role = target.element?.role ?? (input.action === "set_value" ? null : shapingRoleAt(treeReadByAction, point));
     if (input.action === "set_value") {
       const value = input.value ?? "";
       const secret = typingKeptSecret(typedField(target.element), value);
@@ -2550,9 +2552,11 @@ export class Computer {
       };
     }
     let snapshot = use.state.snapshots.get(window);
+    let readByAction = false;
     if (!snapshot || snapshot.generation !== use.state.live?.generation || !snapshot.screenshot) {
       const read = await this.#read(use, window, false);
       snapshot = read.snapshot;
+      readByAction = true;
       if (read.dropped) {
         throw new ComputerError("stale", `Window ${window} changed size since your image of it, so its pixels no longer match.`, `Take a new image with computer_screenshot, window ${window}.`);
       }
@@ -2567,6 +2571,7 @@ export class Computer {
       snapshot,
       element: null,
       coordinates: coordinates(held, held.source, "window"),
+      readByAction,
     };
   }
 
