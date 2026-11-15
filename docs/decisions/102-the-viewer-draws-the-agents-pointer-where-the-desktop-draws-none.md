@@ -1,6 +1,6 @@
 # 102: The viewer draws the agent's pointer where the desktop draws none
 
-Status: accepted, 14 November 2026. Extends [060](060-every-desktop-streams-as-video-through-one-viewer.md) and [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md).
+Status: accepted, 14 November 2026. Extends [060](060-every-desktop-streams-as-video-through-one-viewer.md) and [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md). Extended by [105](105-the-live-agent-pointer-changes-shape-by-the-rules-recordings-use.md): the pointer is no longer always the arrow.
 
 ## Context
 

@@ -1064,6 +1064,7 @@ export async function setup(bb: BbPluginApi, options: SetupOptions = {}): Promis
       recordings.acted(box.id, input, sentAt);
       desktops?.agentActed(box, input, sentAt);
     },
+    onTyping: (box, typing, sentAt) => desktops?.agentTyping(box, typing, sentAt),
     async spawn(box, script, signal) {
       const { command } = await boxes.transports(box);
       if (!command?.spawn) throw new BoxError("unsupported", `Box ${box.name}'s command transport cannot start the computer-use driver.`);

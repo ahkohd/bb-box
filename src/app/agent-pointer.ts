@@ -1,12 +1,11 @@
 import { AGENT_VERB, agentPlaceOf, type AgentPlace } from "../core/pointer.ts";
+import { CURSOR_HOTSPOTS, type ActionShape } from "../core/pointer-shapes.ts";
 import { CURSOR_PARTS, type CursorInk } from "../core/record-cursor-paths.ts";
 import type { Picture } from "./box-pointer.ts";
 
 const SVG = "http://www.w3.org/2000/svg";
-const ARROW_VIEW = 32;
-const ARROW_HOTSPOT = 8.4;
-const ARROW_PX = 40;
-const ARROW_OFFSET_PX = -(ARROW_HOTSPOT * ARROW_PX) / ARROW_VIEW;
+const CURSOR_VIEW = 32;
+const CURSOR_PX = 40;
 const RING_PX = 36;
 const RING_MS = 600;
 const INK_COLOURS: Readonly<Record<CursorInk, string>> = { ink: "var(--primary)", paper: "var(--primary-foreground)" };
@@ -15,19 +14,29 @@ function reducedMotion(): boolean {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function arrow(): SVGSVGElement {
+function cursor(shape: ActionShape): SVGSVGElement {
+  const [hotX, hotY] = CURSOR_HOTSPOTS[shape];
   const svg = document.createElementNS(SVG, "svg");
-  svg.setAttribute("viewBox", `0 0 ${ARROW_VIEW} ${ARROW_VIEW}`);
-  svg.setAttribute("width", String(ARROW_PX));
-  svg.setAttribute("height", String(ARROW_PX));
+  svg.setAttribute("viewBox", `0 0 ${CURSOR_VIEW} ${CURSOR_VIEW}`);
+  svg.setAttribute("width", String(CURSOR_PX));
+  svg.setAttribute("height", String(CURSOR_PX));
   svg.setAttribute("aria-hidden", "true");
-  svg.style.cssText = `position:absolute;left:${ARROW_OFFSET_PX}px;top:${ARROW_OFFSET_PX}px;overflow:visible`;
-  const parts = CURSOR_PARTS.arrow;
+  svg.style.cssText = `position:absolute;left:${-(hotX * CURSOR_PX) / CURSOR_VIEW}px;top:${-(hotY * CURSOR_PX) / CURSOR_VIEW}px;overflow:visible`;
+  const parts = CURSOR_PARTS[shape];
   for (const part of [...parts.outlines, ...parts.fills]) {
     const path = document.createElementNS(SVG, "path");
     path.setAttribute("d", part.d);
     path.setAttribute("fill", INK_COLOURS[part.ink]);
     path.setAttribute("fill-rule", "evenodd");
+    svg.appendChild(path);
+  }
+  for (const part of parts.strokes) {
+    const path = document.createElementNS(SVG, "path");
+    path.setAttribute("d", part.d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", INK_COLOURS[part.ink]);
+    path.setAttribute("stroke-width", "1");
+    path.setAttribute("stroke-linecap", "round");
     svg.appendChild(path);
   }
   return svg;
@@ -38,6 +47,7 @@ export class AgentPointer {
   #shown: HTMLDivElement | null = null;
   #picture: Picture | null = null;
   #hidden = true;
+  #shape: ActionShape = "arrow";
   readonly #container: HTMLElement;
 
   constructor(container: HTMLElement) {
@@ -48,8 +58,9 @@ export class AgentPointer {
     const comma = text.indexOf(",");
     if ((comma < 0 ? text : text.slice(0, comma)) !== AGENT_VERB) return false;
     const place = agentPlaceOf(text.slice(comma + 1));
-    if (!place) return true;
+    if (!place || !this.#onScreen(place)) return true;
     this.#place = place;
+    if (place.act === "shape") this.#shape = place.shape ?? "arrow";
     this.#draw();
     if (place.act === "click") this.#ring(place);
     return true;
@@ -59,6 +70,11 @@ export class AgentPointer {
     this.#picture = picture && picture.desktopWidth && picture.desktopHeight && picture.width && picture.height ? picture : null;
     this.#hidden = hidden;
     this.#draw();
+  }
+
+  #onScreen(place: AgentPlace): boolean {
+    const picture = this.#picture;
+    return !picture || (place.x < picture.desktopWidth && place.y < picture.desktopHeight);
   }
 
   #at(place: AgentPlace): { left: number; top: number } | null {
@@ -77,8 +93,11 @@ export class AgentPointer {
       this.#shown = document.createElement("div");
       this.#shown.dataset.testid = "agent-pointer";
       this.#shown.style.cssText = "position:absolute;width:0;height:0;pointer-events:none;z-index:2";
-      this.#shown.appendChild(arrow());
       this.#container.appendChild(this.#shown);
+    }
+    if (this.#shown.dataset.shape !== this.#shape) {
+      this.#shown.dataset.shape = this.#shape;
+      this.#shown.replaceChildren(cursor(this.#shape));
     }
     Object.assign(this.#shown.style, { display: "block", left: `${at.left}px`, top: `${at.top}px` });
   }

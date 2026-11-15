@@ -1,0 +1,32 @@
+# 105: The live agent pointer changes shape by the rules recordings use
+
+Status: accepted, 15 November 2026. Extends [102](102-the-viewer-draws-the-agents-pointer-where-the-desktop-draws-none.md) and [073](073-recordings-draw-the-pointer-keys-and-zooms-from-the-event-log.md).
+
+## Context
+
+Since 102, the Box panel draws the agent's pointer over a Linux desktop where the agent clicks or scrolls by pixels. It was always the arrow. A recording's pointer already changes shape (073): a hand on a link or button it clicks, a text cursor on a text field it clicks or types into, and drag cursors while a person drags, each held for at least 0.3 seconds. People watching live saw the agent click links and type into fields with an arrow that never changed, then saw the same work in a recording with a hand and a text cursor.
+
+Two things stood in the way. A click by pixels named no element, so it had no role to take a shape from, in the live pointer or in a recording. And typing reached the viewers only after it ended, as recordings log it then.
+
+## Decision
+
+- One module, `src/core/pointer-shapes.ts`, holds the shape rules: a click's shape from its element's role, typing's shape, how long each is held, and how held shapes resolve over time. Recordings and the live pointer both use it, so they share how a role gives a shape and how long each shape is held. Their timelines can still differ: only a recording ends a shape as its window closes, or moves the pointer in glides, and a recording works out its shapes from its whole log after it ends.
+- A click on a link or button shows a hand for 0.3 seconds. A click on a text field shows a text cursor until the pointer moves to another place, for at least 0.3 seconds. Typing into a text field shows a text cursor from its start until 1 second after it ends. A secret, or typing whose field's role is not known, keeps the arrow. A shape shorter than 0.3 seconds is held to 0.3 seconds before the next.
+- A click by pixels takes its role only from a window's tree read by that action, before it clicked: the tree of the window under the point, read only when it is small, for a click on the desktop's pixels, or the window's tree, for a click on a window's pixels when the action had to read it again. A tree kept from an earlier action, such as the one read with the agent's image of the window, may be out of date, and is not used. A tree cut short is not used either. BB Box reads nothing more for it, so an action takes no longer. Where the point is in no element whose role gives a shape, or the window was too large to read quickly, the pointer stays the arrow. The smallest element at the point whose role gives a shape wins, so a button inside a text field shows a hand.
+- The role goes into the recording's log too, so a recording shows the same shape for a click by pixels as the live pointer did.
+- Typing counts from its start to its end, at the place the agent last clicked or scrolled by pixels. Where the agent has acted at no known place yet, nothing is shown, as in 102. Setting a value counts as typing that ends at once.
+- The plugin is the only place the live shape is worked out. For each box it keeps the shape showing now, where the pointer is, and when the shape next changes, and works these out as each action comes, by the shared rules. It keeps only the holds that can still change what shows, at most one of each kind, so the state stays the same size however many actions come. Whenever the shape changes, as an action comes or a hold ends by its one timer, it tells every viewer `BB_AGENT,shape,<x>,<y>,<arrow|hand|ibeam>`. No time goes on the wire.
+- A viewer that connects is told once where the agent last acted and the shape showing now, so it shows what a viewer watching all along shows. The panel draws only what it is told and keeps no timers for the shape. Clicks and scrolls still carry their place, and a click its ring, as in 102. A place that is not a whole number of screen pixels from 0 to 99999, or lies off the screen, is ignored.
+- When a person takes control, BB Box forgets where the agent last acted and its shape, and stops its timer, as it does when the box stops or is released (102). Viewers watching are told the arrow. A viewer that connects after they hand back is shown nothing until the agent acts again, and an action that began before they took control is not shown. The plugin stops every timer as it shuts down.
+- A panel from before this ignores `BB_AGENT,shape`, so it shows its arrow, as before. This panel reads the forms an unreleased version sent, `held` and `typing` with times and a click with a shape field, as a place alone, with the arrow.
+- The panel draws the hand and the text cursor from the same paths and hotspots as recordings, in BB's primary colour on its primary foreground, at 40 px. A change of shape is not animated, so it needs nothing for reduced motion. The click ring keeps its rule from 102.
+
+## Consequences
+
+- On macOS and Windows, Cua Driver draws its own cursor, and BB Box cannot change its shape. Their recordings now show a hand or a text cursor for a click by pixels, as they did for clicks by reference.
+- iOS and Android boxes have no live agent pointer (102), and a touch screen has no pointer shape.
+- The agent never drags, so the live pointer shows no drag cursor. Recordings still show them for a person's drags.
+- On a scaled Linux desktop, an app's frames may be in points rather than pixels (102). A click by pixels there may take the role of another element and show the wrong shape: a wrong hand for 0.3 seconds, or a wrong text cursor until the agent next clicks or scrolls at another place. It never moves the pointer.
+- A click on a web page by the desktop's pixels keeps the arrow where the page's tree is too large to read quickly. A click on a window's pixels keeps the arrow when the window's tree was read only with the agent's image of it, which is the usual case right after a screenshot of the window.
+- The text cursor while typing stands at the pointer's last place, which may not be over the field, as in a recording.
+- A viewer's shape changes when the plugin's message reaches it, so on a slow connection a shape shows a little late, but every viewer shows the same shapes in the same order.

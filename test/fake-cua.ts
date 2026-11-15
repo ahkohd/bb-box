@@ -84,6 +84,8 @@ export interface FakeWindow {
   halfFrames?: boolean;
   /** A "Show older tasks" button lies partly above it, scrolled out of view. */
   olderTasks?: boolean;
+  /** A "Help" link lies below its buttons. */
+  helpLink?: boolean;
 }
 
 export interface FakeDesktop {
@@ -390,6 +392,7 @@ function shape(desktop: FakeDesktop, window: FakeWindow): Node {
       { key: "field", role: "text", label: "New task", value: desktop.fields[window.id] ?? "", actions: [], frame: frame(0, 520, 600, 40), children: [] },
       { key: "add", role: "push button", label: "Add", actions: ["click"], frame: frame(620, 520, 80, 40), children: [] },
       { key: "clear", role: "push button", label: "Clear all", actions: ["click"], frame: frame(710, 520, 80, 40), children: [] },
+      ...(window.helpLink ? [{ key: "help", role: "link", label: "Help", actions: ["click"], frame: frame(20, 570, 100, 20), children: [] }] : []),
       ...(desktop.menusInWindow ? desktop.windows.filter((menu) => menu.menuOf === window.id).map((menu) => tree(desktop, menu)) : []),
     ],
   };
