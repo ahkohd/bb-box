@@ -1400,3 +1400,44 @@ test("071 unit 6: gpu.<card>.whole passes when one guest holds the card whole, a
   assert.match(failed?.detail ?? "", /Card 0 is held whole and also by another guest: CT 7060, CT 7061/);
   assert.match(failed?.fix ?? "", /Stop the guests that should not hold it/);
 });
+
+test("104, review: a start cancelled while the helper waits for its card's reading takes its request off the box, so the box does not start when the card reads again; if it cannot, it says the helper may still start it", async () => {
+  for (const withdrawal of ["works", "fails"] as const) {
+    const bridge = new ClaimsBridge();
+    const controller = new AbortController();
+    let cancelling = false;
+    const backend = bridge.backend({
+      onSleep: () => {
+        if (cancelling && Object.keys(bridge.node.ledger().waiting ?? {}).length) controller.abort(new Error("the person cancelled the start"));
+      },
+    });
+    const guest = await backend.acquire(box(), null, hooks(), signal());
+    await backend.stop(guest, signal());
+    const vmid = Number(guest.ref);
+    const other = bridge.cardOf(vmid)!.uuid === A ? CARD_B : CARD_A;
+    bridge.proxmox.intercept = (call) => {
+      if (call.method !== "PUT" || call.path !== `/nodes/pve/lxc/${vmid}/config`) return undefined;
+      if (String(call.params.tags ?? "").includes("bb-power.start.")) bridge.node.smiReading([bridge.node.smiRow(other)]);
+      else if (withdrawal === "fails" && controller.signal.aborted) return { ok: false, status: 500, statusText: "Internal Server Error", text: async () => "{}" };
+      return undefined;
+    };
+    cancelling = true;
+    const startsBefore = bridge.node.powerLog().filter((line) => line === `start ${vmid}`).length;
+    const said = await backend.start(guest, controller.signal).then(() => "started", (error: unknown) => (error instanceof Error ? error.message : String(error)));
+    bridge.proxmox.intercept = undefined;
+    const requests = bridge.tags(vmid).filter((tag) => tag.startsWith("bb-power."));
+    if (withdrawal === "fails") {
+      assert.match(said, new RegExp(`^the person cancelled the start\\. BB Box could not take its request off CT ${vmid}, so the GPU helper on pve may still start it\\. Run bb box doctor, then start the box again or release it\\.$`));
+      assert.equal(requests.length, 1, "the request stands, and BB Box says so");
+      assert.ok(backend.errors.some((error) => error.includes(`take the request to start CT ${vmid} off it`)), backend.errors.join("\n"));
+      continue;
+    }
+    assert.equal(said, "the person cancelled the start");
+    assert.deepEqual(requests, [], "the cancelled request is taken off the box");
+    bridge.node.smiReading([bridge.node.smiRow(CARD_A), bridge.node.smiRow(CARD_B)]);
+    bridge.pass();
+    assert.equal(bridge.proxmox.guests.get(vmid)!.status, "stopped", "a cancelled start does not run when the card reads again");
+    assert.equal(bridge.node.powerLog().filter((line) => line === `start ${vmid}`).length, startsBefore, bridge.node.powerLog().join("\n"));
+    assert.deepEqual(bridge.node.ledger().waiting, {}, "the helper stops waiting once the request is gone");
+  }
+});

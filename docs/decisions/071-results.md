@@ -2296,7 +2296,8 @@ same guest.
 | `#writesFor`, `disarm`, `armFork`, `dropHalfMadeFork`, `forkByFullClone` | a fork's guest, in the fork module | network, delete | as above, or box |
 | `#fill`, `#topUp`, `#retireForWhole` | warm guests | cores and memory, labels and marker, start, retirement, delete; `#retireForWhole` retires and deletes this install's warm desktops on a card it keeps whole for a box (unit 8) | the warm guest of this install that bb-box made, by its description |
 | `#imageBox`, `#capture`, `#removeImage` | image boxes and builds | settings, labels, start, shutdown, template, protection, delete | image box or build of this install |
-| `#askPower` | a guest bb-box starts, stops, shuts down or deletes through the helper | the helper's request tag, added and taken off | the owner of the action asked for |
+| `#askPower` | a guest bb-box starts, stops, shuts down or deletes through the helper | the helper's request tag, added | the owner of the action asked for |
+| `#withdrawPower` | the same guest, once bb-box has its answer or stops waiting for one ([104](104-a-card-nvidia-smi-did-not-read-is-not-known-yet-and-blocks-only-itself.md)) | the helper's request tag, taken off, with 10 s of its own even when the start was cancelled | the owner of the action asked for |
 | `#replaceTemplate` | a configured template, and the guest made in its place | protection, delete, template, labels | the template as read, then the guest with the description bb-box gave it |
 | `planAndWrite` (`bb box gpu mark`) | a guest of this install | its gpu tags | the guest bb-box looked at, on that look's digest |
 | `change_guest`, in the helper | a container it serves | GPU device lines; for a copy proven not re-armed (its description names another box than its tags, or a held copy its tags do not label yet), also its start at boot, off, with a card or none | under the guest's config lock, the same box, install, kind, pool and gpu tags it scanned, and still such a copy |

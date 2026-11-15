@@ -565,7 +565,10 @@ and waits up to 10 s for the helper's answer before it starts the box
   card it read goes ahead. A start on a card it has not read
   waits, tried again each pass, and goes ahead once the card is read; after
   60 s it is refused `card-unread`, or `no-cards` when `nvidia-smi` read no
-  card at all. A claim on such a card waits too. No guest's lines for a card
+  card at all. If bb-box gives up first, as when the start is cancelled, it
+  takes its request off the box, so the helper does not start it later. A
+  row `nvidia-smi` did not finish counts as no reading of that card. A claim
+  on such a card waits too. No guest's lines for a card
   it has not read are changed, and no guest's lines are put right until a
   full reading. The report names each such card in an `unread` line with
   its device nodes, which the doctor's "Markers on GPU guests" check uses,

@@ -188,7 +188,7 @@ sub pci_address {
 sub parse_smi_row {
     my ($line) = @_;
     my @fields = split /\s*,\s*/, ($line =~ s/^\s+|\s+$//gr);
-    return undef unless @fields == 5 && $fields[2] =~ /^\d+$/ && $fields[3] =~ /^\d+$/ && $fields[4] =~ /^\d+$/;
+    return undef unless @fields == 5 && $fields[2] =~ /^\d+$/ && $fields[3] =~ /^\d+$/ && $fields[4] =~ /^\d+$/ && $fields[4] > 0 && $fields[3] <= $fields[4];
     return { uuid => $fields[0], bus => $fields[1], index => $fields[2], free => $fields[3], total => $fields[4] };
 }
 
@@ -2133,6 +2133,12 @@ sub take_smi_line {
     finish_group($smi) if $smi->{reading} && @{ $smi->{group} } >= @{ $smi->{reading} };
 }
 
+sub cut_short_row {
+    my ($smi) = @_;
+    $smi->{failure} = 'nvidia-smi stopped partway through a row: ' . substr($smi->{buffer} =~ s/[^\x20-\x7e]//gr, 0, 120);
+    $smi->{group_bad} = $smi->{failure};
+}
+
 sub exited_cleanly {
     my ($status) = @_;
     return defined $status && $status eq '0';
@@ -2149,7 +2155,7 @@ sub read_smi {
     my ($smi) = @_;
     my $got = sysread($smi->{fh}, my $chunk, 65536);
     if (!$got) {
-        take_smi_line($smi, $smi->{buffer}) if length $smi->{buffer};
+        cut_short_row($smi) if $smi->{buffer} =~ /\S/;
         $smi->{buffer} = '';
         finish_group($smi);
         my $status = $smi->{pid} ? exit_status_soon($smi->{pid}, 0.5) : undef;

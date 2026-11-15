@@ -779,6 +779,7 @@ interface PowerNode {
   readonly seen: string;
 }
 const POWER_WAIT_MS = 120_000;
+const WITHDRAW_WAIT_MS = 10_000;
 const DELETED_UNANSWERED_MS = 5_000;
 const POWER_TAG = /^bb-power\.(start|stop|shutdown|delete)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.g\d+\.n[0-9a-f]{8,32}$/;
 
@@ -816,6 +817,12 @@ const POWER_REFUSALS: Readonly<Record<string, string>> = {
   "not-bb-box": `its description names no ${PRODUCT} install`,
   failed: "Proxmox's own call failed",
 };
+
+class PowerUnanswered extends Error {}
+
+function asSentence(text: string): string {
+  return /[.!?]$/.test(text.trimEnd()) ? text.trimEnd() : `${text.trimEnd()}.`;
+}
 
 function powerWords(answer: HelperPower): string {
   const why = POWER_REFUSALS[answer.reason ?? ""] ?? `the helper's reason was ${answer.reason ?? "none"}`;
@@ -3776,20 +3783,41 @@ export class ProxmoxLxcBackend implements Backend {
       if (!POWER_TAG.test(tag)) throw new Error(`${PRODUCT} cannot ask the GPU helper on ${api.node} to ${action} CT ${vmid}: its install or box ID makes the request ${tag}, which is not a Proxmox tag the helper reads.`);
       return { tags: [...tags.filter((each) => !each.startsWith("bb-power.")), tag] };
     }, signal);
+    const asked = { answered: false };
+    let failure: { readonly error: unknown } | null = null;
     try {
-      await this.#awaitPower(api, plain, vmid, action, owner, tag, nonce, signal);
-    } finally {
+      await this.#awaitPower(api, plain, vmid, action, owner, tag, nonce, asked, signal);
+    } catch (error) {
+      failure = { error };
+    }
+    const unwithdrawn = await this.#withdrawPower(plain, vmid, owner, tag);
+    if (!failure) return;
+    if (asked.answered || failure.error instanceof NoLongerOurs) throw failure.error;
+    if (unwithdrawn) {
+      this.#context.logError(`take the request to ${action} CT ${vmid} off it`, unwithdrawn.error);
+      throw new Error(`${asSentence(message(failure.error))} ${PRODUCT} could not take its request off CT ${vmid}, so the GPU helper on ${api.node} may still ${action} it. Run bb box doctor, then ${action} the box again or release it.`);
+    }
+    if (failure.error instanceof PowerUnanswered) throw new Error(`${failure.error.message}, so ${PRODUCT} withdrew it. Run bb box doctor.`);
+    throw failure.error;
+  }
+
+  async #withdrawPower(plain: OwnedGuests, vmid: number, owner: GuestOwner, tag: string): Promise<{ readonly error: unknown } | null> {
+    try {
       await plain.configure(vmid, owner, (config) => {
         const tags = parseTags(config.tags);
         return tags.includes(tag) ? { tags: tags.filter((each) => each !== tag) } : null;
-      }, signal).catch(() => undefined);
+      }, AbortSignal.timeout(WITHDRAW_WAIT_MS));
+      return null;
+    } catch (error) {
+      return { error };
     }
   }
 
-  async #awaitPower(api: Proxmox, plain: OwnedGuests, vmid: number, action: PowerAction, owner: GuestOwner, tag: string, nonce: string, signal?: AbortSignal): Promise<void> {
+  async #awaitPower(api: Proxmox, plain: OwnedGuests, vmid: number, action: PowerAction, owner: GuestOwner, tag: string, nonce: string, asked: { answered: boolean }, signal?: AbortSignal): Promise<void> {
     let goneAt: number | null = null;
     for (let waited = 0; ; waited += ANSWER_POLL_MS) {
       const answer = (await this.#helperLines(api, signal))?.power.find((each) => each.vmid === vmid && each.nonce === nonce) ?? null;
+      if (answer) asked.answered = true;
       if (answer?.answer === "done") return;
       if (answer) {
         const words = `The GPU helper on ${api.node} did not ${action} CT ${vmid}, as ${powerWords(answer)}.`;
@@ -3797,7 +3825,7 @@ export class ProxmoxLxcBackend implements Backend {
         this.#sighted(vmid, `${words} ${PRODUCT} acts on it no more.`);
         throw new NoLongerOurs(`${words} ${PRODUCT} acts on it no more.`);
       }
-      if (waited >= POWER_WAIT_MS) throw new Error(`The GPU helper on ${api.node} did not answer ${PRODUCT}'s request to ${action} CT ${vmid} within ${POWER_WAIT_MS / 1000} s, so ${PRODUCT} withdrew it. Run bb box doctor.`);
+      if (waited >= POWER_WAIT_MS) throw new PowerUnanswered(`The GPU helper on ${api.node} did not answer ${PRODUCT}'s request to ${action} CT ${vmid} within ${POWER_WAIT_MS / 1000} s`);
       const now = await plain.readIfThere(vmid, owner, signal).catch((error: unknown) => {
         if (error instanceof NoLongerOurs) this.#sighted(vmid, error.message);
         throw error;

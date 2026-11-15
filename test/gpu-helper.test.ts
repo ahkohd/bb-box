@@ -1896,3 +1896,32 @@ test("104: when nvidia-smi fails, or times out, a start on a GPU box waits rathe
   assert.deepEqual(node.powerLog(), ["start 3120", "start 3121"], "both starts that waited go ahead once their cards are read");
   assert.deepEqual(powered(node), ["power 3120 n5b5b5b5b start done", "power 3121 n5a5a5a5a start done"]);
 });
+
+test("104, review: a row nvidia-smi did not finish, as when it fails partway through, is a card not read and grants no claim; the rows it finished stand, and a row whose free memory is above its total is no reading", () => {
+  const node = new FakeNode({ writes: "on" });
+  const rowA = node.smiRow(CARD_A);
+  const rowB = node.smiRow(CARD_B);
+  node.guest(4100, { box: "bx4100", marker: marker("shared", CARD_A, 1) });
+  node.write("bin/nvidia-smi", `#!/bin/sh\nprintf '%s' '${rowA.slice(0, -3)}'\nexit 9\n`);
+  ran(node);
+  assert.equal(node.ledger().guests["4100"]?.claim, undefined, "an unfinished row from a failed query grants no claim");
+  assert.deepEqual(node.lines(4100), []);
+  assert.deepEqual(lines(node, "gpu"), [], "nor gives a card's memory");
+  assert.ok(lines(node, "error").some((line) => line.startsWith("error nvidia-smi stopped partway through a row: ")), lines(node, "error").join("\n"));
+
+  node.guest(4101, { box: "bx4101", marker: marker("shared", CARD_A, 1) });
+  node.guest(4102, { box: "bx4102", marker: marker("shared", CARD_B, 1) });
+  node.write("bin/nvidia-smi", `#!/bin/sh\nprintf '%s\\n' '${rowA}'\nprintf '%s' '${rowB.slice(0, -3)}'\nexit 9\n`);
+  ran(node);
+  assert.ok(claims(node).includes(`claim 4101 g1 granted shared ${A}`), `the row it finished stands: ${claims(node).join(" | ")}`);
+  assert.ok(!claims(node).some((line) => line.startsWith("claim 4102 ")), "the card whose row it did not finish waits");
+  assert.deepEqual(node.lines(4102), []);
+  assert.deepEqual(lines(node, "gpu").map((line) => line.split(" ")[1]), [`GPU-${A}`]);
+
+  const odd = new FakeNode({ writes: "on" });
+  odd.guest(4103, { box: "bx4103", marker: marker("shared", CARD_A, 1) });
+  odd.smiReading([`GPU-${A}, ${CARD_A.bus}, 0, 97000, 97`, odd.smiRow(CARD_B)]);
+  ran(odd);
+  assert.ok(!claims(odd).some((line) => line.startsWith("claim 4103 ")), claims(odd).join(" | "));
+  assert.ok(lines(odd, "error").some((line) => line.includes("nvidia-smi gave no GPU memory: GPU-3f9a2c1e")), lines(odd, "error").join("\n"));
+});

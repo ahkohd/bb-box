@@ -21,7 +21,9 @@ Run by hand, `nvidia-smi` read both cards in 0.03 s.
 - The helper keeps each card's last row from `nvidia-smi`, and uses it for up to 10 s, as it did the whole reading before. A tick that leaves a card out, or whose rows come late, changes no card's state. A reading never shrinks to the cards of one partial tick.
 - A card `nvidia-smi` did not read is not known yet. That blocks decisions on that card alone. A card it read is decided as on a full reading, whatever happened to another card.
 - A row the helper cannot read, or a query that did not exit with status 0, makes the cards it did not read not known yet. The rows it read stand.
+- Only a row `nvidia-smi` finished counts. A last line its output ends partway through, with no newline, is no row, and a row whose free memory is above its total, or whose total is 0, is one the helper cannot read. Either leaves that card not known yet.
 - A start on a card the helper has not read waits. The helper tries it again each pass, and starts it once the card is read. After 60 s it refuses it `card-unread`, naming the card's PCI address, or `no-cards` when `nvidia-smi` read no card at all. bb-box waits 120 s for an answer, so it sees the refusal. The wait is kept in the ledger, so it survives a restart of the helper.
+- When bb-box stops waiting for an answer, because the start was cancelled or 120 s passed, it takes its request off the box, with 10 s of its own to do so, so the helper never starts the box later. If it cannot take the request off, it says the helper may still start the box.
 - A claim on a card the helper has not read waits, as before.
 - No guest's lines for a card the helper has not read are changed, and no guest's lines are put right, as at boot or after a write cut short, until a full reading. A lost ledger is rebuilt only from a full reading, as before. A reading that is not full is still an error line, and still fails `--preview` and `setup-gpu.sh --writes on`.
 - The report names each card the driver lists that `nvidia-smi` did not read: `unread <uuid> pci <address> minor <n> drm <card> <render>`. Its UUID comes from the driver, or else from the last full reading. The doctor's "Markers on GPU guests" check counts these cards' nodes as a card's.
@@ -30,7 +32,7 @@ Run by hand, `nvidia-smi` read both cards in 0.03 s.
 ## Consequences
 
 - A card left out for a moment no longer stops boxes on the other cards. A card left out for longer than 10 s stops only its own boxes, for up to a minute each.
-- A reading 071 counted as incomplete for every card now decides the cards it read. A row `nvidia-smi` printed in full is trusted even when it then failed. Its UUID and PCI address are what the helper decides on, and the device nodes come from the driver.
+- A reading 071 counted as incomplete for every card now decides the cards it read. A row `nvidia-smi` printed in full, ending in a newline, is trusted even when it then failed. Its UUID and PCI address are what the helper decides on, and the device nodes come from the driver.
 - A card that falls off the bus is still listed for up to 10 s, as it was when the whole reading was kept for 10 s.
 - An older bb-box shows `card-unread` as "the helper's reason was card-unread".
 - The helper is version 0.4.4. Its protocol is still 1: the ledger's new `waiting` entries are ignored by an older helper.
