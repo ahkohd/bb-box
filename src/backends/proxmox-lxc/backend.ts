@@ -3777,19 +3777,22 @@ export class ProxmoxLxcBackend implements Backend {
     const nonce = randomBytes(8).toString("hex");
     const plain = new OwnedGuests(api);
     let tag = "";
-    await plain.configure(vmid, owner, (config) => {
-      const tags = parseTags(config.tags);
-      tag = `bb-power.${action}.${this.#context.installId}.${powerBox(config, helper) ?? "-"}.g${markerOf(tags)?.generation ?? 0}.n${nonce}`;
-      if (!POWER_TAG.test(tag)) throw new Error(`${PRODUCT} cannot ask the GPU helper on ${api.node} to ${action} CT ${vmid}: its install or box ID makes the request ${tag}, which is not a Proxmox tag the helper reads.`);
-      return { tags: [...tags.filter((each) => !each.startsWith("bb-power.")), tag] };
-    }, signal);
+    let sent = false;
     const asked = { answered: false };
     let failure: { readonly error: unknown } | null = null;
     try {
+      await plain.configure(vmid, owner, (config) => {
+        const tags = parseTags(config.tags);
+        tag = `bb-power.${action}.${this.#context.installId}.${powerBox(config, helper) ?? "-"}.g${markerOf(tags)?.generation ?? 0}.n${nonce}`;
+        if (!POWER_TAG.test(tag)) throw new Error(`${PRODUCT} cannot ask the GPU helper on ${api.node} to ${action} CT ${vmid}: its install or box ID makes the request ${tag}, which is not a Proxmox tag the helper reads.`);
+        sent = true;
+        return { tags: [...tags.filter((each) => !each.startsWith("bb-power.")), tag] };
+      }, signal);
       await this.#awaitPower(api, plain, vmid, action, owner, tag, nonce, asked, signal);
     } catch (error) {
       failure = { error };
     }
+    if (!sent && failure) throw failure.error;
     const unwithdrawn = await this.#withdrawPower(plain, vmid, owner, tag);
     if (!failure) return;
     if (asked.answered || failure.error instanceof NoLongerOurs) throw failure.error;
