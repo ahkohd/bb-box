@@ -1,5 +1,5 @@
 import { AGENT_VERB, agentPlaceOf, type AgentPlace } from "../core/pointer.ts";
-import { CURSOR_HOTSPOTS, ShapeTimeline, type ActionShape } from "../core/pointer-shapes.ts";
+import { CURSOR_HOTSPOTS, type ActionShape } from "../core/pointer-shapes.ts";
 import { CURSOR_PARTS, type CursorInk } from "../core/record-cursor-paths.ts";
 import type { Picture } from "./box-pointer.ts";
 
@@ -12,10 +12,6 @@ const INK_COLOURS: Readonly<Record<CursorInk, string>> = { ink: "var(--primary)"
 
 function reducedMotion(): boolean {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-}
-
-function secondsNow(): number {
-  return performance.now() / 1000;
 }
 
 function cursor(shape: ActionShape): SVGSVGElement {
@@ -52,8 +48,6 @@ export class AgentPointer {
   #picture: Picture | null = null;
   #hidden = true;
   #shape: ActionShape = "arrow";
-  #reshapes: ReturnType<typeof setTimeout> | null = null;
-  readonly #shapes = new ShapeTimeline(secondsNow());
   readonly #container: HTMLElement;
 
   constructor(container: HTMLElement) {
@@ -64,10 +58,9 @@ export class AgentPointer {
     const comma = text.indexOf(",");
     if ((comma < 0 ? text : text.slice(0, comma)) !== AGENT_VERB) return false;
     const place = agentPlaceOf(text.slice(comma + 1));
-    if (!place) return true;
+    if (!place || !this.#onScreen(place)) return true;
     this.#place = place;
-    this.#shapes.act(place, secondsNow());
-    this.#reshape();
+    if (place.act === "shape") this.#shape = place.shape ?? "arrow";
     this.#draw();
     if (place.act === "click") this.#ring(place);
     return true;
@@ -79,17 +72,9 @@ export class AgentPointer {
     this.#draw();
   }
 
-  #reshape(): void {
-    if (this.#reshapes) clearTimeout(this.#reshapes);
-    this.#reshapes = null;
-    const now = secondsNow();
-    const { shape, changesAt } = this.#shapes.now(now);
-    this.#shape = shape;
-    if (changesAt === null) return;
-    this.#reshapes = setTimeout(() => {
-      this.#reshape();
-      this.#draw();
-    }, (changesAt - now) * 1000);
+  #onScreen(place: AgentPlace): boolean {
+    const picture = this.#picture;
+    return !picture || (place.x < picture.desktopWidth && place.y < picture.desktopHeight);
   }
 
   #at(place: AgentPlace): { left: number; top: number } | null {

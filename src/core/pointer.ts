@@ -10,55 +10,40 @@ export const POINTER_NONE = "This desktop's pointer comes with its picture.";
 
 export const AGENT_VERB = "BB_AGENT";
 
-export type AgentAct = "click" | "scroll" | "at" | "typing" | "typed" | "held";
+export type AgentAct = "click" | "scroll" | "at" | "shape";
 
-export type AgentClickShape = "hand" | "ibeam";
+export type AgentShape = "arrow" | "hand" | "ibeam";
 
 export interface AgentPlace {
   readonly act: AgentAct;
   readonly x: number;
   readonly y: number;
-  readonly shape?: AgentClickShape;
-  readonly agoMs?: number;
-  readonly forMs?: number;
+  readonly shape?: AgentShape;
 }
 
-const AGENT_ACTS: readonly string[] = ["click", "scroll", "at", "typing", "typed", "held"] satisfies readonly AgentAct[];
-const AGENT_CLICK_SHAPES: readonly string[] = ["hand", "ibeam"] satisfies readonly AgentClickShape[];
-const SHAPED_ACTS: readonly AgentAct[] = ["click", "held"];
-const TIMED_ACTS: readonly AgentAct[] = ["held", "typing"];
-const WHOLE_MS = /^\d+$/;
-
-function timing(place: AgentPlace): string {
-  if (!TIMED_ACTS.includes(place.act) || place.agoMs === undefined) return "";
-  const ago = `,${Math.max(0, Math.round(place.agoMs))}`;
-  return place.forMs === undefined ? ago : `${ago},${Math.max(0, Math.round(place.forMs))}`;
-}
+const AGENT_ACTS: readonly string[] = ["click", "scroll", "at", "shape"] satisfies readonly AgentAct[];
+const AGENT_SHAPES: readonly string[] = ["arrow", "hand", "ibeam"] satisfies readonly AgentShape[];
+const PLACE_ONLY_FORMS: readonly string[] = ["typing", "typed", "held"];
+const SCREEN_PIXEL = /^\d{1,5}$/;
 
 export function agentMessage(place: AgentPlace): string {
-  const shape = SHAPED_ACTS.includes(place.act) && place.shape ? `,${place.shape}` : "";
-  return `${AGENT_VERB},${place.act},${Math.round(place.x)},${Math.round(place.y)}${shape}${timing(place)}`;
+  const shape = place.act === "shape" ? `,${place.shape ?? "arrow"}` : "";
+  return `${AGENT_VERB},${place.act},${Math.round(place.x)},${Math.round(place.y)}${shape}`;
 }
 
-function wholeMs(text: string | undefined): number | null | undefined {
-  if (text === undefined) return undefined;
-  return WHOLE_MS.test(text) ? Number(text) : null;
+function screenPixel(text: string | undefined): number | null {
+  return text !== undefined && SCREEN_PIXEL.test(text) ? Number(text) : null;
 }
 
 export function agentPlaceOf(rest: string): AgentPlace | null {
-  const [act, x, y, ...more] = rest.split(",");
-  const at = { x: Number(x), y: Number(y) };
-  if (!act || !AGENT_ACTS.includes(act) || !x || !y || !Number.isFinite(at.x) || !Number.isFinite(at.y)) return null;
-  const known = act as AgentAct;
-  const shape = SHAPED_ACTS.includes(known) ? more.shift() : undefined;
-  const shaped = !!shape && AGENT_CLICK_SHAPES.includes(shape);
-  if (known === "held" && !shaped) return null;
-  const shapes = shaped ? { shape: shape as AgentClickShape } : {};
-  if (!TIMED_ACTS.includes(known)) return { act: known, ...at, ...shapes };
-  const [agoText, forText, ...extra] = more;
-  const agoMs = wholeMs(agoText);
-  const forMs = wholeMs(forText);
-  if (agoMs === null || forMs === null || extra.length || (agoMs === undefined && known === "held")) return null;
-  if (known === "held" && forMs === undefined && shape !== "ibeam") return null;
-  return { act: known, ...at, ...shapes, ...(agoMs !== undefined ? { agoMs } : {}), ...(forMs !== undefined ? { forMs } : {}) };
+  const [act, xText, yText, ...more] = rest.split(",");
+  const x = screenPixel(xText);
+  const y = screenPixel(yText);
+  if (!act || x === null || y === null) return null;
+  if (PLACE_ONLY_FORMS.includes(act)) return { act: "at", x, y };
+  if (!AGENT_ACTS.includes(act)) return null;
+  if (act !== "shape") return { act: act as AgentAct, x, y };
+  const [shape, ...extra] = more;
+  if (!shape || !AGENT_SHAPES.includes(shape) || extra.length) return null;
+  return { act: "shape", x, y, shape: shape as AgentShape };
 }

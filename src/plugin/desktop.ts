@@ -22,8 +22,9 @@ import { scaleScript } from "../backends/windows.ts";
 import { openRoute } from "../transports/route.ts";
 import { LEFT_TO_STREAM_SERVER, type BoxPointer, type ByteChannel, type Display } from "../transports/types.ts";
 import { argbToRgba, rgbaPng } from "../core/png.ts";
-import { POINTER_NONE, POINTER_VERB, agentMessage, type AgentPlace } from "../core/pointer.ts";
-import { ShapeTimeline, clickShape, typingShape, type TypedText } from "../core/pointer-shapes.ts";
+import { POINTER_NONE, POINTER_VERB, agentMessage } from "../core/pointer.ts";
+import { clickShape, typingShape, type TypedText } from "../core/pointer-shapes.ts";
+import { AgentShapes } from "../core/agent-shapes.ts";
 import { driverDrawsAgentCursor } from "../core/record.ts";
 import { LEVEL_52_MACROBLOCKS, macroblocks } from "../core/h264.ts";
 import type { ActedInput, MacKeys, PersonInput } from "../core/record-input.ts";
@@ -494,9 +495,20 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     for (const listener of entry.listeners) listener.send(message);
   };
   const agentPlaces = new Map<string, string>();
-  const agentShapes = new Map<string, ShapeTimeline>();
-  const secondsNow = () => Date.now() / 1000;
   const agentListeners = new Map<string, Set<(message: string) => void>>();
+  const tellViewers = (boxId: string, message: string): void => {
+    for (const send of agentListeners.get(boxId) ?? []) send(message);
+  };
+  const agentShapes = new AgentShapes({
+    now: () => Date.now() / 1000,
+    schedule: (run, ms) => {
+      const timer = setTimeout(run, ms);
+      timer.unref?.();
+      return timer;
+    },
+    cancel: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+    send: tellViewers,
+  });
   const listenAgent = (boxId: string, send: (message: string) => void): (() => void) => {
     const listeners = agentListeners.get(boxId) ?? new Set<(message: string) => void>();
     agentListeners.set(boxId, listeners);
@@ -512,7 +524,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
         const last = agentPlaces.get(boxId);
         if (told || !last || !listeners.has(tell) || box?.state !== "ready" || !viewerDrawsAgentCursor(box)) return;
         tell(last);
-        for (const place of agentShapes.get(boxId)?.replay(secondsNow()) ?? []) tell(agentMessage(place));
+        for (const message of agentShapes.told(boxId)) tell(message);
       })
       .catch((error: unknown) => deps.logError("tell a viewer where the agent last acted", error));
     return () => {
@@ -530,22 +542,15 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     agentPlaces.delete(boxId);
     agentPoints.delete(boxId);
     agentTypingShown.delete(boxId);
-    agentShapes.delete(boxId);
-  };
-  const tellAgent = (boxId: string, place: AgentPlace): void => {
-    const shapes = agentShapes.get(boxId) ?? new ShapeTimeline(secondsNow());
-    agentShapes.set(boxId, shapes);
-    shapes.act(place, secondsNow());
-    const message = agentMessage(place);
-    for (const send of agentListeners.get(boxId) ?? []) send(message);
+    agentShapes.forget(boxId);
   };
   const agentActed = (box: BoxRecord, input: ActedInput, sentAt: number): void => {
     if (sentAt < (agentEnded.get(box.id) ?? 0)) return;
     if (!viewerDrawsAgentCursor(box) || (input.type !== "click" && input.type !== "scroll")) return;
     agentPlaces.set(box.id, agentMessage({ act: "at", ...input.point }));
     agentPoints.set(box.id, input.point);
-    const shape = input.type === "click" ? clickShape(input.role) : "arrow";
-    tellAgent(box.id, { act: input.type, ...input.point, ...(shape !== "arrow" ? { shape } : {}) });
+    tellViewers(box.id, agentMessage({ act: input.type, ...input.point }));
+    agentShapes.acted(box.id, input.type === "click" ? { act: "click", ...input.point, shape: clickShape(input.role) } : { act: "scroll", ...input.point });
   };
   const agentTyping = (box: BoxRecord, typing: TypedText | null, sentAt: number): void => {
     if (sentAt < (agentEnded.get(box.id) ?? 0) || !viewerDrawsAgentCursor(box)) return;
@@ -553,12 +558,12 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     const shown = agentTypingShown.has(box.id);
     if (typing && typingShape(typing) === "ibeam" && point && !shown) {
       agentTypingShown.add(box.id);
-      tellAgent(box.id, { act: "typing", ...point });
+      agentShapes.acted(box.id, { act: "typing", ...point });
       return;
     }
     if (typing || !shown || !point) return;
     agentTypingShown.delete(box.id);
-    tellAgent(box.id, { act: "typed", ...point });
+    agentShapes.acted(box.id, { act: "typed", ...point });
   };
   const endsWithoutAgent = (boxId: string, end: () => void): void => {
     void boxes
@@ -1268,6 +1273,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     },
     async dispose() {
       for (const boxId of [...watches.keys()]) stopWatch(boxId);
+      agentShapes.dispose();
       await control.dispose();
       await Promise.all([...relays].map((relay) => relay.close()));
     },

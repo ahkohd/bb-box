@@ -1,4 +1,3 @@
-import type { AgentPlace } from "./pointer.ts";
 import type { PointerShape } from "./record-cursors.ts";
 import { TYPING_AFTER_S, TYPING_LEAST_S } from "./record-keys.ts";
 
@@ -75,28 +74,34 @@ function round3(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
+function holdStep(out: ShapeSpan[], piece: ShapeSpan, firmEnds: readonly number[]): void {
+  const last = out.at(-1);
+  if (!last) {
+    out.push({ ...piece });
+    return;
+  }
+  if (last.shape === piece.shape) {
+    out[out.length - 1] = { ...last, to: piece.to };
+    return;
+  }
+  const endsFirmly = firmEnds.some((at) => Math.abs(at - last.to) < FIRM_END_S);
+  if (!(last.from === 0 && last.shape === "arrow") && !endsFirmly && last.to - last.from < SHAPE_HOLD_S) {
+    const until = Math.min(piece.to, last.from + SHAPE_HOLD_S);
+    out[out.length - 1] = { ...last, to: until };
+    if (until < piece.to) out.push({ ...piece, from: until });
+    return;
+  }
+  out.push({ ...piece });
+}
+
 function heldShapes(pieces: readonly ShapeSpan[], firmEnds: readonly number[]): ShapeSpan[] {
   const out: ShapeSpan[] = [];
-  for (const piece of pieces) {
-    const last = out.at(-1);
-    if (!last) {
-      out.push({ ...piece });
-      continue;
-    }
-    if (last.shape === piece.shape) {
-      out[out.length - 1] = { ...last, to: piece.to };
-      continue;
-    }
-    const endsFirmly = firmEnds.some((at) => Math.abs(at - last.to) < FIRM_END_S);
-    if (!(last.from === 0 && last.shape === "arrow") && !endsFirmly && last.to - last.from < SHAPE_HOLD_S) {
-      const until = Math.min(piece.to, last.from + SHAPE_HOLD_S);
-      out[out.length - 1] = { ...last, to: until };
-      if (until < piece.to) out.push({ ...piece, from: until });
-      continue;
-    }
-    out.push({ ...piece });
-  }
+  for (const piece of pieces) holdStep(out, piece, firmEnds);
   return out.map((span) => ({ from: round3(span.from), to: round3(span.to), shape: span.shape }));
+}
+
+function winner(requests: readonly ShapeRequest[], at: number): PointerShape {
+  return requests.filter((request) => request.from <= at && at < request.to).sort((a, b) => b.rank - a.rank || b.from - a.from)[0]?.shape ?? "arrow";
 }
 
 export function resolveShapes(requests: readonly ShapeRequest[], length: number, firmEnds: readonly number[] = []): ShapeSpan[] {
@@ -106,9 +111,7 @@ export function resolveShapes(requests: readonly ShapeRequest[], length: number,
     const from = marks[index]!;
     const to = marks[index + 1]!;
     if (to <= from) continue;
-    const mid = (from + to) / 2;
-    const active = requests.filter((request) => request.from <= mid && mid < request.to).sort((a, b) => b.rank - a.rank || b.from - a.from);
-    const shape = active[0]?.shape ?? "arrow";
+    const shape = winner(requests, (from + to) / 2);
     const last = pieces.at(-1);
     if (last && last.shape === shape) pieces[pieces.length - 1] = { ...last, to };
     else pieces.push({ from, to, shape });
@@ -121,103 +124,120 @@ export function shapeAt(spans: readonly ShapeSpan[], t: number): PointerShape {
   return (spans.find((span) => t >= span.from && t < span.to) ?? spans.at(-1))?.shape ?? "arrow";
 }
 
-type OpenUntil = "moved" | "typed";
+export type LiveAct =
+  | { readonly act: "click"; readonly x: number; readonly y: number; readonly shape: ActionShape }
+  | { readonly act: "scroll" | "typing" | "typed"; readonly x: number; readonly y: number };
 
-type HoldKind = "click" | "typing";
-
-interface HeldShape {
-  readonly kind: HoldKind;
-  readonly openUntil: OpenUntil | null;
-  readonly request: ShapeRequest;
-}
-
-export interface ShapeNow {
+export interface LiveShapeNow {
   readonly shape: ActionShape;
   readonly changesAt: number | null;
 }
 
-const PAST_KEPT_S = 10;
-const REPLAY_PAST_S = 1;
+type OpenUntil = "moved" | "typed";
+
+interface LiveHold {
+  readonly openUntil: OpenUntil | null;
+  readonly request: ShapeRequest;
+}
+
 const OPEN_MARGIN_S = 1;
-const ORIGIN_LEAD_S = 3600;
+const REACHED_WITHIN_S = 1e-6;
 
 function asActionShape(shape: PointerShape): ActionShape {
   return shape === "hand" || shape === "ibeam" ? shape : "arrow";
 }
 
-function msOf(seconds: number): number {
-  return Math.round(seconds * 1000);
+function piecesBetween(requests: readonly ShapeRequest[], from: number, to: number): ShapeSpan[] {
+  const marks = [...new Set([from, to, ...requests.flatMap((request) => [request.from, request.to]).filter((time) => time > from && time < to)])].sort((a, b) => a - b);
+  const pieces: ShapeSpan[] = [];
+  for (let index = 0; index < marks.length - 1; index++) {
+    const start = marks[index]!;
+    const end = marks[index + 1]!;
+    const shape = winner(requests, (start + end) / 2);
+    const last = pieces.at(-1);
+    if (last && last.shape === shape) pieces[pieces.length - 1] = { ...last, to: end };
+    else pieces.push({ from: start, to: end, shape });
+  }
+  return pieces;
 }
 
-export class ShapeTimeline {
-  #held: HeldShape[] = [];
+function outranks(newer: ShapeRequest, older: ShapeRequest): boolean {
+  return newer.rank === older.rank && newer.shape === older.shape && newer.from >= older.from && newer.to >= older.to;
+}
+
+export class LiveShape {
+  #holds: LiveHold[] = [];
+  #last: ShapeSpan = { from: 0, to: 0, shape: "arrow" };
+  #resolvedTo = 0;
   #place: { readonly x: number; readonly y: number } | null = null;
   readonly #origin: number;
 
   constructor(since: number) {
-    this.#origin = since - ORIGIN_LEAD_S;
+    this.#origin = since;
   }
 
-  act(place: AgentPlace, at: number): void {
-    const now = at - this.#origin;
-    const moved = !this.#place || this.#place.x !== place.x || this.#place.y !== place.y;
-    this.#place = { x: place.x, y: place.y };
-    if (moved) this.#close("moved", (held) => clickHeld(asActionShape(held.request.shape), held.request.from, now));
-    if (place.act === "typed") this.#close("typed", (held) => typingHeld(held.request.from, now));
-    const from = now - (place.agoMs ?? 0) / 1000;
-    const lasting = place.forMs === undefined ? null : place.forMs / 1000;
-    if (place.act === "click" && place.shape) {
-      const open = place.shape === "ibeam";
-      const request = clickHeld(place.shape, now, open ? Infinity : now);
-      if (request) this.#held.push({ kind: "click", openUntil: open ? "moved" : null, request });
-    }
-    if (place.act === "held" && place.shape) {
-      const to = lasting === null ? Infinity : from + lasting;
-      this.#held.push({ kind: "click", openUntil: lasting === null ? "moved" : null, request: { from, to, shape: place.shape, rank: CLICK_RANK } });
-    }
-    if (place.act === "typing" && lasting !== null) {
-      this.#held.push({ kind: "typing", openUntil: null, request: { from, to: from + lasting, shape: "ibeam", rank: TYPING_RANK } });
-    }
-    if (place.act === "typing" && lasting === null && !this.#held.some((held) => held.openUntil === "typed")) {
-      this.#held.push({ kind: "typing", openUntil: "typed", request: typingHeld(from, Infinity) });
-    }
-    this.#held = this.#held.filter((held) => held.openUntil || held.request.to > now - PAST_KEPT_S);
+  get holdsKept(): number {
+    return this.#holds.length;
   }
 
-  now(at: number): ShapeNow {
-    const now = at - this.#origin;
-    const spans = this.#spans(now);
+  act(act: LiveAct, at: number): void {
+    const now = Math.max(this.#resolvedTo, at - this.#origin);
+    this.#resolve(now);
+    const moved = !this.#place || this.#place.x !== act.x || this.#place.y !== act.y;
+    this.#place = { x: act.x, y: act.y };
+    if (moved) this.#close("moved", (request) => clickHeld(asActionShape(request.shape), request.from, now));
+    if (act.act === "typed") this.#close("typed", (request) => typingHeld(request.from, now));
+    if (act.act === "click") {
+      const open = act.shape === "ibeam";
+      const request = clickHeld(act.shape, now, open ? Infinity : now);
+      if (request) this.#hold({ openUntil: open ? "moved" : null, request });
+    }
+    if (act.act === "typing" && !this.#holds.some((hold) => hold.openUntil === "typed")) this.#hold({ openUntil: "typed", request: typingHeld(now, Infinity) });
+  }
+
+  now(at: number): LiveShapeNow {
+    const now = Math.max(this.#resolvedTo, at - this.#origin) + REACHED_WITHIN_S;
+    const spans = this.#ahead(now);
     const next = spans.find((span) => span.from > now);
     return { shape: asActionShape(shapeAt(spans, now)), changesAt: next ? next.from + this.#origin : null };
   }
 
-  replay(at: number): AgentPlace[] {
-    const place = this.#place;
-    if (!place) return [];
-    const now = at - this.#origin;
-    return this.#held
-      .filter((held) => held.openUntil || held.request.to > now - REPLAY_PAST_S)
-      .map((held): AgentPlace => {
-        const { from, to, shape } = held.request;
-        const lasting = held.openUntil ? {} : { forMs: msOf(to - from) };
-        const ago = { agoMs: msOf(now - from) };
-        return held.kind === "typing" ? { act: "typing", ...place, ...ago, ...lasting } : { act: "held", ...place, shape: shape === "hand" ? "hand" : "ibeam", ...ago, ...lasting };
-      });
+  #hold(hold: LiveHold): void {
+    this.#holds = [...this.#holds, hold];
+    this.#compact();
   }
 
-  #close(until: OpenUntil, closed: (held: HeldShape) => ShapeRequest | null): void {
-    this.#held = this.#held.flatMap((held) => {
-      if (held.openUntil !== until) return [held];
-      const request = closed(held);
-      return request ? [{ ...held, openUntil: null, request }] : [];
+  #compact(): void {
+    const holds = this.#holds;
+    this.#holds = holds.filter((hold, index) => !holds.some((other, at) => at !== index && outranks(other.request, hold.request) && (other.request.from > hold.request.from || at > index)));
+  }
+
+  #close(until: OpenUntil, closed: (request: ShapeRequest) => ShapeRequest | null): void {
+    this.#holds = this.#holds.flatMap((hold) => {
+      if (hold.openUntil !== until) return [hold];
+      const request = closed(hold.request);
+      return request ? [{ openUntil: null, request }] : [];
     });
+    this.#compact();
   }
 
-  #spans(now: number): ShapeSpan[] {
-    const horizon = Math.max(now, ...this.#held.map((held) => held.request.to).filter(Number.isFinite)) + OPEN_MARGIN_S;
-    return resolveShapes(
-      this.#held.map((held) => ({ ...held.request, to: Math.min(held.request.to, horizon) })),
-      horizon,
-    );
+  #resolve(now: number): void {
+    if (now <= this.#resolvedTo) return;
+    const out = [this.#last];
+    for (const piece of piecesBetween(this.#requests(now), this.#resolvedTo, now)) holdStep(out, piece, []);
+    this.#last = out.at(-1)!;
+    this.#resolvedTo = now;
+    this.#holds = this.#holds.filter((hold) => hold.request.to > now);
+  }
+
+  #requests(horizon: number): ShapeRequest[] {
+    return this.#holds.map((hold) => ({ ...hold.request, to: Math.min(hold.request.to, horizon) }));
+  }
+
+  #ahead(now: number): ShapeSpan[] {
+    const horizon = Math.max(now, this.#last.to, ...this.#holds.map((hold) => hold.request.to).filter(Number.isFinite)) + OPEN_MARGIN_S;
+    const out = [this.#last];
+    for (const piece of piecesBetween(this.#requests(horizon), this.#resolvedTo, horizon)) holdStep(out, piece, []);
+    return out;
   }
 }

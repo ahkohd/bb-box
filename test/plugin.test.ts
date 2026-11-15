@@ -35,8 +35,6 @@ import { Phases, removeStaleApp, setAsideOtherMachines, type JoinAlarm } from ".
 import { joinProblem, nextTry, plainJoinFailure } from "../src/core/join-tries.ts";
 import { RETIRED_TITLE } from "../src/plugin/holder.ts";
 import { FOLLOW_FRAME_MS, POINTER_NONE, sharpOffered } from "../src/plugin/desktop.ts";
-import { agentPlaceOf } from "../src/core/pointer.ts";
-import { ShapeTimeline } from "../src/core/pointer-shapes.ts";
 import { FILES_FROM_PANEL } from "../src/plugin/box-fs.ts";
 import { setup, type SetupOptions } from "../src/plugin/setup.ts";
 import { heldWords } from "../src/plugin/turn-hold.ts";
@@ -4436,7 +4434,7 @@ test("on a Linux desktop, whose driver draws no agent cursor, each viewer is tol
   const scrolled = agentSaid(vnc).find((message) => message.startsWith("BB_AGENT,scroll,"))!;
   const later = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
   await until("the later viewer told where the agent is", async () => agentSaid(later).length > 0);
-  assert.deepEqual(agentSaid(later), [scrolled.replace("BB_AGENT,scroll,", "BB_AGENT,at,")], "where, with no ring for an action it did not see");
+  assert.deepEqual(agentSaid(later), [scrolled.replace("BB_AGENT,scroll,", "BB_AGENT,at,"), `${scrolled.replace("BB_AGENT,scroll,", "BB_AGENT,shape,")},arrow`], "where, and its shape, with no ring for an action it did not see");
   await video.close();
   await vnc.close();
   await later.close();
@@ -4504,11 +4502,27 @@ test("a click by reference on a Linux desktop waits for nothing in the box befor
   assert.equal(existsSync(asked), false, "no setting was read in the box");
 });
 
-function agentShapes(session: { sent: readonly (string | Uint8Array)[] }): string[] {
-  return session.sent.filter((message): message is string => typeof message === "string" && /^BB_AGENT,(click|typing|typed),/.test(message));
+type Viewer = { sent: readonly (string | Uint8Array)[] };
+
+function agentSaid(session: Viewer): string[] {
+  return session.sent.filter((message): message is string => typeof message === "string" && message.startsWith("BB_AGENT,"));
 }
 
-test("on a Linux desktop, the agent's pointer is a hand on a link or button it clicks by pixels, an I-beam on a text field, and the arrow elsewhere (105)", async (t) => {
+function shapesSaid(session: Viewer): string[] {
+  return agentSaid(session).filter((message) => message.startsWith("BB_AGENT,shape,"));
+}
+
+function clicksSaid(session: Viewer): string[] {
+  return agentSaid(session).filter((message) => message.startsWith("BB_AGENT,click,"));
+}
+
+const QUIET_MS = 400;
+
+function quiet(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, QUIET_MS));
+}
+
+test("on a Linux desktop, the agent's pointer is a hand on a link or button it clicks by pixels, an I-beam on a text field, and the arrow elsewhere, each told by the plugin as it changes (105)", async (t) => {
   const { harness, box, file, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   editDesktop(file, (desktop) => {
@@ -4521,11 +4535,16 @@ test("on a Linux desktop, the agent's pointer is a hand on a link or button it c
     assert.match(clicked, new RegExp(`on the desktop, \\(${screen}\\) on the screen`));
   };
   await clickAt(139, 555, "170, 680");
+  await until("the hand", async () => shapesSaid(vnc).includes("BB_AGENT,shape,170,680,hand"));
+  await until("the arrow once the hand's 0.3 s are over", async () => shapesSaid(vnc).includes("BB_AGENT,shape,170,680,arrow"));
   await clickAt(408, 94, "500, 115");
+  await until("the heading's click", async () => clicksSaid(vnc).length === 2);
+  await quiet();
+  assert.equal(shapesSaid(vnc).length, 2, "a heading gives no shape");
   await clickAt(327, 523, "400, 640");
-  await until("three clicks told", async () => agentShapes(vnc).length === 3);
-  assert.deepEqual(agentShapes(vnc), ["BB_AGENT,click,170,680,hand", "BB_AGENT,click,500,115", "BB_AGENT,click,400,640,ibeam"]);
-
+  await until("the I-beam", async () => shapesSaid(vnc).includes("BB_AGENT,shape,400,640,ibeam"));
+  assert.deepEqual(clicksSaid(vnc), ["BB_AGENT,click,170,680", "BB_AGENT,click,500,115", "BB_AGENT,click,400,640"], "a click's message carries no shape");
+  assert.deepEqual(shapesSaid(vnc), ["BB_AGENT,shape,170,680,hand", "BB_AGENT,shape,170,680,arrow", "BB_AGENT,shape,400,640,ibeam"]);
   await vnc.close();
 });
 
@@ -4536,8 +4555,8 @@ test("a click by a window's pixels takes its shape from the window's tree when t
   await tool("computer_screenshot", { box: box.name, window: 100 });
   await until("the idle session to close", async () => !app.computer.connected(box.id));
   await tool("computer_act", { box: box.name, action: "click", window: 100, x: 750, y: 540 });
-  await until("the button told", async () => agentShapes(vnc).length === 1);
-  assert.deepEqual(agentShapes(vnc), ["BB_AGENT,click,850,640,hand"]);
+  await until("the hand", async () => shapesSaid(vnc).length > 0);
+  assert.equal(shapesSaid(vnc)[0], "BB_AGENT,shape,850,640,hand");
   await vnc.close();
 });
 
@@ -4554,8 +4573,9 @@ test("a click by a window's pixels takes no shape from a tree read before the ac
   });
   app.recordings.begin(box.id, 0, "linux");
   await tool("computer_act", { box: box.name, action: "click", window: 100, x: 70, y: 580 });
-  await until("the click told", async () => agentShapes(vnc).length === 1);
-  assert.deepEqual(agentShapes(vnc), ["BB_AGENT,click,170,680"], "the link was in the tree read with the image, but has gone since");
+  await until("the click told", async () => clicksSaid(vnc).length === 1);
+  await quiet();
+  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,click,170,680"], "the link was in the tree read with the image, but has gone since");
   const clicks = app.recordings.end(box.id)!.filter((event) => event.type === "click");
   assert.deepEqual(
     clicks.map((event) => event.type === "click" && event.role),
@@ -4564,23 +4584,13 @@ test("a click by a window's pixels takes no shape from a tree read before the ac
   await vnc.close();
 });
 
-function replayedShape(messages: readonly string[], at: number): string {
-  const shapes = new ShapeTimeline(at);
-  for (const message of messages) {
-    const place = agentPlaceOf(message.slice("BB_AGENT,".length));
-    if (place) shapes.act(place, at);
-  }
-  return shapes.now(at).shape;
-}
-
-test("a viewer that connects while the agent types, or while an I-beam is held after a click on a text field, is shown that shape (105)", async (t) => {
+test("a viewer that connects is told where the agent is and the shape showing now, once, and the same as a viewer watching all along (105)", async (t) => {
   const { harness, app, box, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   const running = (await only(app))!;
-  const agentSaid = (session: { sent: readonly (string | Uint8Array)[] }) => session.sent.filter((message): message is string => typeof message === "string" && message.startsWith("BB_AGENT,"));
-  const viewer = async (number: number, count: number) => {
+  const viewer = async (number: number) => {
     const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-0000${number}&stream=pointer`);
-    await until(`viewer ${number} told`, async () => agentSaid(session).length >= count);
+    await until(`viewer ${number} told`, async () => agentSaid(session).length >= 2);
     await new Promise((resolve) => setTimeout(resolve, 100));
     const told = agentSaid(session);
     await session.close();
@@ -4588,37 +4598,39 @@ test("a viewer that connects while the agent types, or while an I-beam is held a
   };
   await tool("computer_screenshot", { box: box.name });
   await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 327, y: 523 });
-  const afterField = await viewer(1, 2);
-  assert.equal(afterField[0], "BB_AGENT,at,400,640");
-  assert.match(afterField[1]!, /^BB_AGENT,held,400,640,ibeam,\d+$/, "the I-beam held after a click on a text field, until the pointer moves");
-  assert.equal(replayedShape(afterField, 0), "ibeam");
+  const watching = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00009&stream=pointer`);
+  assert.deepEqual(await viewer(1), ["BB_AGENT,at,400,640", "BB_AGENT,shape,400,640,ibeam"], "the I-beam held after a click on a text field, until the pointer moves");
 
   await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 408, y: 94 });
   app.desktops.agentTyping(running, { characters: 8, secret: false, role: "text" }, Date.now());
-  const whileTyping = await viewer(2, 2);
-  assert.equal(whileTyping[0], "BB_AGENT,at,500,115");
-  assert.ok(whileTyping.some((message) => /^BB_AGENT,typing,500,115,\d+$/.test(message)), whileTyping.join(" "));
-  assert.equal(replayedShape(whileTyping, 0), "ibeam", "the I-beam while the agent types");
+  assert.deepEqual(await viewer(2), ["BB_AGENT,at,500,115", "BB_AGENT,shape,500,115,ibeam"], "the I-beam while the agent types");
+
+  app.desktops.agentTyping(running, null, Date.now());
+  await until("the arrow a second after the typing", async () => shapesSaid(watching).at(-1) === "BB_AGENT,shape,500,115,arrow");
+  assert.deepEqual(await viewer(3), ["BB_AGENT,at,500,115", "BB_AGENT,shape,500,115,arrow"]);
+  await watching.close();
 });
 
-test("a person who takes control ends the agent's shape, so a viewer after they hand back is shown none from before (105)", async (t) => {
+test("a person who takes control ends the agent's shape: watching viewers see the arrow, and a viewer after they hand back is told nothing from before (105)", async (t) => {
   const { harness, box, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
-  const agentSaid = (session: { sent: readonly (string | Uint8Array)[] }) => session.sent.filter((message): message is string => typeof message === "string" && message.startsWith("BB_AGENT,"));
   await tool("computer_screenshot", { box: box.name });
   await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 327, y: 523 });
   const watching = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
   await until("the watching viewer told", async () => agentSaid(watching).length >= 2);
+  assert.deepEqual(agentSaid(watching), ["BB_AGENT,at,400,640", "BB_AGENT,shape,400,640,ibeam"]);
   const viewer = "viewer-one-0001";
   const session = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}`);
   await session.receive(new TextEncoder().encode("RFB 003.008\n"));
   await session.receive(Uint8Array.of(1));
   await session.receive(Uint8Array.of(1));
   assert.equal(((await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null }).error, null);
+  await until("the arrow", async () => agentSaid(watching).at(-1) === "BB_AGENT,shape,400,640,arrow");
   await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
   const later = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
-  await new Promise((resolve) => setTimeout(resolve, 300));
+  await quiet();
   assert.deepEqual(agentSaid(later), [], "neither where the agent last acted nor its I-beam");
+  assert.equal(agentSaid(watching).length, 3, "nothing more after the take-over");
   await later.close();
   await watching.close();
   await session.close();
@@ -4630,23 +4642,23 @@ test("on a Linux desktop, the agent's pointer is an I-beam while it types into a
   const vnc = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00001&stream=pointer`);
   const field = refOf(text(await tool("computer_observe", { box: box.name, window: 100 })), '"New task"');
   await tool("computer_type", { box: box.name, ref: field, text: "Buy milk" });
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.deepEqual(agentShapes(vnc), [], "typing by reference with no place known shows no pointer");
+  await quiet();
+  assert.deepEqual(agentSaid(vnc), [], "typing by reference with no place known shows no pointer");
 
   await tool("computer_screenshot", { box: box.name });
   await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 408, y: 94 });
-  await until("the click told", async () => agentShapes(vnc).length === 1);
+  await until("the click told", async () => clicksSaid(vnc).length === 1);
   await tool("computer_type", { box: box.name, ref: field, text: " and eggs" });
-  await until("the typing told", async () => agentShapes(vnc).length === 3);
-  assert.deepEqual(agentShapes(vnc).slice(1), ["BB_AGENT,typing,500,115", "BB_AGENT,typed,500,115"]);
+  await until("the I-beam", async () => shapesSaid(vnc).length === 1);
+  await until("the arrow after it", async () => shapesSaid(vnc).length === 2);
   await tool("computer_act", { box: box.name, action: "set_value", ref: field, value: "Buy bread" });
-  await until("the value told", async () => agentShapes(vnc).length === 5);
-  assert.deepEqual(agentShapes(vnc).slice(3), ["BB_AGENT,typing,500,115", "BB_AGENT,typed,500,115"]);
+  await until("the I-beam and the arrow again", async () => shapesSaid(vnc).length === 4);
+  assert.deepEqual(shapesSaid(vnc), ["BB_AGENT,shape,500,115,ibeam", "BB_AGENT,shape,500,115,arrow", "BB_AGENT,shape,500,115,ibeam", "BB_AGENT,shape,500,115,arrow"]);
 
   await tool("computer_type", { box: box.name, window: 100, text: "x" });
   await tool("computer_type", { box: box.name, ref: field, keys: "ctrl+a" });
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.equal(agentShapes(vnc).length, 5, "typing into a window's focused element, whose role is not known, or pressing keys, keeps the arrow");
+  await quiet();
+  assert.equal(shapesSaid(vnc).length, 4, "typing into a window's focused element, whose role is not known, or pressing keys, keeps the arrow");
   await vnc.close();
 });
 
@@ -4661,8 +4673,9 @@ test("a click by pixels on a window too large to read quickly keeps the arrow, a
   const clicked = text(await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 690, y: 131 }));
   assert.match(clicked, /^Clicked \(690, 131\) on the desktop, \(845, 160\) on the screen\./);
   assert.match(clicked, /too large to read quickly/);
-  await until("the click told", async () => agentShapes(vnc).length === 1);
-  assert.deepEqual(agentShapes(vnc), ["BB_AGENT,click,845,160"], "the Delete Task 1 button is under the point, but its tree was not read");
+  await until("the click told", async () => clicksSaid(vnc).length === 1);
+  await quiet();
+  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,click,845,160"], "the Delete Task 1 button is under the point, but its tree was not read");
   const budgets = readDesktop(file).calls.filter((call) => call.tool === "get_window_state").slice(before).map((call) => call.args.max_elements);
   assert.ok(budgets.length && budgets.every((budget) => budget === 1), `reads: ${budgets.join()}`);
   await vnc.close();
