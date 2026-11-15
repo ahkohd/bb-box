@@ -190,7 +190,7 @@ export function parseMsbPart(part: BackendPart): ParsedBackend<MsbConfig> {
 
   const host = text(values, MSB_KEYS.host);
   if (host && !SSH.test(host) && !BB_MACHINE.test(host)) {
-    problem(MSB_KEYS.host, `microsandbox: the host "${host}" must be ssh://user@host or bb:<machine ID>, or empty for BB's server.`);
+    problem(MSB_KEYS.host, `microsandbox: the host must be ssh://user@host or bb:<machine ID>, or empty for BB's server.`);
   }
   const linux = text(values, MSB_KEYS.linuxImage, MSB_DEFAULTS.linuxImage);
   const desktop = text(values, MSB_KEYS.desktopImage, MSB_DEFAULTS.desktopImage);
@@ -202,7 +202,7 @@ export function parseMsbPart(part: BackendPart): ParsedBackend<MsbConfig> {
     [MSB_KEYS.arm64Image, "arm64 linux", arm64],
     [MSB_KEYS.arm64DesktopImage, "arm64 desktop", arm64Desktop],
   ] as const) {
-    if (image && !IMAGE_REF.test(image)) problem(key, `microsandbox: the ${what} image "${image}" is not an image reference ${PRODUCT} can use.`);
+    if (image && !IMAGE_REF.test(image)) problem(key, `microsandbox: the ${what} image is not an image reference ${PRODUCT} can use.`);
   }
   if (!linux && !desktop && !arm64 && !arm64Desktop) problem(MSB_KEYS.linuxImage, "microsandbox: give a linux or a desktop image.");
   const docker = values[MSB_KEYS.docker] !== false;
@@ -216,7 +216,7 @@ export function parseMsbPart(part: BackendPart): ParsedBackend<MsbConfig> {
   const network = text(values, MSB_KEYS.network, MSB_DEFAULTS.network);
   const profiles = network.split(",").map((profile) => profile.trim());
   if (!profiles.length || profiles.some((profile) => !PROFILES.has(profile))) {
-    problem(MSB_KEYS.network, `microsandbox: "${network}" is not a list of msb's network profiles: public, private and host.`);
+    problem(MSB_KEYS.network, "microsandbox: the network is not a list of msb's network profiles: public, private and host.");
   }
   const boxes = whole(MSB_KEYS.boxes, MSB_DEFAULTS.boxes, 1, "the most boxes");
   const reserveMemoryMiB = number(values, MSB_KEYS.reserveMemoryMiB, MSB_DEFAULTS.reserveMemoryMiB);

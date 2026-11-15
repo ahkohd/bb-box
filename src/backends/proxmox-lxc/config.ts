@@ -526,20 +526,20 @@ function templateList(values: Readonly<Record<string, unknown>>, flavour: LxcFla
   const entries = listed.split(gpu ? /[,\n]+/ : /[\s,]+/).map((entry) => entry.trim()).filter(Boolean);
   const name = FLAVOUR_WORDS[flavour].name;
   const templates: LxcTemplate[] = [];
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     const [vmidText = "", id = "", ...rest] = entry.split(/\s*=\s*|\s+/);
     const vmid = Number(vmidText);
     if (!wholeInRange(vmid, 100, 999_999_999) || rest.length || (!gpu && id)) {
       problem(
         key,
         gpu
-          ? `Use one line per GPU desktop template, with its VMID and, for a template with a card's device lines, its GPU's ID, like "9101" or "9101 GPU-0a1b2c3d". "${entry}" is not.`
-          : `Use VMIDs from 100 for the ${name} templates. "${entry}" is not one.`,
+          ? `Use one line per GPU desktop template, with its VMID and, for a template with a card's device lines, its GPU's ID, like "9101" or "9101 GPU-0a1b2c3d". Entry ${index + 1} is not.`
+          : `Use VMIDs from 100 for the ${name} templates. Entry ${index + 1} is not one.`,
       );
       continue;
     }
     if (gpu && id && !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(id)) {
-      problem(key, `Give GPU desktop template ${vmid} the ID of its GPU, like "${vmid} GPU-0a1b2c3d", or no ID for a template with no device lines.`);
+      problem(key, `Give GPU desktop template ${vmid} the ID of its GPU, like "${vmid} GPU-0a1b2c3d", or no ID for a template with no device lines. Entry ${index + 1}'s ID is not one.`);
       continue;
     }
     templates.push({ vmid, gpu: gpu && id ? id : null });

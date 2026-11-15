@@ -1521,11 +1521,11 @@ test("the iOS image setting is a Tart VM name of its own, and needs a macOS imag
     const parsed = parse(values);
     return parsed.enabled && !parsed.ok ? parsed.problems : [];
   };
-  assert.deepEqual(problems({ "tart-ios-image": "bb box ios" }), ['Tart: the iOS image "bb box ios" is not a Tart VM name BB Box can use.']);
+  assert.deepEqual(problems({ "tart-ios-image": "bb box ios" }), ["Tart: the iOS image is not a Tart VM name BB Box can use."]);
   assert.deepEqual(problems({ "tart-ios-image": "bb-box-ios", "tart-macos-image": "", "tart-macos-desktop-image": "", "tart-linux-image": "bb-box-linux" }), [
     "Tart: the iOS image is built on the macOS image, so give a macOS image too.",
   ]);
-  assert.deepEqual(problems({ "tart-ios-image": "bb-box-macos" }), ['Tart: "bb-box-macos" is another kind\'s image; the iOS image is a VM of its own.']);
+  assert.deepEqual(problems({ "tart-ios-image": "bb-box-macos" }), ["Tart: the iOS image is another kind's image; the iOS image is a VM of its own."]);
 });
 
 test("what a Mac's empty shared iOS host sizes take is BB Box's estimate from the Mac it last read, read once when first asked, and open pages are told (067)", async () => {

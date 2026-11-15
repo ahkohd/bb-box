@@ -6,6 +6,7 @@ import { PRESETS, describeSize, kindSizes, type Preset, type SizeChange } from "
 import { DEFAULT_TAILNET_TAGS } from "../core/tailnet.ts";
 import type { FieldView } from "./configuration.ts";
 import { PRODUCT } from "../brand.ts";
+import { VALUE_NOT_SHOWN, ordinal } from "../core/problems.ts";
 
 export interface Change {
   readonly path: string;
@@ -24,6 +25,7 @@ export interface FieldEdits {
   readonly addLines?: readonly (readonly [string, string])[];
   readonly removeLines?: readonly (readonly [string, string])[];
   readonly secrets?: ReadonlyMap<string, string>;
+  readonly unresolvedSecrets?: ReadonlyMap<string, Error>;
   readonly clearSecrets?: readonly string[];
 }
 
@@ -44,13 +46,13 @@ export function projectIdsOf(text: string, known: readonly ProjectChoice[]): str
   const names = known.map((project) => project.name).join(", ");
   return [
     ...new Set(
-      asked.map((each) => {
+      asked.map((each, index) => {
         const byId = known.find((project) => project.id === each);
         if (byId) return byId.id;
         const byName = known.filter((project) => project.name.toLowerCase() === each.toLowerCase());
         if (byName.length === 1) return byName[0]!.id;
         if (byName.length > 1) throw invalid(`${byName.length} projects are called "${each}": ${byName.map((project) => project.id).join(", ")}. Give its ID.`);
-        throw invalid(`BB has no project called "${each}".${names ? ` Its projects are: ${names}.` : ""}`, "Give names or IDs, separated by commas, or an empty list for every project.");
+        throw invalid(`BB has no project by the ${ordinal(index + 1)} name or ID given. ${NOT_SHOWN}${names ? ` Its projects are: ${names}.` : ""}`, "Give names or IDs, separated by commas, or an empty list for every project.");
       }),
     ),
   ];
@@ -86,10 +88,21 @@ function invalid(message: string, hint?: string): PluginCliError {
   return new PluginCliError(message, { code: "invalid_input", ...(hint ? { hint } : {}) });
 }
 
-export function pairOf(text: string, what: string): [string, string] {
+function splitPair(text: string): [string, string] | null {
   const at = text.indexOf("=");
-  if (at <= 0) throw invalid(`Give ${what} as <name>=<value>, not "${text.length > 40 ? `${text.slice(0, 40)}…` : text}".`);
-  return [text.slice(0, at).trim(), text.slice(at + 1)];
+  return at <= 0 ? null : [text.slice(0, at).trim(), text.slice(at + 1)];
+}
+
+export function pairOf(text: string, what: string): [string, string] {
+  const pair = splitPair(text);
+  if (!pair) throw invalid(`Give ${what} as <name>=<value>. ${GIVEN_NOT_SHOWN}`);
+  return pair;
+}
+
+export function unshownPairOf(text: string, what: string): [string, string] {
+  const pair = splitPair(text);
+  if (!pair) throw invalid(`Give ${what} as <name>=<value>. ${GIVEN_NOT_SHOWN}`);
+  return pair;
 }
 
 function isSecretState(value: unknown): value is SecretState {
@@ -111,14 +124,39 @@ function defaultWords(field: FieldView): string {
   return field.default === undefined || field.default === "" ? "unset" : `${JSON.stringify(field.default)}, the default`;
 }
 
-function fieldNamed(fields: readonly FieldView[], key: string, owner: string): FieldView {
+function fieldNamed(fields: readonly FieldView[], key: string, owner: string, given: string): FieldView {
   const field = fields.find((candidate) => candidate.key === key);
-  if (!field) throw invalid(`${owner} has no field "${key}". Its fields are ${fields.map((each) => each.key).join(", ") || "none"}.`, "bb box backend fields <type> lists them, with what each takes.");
+  if (!field) throw invalid(`${owner} has no field by the name ${given} gives. ${NOT_SHOWN} Its fields are ${fields.map((each) => each.key).join(", ") || "none"}.`, "bb box backend fields <type> lists them, with what each takes.");
   return field;
 }
 
-function plainField(fields: readonly FieldView[], key: string, owner: string): FieldView {
-  const field = fieldNamed(fields, key, owner);
+const NOT_SHOWN = "That name is not shown, as it may be a secret.";
+const GIVEN_NOT_SHOWN = "What was given is not shown, as it may be a secret.";
+const CEILINGS = "general.snapshots.ceilings.";
+
+function refuseUnknownCeiling(document: ConfigDocument, option: OptionInfo): void {
+  const backend = option.name.startsWith(CEILINGS) ? option.name.slice(CEILINGS.length) : null;
+  if (backend !== null && !document.backends.some((each) => each.id === backend)) {
+    throw invalid(`There is no backend by the ID a ceiling on paid snapshots names. ${NOT_SHOWN}`, "bb box config show lists the backends' IDs.");
+  }
+}
+
+const SECRET_GIVERS = "a --secret or --secret-file";
+const SECRET_CLEARER = "a --clear-secret";
+
+function firstUnresolved(unresolved: ReadonlyMap<string, Error> | undefined): void {
+  const first = unresolved?.values().next().value;
+  if (first) throw first;
+}
+
+function secretFieldNamed(fields: readonly FieldView[], key: string, owner: string, given = SECRET_GIVERS): FieldView {
+  const field = fields.find((candidate) => candidate.key === key);
+  if (!field) throw invalid(`${owner} has no field by the name ${given} gives. ${NOT_SHOWN}`, `Its secret fields are ${fields.filter(isSecretField).map((each) => each.key).join(", ") || "none"}.`);
+  return field;
+}
+
+function plainField(fields: readonly FieldView[], key: string, owner: string, given: string): FieldView {
+  const field = fieldNamed(fields, key, owner, given);
   if (isSecretField(field)) throw invalid(`${field.label} (${key}) is a secret, so it is never given on the command line, where other processes can read it.`, SECRET_INPUT_HINT);
   return field;
 }
@@ -130,12 +168,12 @@ export function booleanOf(text: string, name: string): boolean {
   const word = text.trim().toLowerCase();
   if (TRUE_WORDS.has(word)) return true;
   if (FALSE_WORDS.has(word)) return false;
-  throw invalid(`${name} is true or false, not "${text}".`);
+  throw invalid(`${name} is true or false. ${VALUE_NOT_SHOWN}`);
 }
 
 function wholeOf(text: string, name: string, least: number, most: number): number {
   const value = Number(text.trim());
-  if (!text.trim() || !Number.isInteger(value) || value < least || value > most) throw invalid(`${name} is a whole number from ${least} to ${most}, not "${text}".`);
+  if (!text.trim() || !Number.isInteger(value) || value < least || value > most) throw invalid(`${name} is a whole number from ${least} to ${most}. ${VALUE_NOT_SHOWN}`);
   return value;
 }
 
@@ -144,12 +182,12 @@ function valueOf(field: FieldView, raw: string): FieldValue {
   if (field.type === "boolean") return booleanOf(raw, name);
   if (field.type === "number") {
     const value = Number(raw.trim());
-    if (!raw.trim() || !Number.isFinite(value)) throw invalid(`${name} is a number, not "${raw}". --unset ${field.key} gives it its default.`);
+    if (!raw.trim() || !Number.isFinite(value)) throw invalid(`${name} is a number. ${VALUE_NOT_SHOWN} --unset ${field.key} gives it its default.`);
     return value;
   }
   if (field.type === "select") {
     const options = (field as { options?: readonly string[] }).options ?? [];
-    if (!options.includes(raw)) throw invalid(`${name} is one of ${options.join(", ")}, not "${raw}".`);
+    if (!options.includes(raw)) throw invalid(`${name} is one of ${options.join(", ")}. ${VALUE_NOT_SHOWN}`);
   }
   return raw;
 }
@@ -177,24 +215,24 @@ function editedFields(
   const effective = (field: FieldView) => (next[field.key] === undefined ? field.default : next[field.key]);
   const note = (key: string, words: string) => changes.push({ path: `${path}.${key}`, words });
   for (const key of edits.unset ?? []) {
-    const field = fieldNamed(fields, key, owner);
+    const field = fieldNamed(fields, key, owner, "an --unset");
     if (isSecretField(field)) throw invalid(`${field.label} (${key}) is a secret: clear it with --clear-secret ${key}.`);
     if (next[key] === undefined) continue;
     note(key, `${shown(next[key])} → ${defaultWords(field)}`);
     delete next[key];
   }
-  const setPlain = (key: string, raw: string) => {
-    const field = plainField(fields, key, owner);
+  const setPlain = (key: string, raw: string, given: string) => {
+    const field = plainField(fields, key, owner, given);
     const value = valueOf(field, raw);
     if (next[key] === value) return;
     const before = next[key] === undefined ? defaultWords(field) : shown(next[key]);
     next[key] = value;
     note(key, `${before} → ${value === "" ? '"" (empty)' : shown(value)}`);
   };
-  for (const [key, raw] of edits.set ?? []) setPlain(key, raw);
-  for (const [key, text] of edits.setFromFile ?? []) setPlain(key, text.replace(/\r\n/g, "\n").replace(/\n+$/, ""));
+  for (const [key, raw] of edits.set ?? []) setPlain(key, raw, "a --field");
+  for (const [key, text] of edits.setFromFile ?? []) setPlain(key, text.replace(/\r\n/g, "\n").replace(/\n+$/, ""), "a --field-file");
   for (const [key, line] of edits.addLines ?? []) {
-    const field = plainField(fields, key, owner);
+    const field = plainField(fields, key, owner, "an --add-line");
     if (field.type !== "string") throw invalid(`${field.label} (${key}) is a ${field.type}, not lines of text.`);
     const lines = linesOf(effective(field));
     if (lines.some((each) => each.trim() === line.trim())) continue;
@@ -202,15 +240,17 @@ function editedFields(
     note(key, `added the line "${line.trim()}"`);
   }
   for (const [key, text] of edits.removeLines ?? []) {
-    const field = plainField(fields, key, owner);
+    const field = plainField(fields, key, owner, "a --remove-line");
     const lines = linesOf(effective(field));
     const kept = lines.filter((line) => !lineMatches(line, text));
-    if (kept.length === lines.length) throw invalid(`No line of ${field.label} (${key}) is "${text}" or starts with it.`);
+    if (kept.length === lines.length) throw invalid(`No line of ${field.label} (${key}) is the text a --remove-line gives, or starts with it. ${GIVEN_NOT_SHOWN}`);
     next[key] = kept.join("\n");
     for (const line of lines.filter((each) => lineMatches(each, text))) note(key, `removed the line "${line.trim()}"`);
   }
+  for (const key of [...(edits.secrets?.keys() ?? []), ...(edits.unresolvedSecrets?.keys() ?? [])]) secretFieldNamed(fields, key, owner);
+  firstUnresolved(edits.unresolvedSecrets);
   for (const [key, value] of edits.secrets ?? []) {
-    const field = fieldNamed(fields, key, owner);
+    const field = secretFieldNamed(fields, key, owner);
     if (!isSecretField(field)) throw invalid(`${field.label} (${key}) is not a secret: give it with --field ${key}=<value>.`);
     if (!secretsAllowed) throw invalid(`${owner} keeps no secrets.`);
     if (!value.trim()) throw invalid(`The value for ${key} is empty. To clear a secret, use --clear-secret ${key}.`);
@@ -219,7 +259,7 @@ function editedFields(
     note(key, isSecretState(before) && before.set ? "replaced" : "set");
   }
   for (const key of edits.clearSecrets ?? []) {
-    const field = fieldNamed(fields, key, owner);
+    const field = secretFieldNamed(fields, key, owner, SECRET_CLEARER);
     if (!isSecretField(field)) throw invalid(`${field.label} (${key}) is not a secret: use --unset ${key}.`);
     const before = next[key];
     if (isSecretState(before) && !before.set) continue;
@@ -238,14 +278,14 @@ export function findBackend(document: ConfigDocument, ref: string): BackendConfi
   const backend = document.backends.find((candidate) => candidate.id === ref) ?? (document.backends.filter((candidate) => candidate.type === ref).length === 1 ? document.backends.find((candidate) => candidate.type === ref) : undefined);
   if (!backend) {
     const ids = document.backends.map((candidate) => candidate.id);
-    throw new PluginCliError(`There is no backend ${ref}.${ids.length ? ` There are ${ids.join(", ")}.` : " There is none yet."}`, { code: "not_found", hint: "bb box backend list lists them, and bb box backend add <type> adds one." });
+    throw new PluginCliError(`There is no backend by the ID or type given. ${NOT_SHOWN}${ids.length ? ` There are ${ids.join(", ")}.` : " There is none yet."}`, { code: "not_found", hint: "bb box backend list lists them, and bb box backend add <type> adds one." });
   }
   return backend;
 }
 
 export function driverOf(drivers: readonly DriverShape[], type: string): DriverShape {
   const driver = drivers.find((candidate) => candidate.type === type);
-  if (!driver) throw invalid(`There is no backend type "${type}". The types are ${drivers.map((each) => each.type).join(", ")}.`, "bb box backend types lists them.");
+  if (!driver) throw invalid(`There is no backend type by the name given. ${NOT_SHOWN} The types are ${drivers.map((each) => each.type).join(", ")}.`, "bb box backend types lists them.");
   return driver;
 }
 
@@ -253,7 +293,7 @@ function warmChanges(backend: BackendConfig, driver: DriverShape, warm: readonly
   const next: Record<string, number> = { ...backend.warm };
   const changes: Change[] = [];
   for (const [kind, count] of warm ?? []) {
-    if (!driver.kinds.includes(kind)) throw invalid(`${driver.label} makes ${driver.kinds.join(", ")}, not ${kind}.`);
+    if (!driver.kinds.includes(kind)) throw invalid(`${driver.label} makes ${driver.kinds.join(", ")}, and not a kind a --warm names. ${NOT_SHOWN}`);
     const before = next[kind] ?? 0;
     if (before === count) continue;
     if (count === 0) delete next[kind];
@@ -339,7 +379,7 @@ export interface HostEdit extends FieldEdits {
 export function addHost(document: ConfigDocument, drivers: readonly DriverShape[], ref: string, name: string, edit: HostEdit): Edited {
   const backend = findBackend(document, ref);
   const driver = hostDriver(backend, drivers);
-  if (!HOST_NAME.test(name)) throw invalid(`Name the host with lower-case letters, digits and "-", such as mac-1, not "${name}".`);
+  if (!HOST_NAME.test(name)) throw invalid(`Name the host with lower-case letters, digits and "-", such as mac-1. ${NOT_SHOWN}`);
   if ((backend.hosts ?? []).some((host) => host.name === name)) throw invalid(`Backend ${backend.id} has a host ${name} already.`, `bb box backend host set ${backend.id} ${name} changes it.`);
   const path = `backends.${backend.id}.hosts.${name}`;
   const fields = editedFields({}, driver.hostFields, edit, `Host ${name} of backend ${backend.id}`, path, false);
@@ -349,7 +389,7 @@ export function addHost(document: ConfigDocument, drivers: readonly DriverShape[
 
 function hostOf(backend: BackendConfig, name: string): HostConfig {
   const host = (backend.hosts ?? []).find((candidate) => candidate.name === name);
-  if (!host) throw new PluginCliError(`Backend ${backend.id} has no host ${name}.${backend.hosts?.length ? ` Its hosts are ${backend.hosts.map((each) => each.name).join(", ")}.` : ""}`, { code: "not_found" });
+  if (!host) throw new PluginCliError(`Backend ${backend.id} has no host by the name given. ${NOT_SHOWN}${backend.hosts?.length ? ` Its hosts are ${backend.hosts.map((each) => each.name).join(", ")}.` : ""}`, { code: "not_found" });
   return host;
 }
 
@@ -403,7 +443,7 @@ function sizesWords(kind: string, kinds: Readonly<Record<string, KindConfig>>): 
 }
 
 export function setKind(document: ConfigDocument, knownKinds: readonly string[], kind: string, edit: KindEdit): Edited {
-  if (!knownKinds.includes(kind)) throw invalid(`There is no kind "${kind}". The kinds are ${knownKinds.join(", ")}.`);
+  if (!knownKinds.includes(kind)) throw invalid(`There is no kind by the name given. ${NOT_SHOWN} The kinds are ${knownKinds.join(", ")}.`);
   if (edit.makeDefault && edit.enabled === false) throw invalid("The default kind stays on. Leave out --off, or choose another default.");
   const defaultKind = document.general.defaultKind ?? GENERAL_DEFAULTS.defaultKind;
   if (edit.enabled === false && !edit.makeDefault && kind === defaultKind) {
@@ -508,12 +548,22 @@ export function optionsOf(document: ConfigDocument): OptionInfo[] {
   return [...OPTIONS, ...document.backends.map((backend) => ceilingOption(backend.id))];
 }
 
+function fullOptionName(name: string): string {
+  return name.startsWith("general.") || name.startsWith("monitor.") ? name : `general.${name}`;
+}
+
+function secretOptionNamed(name: string): OptionInfo {
+  const option = OPTIONS.find((candidate) => candidate.name === fullOptionName(name));
+  if (!option) throw invalid(`A --secret names no option. ${NOT_SHOWN}`, `The secret options are ${OPTIONS.filter((each) => each.type.kind === "secret").map((each) => each.name).join(", ")}.`);
+  return option;
+}
+
 export function optionNamed(name: string): OptionInfo {
-  const full = name.startsWith("general.") || name.startsWith("monitor.") ? name : `general.${name}`;
+  const full = fullOptionName(name);
   const ceiling = CEILING_OPTION.exec(full);
   if (ceiling) return ceilingOption(ceiling[1]!);
   const option = OPTIONS.find((candidate) => candidate.name === full);
-  if (!option) throw invalid(`There is no option "${name}". The options are ${OPTIONS.map((each) => each.name).join(", ")}.`, "bb box option list shows each with its value.");
+  if (!option) throw invalid(`There is no option by the name given. ${NOT_SHOWN} The options are ${OPTIONS.map((each) => each.name).join(", ")}.`, "bb box option list shows each with its value.");
   return option;
 }
 
@@ -523,11 +573,11 @@ function optionValue(option: OptionInfo, raw: string): unknown {
   if (type.kind === "whole") return wholeOf(raw, option.name, type.least, type.most);
   if (type.kind === "amount") {
     const amount = Number(raw.trim().replace(/^\$/, ""));
-    if (!raw.trim() || !isCents(amount, type.least, type.most)) throw invalid(`${option.name} is an amount a month from ${type.least} to ${type.most}, in whole cents, such as 5 or 7.50, not "${raw}".`);
+    if (!raw.trim() || !isCents(amount, type.least, type.most)) throw invalid(`${option.name} is an amount a month from ${type.least} to ${type.most}, in whole cents, such as 5 or 7.50. ${VALUE_NOT_SHOWN}`);
     return amount;
   }
   if (type.kind === "choice") {
-    if (!type.values.includes(raw)) throw invalid(`${option.name} is ${type.values.join(", ")}, not "${raw}".`);
+    if (!type.values.includes(raw)) throw invalid(`${option.name} is ${type.values.join(", ")}. ${VALUE_NOT_SHOWN}`);
     return raw;
   }
   if (type.kind === "tags") return raw.split(",").map((tag) => tag.trim()).filter(Boolean);
@@ -570,7 +620,13 @@ function rebuilt(document: ConfigDocument, parts: ReturnType<typeof partsOf>, ta
   return { ...rest, general: general as ConfigDocument["general"], ...(monitor ? { monitor: monitor as ConfigDocument["monitor"] } : {}) };
 }
 
-export function setOptions(document: ConfigDocument, values: readonly (readonly [string, string])[], secrets: ReadonlyMap<string, string>, unset: readonly string[] = []): Edited {
+export function setOptions(
+  document: ConfigDocument,
+  values: readonly (readonly [string, string])[],
+  secrets: ReadonlyMap<string, string>,
+  unset: readonly string[] = [],
+  unresolved: ReadonlyMap<string, Error> = new Map(),
+): Edited {
   const parts = partsOf(document);
   const changes: Change[] = [];
   let tailnetTouched = false;
@@ -578,7 +634,7 @@ export function setOptions(document: ConfigDocument, values: readonly (readonly 
     const [part, key, sub] = option.name.split(".") as [string, string, string | undefined];
     const ceiling = key === "snapshots" && sub === "ceilings" ? option.name.slice("general.snapshots.ceilings.".length) : null;
     if (ceiling !== null && value !== undefined && !document.backends.some((backend) => backend.id === ceiling)) {
-      throw invalid(`There is no backend "${ceiling}" for a ceiling on paid snapshots.`, "bb box config show lists the backends' IDs.");
+      throw invalid(`There is no backend by the ID a ceiling on paid snapshots names. ${NOT_SHOWN}`, "bb box config show lists the backends' IDs.");
     }
     if (ceiling !== null) parts.snapshots.ceilings = { ...(parts.snapshots.ceilings as Record<string, number> | undefined) };
     const target = part === "monitor" ? parts.monitor : key === "tailnet" ? parts.tailnet : ceiling !== null ? (parts.snapshots.ceilings as Record<string, unknown>) : key === "snapshots" ? parts.snapshots : parts.general;
@@ -601,9 +657,15 @@ export function setOptions(document: ConfigDocument, values: readonly (readonly 
       }
     } else put(option, undefined);
   }
-  for (const [name, raw] of values) put(optionNamed(name), optionValue(optionNamed(name), raw));
-  for (const [name, value] of secrets) {
+  for (const [name, raw] of values) {
     const option = optionNamed(name);
+    refuseUnknownCeiling(document, option);
+    put(option, optionValue(option, raw));
+  }
+  for (const name of [...secrets.keys(), ...unresolved.keys()]) secretOptionNamed(name);
+  firstUnresolved(unresolved);
+  for (const [name, value] of secrets) {
+    const option = secretOptionNamed(name);
     if (option.type.kind !== "secret") throw invalid(`${option.name} is not a secret: give it as ${option.name}=<value>.`);
     if (!value.trim()) throw invalid(`The value for ${option.name} is empty. To clear it, use bb box option unset ${option.name}.`);
     put(option, value);
@@ -614,13 +676,21 @@ export function setOptions(document: ConfigDocument, values: readonly (readonly 
   return { document: rebuilt(document, parts, tailnetTouched), changes };
 }
 
-export function parseDotenv(text: string): Map<string, string> {
+const DOTENV_ENTRY = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/;
+const DOTENV_SKIPPED = /^\s*(#.*)?$/;
+const BYTE_ORDER_MARK = /^\uFEFF/;
+const DOTENV_HINT =
+  "Each line is VARIABLE=value, a comment that starts with #, or blank. Only the first = ends the name, so a value may hold = signs. A value of several lines goes in quotes. The line is not shown, as it may hold a secret.";
+
+export function parseDotenv(text: string, source = "the dotenv file"): Map<string, string> {
   const values = new Map<string, string>();
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const lines = text.replace(BYTE_ORDER_MARK, "").replace(/\r\n/g, "\n").split("\n");
   for (let index = 0; index < lines.length; index += 1) {
+    const lineNumber = index + 1;
     const line = lines[index]!.replace(/^\s*export\s+/, "");
-    const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
-    if (!match) continue;
+    if (DOTENV_SKIPPED.test(line)) continue;
+    const match = DOTENV_ENTRY.exec(line);
+    if (!match) throw invalid(`Line ${lineNumber} of ${source} is not a VARIABLE=value line. Nothing was saved.`, DOTENV_HINT);
     const name = match[1]!;
     let rest = match[2]!.replace(/^\s+/, "");
     if (rest.startsWith('"') || rest.startsWith("'")) {
@@ -631,7 +701,8 @@ export function parseDotenv(text: string): Map<string, string> {
         body += `\n${lines[index]}`;
       }
       const end = closingAt(body, quote);
-      const inner = end === -1 ? body : body.slice(0, end);
+      if (end === -1) throw invalid(`The quoted value on line ${lineNumber} of ${source} has no closing quote. Nothing was saved.`, DOTENV_HINT);
+      const inner = body.slice(0, end);
       values.set(name, quote === '"' ? unescaped(inner) : inner);
       continue;
     }

@@ -65,7 +65,7 @@ test("a Tart Mac takes its own slots, cores and memory for shared hosts, a backe
   assert.deepEqual([plain.config.machines[0]!.slotsMost, plain.config.slots.mostSet], [undefined, undefined]);
   const wrong = pool("mac-1 bbbox-admin@192.0.2.30 macos,ios:many");
   assert.ok(wrong.enabled && !wrong.ok);
-  assert.match(JSON.stringify(wrong.problems), /Give machine mac-1's iOS slots as ios:<slots>, a whole number from 1 to 64, or ios for BB Box's estimate\./);
+  assert.match(JSON.stringify(wrong.problems), /Give the machine on line 1's iOS slots as ios:<slots>, a whole number from 1 to 64, or ios for BB Box's estimate\./);
 });
 
 test("a Mac with no hardware encoder is sized by the cores its software video takes (065)", () => {

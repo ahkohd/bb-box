@@ -1,5 +1,6 @@
 import type { TailnetCredentials } from "./tailnet.ts";
 import { PRODUCT } from "../brand.ts";
+import { unknownKey, type ProblemAt } from "./problems.ts";
 
 export const DEFAULT_TAILNET_TAGS: readonly string[] = ["tag:bb-box"];
 
@@ -32,7 +33,7 @@ function isSetState(value: unknown): value is { readonly set: boolean } {
   return isRecord(value) && typeof value.set === "boolean" && Object.keys(value).every((key) => key === "set" || (key === "version" && typeof value.version === "number"));
 }
 
-function readSecret(value: unknown, key: string, at: string, what: string, problem: (path: string, message: string) => void, changes: Record<string, string | null>): void {
+function readSecret(value: unknown, key: string, at: string, what: string, problem: ProblemAt, changes: Record<string, string | null>): void {
   if (value === undefined) return;
   if (isSetState(value)) {
     if (!value.set) changes[key] = null;
@@ -46,13 +47,15 @@ function readSecret(value: unknown, key: string, at: string, what: string, probl
   changes[key] = value.trim();
 }
 
-export function readTailnet(value: unknown, problem: (path: string, message: string) => void, changes: Record<string, string | null>): TailnetSetting | undefined {
+const TAILNET_SETTINGS = "There are mode, tags, clientId and clientSecret.";
+
+export function readTailnet(value: unknown, problem: ProblemAt, changes: Record<string, string | null>): TailnetSetting | undefined {
   if (!isRecord(value)) {
     problem("general.tailnet", 'tailnet is an object: {"mode": "off"}, or {"mode": "oauth", "tags": ["tag:bb-box"], "clientId": "…", "clientSecret": "…"}.');
     return undefined;
   }
   for (const key of Object.keys(value)) {
-    if (!["mode", "tags", "clientId", "clientSecret"].includes(key)) problem(`general.tailnet.${key}`, `There is no tailnet setting "${key}". There are mode, tags, clientId and clientSecret.`);
+    if (!["mode", "tags", "clientId", "clientSecret"].includes(key)) problem(`general.tailnet.${key}`, `There is no tailnet setting "${key}". ${TAILNET_SETTINGS}`, unknownKey("general.tailnet", Object.keys(value), key, TAILNET_SETTINGS));
   }
   const mode = value.mode ?? "off";
   if (typeof mode !== "string" || !(MODES as readonly string[]).includes(mode)) {

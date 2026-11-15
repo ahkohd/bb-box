@@ -178,6 +178,9 @@ grep '^HCLOUD_TOKEN=' "$BB_THREAD_STORAGE/bb-box.env" | \
 
 A secret on the command line, as `--field token=...`, is refused, and the
 value is not printed. bb-box shows a secret only as set or not set.
+A value may hold `=` signs: only the first `=` on a line ends the name. A
+line that is not `VARIABLE=value`, a comment or blank is refused, and the
+error names only its line number, never the line or a value.
 
 Several backends need an SSH key that their hosts accept. Leave
 `ssh-private-key` empty, and bb-box makes one. Add the backend with `--off`,

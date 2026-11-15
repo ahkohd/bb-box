@@ -446,7 +446,7 @@ test("a Mac line with a mistake is left out of the move, and the copy says so (r
     true,
   );
   assert.deepEqual(document.backends[0]!.hosts!.map((host) => host.name), ["mac1"]);
-  assert.deepEqual(notes, ['Tart: Mac line "mac2 192.0.2.21" is not a name, a space and user@address, so the Mac was left out; add it on the settings page.']);
+  assert.deepEqual(notes, ["Tart: line 2 of the Macs is not a name, a space and user@address, so the Mac was left out; add it on the settings page."]);
   // Any other mistake keeps the Mac, and the note says to fix it.
   const kept = fromSettings({ "tart-enabled": true, "tart-hosts": "mac1 bbbox-admin@192.0.2.20\nmac1 admin@192.0.2.21" }, DRIVERS, true);
   assert.deepEqual(kept.document.backends[0]!.hosts!.map((host) => host.name), ["mac1", "mac1"]);

@@ -7,12 +7,13 @@
 // Every problem has a path, such as "backends.proxmox-lxc.url" or
 // "kinds.linux.presets.small", so the settings page can show it by its field.
 
-import { currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
+import { KIND_INFO, currentKindId, featureWord, isEarlierKindId, kindRequest } from "../backends/kinds.ts";
 import { GPU_PARTS, isSecret, type BackendDriver, type BackendPart, type MachineSize, type FieldDescriptor, type FieldValue, type GpuPart } from "../backends/types.ts";
 import { TAILNET_CLIENT_ID, TAILNET_CLIENT_SECRET, exportedTailnet, keptTailnetSecrets, readTailnet, tailnetProblems, type TailnetSetting } from "./tailnet-settings.ts";
 import { GENERAL_SECRETS, MAX_BOX_FILES, MAX_BOX_FILE_BYTES, contentKey, pathProblem, type BoxFileSetting } from "./box-files.ts";
 import { PRESETS, belowLeast, describeSize, fits, kindSizes, type KindSizesChange, type Preset, type SizeChange, type SizeChanges } from "./sizes.ts";
 import { PRODUCT } from "../brand.ts";
+import { keyPath, ordinal, unknownKey, unnamedValue, type ProblemAt, type UnnamedProblem } from "./problems.ts";
 
 export const SCHEMA = 1;
 
@@ -243,8 +244,6 @@ export function isCents(value: unknown, least: number, most: number): value is n
   return typeof value === "number" && Number.isFinite(value) && value >= least && value <= most && Math.abs(Math.round(value * 100) - value * 100) < 1e-6;
 }
 
-type ProblemAt = (path: string, message: string) => void;
-
 const SNAPSHOT_SETTING_NAMES = "perBox, roomPercent, keepDays, agentsRestore, agentsMemory, pictures and ceilings";
 
 function readSnapshots(value: unknown, problem: ProblemAt): SnapshotSettings | null {
@@ -275,10 +274,13 @@ function readSnapshots(value: unknown, problem: ProblemAt): SnapshotSettings | n
       const { least, most } = SNAPSHOT_LIMITS.ceiling;
       for (const [backend, ceiling] of Object.entries(entry)) {
         if (isCents(ceiling, least, most)) ceilings[backend] = ceiling;
-        else problem(`general.snapshots.ceilings.${backend}`, `Use an amount a month from ${least} to ${most}, in whole cents, such as 5 or 7.50.`);
+        else {
+          const message = `Use an amount a month from ${least} to ${most}, in whole cents, such as 5 or 7.50.`;
+          problem(`general.snapshots.ceilings.${backend}`, message, { path: keyPath("general.snapshots.ceilings", Object.keys(entry), backend), message });
+        }
       }
       if (Object.keys(ceilings).length) snapshots[key] = ceilings;
-    } else problem(`general.snapshots.${key}`, `There is no snapshots setting "${key}". There are ${SNAPSHOT_SETTING_NAMES}.`);
+    } else problem(`general.snapshots.${key}`, `There is no snapshots setting "${key}". There are ${SNAPSHOT_SETTING_NAMES}.`, unknownKey("general.snapshots", Object.keys(value), key, `There are ${SNAPSHOT_SETTING_NAMES}.`));
   }
   return Object.keys(snapshots).length ? (snapshots as SnapshotSettings) : null;
 }
@@ -319,6 +321,7 @@ export type Secrets = Readonly<Record<string, Readonly<Record<string, string>>>>
 export interface Problem {
   readonly path: string;
   readonly message: string;
+  readonly unnamed?: UnnamedProblem;
 }
 
 export const GENERAL_DEFAULTS = { boxesPerThread: 0, enrol: true, defaultKind: "linux", video: true, nightlyImages: false, testDevice: false, encoderLedger: true, iosEncoder: "auto" } as const;
@@ -421,6 +424,14 @@ export function knownKinds(drivers: readonly BackendDriver<any>[]): string[] {
   return [...new Set(drivers.flatMap((driver) => driver.kinds))];
 }
 
+function anyKnownKind(drivers: readonly BackendDriver<any>[]): string[] {
+  return [...new Set([...Object.keys(KIND_INFO), ...knownKinds(drivers)])];
+}
+
+function isUnknownKind(id: string, drivers: readonly BackendDriver<any>[]): boolean {
+  return !isEarlierKindId(id) && !anyKnownKind(drivers).includes(id);
+}
+
 /**
  * The document with each earlier kind ID moved to its kind, or null when it
  * has none. An alias's entry, such as linux-docker's, moves to its kind once,
@@ -487,7 +498,18 @@ export type SecretChanges = Readonly<Record<string, Readonly<Record<string, stri
  * shape. Parts in the wrong shape are left out of the document, so the
  * problems block the write.
  */
-function readMonitor(input: unknown, problem: (path: string, message: string) => void): MonitorSettings | null {
+const MONITOR_SETTINGS = "There are enabled, refreshIntervalSeconds, backgroundMonitoring, pressureNotifications and boxHistory.";
+const TOP_LEVEL_SETTINGS = "It has backends, kinds, general, images and monitor.";
+const GENERAL_SETTINGS = "There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages, identityResetBackends, testDevice, wholeCards, encoderLedger, iosEncoder, tailnet and snapshots.";
+const IMAGE_SETTINGS = "It has kinds, script, check, bake, projects, source and updated.";
+const SIZE_SETTINGS = "A size has cores, memoryMiB and diskGiB.";
+const PRESET_NAMES = "The presets are small, medium and large.";
+const KIND_SETTINGS = "A kind has enabled, presets, default, largest, spares and gpu.";
+const BACKEND_SETTINGS = "A backend has id, type, label, enabled, fields, warm, projects and hosts.";
+const HOST_SETTINGS = "A host has name, enabled and fields.";
+const IMAGE_NAME_RULE = 'Name an image with a lower-case letter first, then letters, digits and "-", up to 40, and not "standard".';
+
+function readMonitor(input: unknown, problem: ProblemAt): MonitorSettings | null {
   if (input === undefined || input === null) return null;
   if (!isRecord(input)) {
     problem("monitor", "monitor must be an object with enabled, refreshIntervalSeconds, backgroundMonitoring, pressureNotifications and boxHistory.");
@@ -502,7 +524,7 @@ function readMonitor(input: unknown, problem: (path: string, message: string) =>
     } else if (key === "enabled" || key === "backgroundMonitoring" || key === "pressureNotifications" || key === "boxHistory") {
       if (typeof value === "boolean") monitor[key] = value;
       else problem(`monitor.${key}`, `${key} is true or false.`);
-    } else problem(`monitor.${key}`, `There is no monitor setting "${key}". There are enabled, refreshIntervalSeconds, backgroundMonitoring, pressureNotifications and boxHistory.`);
+    } else problem(`monitor.${key}`, `There is no monitor setting "${key}". ${MONITOR_SETTINGS}`, unknownKey("monitor", Object.keys(input), key, MONITOR_SETTINGS));
   }
   return Object.keys(monitor).length ? (monitor as MonitorSettings) : null;
 }
@@ -510,14 +532,16 @@ function readMonitor(input: unknown, problem: (path: string, message: string) =>
 export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]): { document: ConfigDocument; secrets: SecretChanges; problems: Problem[] } {
   const problems: Problem[] = [];
   const secrets: Record<string, Record<string, string | null>> = {};
-  const problem = (path: string, message: string) => problems.push({ path, message });
+  const problem: ProblemAt = (path, message, unnamed) => problems.push({ path, message, ...(unnamed ? { unnamed } : {}) });
   if (!isRecord(input)) {
     problem("", "The configuration must be a JSON object with backends, kinds and general.");
     return { document: emptyDocument(), secrets, problems };
   }
   const known = new Set(["schema", "revision", "backends", "kinds", "general", "images", "monitor"]);
-  for (const key of Object.keys(input)) if (!known.has(key)) problem(key, `There is no "${key}" in the configuration. It has backends, kinds, general, images and monitor.`);
-  if (input.schema !== undefined && input.schema !== SCHEMA) problem("schema", `This ${PRODUCT} reads schema ${SCHEMA}, not ${String(input.schema)}.`);
+  for (const key of Object.keys(input)) if (!known.has(key)) problem(key, `There is no "${key}" in the configuration. ${TOP_LEVEL_SETTINGS}`, unknownKey("", Object.keys(input), key, TOP_LEVEL_SETTINGS));
+  if (input.schema !== undefined && input.schema !== SCHEMA) {
+    problem("schema", `This ${PRODUCT} reads schema ${SCHEMA}, not ${String(input.schema)}.`, unnamedValue("schema", `This ${PRODUCT} reads schema ${SCHEMA}, and the file names another.`));
+  }
   const revision = isWhole(input.revision, 0) ? input.revision : 0;
 
   const general: Record<string, unknown> = {};
@@ -533,7 +557,10 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
           if (typeof value === "boolean") general[key] = value;
           else problem("general.enrol", "enrol is true or false.");
         } else if (key === "defaultKind") {
-          if (typeof value === "string" && value) general[key] = value;
+          if (typeof value === "string" && isUnknownKind(value, drivers)) {
+            const known = `The kinds are ${anyKnownKind(drivers).join(", ")}.`;
+            problem("general.defaultKind", `There is no kind "${value}". ${known}`, unnamedValue("general.defaultKind", `There is no kind by the name general.defaultKind gives. ${known}`));
+          } else if (typeof value === "string" && value) general[key] = value;
           else problem("general.defaultKind", "Name the default kind, such as linux.");
         } else if (key === "files") {
           const files = readFiles(value, problem, secrets);
@@ -567,7 +594,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
         } else if (key === "snapshots") {
           const snapshots = readSnapshots(value, problem);
           if (snapshots) general[key] = snapshots;
-        } else problem(`general.${key}`, `There is no general setting "${key}". There are boxesPerThread, enrol, defaultKind, files, video, nightlyImages, identityResetBackends, testDevice, wholeCards, encoderLedger, iosEncoder, tailnet and snapshots.`);
+        } else problem(`general.${key}`, `There is no general setting "${key}". ${GENERAL_SETTINGS}`, unknownKey("general", Object.keys(input.general), key, GENERAL_SETTINGS));
       }
     }
   }
@@ -576,6 +603,11 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
   if (input.kinds !== undefined) {
     if (!isRecord(input.kinds)) problem("kinds", "kinds must be an object with an entry per kind, such as linux.");
     else for (const [id, value] of Object.entries(input.kinds)) {
+      if (isUnknownKind(id, drivers)) {
+        const known = `The kinds are ${anyKnownKind(drivers).join(", ")}.`;
+        problem(`kinds.${id}`, `There is no kind "${id}". ${known}`, unknownKey("kinds", Object.keys(input.kinds), id, known));
+        continue;
+      }
       const kind = readKind(`kinds.${id}`, value, problem);
       if (kind) kinds[id] = kind;
     }
@@ -593,8 +625,16 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
   if (input.images !== undefined) {
     if (!isRecord(input.images)) problem("images", "images must be an object with an entry per image, by its name.");
     else for (const [name, value] of Object.entries(input.images)) {
+      if (!IMAGE_NAME.test(name) || name === "standard") {
+        problem(`images.${name}`, `${IMAGE_NAME_RULE} "${name}" is not one.`, unknownKey("images", Object.keys(input.images), name, IMAGE_NAME_RULE));
+        continue;
+      }
       const image = readImage(`images.${name}`, value, problem);
-      if (image) images[name] = image;
+      const unknown = image?.kinds.findIndex((kind) => isUnknownKind(kind, drivers)) ?? -1;
+      if (image && unknown !== -1) {
+        const known = `The kinds are ${anyKnownKind(drivers).join(", ")}.`;
+        problem(`images.${name}.kinds`, `There is no kind "${image.kinds[unknown]}". ${known}`, unnamedValue(`images.${name}.kinds`, `The ${ordinal(unknown + 1)} kind of image ${name} is not one ${PRODUCT} knows. ${known}`));
+      } else if (image) images[name] = image;
     }
   }
   const monitor = readMonitor(input.monitor, problem);
@@ -609,7 +649,7 @@ export function readDraft(input: unknown, drivers: readonly BackendDriver<any>[]
  * The files for every box: each path, checked, and its content into the
  * general secrets' changes. No problem quotes a content.
  */
-function readFiles(value: unknown, problem: (path: string, message: string) => void, secrets: Record<string, Record<string, string | null>>): BoxFileSetting[] | undefined {
+function readFiles(value: unknown, problem: ProblemAt, secrets: Record<string, Record<string, string | null>>): BoxFileSetting[] | undefined {
   if (!Array.isArray(value)) {
     problem("general.files", "files is a list of files, each a path under the box user's home and its content.");
     return undefined;
@@ -626,7 +666,7 @@ function readFiles(value: unknown, problem: (path: string, message: string) => v
     }
     const path = entry.path.trim();
     const wrong = pathProblem(path);
-    if (wrong) return problem(`${at}.path`, wrong);
+    if (wrong) return problem(`${at}.path`, wrong, unnamedValue(`${at}.path`, pathProblem(path, "This path")!));
     if (seen.has(path)) return problem(`${at}.path`, `${path} is in the list twice.`);
     seen.add(path);
     const content = entry.content;
@@ -643,7 +683,7 @@ function readFiles(value: unknown, problem: (path: string, message: string) => v
 }
 
 /** An image's entry, or undefined when its shape is wrong. */
-function readImage(path: string, value: unknown, problem: (path: string, message: string) => void): ImageConfig | undefined {
+function readImage(path: string, value: unknown, problem: ProblemAt): ImageConfig | undefined {
   if (!isRecord(value)) {
     problem(path, "An image is an object with kinds, script, projects, and optionally check, bake and source.");
     return undefined;
@@ -652,8 +692,8 @@ function readImage(path: string, value: unknown, problem: (path: string, message
   const kinds = strings("kinds");
   const projects = strings("projects");
   let ok = true;
-  const bad = (key: string, message: string) => {
-    problem(`${path}.${key}`, message);
+  const bad = (key: string, message: string, unnamed?: UnnamedProblem) => {
+    problem(`${path}.${key}`, message, unnamed);
     ok = false;
   };
   if (!kinds?.length) bad("kinds", "Give the kinds it builds on, such as [\"linux\"].");
@@ -665,7 +705,7 @@ function readImage(path: string, value: unknown, problem: (path: string, message
   if (source !== undefined && !(isRecord(source) && Object.values(source).every((item) => typeof item === "string"))) bad("source", "source gives the files' paths in the repository, as script and check.");
   if (value.updated !== undefined && (typeof value.updated !== "string" || Number.isNaN(Date.parse(value.updated)))) bad("updated", "updated is an ISO 8601 time.");
   for (const key of Object.keys(value)) {
-    if (!["kinds", "script", "check", "bake", "projects", "source", "updated"].includes(key)) bad(key, `An image has no "${key}". It has kinds, script, check, bake, projects, source and updated.`);
+    if (!["kinds", "script", "check", "bake", "projects", "source", "updated"].includes(key)) bad(key, `An image has no "${key}". ${IMAGE_SETTINGS}`, unknownKey(path, Object.keys(value), key, IMAGE_SETTINGS));
   }
   if (!ok) return undefined;
   return {
@@ -679,7 +719,7 @@ function readImage(path: string, value: unknown, problem: (path: string, message
   };
 }
 
-function readSize(path: string, value: unknown, largest: boolean, problem: (path: string, message: string) => void): SizeChange | undefined {
+function readSize(path: string, value: unknown, largest: boolean, problem: ProblemAt): SizeChange | undefined {
   if (!isRecord(value)) {
     problem(path, "A size is an object with cores, memoryMiB and diskGiB.");
     return undefined;
@@ -697,12 +737,12 @@ function readSize(path: string, value: unknown, largest: boolean, problem: (path
       if (part === null && !largest) size.diskGiB = null;
       else if (isWhole(part, 1, 65_536)) size.diskGiB = part;
       else problem(`${path}.diskGiB`, `Disk is a whole number of GiB, at least 1${largest ? "" : ", or null for the base disk"}.`);
-    } else problem(`${path}.${key}`, `A size has cores, memoryMiB and diskGiB, not "${key}".`);
+    } else problem(`${path}.${key}`, `A size has cores, memoryMiB and diskGiB, not "${key}".`, unknownKey(path, Object.keys(value), key, SIZE_SETTINGS));
   }
   return size;
 }
 
-function readKind(path: string, value: unknown, problem: (path: string, message: string) => void): KindConfig | undefined {
+function readKind(path: string, value: unknown, problem: ProblemAt): KindConfig | undefined {
   if (!isRecord(value)) {
     problem(path, "A kind is an object with enabled, presets, default, largest, spares and gpu.");
     return undefined;
@@ -732,11 +772,11 @@ function readKind(path: string, value: unknown, problem: (path: string, message:
       const presets: Partial<Record<Preset, SizeChange>> = {};
       for (const [name, size] of Object.entries(part)) {
         if (size === undefined || size === null) continue;
-        if (!PRESETS.includes(name as Preset)) problem(`${path}.presets.${name}`, `The presets are small, medium and large, not "${name}".`);
+        if (!PRESETS.includes(name as Preset)) problem(`${path}.presets.${name}`, `The presets are small, medium and large, not "${name}".`, unknownKey(`${path}.presets`, Object.keys(part), name, PRESET_NAMES));
         else presets[name as Preset] = readSize(`${path}.presets.${name}`, size, false, problem);
       }
       kind.presets = presets;
-    } else problem(`${path}.${key}`, `A kind has enabled, presets, default, largest, spares and gpu, not "${key}".`);
+    } else problem(`${path}.${key}`, `A kind has enabled, presets, default, largest, spares and gpu, not "${key}".`, unknownKey(path, Object.keys(value), key, KIND_SETTINGS));
   }
   return kind;
 }
@@ -747,6 +787,7 @@ function readKind(path: string, value: unknown, problem: (path: string, message:
  */
 interface FieldOwner {
   readonly name: string;
+  readonly unnamed: string;
   readonly settingsPrefix: string | null;
 }
 
@@ -770,7 +811,7 @@ function readFields(
   value: unknown,
   descriptors: Readonly<Record<string, FieldDescriptor>>,
   owner: FieldOwner,
-  problem: (path: string, message: string) => void,
+  problem: ProblemAt,
   secrets: Record<string, string | null> | null,
   retired: readonly string[] = [],
 ): Record<string, FieldValue> {
@@ -784,7 +825,7 @@ function readFields(
     const descriptor = descriptors[key];
     const at = `${path}.${key}`;
     if (!descriptor) {
-      if (!retired.includes(key)) problem(at, unknownField(owner, key, descriptors));
+      if (!retired.includes(key)) problem(at, unknownField(owner, key, descriptors), unknownKey(`${path}.fields`, Object.keys(value), key, `The fields of ${owner.unnamed} are ${Object.keys(descriptors).join(", ") || "none"}.`));
       continue;
     }
     if (isSecret(descriptor) && secrets) {
@@ -815,7 +856,7 @@ function readBackend(
   index: number,
   value: unknown,
   drivers: readonly BackendDriver<any>[],
-  problem: (path: string, message: string) => void,
+  problem: ProblemAt,
   secrets: Record<string, Record<string, string | null>>,
 ): BackendConfig | null {
   if (!isRecord(value)) {
@@ -832,12 +873,13 @@ function readBackend(
   }
   const name = match[2];
   if (name !== undefined && driver.longestName !== undefined && name.length > driver.longestName) {
-    problem(`backends.${index}.id`, `A ${driver.label} backend's name is at most ${driver.longestName} characters, so its tailnet names have room for each box's own name. Give ${id} a shorter name.`);
+    const rule = `A ${driver.label} backend's name is at most ${driver.longestName} characters, so its tailnet names have room for each box's own name.`;
+    problem(`backends.${index}.id`, `${rule} Give ${id} a shorter name.`, unnamedValue(`backends.${index}.id`, `${rule} Give this one a shorter name.`));
     return null;
   }
   const path = `backends.${id}`;
   const known = new Set(["id", "type", "label", "enabled", "fields", "warm", "projects", "hosts"]);
-  for (const key of Object.keys(value)) if (!known.has(key)) problem(`${path}.${key}`, `A backend has id, type, label, enabled, fields, warm, projects and hosts, not "${key}".`);
+  for (const key of Object.keys(value)) if (!known.has(key)) problem(`${path}.${key}`, `A backend has id, type, label, enabled, fields, warm, projects and hosts, not "${key}".`, unknownKey(path, Object.keys(value), key, BACKEND_SETTINGS));
   let label: string | undefined;
   if (value.label !== undefined && value.label !== null) {
     if (typeof value.label === "string" && value.label.trim() && value.label.length <= 64) label = value.label.trim();
@@ -846,13 +888,18 @@ function readBackend(
   if (value.enabled !== undefined && typeof value.enabled !== "boolean") problem(`${path}.enabled`, "enabled is true or false.");
   const backendSecrets: Record<string, string | null> = {};
   const owner = `Backend ${id}`;
-  const fields = readFields(`${path}`, value.fields, driver.fields, { name: owner, settingsPrefix: `${driver.type}-` }, problem, backendSecrets, driver.retiredFields);
+  const fields = readFields(`${path}`, value.fields, driver.fields, { name: owner, unnamed: `backend ${id}`, settingsPrefix: `${driver.type}-` }, problem, backendSecrets, driver.retiredFields);
   if (Object.keys(backendSecrets).length) secrets[id] = backendSecrets;
 
   const warm: Record<string, number> = {};
   if (value.warm !== undefined && value.warm !== null) {
     if (!isRecord(value.warm)) problem(`${path}.warm`, "warm is an object with a count per kind.");
     else for (const [kind, count] of Object.entries(value.warm)) {
+      if (isUnknownKind(kind, drivers)) {
+        const known = `The kinds are ${anyKnownKind(drivers).join(", ")}.`;
+        problem(`${path}.warm.${kind}`, `There is no kind "${kind}". ${known}`, unknownKey(`${path}.warm`, Object.keys(value.warm), kind, known));
+        continue;
+      }
       if (typeof count !== "number") problem(`${path}.warm.${kind}`, `Give the warm ${kind} boxes as a number.`);
       else if (count !== 0) warm[kind] = count;
     }
@@ -869,10 +916,10 @@ function readBackend(
       value.hosts.forEach((host, n) => {
         const at = `${path}.hosts.${n}`;
         if (!isRecord(host)) return problem(at, "A host is an object with name, enabled and fields.");
-        for (const key of Object.keys(host)) if (!["name", "enabled", "fields"].includes(key)) problem(`${at}.${key}`, `A host has name, enabled and fields, not "${key}".`);
+        for (const key of Object.keys(host)) if (!["name", "enabled", "fields"].includes(key)) problem(`${at}.${key}`, `A host has name, enabled and fields, not "${key}".`, unknownKey(at, Object.keys(host), key, HOST_SETTINGS));
         if (typeof host.name !== "string" || !HOST_NAME.test(host.name)) return problem(`${at}.name`, 'Name the host with lower-case letters, digits and "-".');
         if (host.enabled !== undefined && typeof host.enabled !== "boolean") problem(`${at}.enabled`, "enabled is true or false.");
-        hosts!.push({ name: host.name, enabled: host.enabled !== false, fields: readFields(`${at}`, host.fields, driver.hostFields!, { name: `Host ${host.name} of backend ${id}`, settingsPrefix: null }, problem, null) });
+        hosts!.push({ name: host.name, enabled: host.enabled !== false, fields: readFields(`${at}`, host.fields, driver.hostFields!, { name: `Host ${host.name} of backend ${id}`, unnamed: `host ${n + 1} of backend ${id}`, settingsPrefix: null }, problem, null) });
       });
     }
   }
@@ -890,7 +937,7 @@ function readBackend(
 
 export const MOST_BACKEND_PROJECTS = 100;
 
-function readBackendProjects(path: string, value: unknown, problem: (path: string, message: string) => void): string[] {
+function readBackendProjects(path: string, value: unknown, problem: ProblemAt): string[] {
   if (value === undefined || value === null) return [];
   const listed = Array.isArray(value) && value.every((item) => typeof item === "string" && item.trim() && item.length <= 200);
   if (!listed) {
@@ -911,12 +958,13 @@ function unknownBackend(
   index: number,
   value: Record<string, unknown>,
   drivers: readonly BackendDriver<any>[],
-  problem: (path: string, message: string) => void,
+  problem: ProblemAt,
 ): BackendConfig | null {
   const type = value.type;
   const match = typeof value.id === "string" ? ID.exec(value.id) : null;
   if (typeof type !== "string" || !match || match[1] !== type) {
-    problem(`backends.${index}.type`, `There is no backend type "${String(type)}". The types are ${drivers.map((each) => each.type).join(", ")}.`);
+    const types = `The types are ${drivers.map((each) => each.type).join(", ")}.`;
+    problem(`backends.${index}.type`, `There is no backend type "${String(type)}". ${types}`, unnamedValue(`backends.${index}.type`, `There is no backend type by the name backend ${index + 1} gives. ${types}`));
     return null;
   }
   const fields: Record<string, FieldValue> = {};
@@ -1091,7 +1139,7 @@ export function checkDocument(
   inUse: InUse = NOTHING_IN_USE,
 ): Problem[] {
   const problems: Problem[] = [];
-  const problem = (path: string, message: string) => problems.push({ path, message });
+  const problem: ProblemAt = (path, message, unnamed) => problems.push({ path, message, ...(unnamed ? { unnamed } : {}) });
   const kinds = knownKinds(drivers);
 
   for (const [id, kind] of Object.entries(document.kinds)) {
@@ -1101,7 +1149,7 @@ export function checkDocument(
       continue;
     }
     if (!kinds.includes(id)) {
-      problem(path, `There is no kind "${id}". The kinds are ${kinds.join(", ")}.`);
+      problem(path, `There is no kind "${id}". The kinds are ${kinds.join(", ")}.`, isUnknownKind(id, drivers) ? unknownKey("kinds", Object.keys(document.kinds), id, `The kinds are ${kinds.join(", ")}.`) : undefined);
       continue;
     }
     const sizes = kindSizes(id, sizeChanges({ [id]: kind }));
@@ -1121,7 +1169,7 @@ export function checkDocument(
   const defaultKind = document.general.defaultKind;
   if (defaultKind !== undefined) {
     if (isEarlierKindId(defaultKind)) problem("general.defaultKind", earlierWords(defaultKind));
-    else if (!kinds.includes(defaultKind)) problem("general.defaultKind", `There is no kind "${defaultKind}". The kinds are ${kinds.join(", ")}.`);
+    else if (!kinds.includes(defaultKind)) problem("general.defaultKind", `There is no kind "${defaultKind}". The kinds are ${kinds.join(", ")}.`, isUnknownKind(defaultKind, drivers) ? unnamedValue("general.defaultKind", `No backend offers the kind general.defaultKind names. The kinds are ${kinds.join(", ")}.`) : undefined);
     else if (!kindOn(document, defaultKind)) problem("general.defaultKind", `The default kind, ${defaultKind}, is off. Turn it on, or pick another.`);
   }
 
@@ -1138,7 +1186,7 @@ export function checkDocument(
     }
     seen.add(backend.id);
     if (!driver) {
-      problem(path, `This version of ${PRODUCT} has no ${backend.type} backend, so ${backend.id} does not run. Its boxes wait for a version that has it.`);
+      problem(path, `This version of ${PRODUCT} has no ${backend.type} backend, so ${backend.id} does not run. Its boxes wait for a version that has it.`, unnamedValue(`backends.${document.backends.indexOf(backend)}`, `This version of ${PRODUCT} has no backend of the type backend ${document.backends.indexOf(backend) + 1} gives, so it does not run. Its boxes wait for a version that has it.`));
       continue;
     }
     for (const [kind, count] of Object.entries(backend.warm ?? {})) {
@@ -1192,9 +1240,9 @@ export function checkDocument(
   const claimed = new Map<string, string>();
   for (const [name, image] of Object.entries(document.images ?? {})) {
     const path = `images.${name}`;
-    if (!IMAGE_NAME.test(name) || name === "standard") problem(path, `Name an image with a lower-case letter first, then letters, digits and "-", up to 40, and not "standard". "${name}" is not one.`);
+    if (!IMAGE_NAME.test(name) || name === "standard") problem(path, `${IMAGE_NAME_RULE} "${name}" is not one.`, unknownKey("images", Object.keys(document.images ?? {}), name, IMAGE_NAME_RULE));
     for (const kind of image.kinds) {
-      if (!kinds.includes(kind)) problem(`${path}.kinds`, `There is no kind "${kind}". The kinds are ${kinds.join(", ")}.`);
+      if (!kinds.includes(kind)) problem(`${path}.kinds`, `There is no kind "${kind}". The kinds are ${kinds.join(", ")}.`, isUnknownKind(kind, drivers) ? unnamedValue(`${path}.kinds`, `No backend offers a kind image ${name} lists. The kinds are ${kinds.join(", ")}.`) : undefined);
       else if (!kind.startsWith("linux")) problem(`${path}.kinds`, `An image's script is a Linux one for now, and ${kind} is not a Linux kind.`);
     }
     for (const [key, text] of [["script", image.script], ["check", image.check ?? ""]] as const) {

@@ -34,7 +34,10 @@ import {
   type HostEdit,
   type KindEdit,
   type ProjectChoice,
+  unshownPairOf,
 } from "./config-edits.ts";
+import { readFailure, unnamedProblems } from "./unshown-input.ts";
+import { VALUE_NOT_SHOWN, ordinal } from "../core/problems.ts";
 import { doctorText, problemsText } from "./views.ts";
 import { PRODUCT } from "../brand.ts";
 
@@ -85,14 +88,23 @@ function json(value: unknown, exitCode = 0): PluginCliResult {
   return { exitCode, stdout: `${JSON.stringify(value, null, 2)}\n` };
 }
 
-async function readText(path: string, ctx: PluginCliContext): Promise<string> {
-  const file = isAbsolute(path) ? path : resolve(ctx.cwd ?? process.cwd(), path);
+const READ_HINT = "The file is read on the machine BB's server runs on. From another machine, pipe a secret in with --secrets-stdin.";
+
+function workingFolder(ctx: PluginCliContext): string {
+  return ctx.cwd ?? process.cwd();
+}
+
+function pathFrom(path: string, ctx: PluginCliContext): string {
+  return isAbsolute(path) ? path : resolve(workingFolder(ctx), path);
+}
+
+async function readSecretText(path: string, ctx: PluginCliContext, file: string): Promise<string> {
   try {
-    return await readFile(file, "utf8");
+    return await readFile(pathFrom(path, ctx), "utf8");
   } catch (error) {
-    throw new PluginCliError(`Cannot read ${file}: ${error instanceof Error ? error.message : String(error)}`, {
+    throw new PluginCliError(`Cannot read ${file}: ${readFailure(error)}. Its path is not shown, as it may be a secret given by mistake.`, {
       code: "invalid_input",
-      hint: "The file is read on the machine BB's server runs on. From another machine, pipe a secret in with --secrets-stdin.",
+      hint: `A relative path is from ${workingFolder(ctx)}. ${READ_HINT}`,
     });
   }
 }
@@ -113,47 +125,89 @@ interface SecretInput {
 
 const DOTENV_LINE = /^\s*(export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=/;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+const BASE64_LENGTH_NEVER_MADE = 1;
+const STDIN = "stdin";
+const STDIN_LINE = "the line on stdin";
+const STDIN_FILE = "the dotenv file in base64 on stdin";
+const SECRETS_FILE = "the file given to --secrets-file";
+const STDIN_HINT = "Pipe one line: grep '^NAME=' secrets.env | bb box ... --secrets-stdin, or base64 < secrets.env | tr -d '\\n' | bb box ... --secrets-stdin. The line is not shown, as it may hold a secret.";
 
-function stdinSecrets(line: string): Map<string, string> {
-  const text = line.trim();
-  if (DOTENV_LINE.test(text)) return parseDotenv(text);
-  const decoded = BASE64.test(text) ? Buffer.from(text, "base64").toString("utf8") : "";
-  const env = parseDotenv(decoded);
-  if (!env.size) {
-    throw new PluginCliError("The line on stdin is neither a VARIABLE=value line nor a dotenv file in base64.", {
-      code: "invalid_input",
-      hint: "Pipe one line: grep '^NAME=' secrets.env | bb box ... --secrets-stdin, or base64 < secrets.env | tr -d '\\n' | bb box ... --secrets-stdin.",
-    });
-  }
-  return env;
+function strictBase64(text: string): Buffer | null {
+  if (!BASE64.test(text) || text.length % 4 === BASE64_LENGTH_NEVER_MADE) return null;
+  const bytes = Buffer.from(text, "base64");
+  return bytes.toString("base64").replace(/=+$/, "") === text.replace(/=+$/, "") ? bytes : null;
 }
 
-async function secretValues(options: SecretInput, ctx: PluginCliContext): Promise<Map<string, string>> {
+function utf8(bytes: Buffer): string | null {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function base64Dotenv(text: string): string | null {
+  const bytes = strictBase64(text);
+  const decoded = bytes && utf8(bytes);
+  return decoded && decoded.split(/\r?\n/).some((line) => DOTENV_LINE.test(line)) ? decoded : null;
+}
+
+function stdinSecrets(line: string): { env: Map<string, string>; source: string } {
+  const text = line.trim();
+  const decoded = base64Dotenv(text);
+  if (decoded !== null) return { env: parseDotenv(decoded, STDIN_FILE), source: STDIN_FILE };
+  if (!BASE64.test(text) && DOTENV_LINE.test(text)) return { env: parseDotenv(text, STDIN), source: STDIN_LINE };
+  throw new PluginCliError("The line on stdin is neither a VARIABLE=value line nor a dotenv file in base64.", { code: "invalid_input", hint: STDIN_HINT });
+}
+
+function variableCount(count: number): string {
+  return count === 1 ? "1 variable" : `${count} variables`;
+}
+
+async function secretSource(options: SecretInput, ctx: PluginCliContext): Promise<{ env: Map<string, string>; source: string }> {
+  const path = options["secrets-file"];
+  if (path === undefined) return stdinSecrets(String(options.secrets));
+  return { env: parseDotenv(await readSecretText(path, ctx, SECRETS_FILE), SECRETS_FILE), source: SECRETS_FILE };
+}
+
+interface SecretValues {
+  readonly values: Map<string, string>;
+  readonly unresolved: Map<string, PluginCliError>;
+}
+
+async function secretValues(options: SecretInput, ctx: PluginCliContext): Promise<SecretValues> {
   const values = new Map<string, string>();
-  const pairs = listOf(options.secret).map((text) => pairOf(text, "--secret"));
+  const unresolved = new Map<string, PluginCliError>();
+  const pairs = listOf(options.secret).map((text) => unshownPairOf(text, "--secret"));
   if (pairs.length) {
     if (options["secrets-file"] !== undefined && options.secrets !== undefined) throw new PluginCliError("Give --secrets-file or --secrets-stdin, not both.", { code: "invalid_input" });
-    const source = options["secrets-file"] !== undefined ? `the file ${options["secrets-file"]}` : options.secrets !== undefined ? "the line on stdin" : null;
-    if (!source) {
+    if (options["secrets-file"] === undefined && options.secrets === undefined) {
       throw new PluginCliError("--secret names a variable; give the dotenv file that holds it with --secrets-file, or pipe its line in with --secrets-stdin.", {
         code: "missing_required",
         hint: "bb secret request HCLOUD_TOKEN --write-env secrets.env asks the person for it, then: bb box backend add hetzner --secret token=HCLOUD_TOKEN --secrets-file secrets.env",
       });
     }
-    const env = options["secrets-file"] !== undefined ? parseDotenv(await readText(options["secrets-file"], ctx)) : stdinSecrets(String(options.secrets));
-    for (const [field, variable] of pairs) {
+    const { env, source } = await secretSource(options, ctx);
+    for (const [index, [field, variable]] of pairs.entries()) {
       const value = env.get(variable);
-      if (value === undefined) throw new PluginCliError(`${variable} is not in ${source}.`, { code: "invalid_input", hint: `The variable names in it are ${[...env.keys()].join(", ") || "none"}.` });
-      values.set(field, value);
+      if (value === undefined) {
+        unresolved.set(
+          field,
+          new PluginCliError(`The variable that the ${ordinal(index + 1)} --secret names is not in ${source}.`, {
+            code: "invalid_input",
+            hint: `It has ${variableCount(env.size)}. Check the name after the = of that --secret against it. Names and values are not shown, as they may hold secrets.`,
+          }),
+        );
+      } else values.set(field, value);
     }
   } else if (options["secrets-file"] !== undefined || options.secrets !== undefined) {
     throw new PluginCliError("Name the secret fields to take from it with --secret <field>=<VARIABLE>.", { code: "missing_required" });
   }
-  for (const text of listOf(options["secret-file"])) {
-    const [field, path] = pairOf(text, "--secret-file");
-    values.set(field, (await readText(path, ctx)).replace(/\r\n/g, "\n").replace(/\n+$/, "\n"));
+  for (const [index, text] of listOf(options["secret-file"]).entries()) {
+    const [field, path] = unshownPairOf(text, "--secret-file");
+    values.set(field, (await readSecretText(path, ctx, `the file the ${ordinal(index + 1)} --secret-file gives`)).replace(/\r\n/g, "\n").replace(/\n+$/, "\n"));
   }
-  return values;
+  return { values, unresolved };
 }
 
 function secretDigests(values: ReadonlyMap<string, string>): Record<string, string> {
@@ -171,11 +225,11 @@ interface FieldInput extends SecretInput {
 
 async function fieldEdits(options: FieldInput, ctx: PluginCliContext): Promise<{ edits: FieldEdits; submission: unknown }> {
   const fileFields: [string, string][] = [];
-  for (const text of listOf(options["field-file"])) {
+  for (const [index, text] of listOf(options["field-file"]).entries()) {
     const [key, path] = pairOf(text, "--field-file");
-    fileFields.push([key, await readText(path, ctx)]);
+    fileFields.push([key, await readSecretText(path, ctx, `the file the ${ordinal(index + 1)} --field-file gives`)]);
   }
-  const secrets = await secretValues(options, ctx);
+  const { values: secrets, unresolved } = await secretValues(options, ctx);
   const edits: FieldEdits = {
     set: listOf(options.field).map((text) => pairOf(text, "--field")),
     setFromFile: fileFields,
@@ -183,6 +237,7 @@ async function fieldEdits(options: FieldInput, ctx: PluginCliContext): Promise<{
     addLines: listOf(options["add-line"]).map((text) => pairOf(text, "--add-line")),
     removeLines: listOf(options["remove-line"]).map((text) => pairOf(text, "--remove-line")),
     secrets,
+    unresolvedSecrets: unresolved,
     clearSecrets: listOf(options["clear-secret"]),
   };
   return { edits, submission: { ...edits, setFromFile: fileFields.map(([key, text]) => [key, digestOf(text)]), secrets: secretDigests(secrets) } };
@@ -241,7 +296,7 @@ async function save(configuration: Configuration, request: Save, signal?: AbortS
     const tested = request.backend?.(built.document) ?? null;
     if (options.check) {
       const checked = await configuration.check(built.document, tested ?? undefined, signal);
-      const outcome: Outcome = { saved: false, checked: true, revision: state.revision, operation: null, changes: built.changes, problems: checked.problems, doctor: tested && checked.doctor ? { backend: tested, report: checked.doctor } : null };
+      const outcome: Outcome = { saved: false, checked: true, revision: state.revision, operation: null, changes: built.changes, problems: unnamedProblems(checked.problems), doctor: tested && checked.doctor ? { backend: tested, report: checked.doctor } : null };
       const ok = !checked.problems.length && (outcome.doctor?.report.ok ?? true);
       if (options.json) return json(outcome, ok ? 0 : 1);
       const lines = [
@@ -263,7 +318,7 @@ async function save(configuration: Configuration, request: Save, signal?: AbortS
       const on = id !== null && saved.backends.some((backend) => backend.id === id && backend.enabled);
       const doctor = on && !options["no-doctor"] && !result.replayed ? await backendDoctor(configuration, configuration.exported(), id, signal) : null;
       const revision = result.receipt?.revision ?? result.state.revision;
-      const outcome: Outcome = { saved: true, revision, operation, ...(result.replayed ? { replayed: true as const } : {}), ...(result.receipt ? { receipt: result.receipt } : {}), changes: result.replayed ? [] : built.changes, problems: result.problems, doctor };
+      const outcome: Outcome = { saved: true, revision, operation, ...(result.replayed ? { replayed: true as const } : {}), ...(result.receipt ? { receipt: result.receipt } : {}), changes: result.replayed ? [] : built.changes, problems: unnamedProblems(result.problems), doctor };
       const exitCode = doctor && !doctor.report.ok ? SAVED_WITH_FAILED_CHECK : 0;
       if (options.json) return json(outcome, exitCode);
       const after = await configuration.state();
@@ -291,7 +346,7 @@ async function save(configuration: Configuration, request: Save, signal?: AbortS
       continue;
     }
     const reused = result.problems.find((problem) => problem.path === "operation");
-    return refusal({ saved: false, revision: state.revision, operation, changes: built.changes, problems: reused ? [] : result.problems, doctor: null }, reused ? reused.message : "Nothing was saved. Fix these first:", options);
+    return refusal({ saved: false, revision: state.revision, operation, changes: built.changes, problems: reused ? [] : unnamedProblems(result.problems), doctor: null }, reused ? reused.message : "Nothing was saved. Fix these first:", options);
   }
   return { exitCode: 1, stderr: `The configuration kept changing, ${MOST_TRIES} times while this saved; nothing was saved. Run the command again.\n` };
 }
@@ -320,7 +375,7 @@ function backendLine(state: ConfigState, id: string): string {
   const warm = Object.entries(stored.warm ?? {});
   if (warm.length) lines.push(`  warm: ${warm.map(([kind, count]) => `${count} ${kind}`).join(", ")}`);
   for (const host of stored.hosts ?? []) lines.push(`  host ${host.name}: ${host.enabled ? "on" : "off"}`);
-  for (const problem of backend.problems) lines.push(`  problem at ${problem.path}: ${problem.message}`);
+  for (const problem of unnamedProblems(backend.problems)) lines.push(`  problem at ${problem.path}: ${problem.message}`);
   return lines.join("\n");
 }
 
@@ -337,7 +392,7 @@ function warmOf(value: unknown): [string, number][] {
   return listOf(value).map((text) => {
     const [kind, count] = pairOf(text, "--warm");
     const number = Number(count);
-    if (!Number.isInteger(number) || number < 0) throw new PluginCliError(`Give --warm as <kind>=<count>, a whole number, not "${text}".`, { code: "invalid_input" });
+    if (!Number.isInteger(number) || number < 0) throw new PluginCliError(`Give --warm as <kind>=<count>, a whole number. ${VALUE_NOT_SHOWN}`, { code: "invalid_input" });
     return [kind, number];
   });
 }
@@ -346,7 +401,7 @@ function sizeOf(text: string | undefined, name: string, base: boolean): number |
   if (text === undefined) return undefined;
   if (base && text.trim() === "base") return null;
   const value = Number(text);
-  if (!Number.isFinite(value) || value <= 0) throw new PluginCliError(`Give ${name} as a number above 0${base ? ', or "base" for the image\'s own disk' : ""}, not "${text}".`, { code: "invalid_input" });
+  if (!Number.isFinite(value) || value <= 0) throw new PluginCliError(`Give ${name} as a number above 0${base ? ', or "base" for the image\'s own disk' : ""}. ${VALUE_NOT_SHOWN}`, { code: "invalid_input" });
   return value;
 }
 
@@ -619,15 +674,15 @@ export function configCommands(configuration: Configuration, projects: () => Pro
       run: async ({ positionals, options }, ctx) => {
         const words = (positionals.options ?? []) as string[];
         const pairs = words.length === 2 && !words[0]!.includes("=") ? [[words[0]!, words[1]!] as [string, string]] : words.map((text) => pairOf(text, "an option"));
-        const secrets = await secretValues(options, ctx);
-        if (!pairs.length && !secrets.size) throw new PluginCliError("Give an option and its value, such as monitor.enabled=false.", { code: "missing_required", hint: "bb box option list lists the options." });
+        const { values: secrets, unresolved } = await secretValues(options, ctx);
+        if (!pairs.length && !secrets.size && !unresolved.size) throw new PluginCliError("Give an option and its value, such as monitor.enabled=false.", { code: "missing_required", hint: "bb box option list lists the options." });
         for (const [name] of pairs) optionNamed(name);
         return save(
           configuration,
           {
             command: "option set",
             submission: { pairs, secrets: secretDigests(secrets) },
-            build: (document) => setOptions(document, pairs, secrets),
+            build: (document) => setOptions(document, pairs, secrets, [], unresolved),
             options,
             next: (document) => (pairs.some(([name]) => optionNamed(name).name === "monitor.enabled") ? `The Monitor is ${document.monitor?.enabled === false ? "off" : "on"}. BB's sidebar shows the change when BB next loads.` : null),
           },

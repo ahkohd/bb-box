@@ -266,9 +266,9 @@ function templateList(values: Readonly<Record<string, unknown>>, problem: Proble
   const raw = values[key];
   const listed = typeof raw === "number" ? (raw > 0 ? String(raw) : "") : text(values, key, fallback);
   const templates: number[] = [];
-  for (const entry of listed.split(/[\s,]+/).filter(Boolean)) {
+  for (const [index, entry] of listed.split(/[\s,]+/).filter(Boolean).entries()) {
     const vmid = Number(entry);
-    if (!wholeInRange(vmid, 100, 999_999_999)) problem(key, `Use VMIDs from 100 for the ${what} templates. "${entry}" is not one.`);
+    if (!wholeInRange(vmid, 100, 999_999_999)) problem(key, `Use VMIDs from 100 for the ${what} templates. Entry ${index + 1} is not one.`);
     else if (templates.includes(vmid) || taken.includes(vmid)) problem(key, `Template ${vmid} is listed more than once. List each template once.`);
     else templates.push(vmid);
   }

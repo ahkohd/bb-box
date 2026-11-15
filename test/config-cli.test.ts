@@ -8,7 +8,7 @@ import { sshPoolDriver } from "../src/backends/ssh-pool/index.ts";
 import { tartDriver } from "../src/backends/tart/index.ts";
 import { boatDriver } from "../src/backends/boat/index.ts";
 import type { BackendDriver } from "../src/backends/types.ts";
-import { withoutSecretVersions } from "../src/core/document.ts";
+import { readDraft, withoutSecretVersions } from "../src/core/document.ts";
 import { INSTALL_ID_KEY } from "../src/core/install.ts";
 import { OPERATOR } from "../src/core/boxes.ts";
 import { GENERAL_SECRETS } from "../src/core/box-files.ts";
@@ -17,7 +17,7 @@ import { parseDotenv } from "../src/plugin/config-edits.ts";
 import type { ApplyResult } from "../src/plugin/configuration.ts";
 import { setup, type BbBox } from "../src/plugin/setup.ts";
 import { FakeBackend, fakeDriver } from "./fake-backend.ts";
-import { tempDir } from "./helpers.ts";
+import { seededRandom, tempDir } from "./helpers.ts";
 
 const THREAD = "thr_config_cli";
 const TOKEN = "made-up-cli-token-7f3a";
@@ -154,8 +154,9 @@ test("a secret on the command line is refused without echoing it, and nothing is
   const plain = await cli(["backend", "add", "fake", "--secret", "address=FAKE_TOKEN", "--secrets", `FAKE_TOKEN=${TOKEN}`]);
   assert.match(plain.stderr ?? "", /Address \(address\) is not a secret: give it with --field address=<value>\./);
   const missing = await cli(["backend", "add", "fake", "--secret", "token=NOPE", "--secrets", `FAKE_TOKEN=${TOKEN}`]);
-  assert.match(missing.stderr ?? "", /NOPE is not in the line on stdin\./);
-  assert.match(missing.stderr ?? "", /The variable names in it are FAKE_TOKEN\./);
+  assert.match(missing.stderr ?? "", /The variable that the 1st --secret names is not in the line on stdin\./);
+  assert.match(missing.stderr ?? "", /It has 1 variable\./);
+  assert.ok(!(missing.stderr ?? "").includes("FAKE_TOKEN"), "no name from the input is shown");
   const noSource = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN"]);
   assert.match(noSource.stderr ?? "", /give the dotenv file that holds it with --secrets-file, or pipe its line in with --secrets-stdin/);
   assert.equal(revision(), before);
@@ -188,6 +189,448 @@ test("several secrets come through one stdin line as a dotenv file in base64, an
   assert.equal(neither.exitCode, 1);
   assert.match(neither.stderr ?? "", /The line on stdin is neither a VARIABLE=value line nor a dotenv file in base64\./);
   assertNoSecret(seen);
+});
+
+const PADDED_VALUE = "bWFkZS11cC12YWx1ZQ==";
+const ALPHANUMERIC_THEN_PADDING = /^[A-Za-z0-9]+={1,2}$/;
+
+test("a dotenv file in base64 that ends in = padding is read as base64, and a value may hold = signs", async () => {
+  for (const file of [`FAKE_TOKEN=${PADDED_VALUE}\n`, `FAKE_TOKEN=${PADDED_VALUE}`]) {
+    const { cli, seen, app } = await start();
+    const line = Buffer.from(file).toString("base64");
+    assert.match(line, ALPHANUMERIC_THEN_PADDING, "the base64 looks like a VARIABLE= line");
+    const set = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets", line]);
+    assert.equal(set.exitCode, 0, set.stderr);
+    assert.equal(app.configuration.secrets.fake?.token, PADDED_VALUE);
+    for (const text of seen) assert.ok(!text.includes(line.slice(0, 8)), `the input was printed: ${text}`);
+  }
+  const { cli, app, dir } = await start();
+  const single = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets", "FAKE_TOKEN=made=up=value=="]);
+  assert.equal(single.exitCode, 0, single.stderr);
+  assert.equal(app.configuration.secrets.fake?.token, "made=up=value==");
+  writeFileSync(join(dir, "padded.env"), `FIRST=one\nFAKE_TOKEN=${PADDED_VALUE}`);
+  const fromFile = await cli(["backend", "set", "fake", "--secret", "token=FAKE_TOKEN", "--secrets-file", "padded.env"], dir);
+  assert.equal(fromFile.exitCode, 0, fromFile.stderr);
+  assert.equal(app.configuration.secrets.fake?.token, PADDED_VALUE);
+});
+
+test("a malformed line on stdin or in a file is refused by its line number, with neither its value nor the line", async () => {
+  const { cli, seen, dir, revision } = await start();
+  const before = revision();
+  const value = "made-up-malformed-value-3b9e";
+  const malformed = `FIRST=one\nFAKE_TOKEN ${value}\n`;
+  const piped = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets", Buffer.from(malformed).toString("base64")]);
+  assert.equal(piped.exitCode, 1);
+  assert.match(piped.stderr ?? "", /^Line 2 of the dotenv file in base64 on stdin is not a VARIABLE=value line\. Nothing was saved\./);
+  writeFileSync(join(dir, "malformed.env"), malformed);
+  const filed = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets-file", "malformed.env"], dir);
+  assert.equal(filed.exitCode, 1);
+  assert.match(filed.stderr ?? "", /^Line 2 of the file given to --secrets-file is not a VARIABLE=value line\. Nothing was saved\./);
+  const rawSecret = Buffer.from(value).toString("base64");
+  assert.match(rawSecret, ALPHANUMERIC_THEN_PADDING);
+  const raw = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets", rawSecret]);
+  assert.equal(raw.exitCode, 1);
+  assert.match(raw.stderr ?? "", /neither a VARIABLE=value line nor a dotenv file in base64/);
+  const valueAsVariable = await cli(["backend", "add", "fake", "--secret", `token=${value}`, "--secrets", "FIRST=one"]);
+  assert.equal(valueAsVariable.exitCode, 1);
+  const valueAsPair = await cli(["backend", "add", "fake", "--secret", value, "--secrets", "FIRST=one"]);
+  assert.equal(valueAsPair.exitCode, 1);
+  assert.match(valueAsPair.stderr ?? "", /Give --secret as <name>=<value>\. What was given is not shown/);
+  for (const text of seen) {
+    assert.ok(!text.includes(value), `the value was printed: ${text}`);
+    assert.ok(!text.includes(rawSecret.slice(0, 8)), `the input was printed: ${text}`);
+    assert.ok(!text.includes("FAKE_TOKEN made"), `the line was printed: ${text}`);
+  }
+  assert.equal(revision(), before);
+});
+
+const NAME_SHAPED_VALUE = "RegressionCanaryV8m3";
+
+test("a value in the name position of a malformed line is never printed, from a file, stdin or base64, with or without --json", async () => {
+  const { cli, seen, dir } = await start();
+  const twoEntries = `FAKE_TOKEN=${NAME_SHAPED_VALUE}\n${NAME_SHAPED_VALUE}="unfinished`;
+  writeFileSync(join(dir, "unclosed.env"), twoEntries);
+  const sources = [
+    ["--secrets", Buffer.from(twoEntries).toString("base64")],
+    ["--secrets-file", "unclosed.env"],
+    ["--secrets", `${NAME_SHAPED_VALUE}="unfinished`],
+  ];
+  for (const source of sources) {
+    for (const json of [[], ["--json"]]) {
+      const ran = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", ...source, ...json], dir);
+      assert.equal(ran.exitCode, 1, JSON.stringify(ran));
+      assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, /The quoted value on line \d of (the file given to --secrets-file|the dotenv file in base64 on stdin|stdin) has no closing quote/);
+    }
+  }
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `a name from the input was printed: ${text}`);
+});
+
+test("a value given by mistake as a --secret, a --secret-file or a --secrets-file is never printed, as a field, an option or a path", async () => {
+  const { cli, seen, dir } = await start();
+  const missing = await cli(["backend", "add", "fake", "--secret", `${NAME_SHAPED_VALUE}==`, "--secrets", "OTHER=one"]);
+  assert.match(missing.stderr ?? "", /^Backend fake has no field by the name a --secret or --secret-file gives\. That name is not shown/, "an unknown field is named before a missing variable");
+  const known = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secret", `${NAME_SHAPED_VALUE}==`, "--secrets", "FAKE_TOKEN=one"]);
+  assert.match(known.stderr ?? "", /^Backend fake has no field by the name a --secret or --secret-file gives\./);
+  const missingVariable = await cli(["backend", "add", "fake", "--secret", "token=MISSING", "--secrets", "OTHER=one"]);
+  assert.match(missingVariable.stderr ?? "", /^The variable that the 1st --secret names is not in the line on stdin\./);
+  const unknownField = await cli(["backend", "add", "fake", "--secret", `${NAME_SHAPED_VALUE}=OTHER`, "--secrets", "OTHER=one", "--json"]);
+  assert.match(`${unknownField.stdout}${unknownField.stderr}`, /Backend fake has no field by the name a --secret or --secret-file gives\. That name is not shown/);
+  const unknownOption = await cli(["option", "set", "general.tailnet.mode=oauth", "--secret", `${NAME_SHAPED_VALUE}=OTHER`, "--secrets", "OTHER=one"]);
+  assert.match(unknownOption.stderr ?? "", /^A --secret names no option\. That name is not shown/);
+  assert.match(unknownOption.stderr ?? "", /The secret options are general\.tailnet\.clientId, general\.tailnet\.clientSecret/);
+  const secretFile = await cli(["backend", "add", "fake", "--secret-file", `token=${NAME_SHAPED_VALUE}`], dir);
+  assert.match(secretFile.stderr ?? "", /^Cannot read the file the 1st --secret-file gives: it was not found\. Its path is not shown/);
+  const secretsFile = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets-file", NAME_SHAPED_VALUE, "--json"], dir);
+  assert.match(`${secretsFile.stdout}${secretsFile.stderr}`, /Cannot read the file given to --secrets-file: it was not found\./);
+  const folder = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets-file", dir], dir);
+  assert.match(folder.stderr ?? "", /^Cannot read the file given to --secrets-file: it is a folder\./);
+  const unknownClear = await cli(["backend", "add", "fake", "--clear-secret", NAME_SHAPED_VALUE, "--json"]);
+  assert.match(`${unknownClear.stdout}${unknownClear.stderr}`, /Backend fake has no field by the name a --clear-secret gives\. That name is not shown, as it may be a secret\./);
+  assert.match(`${unknownClear.stdout}${unknownClear.stderr}`, /Its secret fields are token\./);
+  const optionMissing = await cli(["option", "set", "general.tailnet.mode=oauth", "--secret", `${NAME_SHAPED_VALUE}==`, "--secrets", "OTHER=one"]);
+  assert.match(optionMissing.stderr ?? "", /^A --secret names no option\./, "an unknown option is named before a missing variable");
+  for (const ran of [missing, known, missingVariable, unknownField, unknownOption, secretFile, secretsFile, folder, unknownClear, optionMissing]) assert.equal(ran.exitCode, 1);
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `a value given by mistake was printed: ${text}`);
+});
+
+function draftWithToken(token: string): string {
+  return JSON.stringify({ backends: [{ id: "fake", type: "fake", enabled: true, fields: { token } }] }, null, 2);
+}
+
+test("a configuration file that is not JSON is refused by line, column and kind, never its path or text, plain or --json", async () => {
+  const { cli, seen, dir } = await start();
+  const broken = draftWithToken(NAME_SHAPED_VALUE).replace(`"${NAME_SHAPED_VALUE}"`, `"${NAME_SHAPED_VALUE}"x`);
+  const faultLine = broken.split("\n").findIndex((line) => line.includes(NAME_SHAPED_VALUE));
+  const faultColumn = broken.split("\n")[faultLine]!.indexOf(`"x`) + 2;
+  writeFileSync(join(dir, `${NAME_SHAPED_VALUE}.json`), broken);
+  for (const command of ["check", "apply"]) {
+    for (const json of [[], ["--json"]]) {
+      const ran = await cli(["config", command, `${NAME_SHAPED_VALUE}.json`, ...json], dir);
+      assert.equal(ran.exitCode, 1);
+      assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, new RegExp(`The configuration file is not valid JSON, at line ${faultLine + 1}, column ${faultColumn}: a character JSON does not allow there\\. Its path and text are not shown`));
+    }
+  }
+  const missing = await cli(["config", "check", NAME_SHAPED_VALUE], dir);
+  assert.match(missing.stderr ?? "", /^Cannot read the configuration file: it was not found\. Its path and text are not shown/);
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `the configuration file's path or text was printed: ${text}`);
+});
+
+type DraftObject = Record<string, any>;
+
+const UNKNOWN_KEY_PLACES: ((draft: DraftObject, key: string) => void)[] = [
+  (draft, key) => {
+    draft[key] = 1;
+  },
+  (draft, key) => {
+    draft.general = { [key]: 1 };
+  },
+  (draft, key) => {
+    draft.general = { snapshots: { [key]: 1, ceilings: { [key]: "a lot" } } };
+  },
+  (draft, key) => {
+    draft.general = { tailnet: { mode: "off", [key]: 1 } };
+  },
+  (draft, key) => {
+    draft.monitor = { [key]: 1 };
+  },
+  (draft, key) => {
+    draft.kinds = { [key]: { enabled: "yes" } };
+  },
+  (draft, key) => {
+    draft.kinds = { linux: { [key]: 1, largest: { [key]: 1 }, presets: { [key]: {}, small: { [key]: 1 } } } };
+  },
+  (draft, key) => {
+    draft.images = { [key]: { kinds: 1 } };
+  },
+  (draft, key) => {
+    draft.images = { good: { kinds: ["linux"], script: "true", projects: ["prj_cli"], [key]: 1 } };
+  },
+  (draft, key) => {
+    Object.assign(draft.backends[0], { [key]: 1, warm: { [key]: "two" } });
+    draft.backends[0].fields[key] = 1;
+  },
+  (draft, key) => {
+    draft.backends[0].hosts = [{ name: "host-1", [key]: 1, fields: { [key]: 1 } }];
+  },
+];
+
+const REJECTED_VALUE_PLACES: ((draft: DraftObject, value: string) => void)[] = [
+  (draft, value) => {
+    draft.schema = value;
+  },
+  (draft, value) => {
+    draft.general = { defaultKind: value };
+  },
+  (draft, value) => {
+    draft.images = { valid: { kinds: [value], script: "true", projects: ["prj_cli"] } };
+  },
+  (draft, value) => {
+    draft.backends.push({ id: "other", type: value, enabled: false });
+  },
+  (draft, value) => {
+    draft.general = { files: [{ path: `/${value}`, content: "made up" }] };
+  },
+  (draft, value) => {
+    draft.backends.push({ id: "ssh-pool", type: "ssh-pool", enabled: true, fields: { machines: value, "known-hosts": value } });
+  },
+];
+
+function draftWithRejectedValue(token: string, value: string, place: number): string {
+  const draft = JSON.parse(draftWithToken(token)) as DraftObject;
+  REJECTED_VALUE_PLACES[place]!(draft, value);
+  return JSON.stringify(draft, null, 2);
+}
+
+test("a rejected value in a configuration file is named by its place, and never reaches the change summary, plain or --json", async () => {
+  const { cli, seen, dir } = await start();
+  for (const [place] of REJECTED_VALUE_PLACES.entries()) {
+    writeFileSync(join(dir, `rejected-${place}.json`), draftWithRejectedValue("made-up-token-value", NAME_SHAPED_VALUE, place));
+    for (const command of ["check", "apply"]) {
+      for (const json of [[], ["--json"]]) {
+        const ran = await cli(["config", command, `rejected-${place}.json`, ...json], dir);
+        if (!json.length) assert.equal(ran.exitCode, 1, `place ${place}: ${JSON.stringify(ran)}`);
+        assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, /is not shown, as it may be a secret|No backend offers|not one BB Box knows|on line 1/, `place ${place}`);
+      }
+    }
+  }
+  const defaultKind = await cli(["config", "check", "rejected-1.json"], dir);
+  assert.match(defaultKind.stdout ?? "", /  general\.defaultKind: There is no kind by the name general\.defaultKind gives\. The kinds are /);
+  assert.ok(!(defaultKind.stdout ?? "").includes("It would change"), "a rejected value never reaches the change summary");
+  const offBackend = await cli(["config", "check", `rejected-${REJECTED_VALUE_PLACES.length - 1}.json`], dir);
+  assert.match(offBackend.stdout ?? "", /It would change these, whose values are not shown while the file has problems:\n/);
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `a rejected value was printed: ${text}`);
+});
+
+test("a rejected command line value is never printed, as a field, kind, option, backend, host, project, line, path or number", async () => {
+  const { cli, seen, dir } = await start();
+  assert.equal((await cli(["backend", "add", "fake"])).exitCode, 0);
+  assert.equal((await cli(["backend", "add", "ssh-pool", "--off", "--no-doctor"])).exitCode, 0);
+  const value = NAME_SHAPED_VALUE;
+  const refusals = [
+    ["backend", "set", value],
+    ["backend", "add", value],
+    ["backend", "set", "fake", "--field", `${value}=one`],
+    ["backend", "set", "fake", "--unset", value],
+    ["backend", "set", "fake", "--field", value],
+    ["backend", "set", "ssh-pool", "--field", `ios-hosts-most=${value}`],
+    ["backend", "set", "ssh-pool", "--remove-line", `machines=${value}`],
+    ["backend", "set", "ssh-pool", "--add-line", `${value}=line`],
+    ["backend", "set", "fake", "--warm", `${value}=1`],
+    ["backend", "set", "fake", "--warm", `linux=${value}`],
+    ["backend", "set", "fake", "--projects", value],
+    ["backend", "set", "fake", "--field-file", `address=${value}`],
+    ["backend", "host", "set", "fake", value],
+    ["backend", "host", "add", "fake", value],
+    ["kind", "set", value, "--spares", "1"],
+    ["kind", "set", "linux", "--cores", value],
+    ["option", "set", `${value}=1`],
+    ["option", "set", `boxesPerThread=${value}`],
+    ["option", "set", `general.snapshots.ceilings.${value}=abc`],
+    ["option", "get", value],
+    ["image", "remove", value],
+    ["image", "show", value],
+    ["image", "set", "made-up", "--kinds", "linux", "--projects", "prj_cli", "--script-file", value],
+    ["acquire", "linux", "--gpu", value],
+  ];
+  for (const args of refusals) {
+    for (const json of [[], ["--json"]]) {
+      const ran = await cli([...args, ...json], dir);
+      assert.notEqual(ran.exitCode, 0, `${args.join(" ")} was not refused: ${JSON.stringify(ran)}`);
+    }
+  }
+  for (const text of seen) assert.ok(!text.includes(value), `a rejected value was printed: ${text}`);
+});
+
+test("a word the parser refuses is named by its own place when the same text comes earlier, plain or --json", async () => {
+  const { cli, seen } = await start();
+  const cases: [string[], RegExp][] = [
+    [["backend", "set", "fake", "--revision", "fake"], /invalid value \(word 5 after bb box, not shown, as it may be a secret\) for --revision/],
+    [["list", "--thread", "extra", "extra"], /unexpected argument \(word 4 after bb box, not shown, as it may be a secret\)/],
+    [["backend", "set", "fake", "--revision=fake"], /invalid value \(word 4 after bb box, not shown, as it may be a secret\) for --revision/],
+    [["backend", "set", "--zzz", "fake", "--zzz"], /unknown option \(word 3 after bb box, not shown, as it may be a secret\)/],
+  ];
+  for (const [args, words] of cases) {
+    for (const json of [[], ["--json"]]) {
+      const ran = await cli([...args, ...json]);
+      assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, words, args.join(" "));
+    }
+  }
+  for (const text of seen) assert.ok(!text.includes("'extra'") && !text.includes("'fake'"), `a refused word was quoted: ${text}`);
+});
+
+function draftWithUnknownKey(token: string, key: string, place: number): string {
+  const draft = JSON.parse(draftWithToken(token)) as DraftObject;
+  UNKNOWN_KEY_PLACES[place]!(draft, key);
+  return JSON.stringify(draft, null, 2);
+}
+
+test("an unknown key in a valid configuration file is named by its place, never its text, by check and apply, plain or --json", async () => {
+  const { cli, seen, dir } = await start();
+  for (const [place] of UNKNOWN_KEY_PLACES.entries()) {
+    writeFileSync(join(dir, `unknown-${place}.json`), draftWithUnknownKey("made-up-token-value", NAME_SHAPED_VALUE, place));
+    for (const command of ["check", "apply"]) {
+      for (const json of [[], ["--json"]]) {
+        const ran = await cli(["config", command, `unknown-${place}.json`, ...json], dir);
+        if (!json.length) assert.equal(ran.exitCode, 1, `place ${place}: ${JSON.stringify(ran)}`);
+        assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, /key in .+ is not one BB Box knows here\. Its name is not shown, as it may be a secret\./, `place ${place}`);
+      }
+    }
+  }
+  const general = await cli(["config", "check", "unknown-1.json"], dir);
+  assert.match(general.stdout ?? "", /  general\.#1: The 1st key in general is not one BB Box knows here\. Its name is not shown, as it may be a secret\. There are boxesPerThread, /);
+  const field = await cli(["config", "check", "unknown-9.json"], dir);
+  assert.match(field.stdout ?? "", /  backends\.fake\.fields\.#2: The 2nd key in backends\.fake\.fields is not one BB Box knows here\. .* The fields of backend fake are /);
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `an unknown key was printed: ${text}`);
+});
+
+test("the settings page keeps naming an unknown key in its own draft, and only the CLI's form leaves it out", () => {
+  const draft = readDraft({ general: { [NAME_SHAPED_VALUE]: 1 } }, [fakeDriver(tempDir("unknown-key"))]);
+  assert.deepEqual(draft.problems.map((problem) => problem.path), [`general.${NAME_SHAPED_VALUE}`]);
+  assert.match(draft.problems[0]!.message, new RegExp(`There is no general setting "${NAME_SHAPED_VALUE}"`));
+  assert.equal(draft.problems[0]!.unnamed?.path, "general.#1");
+  assert.ok(!JSON.stringify(draft.problems[0]!.unnamed).includes(NAME_SHAPED_VALUE));
+});
+
+test("a word the command line parser refuses is named by its place, never its text, plain or --json", async () => {
+  const { cli, seen, dir } = await start();
+  writeFileSync(join(dir, "empty.json"), "{}");
+  const cases: [string[], RegExp][] = [
+    [[NAME_SHAPED_VALUE], /unknown command \(word 1 after bb box, not shown, as it may be a secret\)/],
+    [["config", NAME_SHAPED_VALUE], /unknown command \(word 2 after bb box, not shown, as it may be a secret\)/],
+    [["backend", "add", "fake", `-${NAME_SHAPED_VALUE}`], /unknown option \(word 4 after bb box, not shown, as it may be a secret\)/],
+    [["backend", "add", "fake", `--${NAME_SHAPED_VALUE}=one`], /unknown option \(word 4 after bb box, not shown, as it may be a secret\)/],
+    [["backend", "add", "fake", "--revision", NAME_SHAPED_VALUE], /invalid value \(word 5 after bb box, not shown, as it may be a secret\) for --revision/],
+    [["backend", "add", "fake", `--revision=${NAME_SHAPED_VALUE}`], /invalid value \(word 4 after bb box, not shown, as it may be a secret\) for --revision/],
+    [["config", "check", "empty.json", NAME_SHAPED_VALUE], /unexpected argument \(word 4 after bb box, not shown, as it may be a secret\)/],
+    [["config", "check", `-${NAME_SHAPED_VALUE}`], /unknown option \(word 3 after bb box, not shown, as it may be a secret\)/],
+  ];
+  for (const [args, words] of cases) {
+    for (const json of [[], ["--json"]]) {
+      const ran = await cli([...args, ...json], dir);
+      assert.notEqual(ran.exitCode, 0);
+      assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, words, args.join(" "));
+      if (json.length) assert.equal(JSON.parse(ran.stdout ?? "").ok, false);
+    }
+  }
+  const suggested = await cli(["backend", "add", "fake", "--secrte", "token=FAKE_TOKEN"]);
+  assert.match(suggested.stderr ?? "", /Did you mean --secret\?/);
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `a refused word was printed: ${text}`);
+});
+
+const FUZZ_ROUNDS = 300;
+const JSON_FUZZ_ROUNDS = 250;
+const PARSER_FUZZ_ROUNDS = 150;
+const FUZZ_SEED = 0x5eed_b0c5;
+const SHORTEST_LEAK = 8;
+const VALUE_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-.";
+const NAME_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_";
+
+function leakedPiece(output: string, values: readonly string[]): string | null {
+  for (const value of values) {
+    for (let at = 0; at + SHORTEST_LEAK <= value.length; at += 1) {
+      const piece = value.slice(at, at + SHORTEST_LEAK);
+      if (output.includes(piece)) return piece;
+    }
+  }
+  return null;
+}
+
+test("fuzzed secret input, arguments and configuration files never put 8 or more characters of a secret value in the output, plain or --json", async () => {
+  const { cli, dir } = await start();
+  const random = seededRandom(FUZZ_SEED);
+  const pick = <T,>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!;
+  const madeUpValue = () => Array.from({ length: 12 + Math.floor(random() * 30) }, () => pick([...VALUE_CHARACTERS])).join("");
+  const madeUpName = () => `V${Array.from({ length: 11 + Math.floor(random() * 20) }, () => pick([...NAME_CHARACTERS])).join("")}`;
+  const breakings: ((lines: string[], values: string[]) => string[])[] = [
+    (lines, values) => [...lines, `${values[0]}="unfinished`],
+    (lines, values) => [...lines, `${values[0]} unfinished`],
+    (lines, values) => [...lines, `${values[0]}=named-by-a-value`],
+    (lines) => lines,
+    (lines) => lines.map((line, index) => (index === lines.length - 1 ? line.replace("=", " ") : line)),
+    (lines, values) => [...lines, values[0]!],
+    (lines, values) => [...lines.slice(0, -1), `${lines.at(-1)!.split("=")[0]}="${values.at(-1)}`],
+    (lines, values) => [...lines.slice(0, -1), `${lines.at(-1)!.split("=")[0]}=${values.at(-1)!.slice(0, 6)}`, values.at(-1)!.slice(6)],
+    (_lines, values) => [values[0]!],
+  ];
+  const commands: { readonly args: string[]; readonly field: string }[] = [
+    { args: ["backend", "add", "fake", "--check"], field: "token" },
+    { args: ["backend", "add", "fake", "--check", "--clear-secret", "token"], field: "token" },
+    { args: ["option", "set", "general.tailnet.mode=oauth", "--check"], field: "general.tailnet.clientSecret" },
+  ];
+  const secretArguments: ((field: string, values: string[]) => string[])[] = [
+    (field, values) => ["--secret", `${field}=${pick(["SECRET_0", "MISSING", values[0]!])}`],
+    (_field, values) => ["--secret", `${values[0]}==`],
+    (_field, values) => ["--secret", `${values[0]}=SECRET_0`],
+    (_field, values) => ["--secret", values[0]!],
+    (field, values) => ["--secret", `${field}=SECRET_0`, "--secret-file", `${field}=${values[0]}`],
+    (_field, values) => ["--secret", `${values[0]}==`, "--secret", "token=MISSING"],
+    (_field, values) => ["--clear-secret", values[0]!, "--secret", "token=SECRET_0"],
+  ];
+  const deliveries: ((file: string, round: number, values: string[]) => string[])[] = [
+    (_file, _round, values) => ["--secrets-file", values[0]!],
+    (file) => ["--secrets", Buffer.from(file).toString("base64")],
+    (file) => ["--secrets", file.split("\n")[0]!],
+    (file, round) => {
+      writeFileSync(join(dir, `fuzz-${round}.env`), file);
+      return ["--secrets-file", `fuzz-${round}.env`];
+    },
+  ];
+  let refused = 0;
+  for (let round = 0; round < FUZZ_ROUNDS; round += 1) {
+    const values = Array.from({ length: 1 + Math.floor(random() * 3) }, () => pick([madeUpValue, madeUpName])());
+    const lines = values.map((value, index) => `SECRET_${index}=${value}`);
+    const file = pick(breakings)(lines, values).join("\n");
+    const command = pick(commands);
+    const json = pick([[], ["--json"]]);
+    const ran = await cli([...command.args, ...pick(secretArguments)(command.field, values), ...pick(deliveries)(file, round, values), ...json], dir);
+    if (ran.exitCode !== 0) refused += 1;
+    const output = `${ran.stdout ?? ""}${ran.stderr ?? ""}`;
+    assert.equal(leakedPiece(output, values), null, `round ${round} printed part of a value: ${output}`);
+  }
+  assert.ok(refused > FUZZ_ROUNDS / 4, `only ${refused} of ${FUZZ_ROUNDS} rounds were refused, so few error paths ran`);
+  const jsonBreakings: ((draft: string, value: string) => string)[] = [
+    (draft) => draft,
+    (draft) => draft.slice(0, Math.floor(random() * draft.length)),
+    (draft, value) => draft.replace(`"${value}"`, `"${value}`),
+    (draft, value) => draft.replace(`"${value}"`, `"${value}"${pick(["x", "'", ",", "\\", "\u0001"])}`),
+    (draft, value) => draft.replace(`"${value}"`, value),
+    (draft, value) => draft.replace(`"${value}"`, `"${value.slice(0, 6)}\\q${value.slice(6)}"`),
+    (draft, value) => draft.replace(`"${value}"`, `"${value.slice(0, 6)}\n${value.slice(6)}"`),
+    (draft, value) => draft.replace(`"token"`, `"${value}" ${value}`),
+    (draft, value) => `${draft}\n${value}`,
+    (_draft, value) => draftWithUnknownKey("made-up-token-value", value, Math.floor(random() * UNKNOWN_KEY_PLACES.length)),
+    (_draft, value) => draftWithUnknownKey(value, value, Math.floor(random() * UNKNOWN_KEY_PLACES.length)),
+    (_draft, value) => draftWithRejectedValue("made-up-token-value", value, Math.floor(random() * REJECTED_VALUE_PLACES.length)),
+  ];
+  const parserRefusals: ((value: string) => string[])[] = [
+    (value) => ["backend", "add", "fake", value],
+    (value) => ["backend", "add", "fake", `-${value}`],
+    (value) => ["backend", "add", "fake", "--revision", value],
+    (value) => ["backend", "add", "fake", `--revision=${value}`],
+    (value) => ["config", "check", "draft-0.json", value],
+    (value) => ["config", value],
+    (value) => [value],
+    (value) => ["backend", "set", value, "--revision", value],
+    (value) => ["list", "--thread", value, value],
+  ];
+  for (let round = 0; round < PARSER_FUZZ_ROUNDS; round += 1) {
+    const value = madeUpValue();
+    const ran = await cli([...pick(parserRefusals)(value), ...pick([[], ["--json"]])], dir);
+    assert.notEqual(ran.exitCode, 0, `parser round ${round} was not refused`);
+    const output = `${ran.stdout ?? ""}${ran.stderr ?? ""}`;
+    assert.equal(leakedPiece(output, [value]), null, `parser round ${round} printed part of a value: ${output}`);
+  }
+  let jsonRefused = 0;
+  for (let round = 0; round < JSON_FUZZ_ROUNDS; round += 1) {
+    const value = madeUpValue();
+    const name = `draft-${round}.json`;
+    writeFileSync(join(dir, name), pick(jsonBreakings)(draftWithToken(value), value));
+    const ran = await cli(["config", pick(["check", "apply"]), pick([name, `./${value}`, value]), ...pick([[], ["--json"]])], dir);
+    if (ran.exitCode !== 0) jsonRefused += 1;
+    const output = `${ran.stdout ?? ""}${ran.stderr ?? ""}`;
+    assert.equal(leakedPiece(output, [value]), null, `JSON round ${round} printed part of a value: ${output}`);
+  }
+  assert.ok(jsonRefused > JSON_FUZZ_ROUNDS / 2, `only ${jsonRefused} of ${JSON_FUZZ_ROUNDS} JSON rounds were refused, so few error paths ran`);
 });
 
 test("a stale --revision is refused with the revision it is at, and the right one saves", async () => {
@@ -280,11 +723,11 @@ test("--field, --unset, --add-line and --remove-line edit fields, and an unknown
   assert.equal(document().backends[0]!.fields["known-hosts"], "192.0.2.22 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMadeUp");
   const unknown = await cli(["backend", "set", "ssh-pool", "--field", "hosts=1"]);
   assert.equal(unknown.exitCode, 1);
-  assert.match(unknown.stderr ?? "", /Backend ssh-pool has no field "hosts"\. Its fields are machines, known-hosts, ssh-private-key, /);
+  assert.match(unknown.stderr ?? "", /Backend ssh-pool has no field by the name a --field gives\. That name is not shown, as it may be a secret\. Its fields are machines, known-hosts, ssh-private-key, /);
   const none = await cli(["backend", "set", "ssh-pool", "--remove-line", "machines=build-9"]);
-  assert.match(none.stderr ?? "", /No line of Machines \(machines\) is "build-9" or starts with it\./);
+  assert.match(none.stderr ?? "", /No line of Machines \(machines\) is the text a --remove-line gives, or starts with it\. What was given is not shown, as it may be a secret\./);
   const notNumber = await cli(["backend", "set", "ssh-pool", "--field", "ios-hosts-ahead=two"]);
-  assert.match(notNumber.stderr ?? "", /Ready slots kept on a shared iOS host \(ios-hosts-ahead\) is a number, not "two"\./);
+  assert.match(notNumber.stderr ?? "", /Ready slots kept on a shared iOS host \(ios-hosts-ahead\) is a number\. The value is not shown, as it may be a secret\./);
 });
 
 test("remove asks for --yes, is refused while the backend has boxes, and then removes it with its secret", async () => {
@@ -336,7 +779,7 @@ test("list, types and fields describe the backends without a secret's value", as
   assert.match(fields.stdout ?? "", /^Backend fake, Fake host \(fake\)\. Its guide: setup\/fake\/README\.md\.\nFields:\n {2}address \(string\) \[connection\]: Address\. Where the fake host is\. Now: unset, so "here"\.\n {2}token \(string, secret\) \[credentials\]: Token\. {2}Now: set\./);
   const typeFields = await cli(["backend", "fields", "tart"]);
   assert.match(typeFields.stdout ?? "", /Each host's fields, with bb box backend host add:\n {2}address \(string\) \[connection\]: Address\./);
-  assert.match((await cli(["backend", "fields", "nothing"])).stderr ?? "", /There is no backend type "nothing"\. The types are fake, ssh-pool, tart\./);
+  assert.match((await cli(["backend", "fields", "nothing"])).stderr ?? "", /There is no backend type by the name given\. That name is not shown, as it may be a secret\. The types are fake, ssh-pool, tart\./);
   assertNoSecret(seen);
 });
 
@@ -360,7 +803,7 @@ test("kind set changes the default preset's size, the default, spares and the sw
   assert.equal(document().kinds.linux?.enabled, false);
   const big = await cli(["kind", "set", "linux-desktop", "--cores", "999"]);
   assert.match(big.stderr ?? "", /kinds\.linux-desktop\.presets\.small: The small linux-desktop preset, 999 cores, 8 GiB memory, is above the largest size/);
-  assert.match((await cli(["kind", "set", "linux-gpu"])).stderr ?? "", /There is no kind "linux-gpu"\. The kinds are /);
+  assert.match((await cli(["kind", "set", "linux-gpu"])).stderr ?? "", /There is no kind by the name given\. That name is not shown, as it may be a secret\. The kinds are /);
   assert.equal((await cli(["kind", "set", "linux", "--reset"])).exitCode, 0);
   assert.equal(document().kinds.linux, undefined);
 });
@@ -383,10 +826,10 @@ test("option set and unset change general and Monitor options in one save, and l
   assert.match(back.stdout ?? "", /monitor\.enabled: false → true, the default/);
   assert.equal(document().monitor, undefined);
   assert.equal(document().general.boxesPerThread, undefined);
-  assert.match((await cli(["option", "set", "monitor.refreshIntervalSeconds=1"])).stderr ?? "", /monitor\.refreshIntervalSeconds is a whole number from 2 to 60, not "1"\./);
-  assert.match((await cli(["option", "set", "colour=blue"])).stderr ?? "", /There is no option "colour"\. The options are general\.defaultKind, /);
+  assert.match((await cli(["option", "set", "monitor.refreshIntervalSeconds=1"])).stderr ?? "", /monitor\.refreshIntervalSeconds is a whole number from 2 to 60\. The value is not shown, as it may be a secret\./);
+  assert.match((await cli(["option", "set", "colour=blue"])).stderr ?? "", /There is no option by the name given\. That name is not shown, as it may be a secret\. The options are general\.defaultKind, /);
   const kind = await cli(["option", "set", "defaultKind=plan9"]);
-  assert.match(kind.stderr ?? "", /^Nothing was saved\. Fix these first:\n  general\.defaultKind: There is no kind "plan9"\./);
+  assert.match(kind.stderr ?? "", /^Nothing was saved\. Fix these first:\n  general\.defaultKind: There is no kind by the name general\.defaultKind gives\. The kinds are /);
 });
 
 test("bb box option sets and unsets the snapshot settings that bite, within their ranges (070 unit 4)", async () => {
@@ -396,7 +839,7 @@ test("bb box option sets and unsets the snapshot settings that bite, within thei
   assert.match(set.stdout ?? "", /general\.snapshots\.perBox: 5, the default → 3/);
   assert.deepEqual(document().general.snapshots, { perBox: 3, roomPercent: 70 });
   assert.match((await cli(["option", "get", "general.snapshots.roomPercent"])).stdout ?? "", /^general\.snapshots\.roomPercent = 70: How full a host's storage may be/);
-  assert.match((await cli(["option", "set", "general.snapshots.roomPercent=95"])).stderr ?? "", /general\.snapshots\.roomPercent is a whole number from 50 to 90, not "95"\./);
+  assert.match((await cli(["option", "set", "general.snapshots.roomPercent=95"])).stderr ?? "", /general\.snapshots\.roomPercent is a whole number from 50 to 90\. The value is not shown, as it may be a secret\./);
   assert.equal((await cli(["option", "unset", "general.snapshots.perBox", "general.snapshots.roomPercent"])).exitCode, 0);
   assert.equal(document().general.snapshots, undefined);
 });
@@ -471,7 +914,9 @@ test("a dotenv file is read as bb secret request writes one, and as people write
       'SPLIT="first',
       'second"',
       "EMPTY=",
-      "not a line",
+      "PADDED=bWFkZS11cA==",
+      "",
+      "LAST=a=b=c=",
     ].join("\n"),
   );
   assert.deepEqual(Object.fromEntries(values), {
@@ -483,7 +928,25 @@ test("a dotenv file is read as bb secret request writes one, and as people write
     KEY: "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n",
     SPLIT: "first\nsecond",
     EMPTY: "",
+    PADDED: "bWFkZS11cA==",
+    LAST: "a=b=c=",
   });
+});
+
+test("a dotenv line that is not VARIABLE=value, or a quote never closed, is refused by its line number alone", () => {
+  const raw = "made-up-line-without-equals-5e1d";
+  assert.throws(() => parseDotenv(`# made up\nFIRST=one\n${raw}\n`, "the file secrets.env"), (error: Error) => {
+    assert.equal(error.message, "Line 3 of the file secrets.env is not a VARIABLE=value line. Nothing was saved.");
+    assert.ok(!JSON.stringify(error).includes(raw));
+    return true;
+  });
+  const opened = "made-up-unclosed-value-77c0";
+  assert.throws(() => parseDotenv(`FIRST=one\nSECOND="${opened}\nTHIRD=three\n`), (error: Error) => {
+    assert.equal(error.message, "The quoted value on line 2 of the dotenv file has no closing quote. Nothing was saved.");
+    assert.ok(!JSON.stringify(error).includes(opened.slice(0, 8)));
+    return true;
+  });
+  assert.deepEqual(Object.fromEntries(parseDotenv("\uFEFFFIRST=one\r\n")), { FIRST: "one" });
 });
 
 test("an empty value for an image field is saved as itself, so it turns its kind off rather than taking the default", async () => {
@@ -524,7 +987,7 @@ test("backend set --projects keeps a backend for BB projects by name or ID, stor
 
   const unknown = await cli(["backend", "set", "fake", "--projects", "Nope"]);
   assert.equal(unknown.exitCode, 1);
-  assert.match(unknown.stderr ?? "", /BB has no project called "Nope"\. Its projects are: Client work, Home, Twin, Twin\./);
+  assert.match(unknown.stderr ?? "", /BB has no project by the 1st name or ID given\. That name is not shown, as it may be a secret\. Its projects are: Client work, Home, Twin, Twin\./);
   const twice = await cli(["backend", "set", "fake", "--projects", "twin"]);
   assert.equal(twice.exitCode, 1);
   assert.match(twice.stderr ?? "", /2 projects are called "twin": prj_twin_a, prj_twin_b\. Give its ID\./);
