@@ -8,7 +8,7 @@ import { sshPoolDriver } from "../src/backends/ssh-pool/index.ts";
 import { tartDriver } from "../src/backends/tart/index.ts";
 import { boatDriver } from "../src/backends/boat/index.ts";
 import type { BackendDriver } from "../src/backends/types.ts";
-import { withoutSecretVersions } from "../src/core/document.ts";
+import { readDraft, withoutSecretVersions } from "../src/core/document.ts";
 import { INSTALL_ID_KEY } from "../src/core/install.ts";
 import { OPERATOR } from "../src/core/boxes.ts";
 import { GENERAL_SECRETS } from "../src/core/box-files.ts";
@@ -268,7 +268,11 @@ test("a value in the name position of a malformed line is never printed, from a 
 test("a value given by mistake as a --secret, a --secret-file or a --secrets-file is never printed, as a field, an option or a path", async () => {
   const { cli, seen, dir } = await start();
   const missing = await cli(["backend", "add", "fake", "--secret", `${NAME_SHAPED_VALUE}==`, "--secrets", "OTHER=one"]);
-  assert.match(missing.stderr ?? "", /^The variable that the 1st --secret names is not in the line on stdin\./);
+  assert.match(missing.stderr ?? "", /^Backend fake has no field by the name a --secret or --secret-file gives\. That name is not shown/, "an unknown field is named before a missing variable");
+  const known = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secret", `${NAME_SHAPED_VALUE}==`, "--secrets", "FAKE_TOKEN=one"]);
+  assert.match(known.stderr ?? "", /^Backend fake has no field by the name a --secret or --secret-file gives\./);
+  const missingVariable = await cli(["backend", "add", "fake", "--secret", "token=MISSING", "--secrets", "OTHER=one"]);
+  assert.match(missingVariable.stderr ?? "", /^The variable that the 1st --secret names is not in the line on stdin\./);
   const unknownField = await cli(["backend", "add", "fake", "--secret", `${NAME_SHAPED_VALUE}=OTHER`, "--secrets", "OTHER=one", "--json"]);
   assert.match(`${unknownField.stdout}${unknownField.stderr}`, /Backend fake has no field by the name a --secret or --secret-file gives\. That name is not shown/);
   const unknownOption = await cli(["option", "set", "general.tailnet.mode=oauth", "--secret", `${NAME_SHAPED_VALUE}=OTHER`, "--secrets", "OTHER=one"]);
@@ -280,7 +284,12 @@ test("a value given by mistake as a --secret, a --secret-file or a --secrets-fil
   assert.match(`${secretsFile.stdout}${secretsFile.stderr}`, /Cannot read the file given to --secrets-file: it was not found\./);
   const folder = await cli(["backend", "add", "fake", "--secret", "token=FAKE_TOKEN", "--secrets-file", dir], dir);
   assert.match(folder.stderr ?? "", /^Cannot read the file given to --secrets-file: it is a folder\./);
-  for (const ran of [missing, unknownField, unknownOption, secretFile, secretsFile, folder]) assert.equal(ran.exitCode, 1);
+  const unknownClear = await cli(["backend", "add", "fake", "--clear-secret", NAME_SHAPED_VALUE, "--json"]);
+  assert.match(`${unknownClear.stdout}${unknownClear.stderr}`, /Backend fake has no field by the name a --clear-secret gives\. That name is not shown, as it may be a secret\./);
+  assert.match(`${unknownClear.stdout}${unknownClear.stderr}`, /Its secret fields are token\./);
+  const optionMissing = await cli(["option", "set", "general.tailnet.mode=oauth", "--secret", `${NAME_SHAPED_VALUE}==`, "--secrets", "OTHER=one"]);
+  assert.match(optionMissing.stderr ?? "", /^A --secret names no option\./, "an unknown option is named before a missing variable");
+  for (const ran of [missing, known, missingVariable, unknownField, unknownOption, secretFile, secretsFile, folder, unknownClear, optionMissing]) assert.equal(ran.exitCode, 1);
   for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `a value given by mistake was printed: ${text}`);
 });
 
@@ -306,8 +315,107 @@ test("a configuration file that is not JSON is refused by line, column and kind,
   for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `the configuration file's path or text was printed: ${text}`);
 });
 
+type DraftObject = Record<string, any>;
+
+const UNKNOWN_KEY_PLACES: ((draft: DraftObject, key: string) => void)[] = [
+  (draft, key) => {
+    draft[key] = 1;
+  },
+  (draft, key) => {
+    draft.general = { [key]: 1 };
+  },
+  (draft, key) => {
+    draft.general = { snapshots: { [key]: 1, ceilings: { [key]: "a lot" } } };
+  },
+  (draft, key) => {
+    draft.general = { tailnet: { mode: "off", [key]: 1 } };
+  },
+  (draft, key) => {
+    draft.monitor = { [key]: 1 };
+  },
+  (draft, key) => {
+    draft.kinds = { [key]: { enabled: "yes" } };
+  },
+  (draft, key) => {
+    draft.kinds = { linux: { [key]: 1, largest: { [key]: 1 }, presets: { [key]: {}, small: { [key]: 1 } } } };
+  },
+  (draft, key) => {
+    draft.images = { [key]: { kinds: 1 } };
+  },
+  (draft, key) => {
+    draft.images = { good: { kinds: ["linux"], script: "true", projects: ["prj_cli"], [key]: 1 } };
+  },
+  (draft, key) => {
+    Object.assign(draft.backends[0], { [key]: 1, warm: { [key]: "two" } });
+    draft.backends[0].fields[key] = 1;
+  },
+  (draft, key) => {
+    draft.backends[0].hosts = [{ name: "host-1", [key]: 1, fields: { [key]: 1 } }];
+  },
+];
+
+function draftWithUnknownKey(token: string, key: string, place: number): string {
+  const draft = JSON.parse(draftWithToken(token)) as DraftObject;
+  UNKNOWN_KEY_PLACES[place]!(draft, key);
+  return JSON.stringify(draft, null, 2);
+}
+
+test("an unknown key in a valid configuration file is named by its place, never its text, by check and apply, plain or --json", async () => {
+  const { cli, seen, dir } = await start();
+  for (const [place] of UNKNOWN_KEY_PLACES.entries()) {
+    writeFileSync(join(dir, `unknown-${place}.json`), draftWithUnknownKey("made-up-token-value", NAME_SHAPED_VALUE, place));
+    for (const command of ["check", "apply"]) {
+      for (const json of [[], ["--json"]]) {
+        const ran = await cli(["config", command, `unknown-${place}.json`, ...json], dir);
+        if (!json.length) assert.equal(ran.exitCode, 1, `place ${place}: ${JSON.stringify(ran)}`);
+        assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, /key in .+ is not one BB Box knows here\. Its name is not shown, as it may be a secret\./, `place ${place}`);
+      }
+    }
+  }
+  const general = await cli(["config", "check", "unknown-1.json"], dir);
+  assert.match(general.stdout ?? "", /  general\.#1: The 1st key in general is not one BB Box knows here\. Its name is not shown, as it may be a secret\. There are boxesPerThread, /);
+  const field = await cli(["config", "check", "unknown-9.json"], dir);
+  assert.match(field.stdout ?? "", /  backends\.fake\.fields\.#2: The 2nd key in backends\.fake\.fields is not one BB Box knows here\. .* The fields of backend fake are /);
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `an unknown key was printed: ${text}`);
+});
+
+test("the settings page keeps naming an unknown key in its own draft, and only the CLI's form leaves it out", () => {
+  const draft = readDraft({ general: { [NAME_SHAPED_VALUE]: 1 } }, [fakeDriver(tempDir("unknown-key"))]);
+  assert.deepEqual(draft.problems.map((problem) => problem.path), [`general.${NAME_SHAPED_VALUE}`]);
+  assert.match(draft.problems[0]!.message, new RegExp(`There is no general setting "${NAME_SHAPED_VALUE}"`));
+  assert.equal(draft.problems[0]!.unnamed?.path, "general.#1");
+  assert.ok(!JSON.stringify(draft.problems[0]!.unnamed).includes(NAME_SHAPED_VALUE));
+});
+
+test("a word the command line parser refuses is named by its place, never its text, plain or --json", async () => {
+  const { cli, seen, dir } = await start();
+  writeFileSync(join(dir, "empty.json"), "{}");
+  const cases: [string[], RegExp][] = [
+    [[NAME_SHAPED_VALUE], /unknown command \(word 1 after bb box, not shown, as it may be a secret\)/],
+    [["config", NAME_SHAPED_VALUE], /unknown command \(word 2 after bb box, not shown, as it may be a secret\)/],
+    [["backend", "add", "fake", `-${NAME_SHAPED_VALUE}`], /unknown option \(word 4 after bb box, not shown, as it may be a secret\)/],
+    [["backend", "add", "fake", `--${NAME_SHAPED_VALUE}=one`], /unknown option \(word 4 after bb box, not shown, as it may be a secret\)/],
+    [["backend", "add", "fake", "--revision", NAME_SHAPED_VALUE], /invalid value \(word 5 after bb box, not shown, as it may be a secret\) for --revision/],
+    [["backend", "add", "fake", `--revision=${NAME_SHAPED_VALUE}`], /invalid value \(word 4 after bb box, not shown, as it may be a secret\) for --revision/],
+    [["config", "check", "empty.json", NAME_SHAPED_VALUE], /unexpected argument \(word 4 after bb box, not shown, as it may be a secret\)/],
+    [["config", "check", `-${NAME_SHAPED_VALUE}`], /unknown option \(word 3 after bb box, not shown, as it may be a secret\)/],
+  ];
+  for (const [args, words] of cases) {
+    for (const json of [[], ["--json"]]) {
+      const ran = await cli([...args, ...json], dir);
+      assert.notEqual(ran.exitCode, 0);
+      assert.match(`${ran.stdout ?? ""}${ran.stderr ?? ""}`, words, args.join(" "));
+      if (json.length) assert.equal(JSON.parse(ran.stdout ?? "").ok, false);
+    }
+  }
+  const suggested = await cli(["backend", "add", "fake", "--secrte", "token=FAKE_TOKEN"]);
+  assert.match(suggested.stderr ?? "", /Did you mean --secret\?/);
+  for (const text of seen) assert.ok(!text.includes(NAME_SHAPED_VALUE), `a refused word was printed: ${text}`);
+});
+
 const FUZZ_ROUNDS = 300;
-const JSON_FUZZ_ROUNDS = 150;
+const JSON_FUZZ_ROUNDS = 250;
+const PARSER_FUZZ_ROUNDS = 150;
 const FUZZ_SEED = 0x5eed_b0c5;
 const SHORTEST_LEAK = 8;
 const VALUE_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-.";
@@ -342,6 +450,7 @@ test("fuzzed secret input, arguments and configuration files never put 8 or more
   ];
   const commands: { readonly args: string[]; readonly field: string }[] = [
     { args: ["backend", "add", "fake", "--check"], field: "token" },
+    { args: ["backend", "add", "fake", "--check", "--clear-secret", "token"], field: "token" },
     { args: ["option", "set", "general.tailnet.mode=oauth", "--check"], field: "general.tailnet.clientSecret" },
   ];
   const secretArguments: ((field: string, values: string[]) => string[])[] = [
@@ -350,6 +459,8 @@ test("fuzzed secret input, arguments and configuration files never put 8 or more
     (_field, values) => ["--secret", `${values[0]}=SECRET_0`],
     (_field, values) => ["--secret", values[0]!],
     (field, values) => ["--secret", `${field}=SECRET_0`, "--secret-file", `${field}=${values[0]}`],
+    (_field, values) => ["--secret", `${values[0]}==`, "--secret", "token=MISSING"],
+    (_field, values) => ["--clear-secret", values[0]!, "--secret", "token=SECRET_0"],
   ];
   const deliveries: ((file: string, round: number, values: string[]) => string[])[] = [
     (_file, _round, values) => ["--secrets-file", values[0]!],
@@ -383,13 +494,31 @@ test("fuzzed secret input, arguments and configuration files never put 8 or more
     (draft, value) => draft.replace(`"${value}"`, `"${value.slice(0, 6)}\n${value.slice(6)}"`),
     (draft, value) => draft.replace(`"token"`, `"${value}" ${value}`),
     (draft, value) => `${draft}\n${value}`,
+    (_draft, value) => draftWithUnknownKey("made-up-token-value", value, Math.floor(random() * UNKNOWN_KEY_PLACES.length)),
+    (_draft, value) => draftWithUnknownKey(value, value, Math.floor(random() * UNKNOWN_KEY_PLACES.length)),
   ];
+  const parserRefusals: ((value: string) => string[])[] = [
+    (value) => ["backend", "add", "fake", value],
+    (value) => ["backend", "add", "fake", `-${value}`],
+    (value) => ["backend", "add", "fake", "--revision", value],
+    (value) => ["backend", "add", "fake", `--revision=${value}`],
+    (value) => ["config", "check", "draft-0.json", value],
+    (value) => ["config", value],
+    (value) => [value],
+  ];
+  for (let round = 0; round < PARSER_FUZZ_ROUNDS; round += 1) {
+    const value = madeUpValue();
+    const ran = await cli([...pick(parserRefusals)(value), ...pick([[], ["--json"]])], dir);
+    assert.notEqual(ran.exitCode, 0, `parser round ${round} was not refused`);
+    const output = `${ran.stdout ?? ""}${ran.stderr ?? ""}`;
+    assert.equal(leakedPiece(output, [value]), null, `parser round ${round} printed part of a value: ${output}`);
+  }
   let jsonRefused = 0;
   for (let round = 0; round < JSON_FUZZ_ROUNDS; round += 1) {
     const value = madeUpValue();
     const name = `draft-${round}.json`;
     writeFileSync(join(dir, name), pick(jsonBreakings)(draftWithToken(value), value));
-    const ran = await cli(["config", pick(["check", "apply"]), pick([name, value]), ...pick([[], ["--json"]])], dir);
+    const ran = await cli(["config", pick(["check", "apply"]), pick([name, `./${value}`, value]), ...pick([[], ["--json"]])], dir);
     if (ran.exitCode !== 0) jsonRefused += 1;
     const output = `${ran.stdout ?? ""}${ran.stderr ?? ""}`;
     assert.equal(leakedPiece(output, [value]), null, `JSON round ${round} printed part of a value: ${output}`);

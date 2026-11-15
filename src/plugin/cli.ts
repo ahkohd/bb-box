@@ -25,7 +25,7 @@ import { isGpuPart } from "../core/gpu.ts";
 import { snapshotStatusLine } from "./snapshot-words.ts";
 import { importChangeText } from "../app/settings-import.ts";
 import { PRODUCT } from "../brand.ts";
-import { jsonFaultOf, readFailure } from "./unshown-input.ts";
+import { jsonFaultOf, readFailure, unnamedProblems, withUnquotedArguments } from "./unshown-input.ts";
 
 const threadOption = {
   thread: { type: "string", description: "The thread whose boxes to use. Defaults to the thread this runs in." },
@@ -231,7 +231,7 @@ function resizeGpuOption(app: BbBox) {
 export function registerCli(bb: BbPluginApi, app: BbBox): void {
   const { boxes } = app;
   bb.cli.register(
-    defineCli({
+    withUnquotedArguments(defineCli({
       name: "box",
       summary: "Fast boxes for BB threads: list, acquire and release them, and check the backends.",
       commands: {
@@ -759,7 +759,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               for (const id of options.test ? configuration.enabledIn(draft) : []) {
                 tested.push({ id, report: (await configuration.check(draft, id, ctx.signal)).doctor });
               }
-              if (options.json) return json({ problems: result.problems, changes, doctors: tested });
+              if (options.json) return json({ problems: unnamedProblems(result.problems), changes, doctors: tested });
               const lines = [result.problems.length ? `Problems:\n${problemsText(result.problems)}` : "No problems."];
               if (changes) lines.push(changes);
               for (const { id, report } of tested) {
@@ -779,7 +779,7 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
               const draft = await readConfigFile(positionals.file, ctx);
               const revision = (draft as { revision?: unknown })?.revision;
               const result = await app.configuration.apply(draft, typeof revision === "number" && !options.replace ? revision : null);
-              if (options.json) return { exitCode: result.ok ? 0 : 1, stdout: `${JSON.stringify(result.ok ? withoutSecretVersions(result.state.document) : result, null, 2)}\n` };
+              if (options.json) return { exitCode: result.ok ? 0 : 1, stdout: `${JSON.stringify(result.ok ? withoutSecretVersions(result.state.document) : result.reason === "problems" ? { ...result, problems: unnamedProblems(result.problems) } : result, null, 2)}\n` };
               if (result.ok) {
                 const saved = `Saved revision ${result.state.revision}. bb box config show shows it, and bb box doctor checks the backends.`;
                 return out(result.problems.length ? `${saved}\nSaved with these problems, in backends that are off:\n${problemsText(result.problems)}` : saved);
@@ -835,6 +835,6 @@ export function registerCli(bb: BbPluginApi, app: BbBox): void {
             }),
         }),
       },
-    }),
+    })),
   );
 }

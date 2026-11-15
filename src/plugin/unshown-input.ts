@@ -1,3 +1,6 @@
+import type { PluginCliContext, PluginCliResult } from "@get-bb/plugin-sdk";
+import type { Problem } from "../core/document.ts";
+
 const READ_FAILURES: Readonly<Record<string, string>> = {
   ENOENT: "it was not found",
   EACCES: "it is not readable",
@@ -165,4 +168,59 @@ export function jsonFaultOf(text: string): JsonFault | null {
   const before = text.slice(0, stopped.stoppedAt);
   const lineStart = before.lastIndexOf("\n") + 1;
   return { line: before.split("\n").length, column: stopped.stoppedAt - lineStart + 1, words: JSON_FAULTS[stopped.kind] };
+}
+
+export function unnamedProblems(problems: readonly Problem[]): Problem[] {
+  return problems.map((each) => each.unnamed ?? { path: each.path, message: each.message });
+}
+
+const QUOTED_BY_THE_SDK = ["unknown command", "unknown option", "invalid value", "unexpected argument"] as const;
+
+function argumentPieces(argv: readonly string[], index: number): string[] {
+  const token = argv[index]!;
+  const equals = token.indexOf("=");
+  const leadingWords = argv.slice(0, index + 1).join(" ");
+  return equals === -1 ? [token, leadingWords] : [token, token.slice(0, equals), token.slice(equals + 1), leadingWords];
+}
+
+export function unquotedArguments(text: string, argv: readonly string[]): string {
+  const pieces = argv.flatMap((_token, index) => argumentPieces(argv, index).map((piece) => [piece, index] as const));
+  pieces.sort(([one], [other]) => other.length - one.length);
+  let unquoted = text;
+  for (const [piece, index] of pieces) {
+    for (const words of QUOTED_BY_THE_SDK) unquoted = unquoted.replaceAll(`${words} '${piece}'`, `${words} (word ${index + 1} after bb box, not shown, as it may be a secret)`);
+  }
+  return unquoted;
+}
+
+function unquotedJson(stdout: string, argv: readonly string[]): string {
+  let parsed: { ok?: unknown; error?: { message?: unknown; hint?: unknown } };
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return unquotedArguments(stdout, argv);
+  }
+  if (parsed?.ok !== false || typeof parsed.error !== "object" || parsed.error === null) return stdout;
+  const { message, hint } = parsed.error;
+  const error = {
+    ...parsed.error,
+    ...(typeof message === "string" ? { message: unquotedArguments(message, argv) } : {}),
+    ...(typeof hint === "string" ? { hint: unquotedArguments(hint, argv) } : {}),
+  };
+  return `${JSON.stringify({ ...parsed, error }, null, 2)}\n`;
+}
+
+function unquotedFailure(result: PluginCliResult, argv: readonly string[]): PluginCliResult {
+  if (result.exitCode === 0) return result;
+  return {
+    ...result,
+    ...(result.stdout === undefined ? {} : { stdout: unquotedJson(result.stdout, argv) }),
+    ...(result.stderr === undefined ? {} : { stderr: unquotedArguments(result.stderr, argv) }),
+  };
+}
+
+type CliRun = (argv: string[], ctx: PluginCliContext) => PluginCliResult | Promise<PluginCliResult>;
+
+export function withUnquotedArguments<Cli extends { readonly run: CliRun }>(cli: Cli): Cli {
+  return { ...cli, run: async (argv: string[], ctx: PluginCliContext) => unquotedFailure(await cli.run(argv, ctx), argv) };
 }

@@ -28,6 +28,7 @@ import { offeredWords } from "../core/mac-capabilities.ts";
 import type { BoxLogView } from "../core/box-log.ts";
 import type { Reach } from "../core/reach.ts";
 import { JOIN_TRIES, joiningWords } from "../core/join-tries.ts";
+import { unnamedProblems } from "./unshown-input.ts";
 
 export type ReachView =
   | Reach
@@ -973,7 +974,7 @@ export function doctorText(view: DoctorView): string {
 
 /** One problem per line, with its field's path. */
 export function problemsText(problems: readonly Problem[]): string {
-  return problems.map((problem) => `  ${problem.path || "(the file)"}: ${problem.message}`).join("\n");
+  return unnamedProblems(problems).map((problem) => `  ${problem.path || "(the file)"}: ${problem.message}`).join("\n");
 }
 
 function fieldValue(value: unknown): string {

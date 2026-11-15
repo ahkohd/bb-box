@@ -24,6 +24,7 @@ export interface FieldEdits {
   readonly addLines?: readonly (readonly [string, string])[];
   readonly removeLines?: readonly (readonly [string, string])[];
   readonly secrets?: ReadonlyMap<string, string>;
+  readonly unresolvedSecrets?: ReadonlyMap<string, Error>;
   readonly clearSecrets?: readonly string[];
 }
 
@@ -130,9 +131,17 @@ function fieldNamed(fields: readonly FieldView[], key: string, owner: string): F
 
 const NOT_SHOWN = "That name is not shown, as it may be a secret.";
 
-function secretFieldNamed(fields: readonly FieldView[], key: string, owner: string): FieldView {
+const SECRET_GIVERS = "a --secret or --secret-file";
+const SECRET_CLEARER = "a --clear-secret";
+
+function firstUnresolved(unresolved: ReadonlyMap<string, Error> | undefined): void {
+  const first = unresolved?.values().next().value;
+  if (first) throw first;
+}
+
+function secretFieldNamed(fields: readonly FieldView[], key: string, owner: string, given = SECRET_GIVERS): FieldView {
   const field = fields.find((candidate) => candidate.key === key);
-  if (!field) throw invalid(`${owner} has no field by the name a --secret or --secret-file gives. ${NOT_SHOWN}`, `Its secret fields are ${fields.filter(isSecretField).map((each) => each.key).join(", ") || "none"}.`);
+  if (!field) throw invalid(`${owner} has no field by the name ${given} gives. ${NOT_SHOWN}`, `Its secret fields are ${fields.filter(isSecretField).map((each) => each.key).join(", ") || "none"}.`);
   return field;
 }
 
@@ -228,6 +237,8 @@ function editedFields(
     next[key] = kept.join("\n");
     for (const line of lines.filter((each) => lineMatches(each, text))) note(key, `removed the line "${line.trim()}"`);
   }
+  for (const key of [...(edits.secrets?.keys() ?? []), ...(edits.unresolvedSecrets?.keys() ?? [])]) secretFieldNamed(fields, key, owner);
+  firstUnresolved(edits.unresolvedSecrets);
   for (const [key, value] of edits.secrets ?? []) {
     const field = secretFieldNamed(fields, key, owner);
     if (!isSecretField(field)) throw invalid(`${field.label} (${key}) is not a secret: give it with --field ${key}=<value>.`);
@@ -238,7 +249,7 @@ function editedFields(
     note(key, isSecretState(before) && before.set ? "replaced" : "set");
   }
   for (const key of edits.clearSecrets ?? []) {
-    const field = fieldNamed(fields, key, owner);
+    const field = secretFieldNamed(fields, key, owner, SECRET_CLEARER);
     if (!isSecretField(field)) throw invalid(`${field.label} (${key}) is not a secret: use --unset ${key}.`);
     const before = next[key];
     if (isSecretState(before) && !before.set) continue;
@@ -599,7 +610,13 @@ function rebuilt(document: ConfigDocument, parts: ReturnType<typeof partsOf>, ta
   return { ...rest, general: general as ConfigDocument["general"], ...(monitor ? { monitor: monitor as ConfigDocument["monitor"] } : {}) };
 }
 
-export function setOptions(document: ConfigDocument, values: readonly (readonly [string, string])[], secrets: ReadonlyMap<string, string>, unset: readonly string[] = []): Edited {
+export function setOptions(
+  document: ConfigDocument,
+  values: readonly (readonly [string, string])[],
+  secrets: ReadonlyMap<string, string>,
+  unset: readonly string[] = [],
+  unresolved: ReadonlyMap<string, Error> = new Map(),
+): Edited {
   const parts = partsOf(document);
   const changes: Change[] = [];
   let tailnetTouched = false;
@@ -631,6 +648,8 @@ export function setOptions(document: ConfigDocument, values: readonly (readonly 
     } else put(option, undefined);
   }
   for (const [name, raw] of values) put(optionNamed(name), optionValue(optionNamed(name), raw));
+  for (const name of [...secrets.keys(), ...unresolved.keys()]) secretOptionNamed(name);
+  firstUnresolved(unresolved);
   for (const [name, value] of secrets) {
     const option = secretOptionNamed(name);
     if (option.type.kind !== "secret") throw invalid(`${option.name} is not a secret: give it as ${option.name}=<value>.`);
