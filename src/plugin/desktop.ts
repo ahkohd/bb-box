@@ -521,7 +521,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       .find(boxId)
       .then((box) => {
         const last = agentPlaces.get(boxId);
-        if (!last || !listeners.has(tell) || box?.state !== "ready" || !viewerDrawsAgentCursor(box)) return;
+        if (!listeners.has(tell) || box?.state !== "ready" || !viewerDrawsAgentCursor(box)) return;
+        if (!last) {
+          tell("BB_AGENT,clear");
+          return;
+        }
         tell(last);
         for (const message of agentShapes.told(boxId)) tell(message);
       })

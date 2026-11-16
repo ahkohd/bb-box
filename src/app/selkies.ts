@@ -608,6 +608,8 @@ export class SelkiesSession implements Kept {
     const socket = new WebSocket(this.#url);
     socket.binaryType = "arraybuffer";
     this.#socket = socket;
+    this.#agentPointer.message("BB_AGENT,clear");
+    this.#drawPointer();
     this.#leaveSlowVideoStills();
     this.#reset();
     this.#set({ state: "connecting" });

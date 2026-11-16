@@ -4417,6 +4417,17 @@ test("a box whose image has no bb-box-cursor, as every Wayland box of a 24.04 im
   await one.close();
 });
 
+test("a joining Linux desktop viewer with no saved agent place is explicitly told to clear it on both streams (105)", async (t) => {
+  const { harness, box } = await desktopBox({ kind: FAKE_SELKIES_KIND });
+  t.after(() => harness.lifecycle.dispose());
+  for (const stream of ["pointer", "selkies"]) {
+    const viewer = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-joining-0001&stream=${stream}`);
+    await until("the joining viewer told to clear", async () => agentSaid(viewer).length > 0);
+    assert.deepEqual(agentSaid(viewer), ["BB_AGENT,clear"]);
+    await viewer.close();
+  }
+});
+
 test("on a Linux desktop, whose driver draws no agent cursor, each viewer is told where the agent clicks and scrolls, and a viewer that comes later where it last acted (073)", async (t) => {
   const { harness, box, tool } = await desktopBox({ kind: FAKE_SELKIES_KIND });
   t.after(() => harness.lifecycle.dispose());
@@ -4575,7 +4586,7 @@ test("a click by a window's pixels takes no shape from a tree read before the ac
   await tool("computer_act", { box: box.name, action: "click", window: 100, x: 70, y: 580 });
   await until("the click told", async () => clicksSaid(vnc).length === 1);
   await quiet();
-  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,click,170,680"], "the link was in the tree read with the image, but has gone since");
+  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,clear", "BB_AGENT,click,170,680"], "the link was in the tree read with the image, but has gone since");
   const clicks = app.recordings.end(box.id)!.filter((event) => event.type === "click");
   assert.deepEqual(
     clicks.map((event) => event.type === "click" && event.role),
@@ -4672,7 +4683,7 @@ test("a person who takes control ends the agent's shape: watching viewers clear 
   await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
   const later = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
   await quiet();
-  assert.deepEqual(agentSaid(later), [], "neither where the agent last acted nor its I-beam");
+  assert.deepEqual(agentSaid(later), ["BB_AGENT,clear"], "the joining viewer explicitly clears any old place and shape");
   assert.equal(agentSaid(watching).length, 4, "nothing more after the take-over");
   await later.close();
   await watching.close();
@@ -4686,7 +4697,7 @@ test("on a Linux desktop, the agent's pointer is an I-beam while it types into a
   const field = refOf(text(await tool("computer_observe", { box: box.name, window: 100 })), '"New task"');
   await tool("computer_type", { box: box.name, ref: field, text: "Buy milk" });
   await quiet();
-  assert.deepEqual(agentSaid(vnc), [], "typing by reference with no place known shows no pointer");
+  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,clear"], "typing by reference with no place known shows no pointer");
 
   await tool("computer_screenshot", { box: box.name });
   await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 408, y: 94 });
@@ -4718,7 +4729,7 @@ test("a click by pixels on a window too large to read quickly keeps the arrow, a
   assert.match(clicked, /too large to read quickly/);
   await until("the click told", async () => clicksSaid(vnc).length === 1);
   await quiet();
-  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,click,845,160"], "the Delete Task 1 button is under the point, but its tree was not read");
+  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,clear", "BB_AGENT,click,845,160"], "the Delete Task 1 button is under the point, but its tree was not read");
   const budgets = readDesktop(file).calls.filter((call) => call.tool === "get_window_state").slice(before).map((call) => call.args.max_elements);
   assert.ok(budgets.length && budgets.every((budget) => budget === 1), `reads: ${budgets.join()}`);
   await vnc.close();
@@ -4736,7 +4747,7 @@ test("an action that began before its box stopped shows no pointer once the box 
   app.desktops.agentActed(running, click, began);
   const later = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.deepEqual([...agentClicks(vnc), ...later.sent.filter((message) => typeof message === "string" && message.startsWith("BB_AGENT,"))], [], "the old action is not shown, nor kept for a later viewer");
+  assert.deepEqual([...agentClicks(vnc), ...agentSaid(later)], ["BB_AGENT,clear"], "the old action is not shown, nor kept for a later viewer");
   app.desktops.agentActed(running, click, Date.now());
   await until("an action since the start shown", async () => agentClicks(vnc).length === 1);
   await vnc.close();
@@ -4757,7 +4768,7 @@ test("where the agent last acted is forgotten as its box stops or is released, s
   assert.equal(((await harness.behavior.callRpc("start", { threadId: THREAD, box: box.id })) as { box: { state: string } }).box.state, "ready");
   const restarted = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.deepEqual(agentSaid(restarted), [], "a desktop that started again has no place of the agent's yet");
+  assert.deepEqual(agentSaid(restarted), ["BB_AGENT,clear"], "a desktop that started again has no place of the agent's yet");
   await restarted.close();
 
   await tool("computer_screenshot", { box: box.name });

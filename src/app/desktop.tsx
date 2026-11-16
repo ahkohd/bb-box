@@ -566,6 +566,7 @@ export class DesktopSession implements Kept {
     if (this.#disposed) return;
     clearTimeout(this.#retry);
     this.#refused = null;
+    this.#closePointer();
     const client = new Viewer(this.element, this.#url, { shared: true });
     client.afterPaste.join(tabOf(this.#url));
     client.afterPaste.pressChord = (shifted) => this.#pressPaste(shifted);
@@ -648,10 +649,13 @@ export class DesktopSession implements Kept {
     const stream = new WebSocket(`${this.#url}&stream=pointer`);
     this.#pointerStream = stream;
     stream.onmessage = (event: MessageEvent) => {
+      if (this.#pointerStream !== stream) return;
       if (typeof event.data === "string" && (this.#boxPointer.message(event.data) || this.#agentPointer.message(event.data))) this.#drawPointer();
     };
     stream.onclose = (event: CloseEvent) => {
-      if (this.#pointerStream === stream) this.#pointerStream = null;
+      if (this.#pointerStream !== stream) return;
+      this.#pointerStream = null;
+      this.#agentPointer.message("BB_AGENT,clear");
       if (event.reason === POINTER_NONE) this.#pointerNone = true;
       this.#boxPointer.at("");
       this.#drawPointer();
@@ -661,6 +665,8 @@ export class DesktopSession implements Kept {
   #closePointer(): void {
     const stream = this.#pointerStream;
     this.#pointerStream = null;
+    this.#agentPointer.message("BB_AGENT,clear");
+    this.#drawPointer();
     stream?.close();
   }
 
