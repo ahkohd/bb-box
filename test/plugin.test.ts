@@ -4654,7 +4654,7 @@ for (const [what, second, place] of [
   });
 }
 
-test("a person who takes control ends the agent's shape: watching viewers see the arrow, and a viewer after they hand back is told nothing from before (105)", async (t) => {
+test("a person who takes control ends the agent's shape: watching viewers clear the pointer, and a viewer after they hand back is told nothing from before (105)", async (t) => {
   const { harness, box, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   await tool("computer_screenshot", { box: box.name });
@@ -4668,12 +4668,12 @@ test("a person who takes control ends the agent's shape: watching viewers see th
   await session.receive(Uint8Array.of(1));
   await session.receive(Uint8Array.of(1));
   assert.equal(((await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null }).error, null);
-  await until("the arrow", async () => agentSaid(watching).at(-1) === "BB_AGENT,shape,400,640,arrow");
+  await until("the pointer cleared", async () => agentSaid(watching).at(-1) === "BB_AGENT,clear");
   await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
   const later = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
   await quiet();
   assert.deepEqual(agentSaid(later), [], "neither where the agent last acted nor its I-beam");
-  assert.equal(agentSaid(watching).length, 3, "nothing more after the take-over");
+  assert.equal(agentSaid(watching).length, 4, "nothing more after the take-over");
   await later.close();
   await watching.close();
   await session.close();
