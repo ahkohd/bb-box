@@ -866,8 +866,8 @@ export class SelkiesSession implements Kept {
         this.#drawPointer();
         break;
       case AGENT_VERB:
-        this.#drawPointer();
         this.#agentPointer.message(text);
+        this.#drawPointer();
         break;
     }
   }
@@ -1073,7 +1073,7 @@ export class SelkiesSession implements Kept {
     const picture = scale
       ? { left: (width - this.#width * scale) / 2, top: (height - this.#height * scale) / 2, width: this.#width * scale, height: this.#height * scale, desktopWidth: this.#width, desktopHeight: this.#height }
       : null;
-    this.#boxPointer.place(picture, this.#mine);
+    this.#boxPointer.place(picture, this.#mine || this.#agentPointer.active);
     this.#agentPointer.place(picture, this.#mine);
   }
 

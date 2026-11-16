@@ -64,3 +64,14 @@ describe("the agent's pointer on a Linux desktop (105)", () => {
     }
   });
 });
+
+test("forgetting the agent removes its pointer and ring before the box pointer returns", () => {
+  const container = document.createElement("div");
+  const pointer = new AgentPointer(container);
+  pointer.place(PICTURE, false);
+  pointer.message("BB_AGENT,click,640,360");
+  pointer.message("BB_AGENT,clear");
+  expect(container.querySelector<HTMLElement>("[data-testid=agent-pointer]")?.style.display).toBe("none");
+  expect(container.querySelector("[data-testid=agent-ring]")).toBeNull();
+  expect(pointer.active).toBe(false);
+});

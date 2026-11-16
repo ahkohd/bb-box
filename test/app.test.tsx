@@ -6418,10 +6418,27 @@ test("a person watching a Linux desktop as video sees the agent's pointer where 
     Object.defineProperty(video, "clientWidth", { value: 960, configurable: true });
     Object.defineProperty(video, "clientHeight", { value: 540, configurable: true });
     const agent = () => video.querySelector<HTMLElement>("[data-testid=agent-pointer]");
+    const png = rgbaPng(2, 1, Uint8Array.from([255, 0, 0, 255, 0, 0, 0, 0])).toString("base64");
+    act(() => void socket.onmessage?.({ data: `cursor,${JSON.stringify({ curdata: png, hotx: 0, hoty: 0 })}` }));
+    act(() => void socket.onmessage?.({ data: "BB_POINTER,640,360" }));
     act(() => void socket.onmessage?.({ data: "BB_AGENT,click,640,360" }));
     await waitFor(() => expect(agent()?.style.display).toBe("block"));
     expect([agent()!.style.left, agent()!.style.top]).toEqual(["320px", "180px"]);
     expect(video.querySelectorAll("[data-testid=agent-ring]").length).toBe(1);
+    const boxPointer = video.querySelector<HTMLElement>("img");
+    expect(boxPointer?.style.display).toBe("none");
+    act(() => void socket.onmessage?.({ data: "BB_AGENT,clear" }));
+    expect(agent()?.style.display).toBe("none");
+    expect(boxPointer?.style.display).toBe("block");
+    act(() => void socket.onmessage?.({ data: "BB_AGENT,click,640,360" }));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    act(() => void socket.onmessage?.({ data: "BB_AGENT,clear" }));
+    expect(boxPointer?.style.display).toBe("none");
+    fireEvent.click(slot.getByRole("button", { name: "Hand back to the agent" }));
+    await slot.findByText("The agent has control.");
+    await waitFor(() => expect(boxPointer?.style.display).toBe("block"));
+    expect(agent()?.style.display).toBe("none");
   } finally {
     FakeDecoder.size = size;
     undo();

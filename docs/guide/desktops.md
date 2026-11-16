@@ -62,7 +62,7 @@ A box's clipboard is its own. A Mac that runs boxes as virtual machines does not
 
 Without control, your own pointer shows over the desktop. With control, the pointer takes the box's shape. If the box hides its pointer, yours shows instead, so it never disappears.
 
-People watching a desktop see where the agent works. On macOS and Windows, the box draws the agent's pointer itself. On a Linux desktop, BB Box draws it over the picture where the agent last clicked or scrolled at a place on the screen, with a ring that grows and fades at each click. It shows over VNC and over video, on X11 and Wayland, and stays where the agent last acted. While you hold control, it does not show for you.
+People watching a desktop see where the agent works. On macOS and Windows, the box draws the agent's pointer itself. On a Linux desktop, BB Box draws it over the picture where the agent last clicked or scrolled at a place on the screen, with a ring that grows and fades at each click. It shows over VNC and over video, on X11 and Wayland, and stays where the agent last acted. While you hold control, it does not show for you. While the agent pointer shows, BB Box hides the box pointer where the display can remove it. Taking control, stopping or restarting the box clears the agent pointer; after you hand back, only the box pointer returns until the agent next acts. X11 VNC pictures with a baked pointer and no removal switch keep that pointer.
 
 The pointer changes shape as it does in a recording. It is a hand for 0.3 seconds after the agent clicks a link or button, and a text cursor after it clicks a text field, until it acts somewhere else. While the agent types into a text field, it is a text cursor, and stays one for 1 second after. Otherwise it is an arrow. BB Box tells what the agent clicked only from the window's elements it read for that click. Where it read none, as for a window too large to read quickly, such as a long web page, or a window clicked by its own pixels right after a screenshot of it, the pointer stays an arrow. If you open the desktop while the pointer has a shape, you see that shape for what is left of it.
 
@@ -88,7 +88,7 @@ Everything else works the same with video: taking control, copying and pasting, 
 
 ### The pointer over video
 
-Video shows the box's pointer as the agent moves it, so you can see where it points while you watch. While you hold control, the video leaves the box's pointer out: your own pointer shows instead, with the box's shape (an arrow, a text cursor, a hand), so it never trails behind your hand. One picture serves everyone watching a box, so while one person holds control, others watching see no pointer in the video either.
+Video shows the box's pointer until the Linux agent pointer takes its place. The video then leaves the box pointer out until the agent's place is forgotten. While you hold control, the video leaves the box's pointer out: your own pointer shows instead, with the box's shape (an arrow, a text cursor, a hand), so it never trails behind your hand. One picture serves everyone watching a box, so while one person holds control, others watching see no pointer in the video either.
 
 On Windows, this needs a box made from a recent image, which keeps the pointer apart from the picture. On a box from an older image, Windows draws the pointer into the picture, so the video always shows it: while you hold control, you see your own pointer and, a little behind it, the box's.
 

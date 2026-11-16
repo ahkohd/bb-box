@@ -5423,7 +5423,7 @@ for (const [how, message] of [["stream", "BB_CURSOR"], ["selkies", "SET_NATIVE_C
       ...FAKE_SELKIES_KIND,
       capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" && display.shows !== "device" ? { ...display, cursor: how } : display)) },
     };
-    const { harness, box, world } = await desktopBox({ kind });
+    const { harness, app, box, world } = await desktopBox({ kind });
     t.after(() => harness.lifecycle.dispose());
     const selkies = world.backend!.selkies;
     const cursors = () => selkies.pages.filter((page) => page.role === "controller").flatMap((page) => page.received.filter((sent) => typeof sent === "string" && sent.startsWith(message)));
@@ -5431,15 +5431,22 @@ for (const [how, message] of [["stream", "BB_CURSOR"], ["selkies", "SET_NATIVE_C
     const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
     await until("Selkies' first message", async () => one.sent.includes("MODE websockets"));
     await until("the cursor in the video, as the agent has control", async () => cursors().length === 1);
+    app.desktops.agentActed(box, { type: "click", button: "left", count: 1, point: { x: 100, y: 100 }, area: null, role: null, window: null }, Date.now());
+    await until("the cursor out for the agent pointer", async () => cursors().length === 2);
+    app.desktops.forgetAgent(box.id);
+    await until("the cursor returns after forgetting", async () => cursors().length === 3);
+    assert.ok(one.sent.includes("BB_AGENT,clear"));
+    app.desktops.agentActed(box, { type: "click", button: "left", count: 1, point: { x: 100, y: 100 }, area: null, role: null, window: null }, Date.now());
+    await until("the cursor out again", async () => cursors().length === 4);
     await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
-    await until("the cursor out, with a person in control", async () => cursors().length === 2);
+    await until("the cursor out, with a person in control", async () => cursors().length === 4);
     // A page from before the choice went, asking for the box's pointer: it goes nowhere, and changes nothing.
     await one.receive("BB_SHOWPOINTER,1");
     await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(cursors().length, 2);
+    assert.equal(cursors().length, 4);
     await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
-    await until("the cursor in, as the agent has control again", async () => cursors().length === 3);
-    assert.deepEqual(cursors(), [`${message},1`, `${message},0`, `${message},1`]);
+    await until("the cursor in, as the agent has control again", async () => cursors().length === 5);
+    assert.deepEqual(cursors(), [`${message},1`, `${message},0`, `${message},1`, `${message},0`, `${message},1`]);
     assert.ok(!selkies.pages.some((page) => page.received.some((sent) => typeof sent === "string" && sent.startsWith("BB_SHOWPOINTER"))), "the stream never sees the old page's message");
     await one.close();
   });
@@ -8513,4 +8520,18 @@ test("a backend kept for other projects is not in box_list, box_acquire, bb box 
   assert.ok(!isError(made), text(made));
   assert.match((await harness.behavior.runCli(["doctor"])).stdout ?? "", /Projects of [^:\n]+: Kept for Project one: only their threads see it\./);
   await app.boxes.idle();
+});
+
+test("a Wayland picture hides its native pointer for an agent place and restores it when forgotten", async (t) => {
+  const { harness, app, box, world } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const pointers: boolean[] = [];
+  world.backend!.pointers = pointers;
+  const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-one-0001`);
+  await until("the native pointer", async () => pointers.at(-1) === true);
+  app.desktops.agentActed(box, { type: "scroll", point: { x: 100, y: 100 }, window: null }, Date.now());
+  await until("the native pointer hidden", async () => pointers.at(-1) === false);
+  app.desktops.forgetAgent(box.id);
+  await until("the native pointer restored", async () => pointers.at(-1) === true);
+  await one.close();
 });

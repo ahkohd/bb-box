@@ -675,7 +675,7 @@ export class DesktopSession implements Kept {
     const outer = this.element.getBoundingClientRect();
     const inner = canvas.getBoundingClientRect();
     const picture = { left: inner.left - outer.left, top: inner.top - outer.top, width: inner.width, height: inner.height, desktopWidth: canvas.width, desktopHeight: canvas.height };
-    this.#boxPointer.place(picture, this.#mine);
+    this.#boxPointer.place(picture, this.#mine || this.#agentPointer.active);
     this.#agentPointer.place(picture, this.#mine);
   }
 
