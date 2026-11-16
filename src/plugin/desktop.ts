@@ -380,6 +380,9 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       box: new SelkiesBox(open, {
         onError: (error) => deps.logError("open the Selkies input", error),
         apart: () => videoApart.has(boxId),
+        onCaptureConfigured: () => {
+          for (const relay of selkiesBoxes.get(boxId)?.relays ?? []) relay.resume();
+        },
         // The clipboard and the pointer's shape, which reach the viewers no other way.
         onText: (message) => {
           for (const relay of selkiesBoxes.get(boxId)?.relays ?? []) relay.fromBox(message);
@@ -518,7 +521,11 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       .find(boxId)
       .then((box) => {
         const last = agentPlaces.get(boxId);
-        if (!last || !listeners.has(tell) || box?.state !== "ready" || !viewerDrawsAgentCursor(box)) return;
+        if (!listeners.has(tell) || box?.state !== "ready" || !viewerDrawsAgentCursor(box)) return;
+        if (!last) {
+          tell("BB_AGENT,clear");
+          return;
+        }
         tell(last);
         for (const message of agentShapes.told(boxId)) tell(message);
       })
@@ -539,12 +546,17 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
     agentPoints.delete(boxId);
     agentTypingShown.delete(boxId);
     agentShapes.forget(boxId);
+    tellViewers(boxId, "BB_AGENT,clear");
+    cursorFor(boxId);
+    pointerFor(boxId);
   };
   const agentActed = (box: BoxRecord, input: ActedInput, sentAt: number): void => {
     if (sentAt < (agentEnded.get(box.id) ?? 0)) return;
     if (!viewerDrawsAgentCursor(box) || (input.type !== "click" && input.type !== "scroll")) return;
     agentPlaces.set(box.id, agentMessage({ act: "at", ...input.point }));
     agentPoints.set(box.id, input.point);
+    cursorFor(box.id);
+    pointerFor(box.id);
     tellViewers(box.id, agentMessage({ act: input.type, ...input.point }));
     agentShapes.acted(box.id, input.type === "click" ? { act: "click", ...input.point, shape: clickShape(input.role) } : { act: "scroll", ...input.point });
   };
@@ -608,7 +620,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       const how = (await selkiesDisplay(boxes, boxId).catch(() => null))?.cursor;
       if (!how) return;
       const view = control.view(boxId);
-      const want = view.owner !== "human";
+      const want = view.owner !== "human" && !agentPlaces.has(boxId);
       if (want === entry.cursor) return;
       entry.cursor = want;
       await entry.box.cursorInVideo(want, how);
@@ -629,7 +641,7 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
         const view = control.view(boxId);
         // Where the display says so, only while the person watches it, by the viewer they took control with.
         const watching = shown.pointerWhile !== "rfb" || (view.holder !== null && (rfbViewers.get(boxId)?.get(view.holder) ?? 0) > 0);
-        await shown.pointer(!(view.owner === "human" && watching));
+        await shown.pointer(!agentPlaces.has(boxId) && !(view.owner === "human" && watching));
       })
       .catch((error) => deps.logError("show or hide the desktop's pointer", error));
     // One at a time for each box, each as control and viewers are when it runs.

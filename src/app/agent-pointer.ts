@@ -57,6 +57,13 @@ export class AgentPointer {
   message(text: string): boolean {
     const comma = text.indexOf(",");
     if ((comma < 0 ? text : text.slice(0, comma)) !== AGENT_VERB) return false;
+    if (text === `${AGENT_VERB},clear`) {
+      this.#place = null;
+      this.#shape = "arrow";
+      this.#container.querySelectorAll('[data-testid="agent-ring"]').forEach((ring) => ring.remove());
+      this.#draw();
+      return true;
+    }
     const place = agentPlaceOf(text.slice(comma + 1));
     if (!place || !this.#onScreen(place)) return true;
     this.#place = place;
@@ -64,6 +71,10 @@ export class AgentPointer {
     this.#draw();
     if (place.act === "click") this.#ring(place);
     return true;
+  }
+
+  get active(): boolean {
+    return this.#place !== null && this.#onScreen(this.#place);
   }
 
   place(picture: Picture | null, hidden: boolean): void {

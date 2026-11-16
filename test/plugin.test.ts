@@ -4417,6 +4417,17 @@ test("a box whose image has no bb-box-cursor, as every Wayland box of a 24.04 im
   await one.close();
 });
 
+test("a joining Linux desktop viewer with no saved agent place is explicitly told to clear it on both streams (105)", async (t) => {
+  const { harness, box } = await desktopBox({ kind: FAKE_SELKIES_KIND });
+  t.after(() => harness.lifecycle.dispose());
+  for (const stream of ["pointer", "selkies"]) {
+    const viewer = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-joining-0001&stream=${stream}`);
+    await until("the joining viewer told to clear", async () => agentSaid(viewer).length > 0);
+    assert.deepEqual(agentSaid(viewer), ["BB_AGENT,clear"]);
+    await viewer.close();
+  }
+});
+
 test("on a Linux desktop, whose driver draws no agent cursor, each viewer is told where the agent clicks and scrolls, and a viewer that comes later where it last acted (073)", async (t) => {
   const { harness, box, tool } = await desktopBox({ kind: FAKE_SELKIES_KIND });
   t.after(() => harness.lifecycle.dispose());
@@ -4575,7 +4586,7 @@ test("a click by a window's pixels takes no shape from a tree read before the ac
   await tool("computer_act", { box: box.name, action: "click", window: 100, x: 70, y: 580 });
   await until("the click told", async () => clicksSaid(vnc).length === 1);
   await quiet();
-  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,click,170,680"], "the link was in the tree read with the image, but has gone since");
+  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,clear", "BB_AGENT,click,170,680"], "the link was in the tree read with the image, but has gone since");
   const clicks = app.recordings.end(box.id)!.filter((event) => event.type === "click");
   assert.deepEqual(
     clicks.map((event) => event.type === "click" && event.role),
@@ -4654,7 +4665,7 @@ for (const [what, second, place] of [
   });
 }
 
-test("a person who takes control ends the agent's shape: watching viewers see the arrow, and a viewer after they hand back is told nothing from before (105)", async (t) => {
+test("a person who takes control ends the agent's shape: watching viewers clear the pointer, and a viewer after they hand back is told nothing from before (105)", async (t) => {
   const { harness, box, tool } = await desktopBox();
   t.after(() => harness.lifecycle.dispose());
   await tool("computer_screenshot", { box: box.name });
@@ -4668,12 +4679,12 @@ test("a person who takes control ends the agent's shape: watching viewers see th
   await session.receive(Uint8Array.of(1));
   await session.receive(Uint8Array.of(1));
   assert.equal(((await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer })) as { error: string | null }).error, null);
-  await until("the arrow", async () => agentSaid(watching).at(-1) === "BB_AGENT,shape,400,640,arrow");
+  await until("the pointer cleared", async () => agentSaid(watching).at(-1) === "BB_AGENT,clear");
   await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
   const later = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
   await quiet();
-  assert.deepEqual(agentSaid(later), [], "neither where the agent last acted nor its I-beam");
-  assert.equal(agentSaid(watching).length, 3, "nothing more after the take-over");
+  assert.deepEqual(agentSaid(later), ["BB_AGENT,clear"], "the joining viewer explicitly clears any old place and shape");
+  assert.equal(agentSaid(watching).length, 4, "nothing more after the take-over");
   await later.close();
   await watching.close();
   await session.close();
@@ -4686,7 +4697,7 @@ test("on a Linux desktop, the agent's pointer is an I-beam while it types into a
   const field = refOf(text(await tool("computer_observe", { box: box.name, window: 100 })), '"New task"');
   await tool("computer_type", { box: box.name, ref: field, text: "Buy milk" });
   await quiet();
-  assert.deepEqual(agentSaid(vnc), [], "typing by reference with no place known shows no pointer");
+  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,clear"], "typing by reference with no place known shows no pointer");
 
   await tool("computer_screenshot", { box: box.name });
   await tool("computer_act", { box: box.name, action: "click", window: "desktop", x: 408, y: 94 });
@@ -4718,7 +4729,7 @@ test("a click by pixels on a window too large to read quickly keeps the arrow, a
   assert.match(clicked, /too large to read quickly/);
   await until("the click told", async () => clicksSaid(vnc).length === 1);
   await quiet();
-  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,click,845,160"], "the Delete Task 1 button is under the point, but its tree was not read");
+  assert.deepEqual(agentSaid(vnc), ["BB_AGENT,clear", "BB_AGENT,click,845,160"], "the Delete Task 1 button is under the point, but its tree was not read");
   const budgets = readDesktop(file).calls.filter((call) => call.tool === "get_window_state").slice(before).map((call) => call.args.max_elements);
   assert.ok(budgets.length && budgets.every((budget) => budget === 1), `reads: ${budgets.join()}`);
   await vnc.close();
@@ -4736,7 +4747,7 @@ test("an action that began before its box stopped shows no pointer once the box 
   app.desktops.agentActed(running, click, began);
   const later = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.deepEqual([...agentClicks(vnc), ...later.sent.filter((message) => typeof message === "string" && message.startsWith("BB_AGENT,"))], [], "the old action is not shown, nor kept for a later viewer");
+  assert.deepEqual([...agentClicks(vnc), ...agentSaid(later)], ["BB_AGENT,clear"], "the old action is not shown, nor kept for a later viewer");
   app.desktops.agentActed(running, click, Date.now());
   await until("an action since the start shown", async () => agentClicks(vnc).length === 1);
   await vnc.close();
@@ -4757,7 +4768,7 @@ test("where the agent last acted is forgotten as its box stops or is released, s
   assert.equal(((await harness.behavior.callRpc("start", { threadId: THREAD, box: box.id })) as { box: { state: string } }).box.state, "ready");
   const restarted = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-vnc-00002&stream=pointer`);
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.deepEqual(agentSaid(restarted), [], "a desktop that started again has no place of the agent's yet");
+  assert.deepEqual(agentSaid(restarted), ["BB_AGENT,clear"], "a desktop that started again has no place of the agent's yet");
   await restarted.close();
 
   await tool("computer_screenshot", { box: box.name });
@@ -5423,7 +5434,7 @@ for (const [how, message] of [["stream", "BB_CURSOR"], ["selkies", "SET_NATIVE_C
       ...FAKE_SELKIES_KIND,
       capabilities: { ...FAKE_SELKIES_KIND.capabilities, displays: FAKE_SELKIES_KIND.capabilities.displays.map((display) => (display.protocol === "selkies" && display.shows !== "device" ? { ...display, cursor: how } : display)) },
     };
-    const { harness, box, world } = await desktopBox({ kind });
+    const { harness, app, box, world } = await desktopBox({ kind });
     t.after(() => harness.lifecycle.dispose());
     const selkies = world.backend!.selkies;
     const cursors = () => selkies.pages.filter((page) => page.role === "controller").flatMap((page) => page.received.filter((sent) => typeof sent === "string" && sent.startsWith(message)));
@@ -5431,15 +5442,30 @@ for (const [how, message] of [["stream", "BB_CURSOR"], ["selkies", "SET_NATIVE_C
     const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=${viewer}&stream=selkies`);
     await until("Selkies' first message", async () => one.sent.includes("MODE websockets"));
     await until("the cursor in the video, as the agent has control", async () => cursors().length === 1);
+    app.desktops.agentActed(box, { type: "click", button: "left", count: 1, point: { x: 100, y: 100 }, area: null, role: null, window: null }, Date.now());
+    await until("the cursor out for the agent pointer", async () => cursors().length === 2);
+    if (how === "selkies") {
+      const controller = selkies.pages.find((page) => page.role === "controller")!;
+      const watching = selkies.pages.find((page) => page.role === "viewer")!;
+      const starts = watching.received.filter((message) => message === "START_VIDEO").length;
+      await controller.send('DISPLAY_CONFIG_UPDATE,{"displays":["primary"]}');
+      await until("the watching stream restarted after the cursor switch", async () => watching.received.filter((message) => message === "START_VIDEO").length === starts + 1);
+      await until("a full frame asked for through the controller", async () => controller.received.includes("REQUEST_KEYFRAME"));
+    }
+    app.desktops.forgetAgent(box.id);
+    await until("the cursor returns after forgetting", async () => cursors().length === 3);
+    assert.ok(one.sent.includes("BB_AGENT,clear"));
+    app.desktops.agentActed(box, { type: "click", button: "left", count: 1, point: { x: 100, y: 100 }, area: null, role: null, window: null }, Date.now());
+    await until("the cursor out again", async () => cursors().length === 4);
     await harness.behavior.callRpc("takeControl", { threadId: THREAD, box: box.id, viewer });
-    await until("the cursor out, with a person in control", async () => cursors().length === 2);
+    await until("the cursor out, with a person in control", async () => cursors().length === 4);
     // A page from before the choice went, asking for the box's pointer: it goes nowhere, and changes nothing.
     await one.receive("BB_SHOWPOINTER,1");
     await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(cursors().length, 2);
+    assert.equal(cursors().length, 4);
     await harness.behavior.callRpc("handBack", { threadId: THREAD, box: box.id });
-    await until("the cursor in, as the agent has control again", async () => cursors().length === 3);
-    assert.deepEqual(cursors(), [`${message},1`, `${message},0`, `${message},1`]);
+    await until("the cursor in, as the agent has control again", async () => cursors().length === 5);
+    assert.deepEqual(cursors(), [`${message},1`, `${message},0`, `${message},1`, `${message},0`, `${message},1`]);
     assert.ok(!selkies.pages.some((page) => page.received.some((sent) => typeof sent === "string" && sent.startsWith("BB_SHOWPOINTER"))), "the stream never sees the old page's message");
     await one.close();
   });
@@ -8513,4 +8539,18 @@ test("a backend kept for other projects is not in box_list, box_acquire, bb box 
   assert.ok(!isError(made), text(made));
   assert.match((await harness.behavior.runCli(["doctor"])).stdout ?? "", /Projects of [^:\n]+: Kept for Project one: only their threads see it\./);
   await app.boxes.idle();
+});
+
+test("a Wayland picture hides its native pointer for an agent place and restores it when forgotten", async (t) => {
+  const { harness, app, box, world } = await desktopBox();
+  t.after(() => harness.lifecycle.dispose());
+  const pointers: boolean[] = [];
+  world.backend!.pointers = pointers;
+  const one = await harness.behavior.experimental_openWebSocket(`/desktop?box=${box.id}&viewer=viewer-one-0001`);
+  await until("the native pointer", async () => pointers.at(-1) === true);
+  app.desktops.agentActed(box, { type: "scroll", point: { x: 100, y: 100 }, window: null }, Date.now());
+  await until("the native pointer hidden", async () => pointers.at(-1) === false);
+  app.desktops.forgetAgent(box.id);
+  await until("the native pointer restored", async () => pointers.at(-1) === true);
+  await one.close();
 });

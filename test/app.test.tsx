@@ -6418,16 +6418,106 @@ test("a person watching a Linux desktop as video sees the agent's pointer where 
     Object.defineProperty(video, "clientWidth", { value: 960, configurable: true });
     Object.defineProperty(video, "clientHeight", { value: 540, configurable: true });
     const agent = () => video.querySelector<HTMLElement>("[data-testid=agent-pointer]");
+    const png = rgbaPng(2, 1, Uint8Array.from([255, 0, 0, 255, 0, 0, 0, 0])).toString("base64");
+    act(() => void socket.onmessage?.({ data: `cursor,${JSON.stringify({ curdata: png, hotx: 0, hoty: 0 })}` }));
+    act(() => void socket.onmessage?.({ data: "BB_POINTER,640,360" }));
     act(() => void socket.onmessage?.({ data: "BB_AGENT,click,640,360" }));
     await waitFor(() => expect(agent()?.style.display).toBe("block"));
     expect([agent()!.style.left, agent()!.style.top]).toEqual(["320px", "180px"]);
     expect(video.querySelectorAll("[data-testid=agent-ring]").length).toBe(1);
+    const boxPointer = video.querySelector<HTMLElement>("img");
+    expect(boxPointer?.style.display).toBe("none");
+    act(() => void socket.onmessage?.({ data: "BB_AGENT,clear" }));
+    expect(agent()?.style.display).toBe("none");
+    expect(boxPointer?.style.display).toBe("block");
+    act(() => void socket.onmessage?.({ data: "BB_AGENT,click,640,360" }));
+    fireEvent.click(await slot.findByRole("button", { name: "Take control" }));
+    await slot.findByText(/You have control/);
+    act(() => void socket.onmessage?.({ data: "BB_AGENT,clear" }));
+    expect(boxPointer?.style.display).toBe("none");
+    fireEvent.click(slot.getByRole("button", { name: "Hand back to the agent" }));
+    await slot.findByText("The agent has control.");
+    await waitFor(() => expect(boxPointer?.style.display).toBe("block"));
+    expect(agent()?.style.display).toBe("none");
   } finally {
     FakeDecoder.size = size;
     undo();
     window.sessionStorage.clear();
   }
 });
+
+for (const transport of ["video", "VNC"] as const) {
+  test(`a ${transport} viewer reconnecting after a missed agent clear shows the box pointer without the old agent place, shape or rings`, async () => {
+    const undo = withVideo();
+    const size = FakeDecoder.size;
+    const session = transport === "video"
+      ? new SelkiesSession("ws://bb/desktop?box=box_2&viewer=v&stream=selkies")
+      : new DesktopSession("ws://bb/desktop?box=box_2&viewer=v");
+    try {
+      FakeDecoder.size = { width: 1920, height: 1080 };
+      const connect = () => {
+        if (transport === "video") {
+          const socket = FakeSocket.made.at(-1)!;
+          socket.open();
+          socket.onmessage?.({ data: videoFrame(5, true) });
+          Object.defineProperty(session.element, "clientWidth", { value: 960, configurable: true });
+          Object.defineProperty(session.element, "clientHeight", { value: 540, configurable: true });
+          return socket;
+        }
+        const rfb = novnc.FakeRfb.made.at(-1)!;
+        const canvas = document.createElement("canvas");
+        canvas.width = 1920;
+        canvas.height = 1080;
+        rfb.target.appendChild(canvas);
+        canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 960, height: 540 }) as DOMRect;
+        rfb.dispatchEvent(new Event("connect"));
+        return FakeSocket.made.at(-1)!;
+      };
+      let socket = connect();
+      await decodesMacroblocks();
+      const png = rgbaPng(2, 1, Uint8Array.from([255, 0, 0, 255, 0, 0, 0, 0])).toString("base64");
+      const boxPointer = () => session.element.querySelector<HTMLElement>("img");
+      const agent = () => session.element.querySelector<HTMLElement>("[data-testid=agent-pointer]");
+      const tell = (data: string) => socket.onmessage?.({ data });
+      tell(`cursor,${JSON.stringify({ curdata: png, hotx: 0, hoty: 0 })}`);
+      tell("BB_POINTER,640,360");
+      tell("BB_AGENT,click,640,360");
+      tell("BB_AGENT,shape,640,360,ibeam");
+      expect(agent()?.style.display).toBe("block");
+      expect(boxPointer()?.style.display).toBe("none");
+      expect(session.element.querySelectorAll("[data-testid=agent-ring]")).toHaveLength(1);
+      if (transport === "VNC") {
+        socket.end(1012, "Plugin reloaded");
+        expect(agent()?.style.display).toBe("none");
+      }
+      session.reconnect();
+      socket = connect();
+      await decodesMacroblocks();
+      tell(`cursor,${JSON.stringify({ curdata: png, hotx: 0, hoty: 0 })}`);
+      tell("BB_POINTER,700,400");
+      expect(agent()?.style.display).toBe("none");
+      expect(session.element.querySelectorAll("[data-testid=agent-ring]")).toHaveLength(0);
+      expect(boxPointer()?.style.display).toBe("block");
+      tell("BB_AGENT,at,700,400");
+      expect(agent()?.getAttribute("data-shape")).toBe("arrow");
+      tell("BB_AGENT,click,700,400");
+      const replaced = socket;
+      session.reconnect();
+      socket = connect();
+      await decodesMacroblocks();
+      replaced.onmessage?.({ data: "BB_AGENT,click,640,360" });
+      tell(`cursor,${JSON.stringify({ curdata: png, hotx: 0, hoty: 0 })}`);
+      tell("BB_POINTER,700,400");
+      expect(agent()?.style.display).toBe("none");
+      expect(session.element.querySelectorAll("[data-testid=agent-ring]")).toHaveLength(0);
+      expect(boxPointer()?.style.display).toBe("block");
+    } finally {
+      session.dispose();
+      FakeDecoder.size = size;
+      undo();
+    }
+  });
+}
 
 /** Bytes as Selkies sends them in a clipboard message: base64. */
 function b64(bytes: Uint8Array): string {
