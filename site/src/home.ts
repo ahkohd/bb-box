@@ -11,7 +11,7 @@ export const headlineRest = "for BB threads";
 export const headline = `${headlineWords[0]} ${headlineRest}`;
 export const subline = "Linux, Windows, macOS, iOS and Android, virtual or real: desktops, terminals or simulators, shared by you and your agent.";
 export const demoDescription =
-  "A person asks a BB thread's agent for a Linux desktop box, and the agent opens getbb.app in its browser. The person opens the desktop, glances at the box's CPU and memory in the Monitor, then makes a server box and runs a command in its terminal. On the server box's page, the person takes a snapshot, breaks the box from its terminal, and restores the snapshot with an undo.";
+  "A person asks one BB thread's agent to build Dither, a small app, on Linux, Windows, macOS, an iPhone and an Android phone. The agent gets five computers, builds the app on all five, sets the same palette on each and checks every one shows the same picture, then reports back with recordings of the work. The person then takes control of the Mac and the iPhone and changes the palette themselves.";
 
 export type FeaturePiece = "boxPanel" | "newBox" | "desktop" | "recording" | "monitor";
 
