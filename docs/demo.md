@@ -1,8 +1,56 @@
 # Recording the demo
 
-The README and the documentation site's landing page open with a demo of about 70 seconds of a person and a thread's agent using bb-box in BB's web app. Record it again when the Box panel, the New box form, the desktop and terminal tabs, a box's page or its Snapshots card change.
+The README and the documentation site's landing page open with a film of about 35 seconds. One BB thread, one prompt and one agent build the same small app on five boxes at once: a Linux desktop, a Windows desktop, a macOS desktop, an iPhone and an Android phone. Record it again when the Box panel, its rows, the desktop and device views, taking control, or `box_record` clips change.
 
-## The demo video
+## The five-platform film
+
+The film is made by a pipeline kept with the demo app, in a private repository. Its runbook covers the stage, the shoot, the cut, the checks, publishing and clean-up. This page says what the film shows and how it reaches the site.
+
+### What it shows
+
+1. A new thread: the prompt is typed and sent.
+2. The agent's five `box_acquire` calls run and land.
+3. The Box panel, with all five boxes ready and how long that took.
+4. All five screens while the agent builds the app on each, sped up.
+5. The same five screens as the agent sets a palette on all five, and "5 of 5 working".
+6. The agent's reply: a card with a screenshot of each box, and a `box_record` recording of the work with its captioned steps.
+7. The whole page, with the macOS desktop live in the panel beside the thread.
+8. The person takes control of the macOS desktop, then of the iPhone, and changes the palette on each.
+9. The end card.
+
+### What is real and what is edited
+
+The video is recorded on a fresh BB, so no name from a deployment can show. Every frame is read with tesseract before it is published, and fails on any name that must not show.
+
+The agent is a scripted ACP agent: only its choice of calls is scripted. Every tool call, box, build, screen, hash check, recording and take-over is real. Nothing is built ahead, and each box is new.
+
+These are edits:
+
+- The typing is sped up, and the wait for the boxes is cut.
+- The builds run at 150 times, with the speed and a clock of the real time.
+- Holds are set to reading time.
+- The five-screen view is an edit: each screen is bb-box's own viewer page for that box, recorded on the same clock as the thread.
+- The pointer, its click ring, the captions, the status boxes and the end card are drawn by the compositor.
+- The sounds are synthesised for the film. The site plays it muted.
+
+### Put a new cut on the site
+
+The film is made in a landing cut (1920 by 1200) and a 16:9 cut, each in dark and light. The site uses the landing cut:
+
+| File | Is |
+|---|---|
+| `docs/media/demo.mp4` | the dark landing cut: H.264, CRF 17, 60 fps, with its sound track |
+| `docs/media/demo-light.mp4` | the light landing cut |
+| `docs/media/demo-poster.jpg`, `demo-light-poster.jpg` | each cut's poster, the frame the pipeline names |
+| `docs/media/demo.webp` | the dark landing cut at 800 px wide, under 4.9 MB, for wherever a video does not play |
+
+Then set `demoSeconds` in `site/src/demo.ts` to the cut's length, and update the video's description for screen readers in `site/src/home.ts`. The landing page plays one file, muted and looping: the one that matches the page's theme.
+
+The README plays its own copy of the video, uploaded by hand to GitHub, as described under [Encode](#encode) below.
+
+## The single-box demo
+
+Before the five-platform film, the README and the landing page opened with a demo of about 70 seconds of a person and a thread's agent using bb-box in BB's web app. Its scripts are still here, and still make [the guide's screenshots](#the-guides-screenshots).
 
 The video is recorded in a box, on a fresh BB with no account, so no deployment's machine, user, project or account name can show. Every name in it is one BB or bb-box makes: the box that runs the fresh BB, the boxes bb-box names, and the user `box`. The scripts are in [scripts/demo](../scripts/demo).
 
