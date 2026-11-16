@@ -177,17 +177,19 @@ export class SelkiesBox {
    */
   readonly #apart: () => boolean;
   readonly #onText: (message: string) => void;
+  readonly #onCaptureConfigured: () => void;
   readonly paths: StreamPaths;
 
   constructor(
     open: OpenStream,
-    options: { onError?: (error: Error) => void; spacingMs?: number; clock?: Clock; apart?: () => boolean; onText?: (message: string) => void; paths?: StreamPaths } = {},
+    options: { onError?: (error: Error) => void; onCaptureConfigured?: () => void; spacingMs?: number; clock?: Clock; apart?: () => boolean; onText?: (message: string) => void; paths?: StreamPaths } = {},
   ) {
     this.#open = open;
     this.paths = options.paths ?? SELKIES_PATHS;
     this.onError = options.onError ?? (() => undefined);
     this.#apart = options.apart ?? (() => false);
     this.#onText = options.onText ?? (() => undefined);
+    this.#onCaptureConfigured = options.onCaptureConfigured ?? (() => undefined);
     this.clock = options.clock ?? SYSTEM_CLOCK;
     this.spacing = new Spacing(options.spacingMs ?? OPEN_SPACING_MS, this.clock);
   }
@@ -330,6 +332,10 @@ export class SelkiesBox {
   async #drain(socket: BoxWebSocket): Promise<void> {
     try {
       for (let message = await socket.next(); message !== null; message = await socket.next()) {
+        if (typeof message === "string" && message.startsWith("DISPLAY_CONFIG_UPDATE,") && this.#cursor?.startsWith("SET_NATIVE_CURSOR_RENDERING,")) {
+          this.#onCaptureConfigured();
+          this.keyframe();
+        }
         if (typeof message === "string" && message.startsWith("BB_PONG,")) this.#pongs.get(message.slice(8))?.();
         else if (typeof message === "string" && this.#apart() && (CLIPBOARD_VERBS.has(verb(message)) || verb(message) === "cursor" || verb(message) === DEVICE_ANSWER_VERB)) this.#onText(message);
         if (typeof message !== "string" && this.clock.now() - this.#stopAsked > STOP_ASK_MS) {

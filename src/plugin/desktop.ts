@@ -380,6 +380,9 @@ export function registerDesktop(bb: BbPluginApi, deps: DesktopDeps): Desktops {
       box: new SelkiesBox(open, {
         onError: (error) => deps.logError("open the Selkies input", error),
         apart: () => videoApart.has(boxId),
+        onCaptureConfigured: () => {
+          for (const relay of selkiesBoxes.get(boxId)?.relays ?? []) relay.resume();
+        },
         // The clipboard and the pointer's shape, which reach the viewers no other way.
         onText: (message) => {
           for (const relay of selkiesBoxes.get(boxId)?.relays ?? []) relay.fromBox(message);

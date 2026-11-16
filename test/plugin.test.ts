@@ -5433,6 +5433,14 @@ for (const [how, message] of [["stream", "BB_CURSOR"], ["selkies", "SET_NATIVE_C
     await until("the cursor in the video, as the agent has control", async () => cursors().length === 1);
     app.desktops.agentActed(box, { type: "click", button: "left", count: 1, point: { x: 100, y: 100 }, area: null, role: null, window: null }, Date.now());
     await until("the cursor out for the agent pointer", async () => cursors().length === 2);
+    if (how === "selkies") {
+      const controller = selkies.pages.find((page) => page.role === "controller")!;
+      const watching = selkies.pages.find((page) => page.role === "viewer")!;
+      const starts = watching.received.filter((message) => message === "START_VIDEO").length;
+      await controller.send('DISPLAY_CONFIG_UPDATE,{"displays":["primary"]}');
+      await until("the watching stream restarted after the cursor switch", async () => watching.received.filter((message) => message === "START_VIDEO").length === starts + 1);
+      await until("a full frame asked for through the controller", async () => controller.received.includes("REQUEST_KEYFRAME"));
+    }
     app.desktops.forgetAgent(box.id);
     await until("the cursor returns after forgetting", async () => cursors().length === 3);
     assert.ok(one.sent.includes("BB_AGENT,clear"));

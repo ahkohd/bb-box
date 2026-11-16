@@ -534,3 +534,26 @@ test("a recording forgets the keys a viewer held when the relay lets them go, on
   await c.relay.close();
   await box.close();
 });
+
+test("a cursor switch refreshes the whole video after Selkies confirms its capture configuration", async () => {
+  const server = new FakeSelkies();
+  let resumed = 0;
+  const box = new SelkiesBox(async () => server.channel(), { spacingMs: 0, onCaptureConfigured: () => { resumed += 1; } });
+  try {
+    let refreshed = 0;
+    for (const on of [false, true]) {
+      await box.cursorInVideo(on, "selkies");
+      const page = server.pages.find((page) => page.role === "controller")!;
+      await until("the cursor switch", () => page.received.includes(`SET_NATIVE_CURSOR_RENDERING,${on ? 1 : 0}`));
+      assert.equal(page.received.filter((message) => message === "REQUEST_KEYFRAME").length, refreshed);
+      await page.send('DISPLAY_CONFIG_UPDATE,{"displays":["primary"]}');
+      refreshed += 1;
+      await until("the full refresh after configuration", () => page.received.filter((message) => message === "REQUEST_KEYFRAME").length === refreshed);
+      assert.equal(resumed, refreshed);
+      assert.ok(page.received.lastIndexOf("REQUEST_KEYFRAME") > page.received.lastIndexOf(`SET_NATIVE_CURSOR_RENDERING,${on ? 1 : 0}`));
+    }
+  } finally {
+    await box.close();
+    await server.close();
+  }
+});
