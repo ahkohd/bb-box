@@ -1,6 +1,6 @@
 import type { Backend, HeldSnapshot, Snapshotting } from "../backends/types.ts";
 import { OPERATOR, forkedFromWords, type BoxRecord } from "../core/boxes.ts";
-import { aboutSecondsWords, countsAgainstLimit, dayWords, gbWords, goneWords, holdsWords, pausedWords, pauseWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, unflushedWords, utcDay, type SnapshotRecord } from "../core/snapshot.ts";
+import { HOME_RESTORE_WENT, homeRestoreGoesWords, aboutSecondsWords, countsAgainstLimit, dayWords, gbWords, goneWords, holdsWords, pausedWords, pauseWords, priceWords, sizeWords, snapshotLine, snapshottingWords, stateWords, unflushedWords, utcDay, type SnapshotRecord } from "../core/snapshot.ts";
 import { describeSize } from "../core/sizes.ts";
 import { freedWords, type DeleteAnswer, type ForkAnswer, type ForkCheck, type KeepAnswer, type KeepCheck, type RestoreAnswer, type RestoreCheck, type Snapshots, type TakeAnswer, type TakeCheck } from "../core/snapshots.ts";
 import type { BackendSnapshotsView } from "./configuration.ts";
@@ -37,7 +37,7 @@ function nonNull(line: string | null): string[] {
 export function takeCheckText(check: TakeCheck, boxName: string): string {
   const where = `${check.host ? `${check.host}'s ` : ""}${check.storage}`;
   return [
-    `A snapshot of box ${boxName} now would hold its ${check.holds === "disk" ? "disk" : "disk and memory"}, on ${where}, and take ${aboutSecondsWords(check.aboutMs)}.`,
+    `A snapshot of box ${boxName} now would hold its ${holdsWords({ holds: check.holds, scope: check.scope })}, on ${where}, and take ${aboutSecondsWords(check.aboutMs)}.`,
     pauseWords(check.pause, boxName),
     ...(check.addsBytes ? [`It adds up to ${gbWords(check.addsBytes)}.`] : []),
   ].join("\n");
@@ -59,7 +59,8 @@ export function restoredText(answer: RestoreAnswer, boxName: string): string {
     return `The restore of box ${boxName} to ${named} was asked for with that request already. ${how}`;
   }
   const processes = snapshot?.holds === "disk-and-memory" ? `It came back running, as it was then, with the credentials its apps held then; what ran since ended.` : "Every process in it ended.";
-  const lines = [`Restored box ${boxName} to ${named}${snapshot ? `, taken ${dayWords(snapshot.takenAt)}` : ""}. Everything on its disk since then went. ${processes}`];
+  const lost = snapshot?.scope === "home" ? HOME_RESTORE_WENT : `Everything on its disk since then went. ${processes}`;
+  const lines = [`Restored box ${boxName} to ${named}${snapshot ? `, taken ${dayWords(snapshot.takenAt)}` : ""}. ${lost}`];
   if (answer.newGuest) lines.push("It runs on a new guest made from that snapshot, with the box's own identity, and its old guest is deleted.");
   if (typeof answer.earlier === "number") lines.push(`It runs on a new guest made from that held copy, with the box's own identity. ${answer.earlier === 1 ? "1 snapshot stays" : `${answer.earlier} snapshots stay`} on its earlier guest, which ${PRODUCT} never starts: fork only.`);
   lines.push(answer.undo ? `Its undo is "${answer.undo.name}" (${answer.undo.id})${answer.undo.guest === "held-copy" ? `, a held copy of the stopped box, guest ${answer.undo.livesOn.ref}` : ""}: restore that to undo this.` : "No undo was taken.");
@@ -157,7 +158,9 @@ export function restoreCheckText(check: RestoreCheck): string {
         ? "- shut it down;"
         : check.fromSnapshot
           ? "- stop it, which ends every process in it;"
-          : `- stop it at once, without a clean shutdown;`,
+          : snapshot.scope === "home"
+            ? "- clear the Mac's automatic login, then end its user's session and every process of its user;"
+            : `- stop it at once, without a clean shutdown;`,
   );
   if (check.undo?.kind === "held-copy") {
     const bytes = check.undo.bytes ? `, up to ${gbWords(check.undo.bytes)} on ${check.storage}` : "";
@@ -173,10 +176,11 @@ export function restoreCheckText(check: RestoreCheck): string {
       ? `${check.leavesOnEarlierGuest === 1 ? "1 snapshot stays" : `${check.leavesOnEarlierGuest} snapshots stay`} on its old guest, which becomes its earlier guest: fork only`
       : `its old guest holds no snapshot, so ${PRODUCT} deletes it${check.undo ? "" : ", and with no undo, nothing then holds the box as it is now"}`;
     lines.push(`- make it a new guest from that held copy, with the box's own identity, and start it; ${old};`);
-  } else lines.push(check.capture === "suspend" ? "- put the snapshot's copy in its place, and resume it;" : "- roll its disk back, and start it;");
+  } else if (snapshot.scope === "home") lines.push("- put a clone of the snapshot in its home folder's place, and sign its user in again where it was;");
+  else lines.push(check.capture === "suspend" ? "- put the snapshot's copy in its place, and resume it;" : "- roll its disk back, and start it;");
   if (check.replaces) lines.push(`- once it is done, delete its oldest undo, "${check.replaces}", as a box keeps two;`);
   lines.push("- write its access file first, then its labels, and start its BB machine again.");
-  lines.push(`Everything on its disk since then goes. ${snapshot.holds === "disk-and-memory" ? "It comes back running, as it was then, with the credentials its apps held then." : "Every process in it ends."} What it did to the world since stays done.`);
+  lines.push(snapshot.scope === "home" ? `${homeRestoreGoesWords(name)} What it did to the world since stays done.` : `Everything on its disk since then goes. ${snapshot.holds === "disk-and-memory" ? "It comes back running, as it was then, with the credentials its apps held then." : "Every process in it ends."} What it did to the world since stays done.`);
   if (check.from && check.to && describeSize(check.from) !== describeSize(check.to)) lines.push(`It goes back to ${describeSize(check.to)}, as it was then; it has ${describeSize(check.from)} now.`);
   if (check.gpuStay) lines.push(check.gpuStay);
   if (check.userspaceNote) lines.push(check.userspaceNote);

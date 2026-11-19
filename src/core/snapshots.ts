@@ -14,6 +14,7 @@ import {
   type HeldCopyLabel,
   type HeldSnapshot,
   type Holds,
+  type SnapshotScope,
   type KeepsPastRelease,
   type OutsideRollback,
   type Price,
@@ -670,6 +671,7 @@ function takeSpends(plan: SnapshotPlan, memory: boolean): TakeSpend[] {
 
 export interface TakeCheck {
   readonly holds: Holds;
+  readonly scope: SnapshotScope;
   readonly aboutMs: number;
   readonly pause: TakePause;
   readonly addsBytes: number | null;
@@ -1111,6 +1113,7 @@ export class Snapshots {
     if ("refused" in admission) throw admission.refused;
     return {
       holds: memory ? "disk-and-memory" : "disk",
+      scope: context.offer.scope,
       aboutMs: memory ? (plan.take.memoryAboutMs ?? plan.take.aboutMs) : plan.take.aboutMs,
       pause: memory && plan.take.memory ? plan.take.memory.pause : plan.take.pause,
       addsBytes: memory && plan.take.memory ? plan.take.memory.addsBytes : plan.take.addsBytes,

@@ -117,6 +117,7 @@ await conformance({
     "computer-use": "the fake SSH host has no computer-use driver",
     size: "the fake SSH runs commands on the test machine",
     images: "the fake SSH runs commands on the test machine, without root",
+    snapshots: "the fake SSH runs commands on the test machine, whose files a rollback on the fake Proxmox does not change; Proxmox LXC's restores are checked in its own snapshot tests",
   },
   timeoutMs: 20_000,
 });
@@ -138,6 +139,7 @@ await conformance({
     "desktop-session": "the fake SSH runs commands on the test machine, which has no launchctl",
     size: "the fake SSH runs commands on the test machine",
     images: "the fake SSH runs commands on the test machine, without root",
+    snapshots: "the fake SSH runs commands on the test machine, whose files a restore on the fake Mac does not change; Tart's restores are checked in its own snapshot tests",
   },
   timeoutMs: 20_000,
 });
@@ -159,6 +161,7 @@ await conformance({
     "desktop-session": "the fake SSH runs commands on the test machine, which has no launchctl",
     size: "the fake SSH runs commands on the test machine",
     images: "the fake SSH runs commands on the test machine, without root",
+    snapshots: "the fake SSH runs commands on the test machine, whose files a restore on the fake Mac does not change; Tart's restores are checked in its own snapshot tests",
   },
   timeoutMs: 20_000,
 });
