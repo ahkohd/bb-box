@@ -63,7 +63,7 @@ BLACKHOLE_SHA256=57b540f27a3e29c37e310e01bee0fdfab76733087e47f997ef9dccf851400dc
 CLAUDE_VERSION=2.1.283
 CLAUDE_SHA256=d8cb1e5c79684cc12a8bfc813e3a2073406921b6245744b3009be3ab5651d21e
 CODEX_VERSION=0.157.1
-CODEX_SHA256=3c45b162b7a76f51325015b1d0a8112c73219b7a9b59cd5762c37c9ba55894fa
+CODEX_SHA256=6cda538d19c2f4d9dce965369aa22011afa9dce8c7a73c234b66eb3611ea4aab
 PI_VERSION=0.87.1
 PI_SHA256=4f8d288b78c9768d3a4ac6f61f06cd34394b82ac17d5b42d1e44a437add401b7
 
@@ -227,7 +227,9 @@ mkdir -p "$ROOT$TOOLS"
 tool claude-code "$CLAUDE_VERSION" "$CLAUDE_SHA256" \
   "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/darwin-arm64/claude" 0 claude claude
 tool codex "$CODEX_VERSION" "$CODEX_SHA256" \
-  "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/codex-aarch64-apple-darwin.tar.gz" 0 codex codex-aarch64-apple-darwin
+  "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/codex-package-aarch64-apple-darwin.tar.gz" 0 codex bin/codex
+codex_host=$ROOT$TOOLS/codex-$CODEX_VERSION/bin/codex-code-mode-host
+[ -f "$codex_host" ] && [ -x "$codex_host" ] || die "codex $CODEX_VERSION has no executable bin/codex-code-mode-host."
 tool pi "$PI_VERSION" "$PI_SHA256" \
   "https://github.com/earendil-works/pi/releases/download/v$PI_VERSION/pi-darwin-arm64.tar.gz" 1 pi pi
 

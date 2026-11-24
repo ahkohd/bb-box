@@ -95,7 +95,7 @@ NODE_SHA256=8779B1BDE1D39F8D420E3B57AA657B39891AF434D3DE44A919044CEC06785921
 CLAUDE_VERSION=2.1.283
 CLAUDE_SHA256=1D0AAA255E3B9BA304840F260F4993B98F10516D3AA5B7D60ECD3392CCA34DF4
 CODEX_VERSION=0.157.1
-CODEX_SHA256=04CB2F6143DA840F33F0061ED9E13FCB0F4D7CD9BFCE27299C456A6BC47B410D
+CODEX_SHA256=497E28F7B4EBE4DB86968D302DFFB959B977928FDE1456F7A3092E2E8E213527
 PI_VERSION=0.87.1
 PI_SHA256=2E0D544999A765018EE5C2FF1A8B1A7E0F5D5B6B1E00B32D8C025D6C1DBCC833
 # box_record's recorder (059): a month's last build, which BtbN keeps.
@@ -361,7 +361,7 @@ pin() { printf '"%s": {"version": "%s", "sha256": "%s", "url": "%s"}' "$1" "$2" 
   printf ',\n  '
   pin claude "$CLAUDE_VERSION" "$CLAUDE_SHA256" "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/win32-arm64/claude.exe"
   printf ',\n  '
-  pin codex "$CODEX_VERSION" "$CODEX_SHA256" "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/codex-aarch64-pc-windows-msvc.exe"
+  pin codex "$CODEX_VERSION" "$CODEX_SHA256" "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/codex-package-aarch64-pc-windows-msvc.tar.gz"
   printf ',\n  '
   pin pi "$PI_VERSION" "$PI_SHA256" "https://github.com/earendil-works/pi/releases/download/v$PI_VERSION/pi-windows-arm64.zip"
   printf ',\n  '

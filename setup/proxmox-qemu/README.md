@@ -112,7 +112,8 @@ needs:
   template without it still works, but each box then installs it as it
   joins BB, about 11 s more
 - an agent CLI in the template for `box_thread`: `build.sh` installs Claude
-  Code, Codex and Pi
+  Code, Codex (its complete release package, with `bin\codex.exe` and
+  `bin\codex-code-mode-host.exe` on `PATH`) and Pi
 
 A box takes about a minute to join BB, most of it BB's installer. A spare is
 a BB machine already. Give `windows-desktop` a spare in Kinds, and it waits

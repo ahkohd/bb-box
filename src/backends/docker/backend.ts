@@ -226,6 +226,7 @@ const BUILD_TARGET: Readonly<Record<DockerKind, string>> = {
  */
 export const DOCKER_CHECK = String.raw`t() { name=$1; shift; if out=$("$@" 2>&1); then echo "$name ok   $(echo "$out" | head -n 1)"; else echo "$name FAIL $(echo "$out" | head -n 1)"; fi; }
 for tool in node git gh claude codex pi rg fd jj uv; do t "$tool" "$tool" --version; done
+t "codex code-mode host" sh -c 'codex=$(command -v codex) || { echo "missing codex"; exit 1; }; real=$(readlink -f "$codex") || { echo "cannot resolve $codex"; exit 1; }; host="$(dirname "$real")/codex-code-mode-host"; [ -f "$host" ] && [ -x "$host" ] && echo "$host" || { echo "missing $host"; exit 1; }'
 [ "${"$"}{BBBOX_DOCKERD:-0}" != 1 ] || t "docker on first use" docker version --format '{{.Server.Version}}'
 if [ -e /usr/local/libexec/bb-box/display ]; then
   for i in $(seq 1 60); do [ -s /run/bb-box/display-mode ] && break; sleep 1; done

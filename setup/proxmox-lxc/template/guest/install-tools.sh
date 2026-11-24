@@ -34,6 +34,15 @@ case "$(uname -m)" in
 esac
 count=$(jq -er --arg arch "$arch" '[.tools[] | select(.arch == $arch)] | length' "$pins")
 [ "$count" -gt 0 ] || die "pins.json has no tools for $arch"
+has_links() {
+  local dir=$1 entry=$2 path real
+  while IFS= read -r path; do
+    real=$(realpath -e "$dir/$path" 2>/dev/null) || return 1
+    case "$real" in "$dir"/*) ;; *) return 1 ;; esac
+    [ -f "$real" ] && [ -x "$real" ] || return 1
+  done < <(jq -r '.links[]' <<<"$entry")
+}
+
 for index in $(seq 0 $((count - 1))); do
   entry=$(jq -c --arg arch "$arch" "[.tools[] | select(.arch == \$arch)][$index]" "$pins")
   name=$(jq -er .name <<<"$entry")
@@ -49,7 +58,7 @@ for index in $(seq 0 $((count - 1))); do
 
   dest=$prefix/$name-$version
   rm -rf "$dest.partial"
-  if [ -d "$dest" ]; then
+  if [ -d "$dest" ] && has_links "$dest" "$entry"; then
     echo "keeping $name $version in $dest"
   else
     mkdir -m 0755 "$dest.partial"
@@ -64,6 +73,7 @@ for index in $(seq 0 $((count - 1))); do
     esac
     if [ "$(id -u)" = 0 ]; then chown -R root:root "$dest.partial"; fi
     chmod -R go-w "$dest.partial"
+    rm -rf "$dest"
     mv "$dest.partial" "$dest"
   fi
 

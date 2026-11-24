@@ -112,8 +112,14 @@ test("a rebuild takes upstream's latest of the tools that follow it, each with i
   assert.equal(gh.url, `https://github.com/cli/cli/releases/download/v${NEXT}/${pinOf("gh").url.split("/").at(-1)!.replaceAll(pinOf("gh").version, NEXT)}`);
   assert.equal(gh.sha256, digest("a"));
   assert.equal(gh.source, `GitHub release asset digest for cli/cli v${NEXT}`);
+  assert.equal(tool("codex", "x86_64").sha256, digest("a"));
+  assert.equal(tool("codex", "x86_64").url, `https://github.com/openai/codex/releases/download/rust-v${NEXT}/codex-package-x86_64-unknown-linux-musl.tar.gz`);
+  assert.deepEqual(tool("codex", "x86_64").links, { codex: "bin/codex" });
+  assert.equal(tool("codex", "x86_64").strip, 0);
   assert.equal(tool("codex", "arm64").sha256, digest("b"));
-  assert.match(String(tool("codex").url), new RegExp(`/rust-v${NEXT.replaceAll(".", "\\.")}/`));
+  assert.equal(tool("codex", "arm64").url, `https://github.com/openai/codex/releases/download/rust-v${NEXT}/codex-package-aarch64-unknown-linux-musl.tar.gz`);
+  assert.deepEqual(tool("codex", "arm64").links, { codex: "bin/codex" });
+  assert.equal(tool("codex", "arm64").strip, 0);
   assert.equal(tool("claude-code").url, pinOf("claude-code").url.replace(`/${pinOf("claude-code").version}/`, `/${NEXT}/`));
   assert.deepEqual([tool("claude-code").sha256, tool("claude-code", "arm64").sha256], [digest("c"), digest("d")]);
   // The tools that do not follow upstream keep their pins.
@@ -149,7 +155,7 @@ test("a tool keeps its pin when upstream has nothing newer, or cannot be read, s
   assert.deepEqual([of("pi").version, of("pi").kept], [pinOf("pi").version, null], "nothing newer");
   assert.equal(of("gh").version, pinOf("gh").version);
   assert.equal(of("gh").kept, "upstream could not be read: https://api.github.com/repos/cli/cli/releases/latest answered HTTP 403");
-  assert.match(of("codex").kept!, /^upstream could not be read: openai\/codex rust-v99\.0\.1 has no asset codex-x86_64-unknown-linux-musl\.tar\.gz with a SHA-256$/);
+  assert.match(of("codex").kept!, /^upstream could not be read: openai\/codex rust-v99\.0\.1 has no asset codex-package-x86_64-unknown-linux-musl\.tar\.gz with a SHA-256$/);
   assert.match(of("claude-code").kept!, /the latest channel names "<html>not a version<\/html>", not a version/);
   assert.equal(of("chrome", "arm64").version, chromePin[1]!.replace(/^google-chrome-stable_([^_]+)-\d+_.*$/, "$1"), "an older Chrome than the pin");
   assert.equal(of("chrome").version, "999.0.0.1");
@@ -300,4 +306,26 @@ test("the arm64 desktop Chrome pin is not older than the amd64 pin", () => {
   const lines = readFileSync(join(TEMPLATE, "desktop-pins.tsv"), "utf8").split("\n").filter((line) => line.startsWith("chrome\t"));
   const version = (arch: string) => lines.find((line) => line.endsWith(`\t${arch}`))!.split("\t")[1]!;
   assert.ok(compareVersions(version("arm64"), version("x86_64")) >= 0, `${version("arm64")} older than ${version("x86_64")}`);
+});
+
+test("following Codex refuses a release that publishes only the single binary and keeps the pinned package", async () => {
+  const singleOnly = JSON.stringify({
+    tag_name: `rust-v${NEXT}`,
+    draft: false,
+    prerelease: false,
+    assets: [
+      { name: "codex-x86_64-unknown-linux-musl.tar.gz", digest: `sha256:${digest("a")}` },
+      { name: "codex-aarch64-unknown-linux-musl.tar.gz", digest: `sha256:${digest("b")}` },
+    ],
+  });
+  const { fetch } = upstream({ "openai/codex": singleOnly });
+
+  const versions = await resolveVersions(SETUP, { fetch, now: NOW, verify: trusting });
+  const codex = versions.tools.filter((tool) => tool.name === "codex");
+
+  assert.equal(codex.length, 2);
+  for (const tool of codex) {
+    assert.equal(tool.version, pinOf("codex", tool.arch).version);
+    assert.match(tool.kept ?? "", /has no asset codex-package-(x86_64|aarch64)-unknown-linux-musl\.tar\.gz with a SHA-256$/);
+  }
 });

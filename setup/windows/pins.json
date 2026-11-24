@@ -70,8 +70,8 @@
       "name": "codex",
       "arch": "x86_64",
       "version": "0.157.1",
-      "url": "https://github.com/openai/codex/releases/download/rust-v0.157.1/codex-x86_64-pc-windows-msvc.exe",
-      "sha256": "8CB0E69E99FF2A158C54815DB82D0F2E524D8F301BC30184722CFD1AE5973574"
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.157.1/codex-package-x86_64-pc-windows-msvc.tar.gz",
+      "sha256": "CD245D8BE33FD35A80A5F946E27649E39E566AFDF4049668D3A4C71770F65D69"
     },
     {
       "name": "pi",
@@ -165,8 +165,8 @@
       "name": "codex",
       "arch": "arm64",
       "version": "0.157.1",
-      "url": "https://github.com/openai/codex/releases/download/rust-v0.157.1/codex-aarch64-pc-windows-msvc.exe",
-      "sha256": "04CB2F6143DA840F33F0061ED9E13FCB0F4D7CD9BFCE27299C456A6BC47B410D"
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.157.1/codex-package-aarch64-pc-windows-msvc.tar.gz",
+      "sha256": "497E28F7B4EBE4DB86968D302DFFB959B977928FDE1456F7A3092E2E8E213527"
     },
     {
       "name": "pi",

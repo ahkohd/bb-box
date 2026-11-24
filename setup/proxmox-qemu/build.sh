@@ -78,7 +78,7 @@ NODE_SHA256=158F7685B44DE51F6C0DF1D153526CBCD3E1BC739A8DFC607721CEF75DE9E541
 CLAUDE_VERSION=2.1.283
 CLAUDE_SHA256=9DBE16DAFED59DA5CDABBFE11AD0335738C753FAD794989B47F9446ACCD6DE3A
 CODEX_VERSION=0.157.1
-CODEX_SHA256=8CB0E69E99FF2A158C54815DB82D0F2E524D8F301BC30184722CFD1AE5973574
+CODEX_SHA256=CD245D8BE33FD35A80A5F946E27649E39E566AFDF4049668D3A4C71770F65D69
 PI_VERSION=0.87.1
 PI_SHA256=AAB2BA67BAF8FF97A52D05B62D88E9E65A840C6EA8FA1029A28D62D210D4E5FC
 # box_record's recorder (059): a month's last build, which BtbN keeps.
@@ -215,7 +215,7 @@ json.dump({
     "claude": {"version": "$CLAUDE_VERSION", "sha256": "$CLAUDE_SHA256",
                "url": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/$CLAUDE_VERSION/win32-x64/claude.exe"},
     "codex": {"version": "$CODEX_VERSION", "sha256": "$CODEX_SHA256",
-              "url": "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/codex-x86_64-pc-windows-msvc.exe"},
+              "url": "https://github.com/openai/codex/releases/download/rust-v$CODEX_VERSION/codex-package-x86_64-pc-windows-msvc.tar.gz"},
     "pi": {"version": "$PI_VERSION", "sha256": "$PI_SHA256",
            "url": "https://github.com/earendil-works/pi/releases/download/v$PI_VERSION/pi-windows-x64.zip"},
     "ffmpeg": {"version": "$FFMPEG_VERSION", "sha256": "$FFMPEG_SHA256",

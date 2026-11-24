@@ -123,16 +123,26 @@ if ($path -notlike "*$dir*") { [Environment]::SetEnvironmentVariable('Path', "$p
 Step "Claude Code $($build.claude.version), Codex $($build.codex.version) and Pi $($build.pi.version)"
 # The agent CLIs, as Linux boxes have them, each in a directory of its own on
 # the machine's PATH (#561). Claude Code gets its PowerShell tool, on PowerShell 7.
-foreach ($tool in @(@{ name = 'claude'; exe = 'claude.exe'; pin = $build.claude }, @{ name = 'codex'; exe = 'codex.exe'; pin = $build.codex }, @{ name = 'pi'; exe = 'pi.exe'; pin = $build.pi })) {
+foreach ($tool in @(@{ name = 'claude'; exe = 'claude.exe'; pin = $build.claude }, @{ name = 'codex'; exe = 'bin\codex.exe'; host = 'bin\codex-code-mode-host.exe'; pin = $build.codex }, @{ name = 'pi'; exe = 'pi.exe'; pin = $build.pi })) {
   $to = "C:\Program Files\bb-box-tools\$($tool.name)"
   $file = "C:\bb-box\$([IO.Path]::GetFileName(([Uri] $tool.pin.url).AbsolutePath))"
   Get-Pinned $tool.pin.url $tool.pin.sha256 $file
   New-Item -ItemType Directory -Force $to | Out-Null
-  if ($file -like '*.zip') { Expand-Archive $file -DestinationPath $to -Force } else { Copy-Item $file "$to\$($tool.exe)" }
+  if ($file -like '*.zip') {
+    Expand-Archive $file -DestinationPath $to -Force
+  } elseif ($file -like '*.tar.gz' -or $file -like '*.tgz') {
+    & "$env:SystemRoot\System32\tar.exe" -xzf $file -C $to
+    if ($LASTEXITCODE) { throw "tar could not unpack $file (exit $LASTEXITCODE)" }
+  } else {
+    Copy-Item $file "$to\$($tool.exe)"
+  }
   Remove-Item $file -Force
-  if (-not (Test-Path "$to\$($tool.exe)")) { throw "$($tool.name) has no $($tool.exe)" }
+  $target = Join-Path $to $tool.exe
+  if (-not (Test-Path $target)) { throw "$($tool.name) has no $($tool.exe)" }
+  if ($tool.host -and -not (Test-Path (Join-Path $to $tool.host))) { throw "$($tool.name) has no $($tool.host)" }
+  $binDir = Split-Path $target -Parent
   $path = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-  if ($path -notlike "*$to*") { [Environment]::SetEnvironmentVariable('Path', "$path;$to", 'Machine') }
+  if (($path -split ';') -notcontains $binDir) { [Environment]::SetEnvironmentVariable('Path', "$path;$binDir", 'Machine') }
 }
 [Environment]::SetEnvironmentVariable('CLAUDE_CODE_USE_POWERSHELL_TOOL', '1', 'Machine')
 

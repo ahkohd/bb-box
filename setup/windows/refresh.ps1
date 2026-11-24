@@ -146,7 +146,7 @@ $versions = @{
   'rustup' = { & (Join-Path $env:USERPROFILE '.cargo\bin\rustup.exe') --version }
   'node' = { & 'C:\Program Files\nodejs\node.exe' --version }
   'claude-code' = { & "$tools\claude\claude.exe" --version }
-  'codex' = { & "$tools\codex\codex.exe" --version }
+  'codex' = { if (Test-Path "$tools\codex\bin\codex-code-mode-host.exe") { & "$tools\codex\bin\codex.exe" --version } }
   'pi' = { & "$tools\pi\pi.exe" --version }
   'ffmpeg' = { & "$tools\ffmpeg\ffmpeg.exe" -version }
   'openh264' = { Get-Content "$tools\bb-box-stream\openh264.version" }
@@ -158,9 +158,17 @@ function Install-Tool($name, $file, $exe) {
   Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith("$to\", 'OrdinalIgnoreCase') } | Stop-Process -Force
   Remove-Item $to -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force $to | Out-Null
-  if ($file -like '*.zip') { Expand-Archive $file -DestinationPath $to -Force } else { Copy-Item $file (Join-Path $to $exe) }
-  if (-not (Test-Path (Join-Path $to $exe))) { throw "$name has no $exe" }
-  Add-MachinePath $to
+  if ($file -like '*.zip') {
+    Expand-Archive $file -DestinationPath $to -Force
+  } elseif ($file -like '*.tar.gz' -or $file -like '*.tgz') {
+    & "$env:SystemRoot\System32\tar.exe" -xzf $file -C $to
+    if ($LASTEXITCODE) { throw "tar could not unpack $file (exit $LASTEXITCODE)" }
+  } else {
+    Copy-Item $file (Join-Path $to $exe)
+  }
+  $target = Join-Path $to $exe
+  if (-not (Test-Path $target)) { throw "$name has no $exe" }
+  Add-MachinePath (Split-Path $target -Parent)
 }
 
 # Each tool, installed as the template's first logon installs it.
@@ -208,7 +216,10 @@ $installers = @{
     if ((& "$to\node.exe" --version) -ne "v$($pin.version)") { throw "node.exe is not $($pin.version)" }
   }
   'claude-code' = { param($pin, $file) Install-Tool claude $file claude.exe }
-  'codex' = { param($pin, $file) Install-Tool codex $file codex.exe }
+  'codex' = { param($pin, $file)
+    Install-Tool codex $file 'bin\codex.exe'
+    if (-not (Test-Path "$tools\codex\bin\codex-code-mode-host.exe")) { throw 'codex has no bin\codex-code-mode-host.exe' }
+  }
   'pi' = { param($pin, $file) Install-Tool pi $file pi.exe }
   # box_record's recorder (059): ffmpeg and ffprobe, from the archive's bin.
   'ffmpeg' = { param($pin, $file)

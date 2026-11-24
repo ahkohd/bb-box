@@ -43,6 +43,7 @@ t "PATH" sh -c 'echo $PATH'
 # BB's updater runs `npm install -g` as the box user for an agent CLI.
 t "npm -g as the box user" sh -c 'p=$(npm config get prefix); [ "$p" = "$HOME/.local" ] && [ -w "$p/lib" ] && case ":$PATH:" in *":$p/bin:"*) echo "$p" ;; *) echo "$p/bin is not on PATH"; exit 1 ;; esac'
 t "tools" sh -c 'for c in node npm pnpm yarn uv gh rg fd jj git-lfs claude codex pi docker psql redis-cli sqlite3 tree vim nvim; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; node --version; uv --version; claude --version | head -1'
+t "codex code-mode host" sh -c 'codex=$(command -v codex) || { echo "missing codex"; exit 1; }; real=$(readlink -f "$codex") || { echo "cannot resolve $codex"; exit 1; }; host="$(dirname "$real")/codex-code-mode-host"; [ -f "$host" ] && [ -x "$host" ] && echo "$host" || { echo "missing $host"; exit 1; }'
 # A new box installs packages without `apt-get update` first.
 t "apt package lists" sh -c 'v=$(apt-cache policy cowsay | awk "/Candidate:/ { print \$2 }"); [ -n "$v" ] && [ "$v" != "(none)" ] && echo "cowsay $v installable, lists from $(date -u +%F -r "$(ls -t /var/lib/apt/lists/*_InRelease | head -1)")"'
 t "bb-app pre-installed" sh -c 'ls ~/.bb-machines/*/host-artifact.sha256 2>/dev/null || echo "none (no BB server URL at build)"'
