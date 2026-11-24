@@ -376,6 +376,10 @@ export function daemonOs(info: Pick<DockerInfo, "kernelVersion" | "operatingSyst
   return "linux";
 }
 
+const RETIRED_IMAGE_PREFIX = "retired-image/";
+const IMAGE_IN_USE = /conflict|in use|being used|is using/i;
+const NO_SUCH_IMAGE = /No such image|not found|No such object/i;
+
 function relabelKey(ref: string): string {
   return `relabel/${ref}`;
 }
@@ -1220,6 +1224,7 @@ export class DockerBackend implements Backend {
   async maintain(signal?: AbortSignal): Promise<void> {
     await this.#snapshots.maintain().catch((error) => this.#context.logError("maintaining Docker snapshots", error));
     await this.#pruneDanglingImages(signal).catch((error) => this.#context.logError("pruning old Docker images", error));
+    await this.#pruneRetiredImages(signal).catch((error) => this.#context.logError("pruning retired Docker images", error));
     await this.#underPlacement(async () => {
       const state = await this.#state(signal);
       await this.#dropDaemonRecords(GPU_PARTS, state, signal);
@@ -1263,6 +1268,53 @@ export class DockerBackend implements Backend {
       ],
       { timeoutMs: 120_000, signal },
     );
+  }
+
+  #retiredImageKey(ref: string): string {
+    return `${RETIRED_IMAGE_PREFIX}${ref}`;
+  }
+
+  #isOwnedCapturedBuild(ref: string, labels: Readonly<Record<string, unknown>>, image?: string, kind?: string): boolean {
+    if (DOCKER_KINDS.some((candidate) => this.#config.images[candidate] === ref)) return false;
+    if (!this.#isCapturedTag(ref)) return false;
+    if (labels[LABELS.install] !== this.#context.installId) return false;
+    const labelledImage = labels[LABELS.image];
+    if (typeof labelledImage !== "string" || !labelledImage || labelledImage === "standard") return false;
+    if (image !== undefined && labelledImage !== image) return false;
+    if (kind !== undefined && labels[LABELS.kind] !== kind) return false;
+    return true;
+  }
+
+  async #removeRetiredImageRef(ref: string, signal?: AbortSignal): Promise<void> {
+    const removed = await this.#cli.run(["image", "rm", ref], { timeoutMs: 120_000, signal });
+    if (removed.exitCode === 0 || NO_SUCH_IMAGE.test(removed.stderr)) {
+      await this.#context.storage.delete(this.#retiredImageKey(ref));
+      return;
+    }
+
+    if (IMAGE_IN_USE.test(removed.stderr)) {
+      await this.#context.storage.set(this.#retiredImageKey(ref), true);
+      return;
+    }
+
+    throw this.#cli.error("docker image rm", removed);
+  }
+
+  async #pruneRetiredImages(signal?: AbortSignal): Promise<void> {
+    const keys = await this.#context.storage.list(RETIRED_IMAGE_PREFIX);
+    if (!keys.length) return;
+    await this.#cli.prepare(signal);
+
+    for (const key of keys) {
+      const ref = key.slice(RETIRED_IMAGE_PREFIX.length);
+      const labels = await this.#imageLabels(ref, signal);
+      if (!labels || !this.#isOwnedCapturedBuild(ref, labels)) {
+        await this.#context.storage.delete(key);
+        continue;
+      }
+
+      await this.#removeRetiredImageRef(ref, signal);
+    }
   }
 
   #probeImage(): string | null {
@@ -2855,12 +2907,35 @@ export class DockerBackend implements Backend {
    * container uses it: now if none does, else it stays, untagged, with them.
    */
   async #replaceImage(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
-    if (!current.current || build.current) throw new Error(`${current.ref} is not a configured image, or ${build.ref} is one.`);
-    const old = (await this.#cli.run(["image", "inspect", "--format", "{{.Id}}", current.ref], { timeoutMs: 30_000, signal })).stdout.trim();
-    await this.#cli.ok(["image", "tag", build.ref, current.ref], { timeoutMs: 60_000, signal });
-    await this.#cli.ok(["image", "rm", build.ref], { timeoutMs: 60_000, signal });
-    if (old) await this.#cli.run(["image", "rm", old], { timeoutMs: 120_000, signal });
-    return { ...build, ref: current.ref, image: "standard", current: true };
+    if (current.current && !build.current) {
+      const old = (await this.#cli.run(["image", "inspect", "--format", "{{.Id}}", current.ref], { timeoutMs: 30_000, signal })).stdout.trim();
+      await this.#cli.ok(["image", "tag", build.ref, current.ref], { timeoutMs: 60_000, signal });
+      await this.#cli.ok(["image", "rm", build.ref], { timeoutMs: 60_000, signal });
+      if (old) await this.#cli.run(["image", "rm", old], { timeoutMs: 120_000, signal });
+      return { ...build, ref: current.ref, image: "standard", current: true };
+    }
+
+    if (!current.current && !build.current && current.image !== "standard" && build.image === current.image && build.kind === current.kind && build.ref !== current.ref) {
+      return this.#replaceProjectImage(build, current, signal);
+    }
+
+    throw new Error(`${current.ref} is not a configured image, or ${build.ref} is one.`);
+  }
+
+  async #replaceProjectImage(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
+    await this.#cli.prepare(signal);
+    const buildLabels = await this.#imageLabels(build.ref, signal);
+    if (!buildLabels || !this.#isOwnedCapturedBuild(build.ref, buildLabels, current.image, current.kind)) {
+      throw new Error(`The image ${build.ref} is not a build of ${current.image} for ${current.kind} of this install's.`);
+    }
+
+    const currentLabels = await this.#imageLabels(current.ref, signal);
+    if (currentLabels && !this.#isOwnedCapturedBuild(current.ref, currentLabels, current.image, current.kind)) {
+      throw new Error(`The image ${current.ref} is not a build of ${current.image} for ${current.kind} of this install's.`);
+    }
+
+    await this.#removeRetiredImageRef(current.ref, signal);
+    return { ...build, current: false };
   }
 
   /** Removes an image box, a captured image or a refresh's build of this install's, and nothing else. */

@@ -3548,8 +3548,41 @@ export class ProxmoxLxcBackend implements Backend {
     );
   }
 
-  maintain(signal?: AbortSignal): Promise<void> {
-    return this.#upkeep.run(signal ?? this.#stopping.signal);
+  async maintain(signal?: AbortSignal): Promise<void> {
+    await this.#pruneRetiredImages(signal).catch((error) => this.#context.logError("pruning retired Proxmox LXC images", error));
+    await this.#upkeep.run(signal ?? this.#stopping.signal);
+  }
+
+  async #pruneRetiredImages(signal?: AbortSignal): Promise<void> {
+    const keys = await this.#context.storage.list("retired-image/");
+    if (!keys.length) return;
+    const api = await this.client();
+    const guests = await api.listPool(this.#config.proxmox.pool, signal);
+
+    for (const key of keys) {
+      const ref = key.slice("retired-image/".length);
+      const vmid = Number(ref);
+      const config = await this.#guestConfig(api, vmid, signal);
+      if (!config) {
+        await this.#context.storage.delete(key);
+        continue;
+      }
+
+      if (this.#templateInUse(guests, vmid)) continue;
+      await this.#removeImage(ref, signal);
+      await this.#context.storage.delete(key);
+    }
+  }
+
+  #templateInUse(guests: readonly PoolGuest[], templateVmid: number): boolean {
+    const install = installTag(this.#context.installId);
+    return guests.some(
+      (guest) =>
+        guest.type === "lxc" &&
+        guest.vmid !== templateVmid &&
+        guest.tags.includes(install) &&
+        templateFromTags(guest.tags) === templateVmid,
+    );
   }
 
   async dispose(): Promise<void> {
@@ -4362,6 +4395,9 @@ export class ProxmoxLxcBackend implements Backend {
    * meanwhile, and warm guests of the old build are retired.
    */
   async #replaceTemplate(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
+    if (!current.current && !build.current && current.image !== "standard" && build.image === current.image && build.kind === current.kind && build.ref !== current.ref) {
+      return this.#replaceProjectTemplate(build, current, signal);
+    }
     if (!current.current || build.current) throw new Error(`Template ${current.ref} is not a configured template, or ${build.ref} is one.`);
     const api = await this.client();
     const [source, target] = [Number(build.ref), Number(current.ref)];
@@ -4387,6 +4423,39 @@ export class ProxmoxLxcBackend implements Backend {
     await this.#owned(api).configure(source, this.#image(), { delete: ["protection"] }, signal);
     await this.#owned(api).destroy(source, this.#image(), signal);
     return { ...build, ref: String(target), image: "standard", current: true };
+  }
+
+  async #replaceProjectTemplate(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
+    const api = await this.client();
+    const [source, target] = [Number(build.ref), Number(current.ref)];
+    const configured = (vmid: number) => LXC_FLAVOURS.some((flavour) => this.#config.flavours[flavour].templates.some((template) => template.vmid === vmid));
+    const ownedBuild = (vmid: number, config: Record<string, unknown> | null) => {
+      if (!config || !isTemplate(config) || configured(vmid) || !this.#inRange(vmid)) return false;
+      const tags = parseTags(config.tags);
+      return tags.includes(installTag(this.#context.installId)) && tags.includes(`${IMAGE_TAG}${current.image}`) && tags.includes(`${KIND_TAG}${current.kind}`);
+    };
+
+    const sourceConfig = await this.#guestConfig(api, source, signal);
+    if (!ownedBuild(source, sourceConfig)) {
+      throw new Error(`CT ${source} is not a build of ${current.image} for ${current.kind} of this install's.`);
+    }
+
+    const targetConfig = await this.#guestConfig(api, target, signal);
+    if (targetConfig && !ownedBuild(target, targetConfig)) {
+      throw new Error(`CT ${target} is not a build of ${current.image} for ${current.kind} of this install's.`);
+    }
+
+    if (targetConfig) {
+      const guests = await api.listPool(this.#config.proxmox.pool, signal);
+      if (this.#templateInUse(guests, target)) {
+        await this.#context.storage.set(`retired-image/${current.ref}`, true);
+      } else {
+        await this.#removeImage(current.ref, signal);
+        await this.#context.storage.delete(`retired-image/${current.ref}`);
+      }
+    }
+
+    return { ...build, current: false };
   }
 
   /** Removes an image box or a captured build of this install's, and nothing else. */

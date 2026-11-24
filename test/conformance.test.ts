@@ -178,7 +178,6 @@ await conformance({
     display: "the fake Docker host has no desktop to stream",
     "computer-use": "the fake container has no computer-use driver",
     size: "the fake docker runs commands on the test machine",
-    images: "the fake docker runs commands on the test machine, without root",
   },
   timeoutMs: 20_000,
 });
@@ -218,7 +217,7 @@ await conformance({
     display: "the fake msb host has no desktop to stream",
     "computer-use": "the fake microVM has no computer-use driver",
     size: "the fake msb runs commands on the test machine",
-    images: "the microsandbox backend builds no images yet",
+    images: "the fake msb host has no KVM to run a builder microVM; microsandbox's image replace and cleanup are checked in test/microsandbox.test.ts and live on a KVM host",
     keep: "the fake msb host does not list a snapshot taken by the backend alone yet; microsandbox's Keep is checked in its own snapshot tests",
     snapshots: "the fake msb host does not list a snapshot taken by the backend alone yet; microsandbox's restores are checked in its own snapshot tests",
   },

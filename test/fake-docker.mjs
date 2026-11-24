@@ -365,6 +365,7 @@ function create(rest) {
   if (existsSync(imageHome(image))) cpSync(imageHome(image), join(dir(name), "home"), { recursive: true });
   if (existsSync(imageIdentityRoot(image))) cpSync(imageIdentityRoot(image), identityRoot(name), { recursive: true });
   if (existsSync(imageVarLib(image))) cpSync(imageVarLib(image), join(dir(name), "var-lib"), { recursive: true });
+  if (existsSync(imageUsrShare(image))) cpSync(imageUsrShare(image), join(dir(name), "usr-share"), { recursive: true });
   save({
     Id: id,
     Name: `/${name}`,
@@ -403,7 +404,7 @@ function inContainer(name, text) {
     .replaceAll("/etc/environment", join(dir(name), "etc", "environment"))
     .replaceAll("/run/bb-box/", `${join(dir(name), "run", "bb-box")}/`)
     .replaceAll("/var/lib/bb-box/", `${join(dir(name), "var-lib", "bb-box")}/`)
-    .replaceAll("/usr/share/bb-box/", `${join(dir(name), "usr-share", "bb-box")}/`)
+    .replace(/\/usr\/share\/bb-box(?=\/|$|[\s'"])/g, join(dir(name), "usr-share", "bb-box"))
     .replaceAll("/usr/local/libexec/bb-box/", `${join(dir(name), "libexec", "bb-box")}/`)
     .replaceAll("/home/box", join(dir(name), "home"))
     .replaceAll(IDENTITY_TOOL, identityToolIn(identityRoot(name)))
@@ -472,6 +473,10 @@ function imageHome(image) {
 
 function imageVarLib(image) {
   return join(root, "image-var-libs", createHash("sha256").update(image).digest("hex"));
+}
+
+function imageUsrShare(image) {
+  return join(root, "image-usr-shares", createHash("sha256").update(image).digest("hex"));
 }
 
 function inheritedEnv(fromImage, given) {
@@ -615,6 +620,7 @@ function container(command, rest) {
       }
       cpSync(join(dir(found.Name.slice(1)), "home"), imageHome(tag), { recursive: true });
       if (existsSync(join(dir(found.Name.slice(1)), "var-lib"))) cpSync(join(dir(found.Name.slice(1)), "var-lib"), imageVarLib(tag), { recursive: true });
+      if (existsSync(join(dir(found.Name.slice(1)), "usr-share"))) cpSync(join(dir(found.Name.slice(1)), "usr-share"), imageUsrShare(tag), { recursive: true });
       const identity = identityRoot(found.Name.slice(1));
       if (existsSync(identity)) cpSync(identity, imageIdentityRoot(tag), { recursive: true, filter: (path) => path !== join(identity, "run") });
       write("image-env.json", { ...read("image-env.json", {}), [tag]: [...env].map(([key, value]) => `${key}=${value}`) });

@@ -216,8 +216,9 @@ checks against any backend:
   `npm run conformance` makes the second process, so `npm test` skips
   these two and says why;
 - for each preset: a box of that size, measured as soon as it is ready;
-- interrupted acquires that leave nothing behind, a small image build, two
-  installs on one backend that leave each other alone, and a reused
+- interrupted acquires that leave nothing behind, a small image build and
+  image replacement with cleanup (both unused and while a box holds the old
+  build), two installs on one backend that leave each other alone, and a reused
   reference that reads as gone.
 
 Steps a kind does not declare are skipped by its capabilities, never by
