@@ -2558,17 +2558,26 @@ export class TartBackend implements Backend {
       await this.#upkeep.run(signal ?? this.#stopping.signal);
       await this.slots?.maintain(signal ?? this.#stopping.signal).catch((error) => this.#context.logError("shared iOS hosts", error));
     } finally {
-      await this.#leftovers(signal).catch((error) => this.#context.logError("image leftovers", error));
-      await this.#pruneWindowsBuilds(signal).catch((error) => this.#context.logError("old Windows image builds", error));
+      const states = await this.#states(signal).catch((error) => {
+        if (signal?.aborted) throw error;
+        this.#context.logError("read Macs for upkeep", error);
+        return null;
+      });
+      if (states) {
+        await this.#leftovers(states, signal).catch((error) => this.#context.logError("image leftovers", error));
+        await this.#pruneWindowsBuilds(states, signal).catch((error) => this.#context.logError("old Windows image builds", error));
+      }
     }
   }
 
-  async #pruneWindowsBuilds(signal?: AbortSignal): Promise<void> {
+  async #pruneWindowsBuilds(states: ReadonlyMap<string, MacState | Error>, signal?: AbortSignal): Promise<void> {
     const windowsImage = this.#config.kinds["windows-arm64-desktop"].image;
     if (!windowsImage) return;
 
     for (const host of this.#on()) {
       signal?.throwIfAborted();
+      const state = states.get(host.name);
+      if (!state || state instanceof Error) continue;
       try {
         const result = await this.#run(host, qemuPruneBuildsScript(windowsImage), { timeoutMs: 120_000, signal });
         const removed = parsePrunedBuilds(result.stdout);
@@ -2590,8 +2599,7 @@ export class TartBackend implements Backend {
    * its prepare script's own VM is the name with -build, which has no owner
    * file. Builds of projects' images are the bakes' to remove.
    */
-  async #leftovers(signal?: AbortSignal): Promise<void> {
-    const states = await this.#states(signal);
+  async #leftovers(states: ReadonlyMap<string, MacState | Error>, signal?: AbortSignal): Promise<void> {
     const now = Date.now();
     for (const host of this.#on()) {
       const state = states.get(host.name);

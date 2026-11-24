@@ -9,7 +9,8 @@ import { test } from "node:test";
 import { toConfiguration } from "../scripts/smoke.ts";
 import { DOCKER_CHECK, daemonOs, containerName, DockerBackend, dockerKinds, hostnameOf } from "../src/backends/docker/backend.ts";
 import { boxVolumeName, createArgs, ENV_A_BOX_IS_GIVEN, type BoxContainerSettings } from "../src/backends/docker/box-container.ts";
-import { gpusOf, parseContainers, parseInfo, sshReuse } from "../src/backends/docker/cli.ts";
+import { DockerCli, gpusOf, parseContainers, parseInfo, sshReuse } from "../src/backends/docker/cli.ts";
+import { doctorDockerImageStorage } from "../src/backends/docker/image-storage.ts";
 import { parseDockerPart } from "../src/backends/docker/config.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
 import { offerChecks } from "../src/backends/index.ts";
@@ -1990,6 +1991,7 @@ test("docker.image-storage reports image space, kept untagged builds with their 
 
   const checkBefore = (await backend.doctor(signal())).checks.find((check) => check.id === "docker.image-storage")!;
   assert.equal(checkBefore.status, "ok");
+  assert.match(checkBefore.detail, /images report .* in sum \(shared layers are stored once on disk\)\./);
   assert.match(checkBefore.detail, /No earlier untagged builds are kept\./);
   assert.match(checkBefore.detail, /Build cache takes 3\.4GB \(2\.1GB reclaimable\)\./);
   assert.match(checkBefore.detail, /building the desktop image needs about 18 GB/);
@@ -2013,7 +2015,7 @@ test("docker.image-storage reports image space, kept untagged builds with their 
   assert.match(checkClean.detail, /No earlier untagged builds are kept\./);
 });
 
-test("docker.image-storage warns when free disk is below build.sh's need and on read failures without failing the doctor", async () => {
+test("docker.image-storage warns on low disk, reports cache read failure as detail, ignores non-prunable labels and rethrows on abort", async () => {
   const linuxOnly = setup({ "desktop-image": "", "wayland-desktop-image": "" }, { buildCacheSize: "5.2GB", freeDiskKb: 8_000_000 });
   const lowLinux = await linuxOnly.backend.doctor(signal());
   const lowCheck = lowLinux.checks.find((check) => check.id === "docker.image-storage")!;
@@ -2023,11 +2025,54 @@ test("docker.image-storage warns when free disk is below build.sh's need and on 
   assert.match(lowCheck.detail, /below the 10 GB building the linux image needs/);
   assert.match(lowCheck.fix ?? "", /docker builder prune/);
 
-  const unread = setup({}, { failSystemDf: true, failDiskFree: true });
+  const cacheFailed = setup({}, { failSystemDf: true, freeDiskKb: 50_000_000 });
+  const cacheReport = await cacheFailed.backend.doctor(signal());
+  const cacheCheck = cacheReport.checks.find((check) => check.id === "docker.image-storage")!;
+  assert.equal(cacheReport.ok, true);
+  assert.equal(cacheCheck.status, "ok");
+  assert.match(cacheCheck.detail, /Build cache size could not be read\./);
+
+  const nonPrunable = setup({}, { freeDiskKb: 50_000_000 });
+  const nonPrunableImages = JSON.parse(readFileSync(join(nonPrunable.fake.root, "images.json"), "utf8")) as Record<string, Record<string, string>>;
+  const nonPrunableId = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+  writeFileSync(
+    join(nonPrunable.fake.root, "images.json"),
+    JSON.stringify({ ...nonPrunableImages, [nonPrunableId]: { "bbbox.image-version": "1", "bbbox.install": "test" } }),
+  );
+  const nonPrunableCheck = (await nonPrunable.backend.doctor(signal())).checks.find((check) => check.id === "docker.image-storage")!;
+  assert.equal(nonPrunableCheck.status, "ok");
+  assert.match(nonPrunableCheck.detail, /No earlier untagged builds are kept\./);
+
+  const unread = setup({}, { failDiskFree: true });
   const unreadReport = await unread.backend.doctor(signal());
   const unreadCheck = unreadReport.checks.find((check) => check.id === "docker.image-storage")!;
-
   assert.equal(unreadReport.ok, true);
   assert.equal(unreadCheck.status, "warn");
-  assert.match(unreadCheck.detail, /Could not read Docker's build cache size, free disk space on fake-docker\./);
+  assert.match(unreadCheck.detail, /Could not read free disk space on fake-docker\./);
+
+  const aborted = new AbortController();
+  const abortCli = {
+    ok: async () => {
+      aborted.abort(new Error("cancelled"));
+      throw aborted.signal.reason;
+    },
+    run: async () => {
+      throw aborted.signal.reason;
+    },
+    inspect: async () => {
+      throw aborted.signal.reason;
+    },
+  } as unknown as DockerCli;
+  await assert.rejects(
+    doctorDockerImageStorage({
+      cli: abortCli,
+      installId: "test",
+      images: { linux: "bbbox/linux:1", "linux-desktop": null, "linux-desktop-cpu": null, "linux-desktop-wayland-cpu": null },
+      existingImages: ["bbbox/linux:1"],
+      containers: [],
+      hostName: "fake-docker",
+      signal: aborted.signal,
+    }),
+    /cancelled/,
+  );
 });

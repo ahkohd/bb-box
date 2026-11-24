@@ -1772,21 +1772,12 @@ test("maintain reads the warm counts of the kinds the driver says it keeps warm,
   assert.deepEqual([...recorded.asked].sort(), [...proxmoxQemuDriver.warmKinds!].sort());
 });
 
-test("proxmox.image-storage reports VM templates, storage room and leftover build VMs, and maintain removes only this install's old build VMs", async () => {
+test("proxmox.image-storage reports VM templates, Android build room and non-box leftover build VMs, and maintain leaves build guests alone", async () => {
   const { proxmox, backend } = setup({ "ssh-private-key": "" });
   const oldBuild = "build.20260101-000000-cccc";
   const recentStamp = new Date(Date.now() - 30 * 60_000).toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   const recentBuild = `build.${recentStamp}-dddd`;
 
-  proxmox.guests.set(9210, {
-    vmid: 9210,
-    type: "qemu",
-    name: "bb-box-windows-9210",
-    pool: "bbbox",
-    status: "stopped",
-    template: false,
-    config: { scsi0: "local-lvm:vm-9210-disk-0,size=64G", tags: `install.test;${oldBuild}` },
-  });
   proxmox.guests.set(9211, {
     vmid: 9211,
     type: "qemu",
@@ -1803,16 +1794,20 @@ test("proxmox.image-storage reports VM templates, storage room and leftover buil
     pool: "bbbox",
     status: "running",
     template: false,
-    config: { scsi0: "local-lvm:vm-9212-disk-0,size=64G", tags: `install.test;${recentBuild}` },
+    config: { scsi0: "local-lvm:vm-9212-disk-0,size=64G", tags: recentBuild },
   });
-  proxmox.guests.set(9213, {
-    vmid: 9213,
+  proxmox.guests.set(9214, {
+    vmid: 9214,
     type: "qemu",
-    name: "bb-box-windows-9213",
+    name: "cloned-box",
     pool: "bbbox",
     status: "stopped",
     template: false,
-    config: { scsi0: "local-lvm:vm-9213-disk-0,size=64G", tags: `install.other;${oldBuild}` },
+    config: {
+      scsi0: "local-lvm:vm-9214-disk-0,size=64G",
+      tags: `bbbox;windows;${oldBuild}`,
+      description: "bb-box box bx-cloned\ninstall test\nthread thr-1",
+    },
   });
   proxmox.statusPass();
 
@@ -1821,17 +1816,14 @@ test("proxmox.image-storage reports VM templates, storage room and leftover buil
   assert.equal(before.ok, true);
   assert.equal(checkBefore.status, "warn");
   assert.match(checkBefore.detail, /VM 9104 \(64 GiB on local-lvm\)/);
-  assert.match(checkBefore.detail, /VM 9210 \(build\.20260101-000000-cccc/);
-  assert.match(checkBefore.detail, /VM 9211 \(build\.20260101-000000-cccc/);
-  assert.match(checkBefore.detail, /build\.sh puts no install tag on build VMs/);
-  assert.match(checkBefore.fix ?? "", /qm stop 9211; qm destroy 9211 --purge 1/);
-  assert.doesNotMatch(checkBefore.detail, /9212|9213/);
+  assert.match(checkBefore.detail, /1 possible leftover build VM: VM 9211 \(build\.20260101-000000-cccc/);
+  assert.match(checkBefore.fix ?? "", /Check it is a leftover build, then remove it on the Proxmox host as root: qm stop 9211; qm destroy 9211 --purge 1\./);
+  assert.doesNotMatch(checkBefore.detail, /9212|9214/);
 
   await backend.maintain();
-  assert.equal(proxmox.guests.has(9210), false);
   assert.equal(proxmox.guests.has(9211), true);
   assert.equal(proxmox.guests.has(9212), true);
-  assert.equal(proxmox.guests.has(9213), true);
+  assert.equal(proxmox.guests.has(9214), true);
 
   proxmox.guests.delete(9211);
   proxmox.storage.set("local-lvm", { total: 100 * 2 ** 30, avail: 70 * 2 ** 30 });
@@ -1840,5 +1832,23 @@ test("proxmox.image-storage reports VM templates, storage room and leftover buil
   assert.equal(lowDisk.ok, true);
   assert.equal(checkLow.status, "warn");
   assert.match(checkLow.detail, /No leftover build VMs\./);
-  assert.match(checkLow.detail, /local-lvm has 70 GiB free .* below the 64 GiB a build needs/);
+  assert.match(checkLow.detail, /local-lvm has 70 GiB free .* below about 64 GiB a build needs/);
+
+  const android = setup({
+    "ssh-private-key": "",
+    "windows-templates": "",
+    "android-templates": "9106",
+    "linux-kvm": true,
+    "reserve-disk-gib": 50,
+  });
+  android.proxmox.addVmTemplate(9106);
+  android.proxmox.guests.get(9106)!.config.scsi0 = "local-lvm:vm-9106-disk-0,size=20G";
+  android.proxmox.storage.set("local-lvm", { total: 200 * 2 ** 30, avail: 80 * 2 ** 30 });
+  android.proxmox.statusPass();
+  const androidReport = await android.backend.doctor();
+  const androidDisk = androidReport.checks.find((check) => check.id === "proxmox.android-disk")!;
+  const androidStorage = androidReport.checks.find((check) => check.id === "proxmox.image-storage")!;
+  assert.equal(androidDisk.status, "warn");
+  assert.equal(androidStorage.status, "warn");
+  assert.match(androidStorage.detail, /below about 40 GiB a build needs/);
 });

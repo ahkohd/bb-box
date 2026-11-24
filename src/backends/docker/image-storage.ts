@@ -11,6 +11,7 @@ const BYTES_PER_GB = 1_000_000_000;
 const BYTES_PER_MB = 1_000_000;
 const BYTES_PER_KB = 1024;
 const INSPECT_TIMEOUT_MS = 30_000;
+const SYSTEM_DF_TIMEOUT_MS = 5_000;
 const DISK_PROBE_TIMEOUT_MS = 15_000;
 
 export interface DockerBuildNeed {
@@ -30,6 +31,13 @@ export interface KeptDockerBuild {
   readonly label: string;
   readonly sizeBytes: number;
   readonly containers: readonly string[];
+}
+
+function nullUnlessAborted(signal?: AbortSignal): (error: unknown) => null {
+  return (error) => {
+    if (signal?.aborted) throw error;
+    return null;
+  };
 }
 
 export function nextBuildNeed(images: DockerConfig["images"]): DockerBuildNeed {
@@ -101,12 +109,8 @@ function isZeroSize(value: string): boolean {
 function isOwnedImage(labels: Readonly<Record<string, string>>, installId: string): boolean {
   if (SNAPSHOT_LABEL in labels) return false;
   if (labels[LABELS.install] === installId && LABELS.image in labels) return true;
-  if (LABELS.imageVersion in labels && (!(LABELS.install in labels) || labels[LABELS.install] === installId)) return true;
+  if (LABELS.imageVersion in labels && !(LABELS.install in labels)) return true;
   return false;
-}
-
-function isUntagged(repoTags: readonly string[]): boolean {
-  return repoTags.every((tag) => tag === "<none>:<none>");
 }
 
 function shortImageId(id: string): string {
@@ -145,7 +149,7 @@ async function containersHoldingImage(
   const listed = await cli.run(["container", "ls", "--all", "--quiet", "--no-trunc", "--filter", `ancestor=${imageId}`], {
     timeoutMs: INSPECT_TIMEOUT_MS,
     signal,
-  }).catch(() => null);
+  }).catch(nullUnlessAborted(signal));
 
   if (!listed || listed.exitCode !== 0) {
     return { names: [...byId.values()], unreadable: true };
@@ -153,7 +157,7 @@ async function containersHoldingImage(
 
   const extraIds = listed.stdout.split("\n").map((line) => line.trim()).filter((id) => id && !byId.has(id));
   if (extraIds.length) {
-    const inspected = await cli.inspect(extraIds, signal).catch(() => null);
+    const inspected = await cli.inspect(extraIds, signal).catch(nullUnlessAborted(signal));
     if (!inspected) return { names: [...byId.values()], unreadable: true };
 
     for (const container of inspected) {
@@ -183,22 +187,24 @@ export async function doctorDockerImageStorage(input: {
   readonly signal?: AbortSignal;
 }): Promise<DoctorCheck> {
   const { cli, installId, images, existingImages, containers, hostName, signal } = input;
+  signal?.throwIfAborted();
   const need = nextBuildNeed(images);
   const probeImage = DOCKER_KINDS.map((kind) => images[kind]).find((image): image is string => image !== null && existingImages.includes(image)) ?? existingImages[0] ?? null;
 
   const [standardRefs, projectRefs, danglingStandard, danglingProject, dfResult, diskResult] = await Promise.all([
-    listImageRefs(cli, [`label=${LABELS.imageVersion}`, `label!=${SNAPSHOT_LABEL}`], signal).catch(() => null),
-    listImageRefs(cli, [`label=${LABELS.install}=${installId}`, `label=${LABELS.image}`, `label!=${SNAPSHOT_LABEL}`], signal).catch(() => null),
-    listImageRefs(cli, ["dangling=true", `label=${LABELS.imageVersion}`, `label!=${LABELS.install}`, `label!=${SNAPSHOT_LABEL}`], signal).catch(() => null),
-    listImageRefs(cli, ["dangling=true", `label=${LABELS.install}=${installId}`, `label=${LABELS.image}`, `label!=${SNAPSHOT_LABEL}`], signal).catch(() => null),
-    cli.run(["system", "df", "--format", "{{json .}}"], { timeoutMs: INSPECT_TIMEOUT_MS, signal }).catch(() => null),
+    listImageRefs(cli, [`label=${LABELS.imageVersion}`, `label!=${LABELS.install}`, `label!=${SNAPSHOT_LABEL}`], signal).catch(nullUnlessAborted(signal)),
+    listImageRefs(cli, [`label=${LABELS.install}=${installId}`, `label=${LABELS.image}`, `label!=${SNAPSHOT_LABEL}`], signal).catch(nullUnlessAborted(signal)),
+    listImageRefs(cli, ["dangling=true", `label=${LABELS.imageVersion}`, `label!=${LABELS.install}`, `label!=${SNAPSHOT_LABEL}`], signal).catch(nullUnlessAborted(signal)),
+    listImageRefs(cli, ["dangling=true", `label=${LABELS.install}=${installId}`, `label=${LABELS.image}`, `label!=${SNAPSHOT_LABEL}`], signal).catch(nullUnlessAborted(signal)),
+    cli.run(["system", "df", "--format", "{{json .}}"], { timeoutMs: SYSTEM_DF_TIMEOUT_MS, signal }).catch(nullUnlessAborted(signal)),
     probeImage
       ? cli.run(["container", "run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "/bin/sh", probeImage, "-c", "df -Pk /"], {
           timeoutMs: DISK_PROBE_TIMEOUT_MS,
           signal,
-        }).catch(() => null)
+        }).catch(nullUnlessAborted(signal))
       : Promise.resolve(null),
   ]);
+  signal?.throwIfAborted();
 
   const unread: string[] = [];
   const details: string[] = [];
@@ -212,9 +218,10 @@ export async function doctorDockerImageStorage(input: {
     status = "warn";
     unread.push(`${PRODUCT}'s Docker images`);
   } else {
-    const refs = [...new Set([...standardRefs, ...projectRefs, ...danglingStandard, ...danglingProject])];
+    const prunableIds = new Set([...danglingStandard, ...danglingProject]);
+    const refs = [...new Set([...standardRefs, ...projectRefs, ...prunableIds])];
     const inspected = refs.length
-      ? await cli.run(["image", "inspect", ...refs], { timeoutMs: INSPECT_TIMEOUT_MS, signal }).catch(() => null)
+      ? await cli.run(["image", "inspect", ...refs], { timeoutMs: INSPECT_TIMEOUT_MS, signal }).catch(nullUnlessAborted(signal))
       : { exitCode: 0, stdout: "[]", stderr: "", timedOut: false };
 
     if (!inspected || inspected.exitCode !== 0) {
@@ -239,17 +246,19 @@ export async function doctorDockerImageStorage(input: {
 
         const owned = [...uniqueById.values()];
         const totalBytes = owned.reduce((sum, image) => sum + image.Size, 0);
-        const untagged = owned.filter((image) => isUntagged(image.RepoTags));
+        const dangling = owned.filter((image) => prunableIds.has(image.Id));
 
-        details.push(
-          owned.length
-            ? `${PRODUCT}'s ${owned.length} ${owned.length === 1 ? "image totals" : "images total"} ${formatDecimalBytes(totalBytes)}.`
-            : `No ${PRODUCT} images are on ${hostName}.`,
-        );
+        if (!owned.length) {
+          details.push(`No ${PRODUCT} images are on ${hostName}.`);
+        } else if (owned.length === 1) {
+          details.push(`${PRODUCT}'s 1 image takes ${formatDecimalBytes(totalBytes)}.`);
+        } else {
+          details.push(`${PRODUCT}'s ${owned.length} images report ${formatDecimalBytes(totalBytes)} in sum (shared layers are stored once on disk).`);
+        }
 
         let containersUnreadable = false;
         keptBuilds = await Promise.all(
-          untagged.map(async (image) => {
+          dangling.map(async (image) => {
             const holders = await containersHoldingImage(cli, image.Id, containers, signal);
             if (holders.unreadable) containersUnreadable = true;
             return {
@@ -285,9 +294,10 @@ export async function doctorDockerImageStorage(input: {
   if (buildCacheEntry) {
     const reclaimable = buildCacheEntry.reclaimable && !isZeroSize(buildCacheEntry.reclaimable) ? ` (${buildCacheEntry.reclaimable} reclaimable)` : "";
     details.push(`Build cache takes ${buildCacheEntry.size}${reclaimable}.`);
+  } else if (dfResult?.timedOut) {
+    details.push("Build cache size was not read in time.");
   } else {
-    status = "warn";
-    unread.push("Docker's build cache size");
+    details.push("Build cache size could not be read.");
   }
 
   const freeKb = diskResult && diskResult.exitCode === 0 ? parseRootFreeKb(diskResult.stdout) : null;
@@ -302,7 +312,7 @@ export async function doctorDockerImageStorage(input: {
       details.push(`${hostName} has ${freeWords} free on Docker's disk, below the ${need.gb} GB building ${need.what} needs.`);
 
       const actions: string[] = [];
-      if (buildCacheEntry && !isZeroSize(buildCacheEntry.size)) {
+      if (!buildCacheEntry || !isZeroSize(buildCacheEntry.size)) {
         actions.push("prune Docker's build cache with docker builder prune --filter until=24h");
       }
       if (keptBuilds.some((build) => build.containers.length > 0)) {

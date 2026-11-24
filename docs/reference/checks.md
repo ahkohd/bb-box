@@ -166,7 +166,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `docker.gpus` | GPUs | The NVIDIA cards Docker lists as CDI devices, for GPU boxes, as nvidia-smi in a container given them reads them; whether every box can open every card there; another install's GPU boxes on the host; and a box with a whole card that BB Box cannot match to a card it reads, which stops GPU boxes there (071). |
 | `docker.capacity` | Room on &lt;host> | Room on the host for a Linux box at its default size. |
 | `docker.sizes` | Room for each kind | The host holds a box of each kind at its default size. |
-| `docker.image-storage` | Image storage | The space BB Box's images and Docker's build cache use, any earlier untagged builds kept with the containers holding them, and free disk against what the next build needs. |
+| `docker.image-storage` | Image storage | The space BB Box's images and Docker's build cache use, any earlier untagged builds kept with the containers holding them, and free disk (read with a short-lived container on the host) against what the next build needs. |
 | `image.<image>` | Image &lt;image> | An image a kind runs is on the host, built by BB Box's build script, and not too old. |
 
 ## Hetzner Cloud

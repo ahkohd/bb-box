@@ -159,7 +159,7 @@ export const CHECKS = {
   "docker.image-storage": {
     name: "Image storage",
     from: ["docker"],
-    what: `The space ${PRODUCT}'s images and Docker's build cache use, any earlier untagged builds kept with the containers holding them, and free disk against what the next build needs.`,
+    what: `The space ${PRODUCT}'s images and Docker's build cache use, any earlier untagged builds kept with the containers holding them, and free disk (read with a short-lived container on the host) against what the next build needs.`,
   },
 
   // Hetzner Cloud.

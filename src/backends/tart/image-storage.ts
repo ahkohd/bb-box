@@ -1,7 +1,7 @@
 import { PRODUCT } from "../../brand.ts";
 import { quote } from "../../transports/process.ts";
 import type { DoctorCheck } from "../types.ts";
-import { sections } from "./host.ts";
+import { VOLUME_CHECK, sections } from "./host.ts";
 import { BASE_IN_USE, BASE_UNUSED, qemuScript } from "./qemu.ts";
 
 const MACOS_BUILD_NEED_GIB = 60;
@@ -33,6 +33,7 @@ export interface TartImageStorageReport {
   readonly ociBases: readonly TartOciBaseUsage[];
   readonly windowsBuilds: readonly TartWindowsBuildUsage[];
   readonly windowsUnreadable: boolean;
+  readonly windowsNoSnapshotsDir: boolean;
 }
 
 export function tartImageStorageScript(tartImages: readonly string[], windowsImage: string | null): string {
@@ -73,11 +74,20 @@ image=${quote(windowsImage)}; im="$q/images/$image"
 if [ -d "$im" ]; then
   cur=$(cd "$im/current" 2>/dev/null && pwd -P) && cur=$(basename "$cur")
   rb=$(cd "$im/rollback" 2>/dev/null && pwd -P) && rb=$(basename "$rb")
-  snaps=$(snaps_dir 2>/dev/null || true)
   scan_ok=1
-  if [ -z "$snaps" ] || ! readable_folder "$q/vms" || ! readable_folder "$snaps"; then
-    scan_ok=0
-    echo "unreadable=1"
+  snaps=$(snaps_dir_if_present 2>/dev/null) || { scan_ok=0; echo "unreadable=1"; snaps=; }
+  if [ "$scan_ok" = 1 ]; then
+    if ! readable_folder "$q/vms"; then
+      scan_ok=0
+      echo "unreadable=1"
+    elif [ -z "$snaps" ]; then
+      echo "no_snapshots_dir=1"
+    elif ! readable_folder "$snaps"; then
+      scan_ok=0
+      echo "unreadable=1"
+    elif [ ! -d "$snaps" ]; then
+      echo "no_snapshots_dir=1"
+    fi
   fi
   all_folders=
   if [ "$scan_ok" = 1 ]; then
@@ -120,7 +130,7 @@ fi
 `
     : "echo @windows-builds\n";
 
-  return qemuScript(`${tartSection}${ociSection}${windowsSection}`);
+  return qemuScript(`${VOLUME_CHECK}${tartSection}${ociSection}${windowsSection}`);
 }
 
 export function parseTartImageStorage(text: string): TartImageStorageReport {
@@ -149,12 +159,17 @@ export function parseTartImageStorage(text: string): TartImageStorageReport {
 
   const windowsBuilds: { build: string; role: TartWindowsBuildUsage["role"]; kib: number; holders: string[] }[] = [];
   let windowsUnreadable = false;
+  let windowsNoSnapshotsDir = false;
 
   for (const raw of (parts.get("windows-builds") ?? "").split("\n")) {
     const line = raw.trim();
     if (!line) continue;
     if (line === "unreadable=1") {
       windowsUnreadable = true;
+      continue;
+    }
+    if (line === "no_snapshots_dir=1") {
+      windowsNoSnapshotsDir = true;
       continue;
     }
 
@@ -176,7 +191,7 @@ export function parseTartImageStorage(text: string): TartImageStorageReport {
     }
   }
 
-  return { tartImages, ociBases, windowsBuilds, windowsUnreadable };
+  return { tartImages, ociBases, windowsBuilds, windowsUnreadable, windowsNoSnapshotsDir };
 }
 
 function formatKiB(kib: number): string {
@@ -269,6 +284,8 @@ export function tartImageStorageCheck(input: {
     status = "warn";
     details.push(`Could not read the config of every Windows VM, snapshot and restore on ${hostName} to tell which builds they stand on.`);
     fixes.push(`Check folder permissions under ~/.bb-box/qemu/vms and Tart's snapshot folder on ${hostName}.`);
+  } else if (report.windowsNoSnapshotsDir) {
+    details.push("No snapshots yet.");
   }
 
   const taggedBases = report.ociBases.filter((base) => base.state === "tagged");

@@ -33,7 +33,7 @@ import type { CheckId } from "../../core/checks.ts";
 import { withDesktopForkSafety } from "../../core/identity.ts";
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
-import { isOwnedBuildWorkConfig, leftoverBuildOf, proxmoxImageStorageCheck, type ProxmoxStorageReading, type ProxmoxTemplateUsage } from "../proxmox/image-storage.ts";
+import { leftoverBuildCandidates, proxmoxImageStorageCheck, type ProxmoxStorageReading, type ProxmoxTemplateUsage } from "../proxmox/image-storage.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone } from "../proxmox/forks.ts";
@@ -452,6 +452,7 @@ export class ProxmoxQemuBackend implements Backend {
   readonly #reserved = new Set<number>();
   /** The template of each acquire running in this process that has chosen one, by box. */
   readonly #acquiring = new Map<string, number>();
+  readonly #acquiringVmids = new Set<number>();
   /** Storage, boot disk and its size of each template. */
   readonly #templates = new Map<number, TemplateInfo>();
   #api: Promise<Proxmox> | null = null;
@@ -473,13 +474,7 @@ export class ProxmoxQemuBackend implements Backend {
     hold: async (member) => void this.#claimed.add(Number(member.ref)),
   });
   readonly #stopping = new AbortController();
-  readonly #upkeep = new Upkeep(async (signal) => {
-    try {
-      await this.#topUp(signal);
-    } finally {
-      await this.#pruneLeftoverBuilds(signal).catch((error) => signal.aborted || this.#context.logError("remove leftover build VMs", error));
-    }
-  });
+  readonly #upkeep = new Upkeep((signal) => this.#topUp(signal));
   /** Whether each Windows template's image has bb-box-stream (060) and the hardware cursor, and when that was read. */
   readonly #streaming = new Map<number, { has: boolean; cursor: boolean; at: number }>();
   /** Image boxes (054) from before their clone until their capture or removal, which no sweep counts. */
@@ -1148,6 +1143,7 @@ export class ProxmoxQemuBackend implements Backend {
     let warm: number | null = null;
     const claim = async (id: number) => {
       claimed = id;
+      this.#acquiringVmids.add(id);
       await hooks.claim(this.#guest(api.node, id, template, box.boxId, null, build));
     };
     try {
@@ -1155,6 +1151,7 @@ export class ProxmoxQemuBackend implements Backend {
       let display: { mode: string; reason: string } | null = null;
       if (previous && this.#inRange(Number(previous.ref)) && (await this.#owns(api, Number(previous.ref), box.boxId, signal))) {
         vmid = Number(previous.ref);
+        this.#acquiringVmids.add(vmid);
         template = typeof previous.data?.template === "number" ? previous.data.template : null;
         build = typeof previous.data?.build === "string" ? previous.data.build : null;
         resumed = true;
@@ -1256,6 +1253,8 @@ export class ProxmoxQemuBackend implements Backend {
       throw error;
     } finally {
       this.#acquiring.delete(box.boxId);
+      if (claimed !== null) this.#acquiringVmids.delete(claimed);
+      if (vmid !== null) this.#acquiringVmids.delete(vmid);
       // The box's now, or deleted after a failed claim.
       if (warm !== null) this.#claimed.delete(warm);
     }
@@ -1689,19 +1688,20 @@ export class ProxmoxQemuBackend implements Backend {
           } else if (!disk || !storage) {
             fail(name, `VM template ${template} has no boot disk.`, "Rebuild the template with setup/proxmox-qemu/build.sh.");
           } else {
+            const kind = this.#kindOf(template);
+            const minBuildNeedGiB = kind === ANDROID_IMAGE_KIND ? ANDROID_ROOM_GIB : undefined;
             const free = await api.storageStatus(storage, signal).catch((error: unknown) => error);
             if (free instanceof Error) {
               storageReadings.set(storage, free);
-              templateUsages.push({ vmid: template, storage, diskGiB: rootDiskGiB(config, disk) });
+              templateUsages.push({ vmid: template, storage, diskGiB: rootDiskGiB(config, disk), minBuildNeedGiB });
               fail(name, `VM template ${template} is on ${storage}, whose free space cannot be read.`, audit(free, `Give the token Datastore.Audit on /storage/${storage}.`));
             } else {
               const status = free as StorageStatus;
               const freeGiB = Math.floor(status.available / GiB);
               storageReadings.set(storage, { availableGiB: freeGiB, totalGiB: Math.floor(status.total / GiB), type: status.type });
-              templateUsages.push({ vmid: template, storage, diskGiB: rootDiskGiB(config, disk) });
+              templateUsages.push({ vmid: template, storage, diskGiB: rootDiskGiB(config, disk), minBuildNeedGiB });
               this.#templates.set(template, { storage, bootDisk: disk, diskGiB: rootDiskGiB(config, disk) });
               templateStorages.push({ name: storage, type: status.type, volume: String(config[disk]) });
-              const kind = this.#kindOf(template);
               pass(name, `VM template ${template} on ${storage}, ${freeGiB} GiB free.`);
               if (kind === ANDROID_IMAGE_KIND) this.#androidDisk(template, storage, freeGiB, { pass, warn });
               // A Windows image carries no build of BB's app: BB's installer puts it in as a box joins BB. A Linux one does (057).
@@ -1775,6 +1775,20 @@ export class ProxmoxQemuBackend implements Backend {
       const privileges = await poolPrivileges(api, pool, signal);
       const metadata = await storagesMetadata(api, templateStorages, signal);
       checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "qemu", privileges, storages: templateStorages, metadata }) });
+      const configuredTemplates = new Set(this.#allTemplates());
+      const activeVmids = new Set([...this.#reserved, ...this.#filling.keys(), ...this.#imageBoxes, ...this.#acquiringVmids, ...this.#claimed, ...this.#retiring]);
+      const now = this.#now();
+      const candidateConfigs = new Map<number, Record<string, unknown> | Error>();
+      if (!(poolGuests instanceof Error)) {
+        for (const candidate of leftoverBuildCandidates(poolGuests, "qemu", configuredTemplates, activeVmids, now)) {
+          try {
+            candidateConfigs.set(candidate.vmid, await api.config(candidate.vmid, signal));
+          } catch (error) {
+            if (signal?.aborted) throw error;
+            candidateConfigs.set(candidate.vmid, error instanceof Error ? error : new Error(message(error)));
+          }
+        }
+      }
       checks.push(
         proxmoxImageStorageCheck({
           type: "qemu",
@@ -1783,9 +1797,10 @@ export class ProxmoxQemuBackend implements Backend {
           templates: templateUsages,
           storages: storageReadings,
           guests: poolGuests,
-          configuredTemplates: new Set(this.#allTemplates()),
-          activeVmids: new Set([...this.#reserved, ...this.#filling.keys(), ...this.#imageBoxes]),
-          now: this.#now(),
+          configuredTemplates,
+          activeVmids,
+          candidateConfigs,
+          now,
         }),
       );
     }
@@ -1826,27 +1841,6 @@ export class ProxmoxQemuBackend implements Backend {
 
   #now(): number {
     return this.#options.now?.() ?? Date.now();
-  }
-
-  async #pruneLeftoverBuilds(signal: AbortSignal): Promise<void> {
-    const api = await this.client();
-    const guests = await api.listPool(this.#config.proxmox.pool, signal);
-    const configured = new Set(this.#allTemplates());
-    const active = new Set([...this.#reserved, ...this.#filling.keys(), ...this.#imageBoxes]);
-    const now = this.#now();
-
-    for (const guest of guests) {
-      signal.throwIfAborted();
-      const leftover = leftoverBuildOf(guest, "qemu", configured, active, now);
-      if (!leftover || leftover.install !== this.#context.installId) continue;
-
-      const config = await this.#guestConfig(api, leftover.vmid, signal);
-      if (!config || !isOwnedBuildWorkConfig(config, this.#context.installId, now)) continue;
-
-      await this.#forget(leftover.vmid);
-      await api.destroy(leftover.vmid, signal);
-      this.#context.log?.(`Removed leftover build VM ${leftover.vmid} (${leftover.build}) on ${api.node}.`);
-    }
   }
 
   async dispose(): Promise<void> {

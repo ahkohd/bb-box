@@ -14,6 +14,7 @@ export interface ProxmoxTemplateUsage {
   readonly vmid: number;
   readonly storage: string | null;
   readonly diskGiB: number | null;
+  readonly minBuildNeedGiB?: number;
 }
 
 export interface ProxmoxStorageReading {
@@ -34,6 +35,15 @@ export interface LeftoverBuildGuest {
 function hasNonBuildRoleTag(tags: readonly string[]): boolean {
   if (isHeldCopy(tags) || isEarlierGuest(tags)) return true;
   return tags.some((tag) => NON_BUILD_ROLES.has(tag) || NON_BUILD_PREFIXES.some((prefix) => tag.startsWith(prefix)));
+}
+
+export function isBoxOrManagedConfig(config: Record<string, unknown>): boolean {
+  if (isTemplate(config)) return true;
+  const tags = parseTags(config.tags);
+  if (hasNonBuildRoleTag(tags)) return true;
+  if (namesOf(config).box !== null) return true;
+  const description = typeof config.description === "string" ? config.description : "";
+  return description.startsWith("bb-box ");
 }
 
 export function leftoverBuildOf(
@@ -61,17 +71,16 @@ export function leftoverBuildOf(
   };
 }
 
-export function isOwnedBuildWorkConfig(config: Record<string, unknown>, installId: string, now: number): boolean {
-  if (isTemplate(config)) return false;
-
-  const tags = parseTags(config.tags);
-  if (installFromTags(tags) !== installId) return false;
-  if (namesOf(config).box !== null) return false;
-  if (hasNonBuildRoleTag(tags)) return false;
-
-  const build = buildFromTags(tags);
-  const startedAt = build ? builtAt(build) : null;
-  return startedAt !== null && now - startedAt >= BUILD_LEFTOVER_MS;
+export function leftoverBuildCandidates(
+  guests: readonly PoolGuest[],
+  type: GuestType,
+  configuredTemplates: ReadonlySet<number>,
+  activeVmids: ReadonlySet<number>,
+  now: number,
+): LeftoverBuildGuest[] {
+  return guests
+    .map((guest) => leftoverBuildOf(guest, type, configuredTemplates, activeVmids, now))
+    .filter((guest): guest is LeftoverBuildGuest => guest !== null);
 }
 
 function formatGiB(value: number): string {
@@ -107,10 +116,12 @@ export function proxmoxImageStorageCheck(input: {
   readonly guests: readonly PoolGuest[] | Error;
   readonly configuredTemplates: ReadonlySet<number>;
   readonly activeVmids: ReadonlySet<number>;
+  readonly candidateConfigs?: ReadonlyMap<number, Record<string, unknown> | Error>;
   readonly now: number;
 }): DoctorCheck {
-  const { type, installId, reserveDiskGiB, templates, storages, guests, configuredTemplates, activeVmids, now } = input;
+  const { type, installId, reserveDiskGiB, templates, storages, guests, configuredTemplates, activeVmids, candidateConfigs, now } = input;
   const guestPlural = type === "lxc" ? "containers" : "VMs";
+  const guestSingular = type === "lxc" ? "container" : "VM";
   const details: string[] = [];
   const fixes: string[] = [];
   let status: DoctorCheck["status"] = "ok";
@@ -149,7 +160,7 @@ export function proxmoxImageStorageCheck(input: {
 
     const allParts = [...templateParts, ...extraParts];
     const totalCount = templates.length + extraTemplates.length;
-    const totalWord = knownDiskGiB > 0 ? `, ${formatGiB(knownDiskGiB)} configured` : "";
+    const totalWord = knownDiskGiB > 0 ? ` (${formatGiB(knownDiskGiB)})` : "";
     details.push(`${totalCount} ${totalCount === 1 ? "template" : "templates"}${totalWord}: ${allParts.join(", ")}.`);
   }
 
@@ -157,31 +168,40 @@ export function proxmoxImageStorageCheck(input: {
     status = "warn";
     details.push(`Could not list pool guests to check for leftover build ${guestPlural}: ${errorMessage(guests)}.`);
   } else {
-    const leftovers = guests
-      .map((guest) => leftoverBuildOf(guest, type, configuredTemplates, activeVmids, now))
-      .filter((guest): guest is LeftoverBuildGuest => guest !== null);
+    const candidates = leftoverBuildCandidates(guests, type, configuredTemplates, activeVmids, now);
+    const leftovers: LeftoverBuildGuest[] = [];
+    const unverified: LeftoverBuildGuest[] = [];
 
-    const ownedLeftovers = leftovers.filter((guest) => guest.install === installId);
-    const untaggedLeftovers = leftovers.filter((guest) => guest.install === null);
-
-    if (ownedLeftovers.length) {
-      status = "warn";
-      const listed = ownedLeftovers.map((guest) => `${guestLabel(type, guest.vmid)} (${guest.build}, ${ageWords(guest.ageMs)})`).join(", ");
-      details.push(`${ownedLeftovers.length} leftover build ${ownedLeftovers.length === 1 ? (type === "lxc" ? "container" : "VM") : guestPlural} of this install: ${listed}. Upkeep removes ${ownedLeftovers.length === 1 ? "it" : "them"}.`);
-      fixes.push(`Wait for ${PRODUCT}'s next upkeep pass, or remove ${ownedLeftovers.map((guest) => guestLabel(type, guest.vmid)).join(", ")} on the host.`);
+    for (const candidate of candidates) {
+      const config = candidateConfigs?.get(candidate.vmid);
+      if (!config || config instanceof Error) {
+        unverified.push(candidate);
+        continue;
+      }
+      if (isBoxOrManagedConfig(config)) continue;
+      leftovers.push(candidate);
     }
 
-    if (untaggedLeftovers.length) {
+    if (leftovers.length) {
       status = "warn";
-      const listed = untaggedLeftovers.map((guest) => `${guestLabel(type, guest.vmid)} (${guest.build}, ${ageWords(guest.ageMs)})`).join(", ");
-      details.push(
-        `${untaggedLeftovers.length} leftover build ${untaggedLeftovers.length === 1 ? (type === "lxc" ? "container" : "VM") : guestPlural} with no install tag: ${listed}. ` +
-          `build.sh puts no install tag on build ${guestPlural}, so ${PRODUCT} leaves ${untaggedLeftovers.length === 1 ? "it" : "them"} alone.`,
+      const listed = leftovers.map((guest) => `${guestLabel(type, guest.vmid)} (${guest.build}, ${ageWords(guest.ageMs)})`).join(", ");
+      const noun = leftovers.length === 1 ? guestSingular : guestPlural;
+      const pronoun = leftovers.length === 1 ? "it" : "them";
+      details.push(`${leftovers.length} possible leftover build ${noun}: ${listed}. ${PRODUCT} leaves build.sh work ${guestPlural} alone.`);
+      fixes.push(
+        `Check ${leftovers.length === 1 ? "it is" : "each is"} a leftover build, then remove ${pronoun} on the Proxmox host as root: ${leftovers.map((guest) => removeCommand(type, guest.vmid)).join(" ; ")}.`,
       );
-      fixes.push(`Remove leftover build ${guestPlural} on the Proxmox host as root: ${untaggedLeftovers.map((guest) => removeCommand(type, guest.vmid)).join(" ; ")}.`);
     }
 
-    if (!ownedLeftovers.length && !untaggedLeftovers.length) {
+    if (unverified.length) {
+      status = "warn";
+      const listed = unverified.map((guest) => guestLabel(type, guest.vmid)).join(", ");
+      details.push(
+        `Could not read config for ${listed} to check whether ${unverified.length === 1 ? "it is" : "they are"} a leftover build or a box.`,
+      );
+    }
+
+    if (!leftovers.length && !unverified.length) {
       details.push(`No leftover build ${guestPlural}.`);
     }
   }
@@ -189,9 +209,9 @@ export function proxmoxImageStorageCheck(input: {
   const byStorage = new Map<string, number>();
   for (const template of templates) {
     if (!template.storage) continue;
-    const currentNeed = byStorage.get(template.storage) ?? MIN_BUILD_NEED_GIB;
-    const diskNeed = template.diskGiB !== null ? Math.ceil(template.diskGiB) : MIN_BUILD_NEED_GIB;
-    byStorage.set(template.storage, Math.max(currentNeed, diskNeed));
+    const floorGiB = template.minBuildNeedGiB ?? MIN_BUILD_NEED_GIB;
+    const diskNeed = Math.max(floorGiB, template.diskGiB !== null ? Math.ceil(template.diskGiB) : floorGiB);
+    byStorage.set(template.storage, Math.max(byStorage.get(template.storage) ?? floorGiB, diskNeed));
   }
 
   for (const [storageName, needGiB] of byStorage) {
@@ -207,7 +227,7 @@ export function proxmoxImageStorageCheck(input: {
     if (spareGiB < needGiB) {
       status = "warn";
       details.push(
-        `${storageName} has ${reading.availableGiB} GiB free (${spareGiB} GiB beyond the ${reserveDiskGiB} GiB reserve), below the ${needGiB} GiB a build needs.`,
+        `${storageName} has ${reading.availableGiB} GiB free (${spareGiB} GiB beyond the ${reserveDiskGiB} GiB reserve), below about ${needGiB} GiB a build needs.`,
       );
       fixes.push(`Free space on ${storageName}, release boxes, or lower the disk kept free in ${PRODUCT}'s settings.`);
     } else {

@@ -2350,20 +2350,12 @@ test("maintain reads the warm counts of the kinds the driver says it keeps warm,
   assert.deepEqual([...recorded.asked].sort(), [...proxmoxLxcDriver.warmKinds!].sort());
 });
 
-test("proxmox.image-storage reports templates, storage room and leftover build containers, and maintain removes only this install's old build containers", async () => {
+test("proxmox.image-storage reports templates, storage room and non-box leftover build containers, and maintain leaves build guests alone", async () => {
   const { proxmox, backend } = setup({ "proxmox-lxc-ssh-private-key": "" });
   const oldBuild = "build.20260101-000000-aaaa";
   const recentStamp = new Date(Date.now() - 30 * 60_000).toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   const recentBuild = `build.${recentStamp}-bbbb`;
 
-  proxmox.guests.set(9250, {
-    vmid: 9250,
-    name: "bb-box-linux",
-    pool: "bbbox",
-    status: "running",
-    template: false,
-    config: { rootfs: "local-lvm:vm-9250-disk-0,size=16G", tags: `install.test;${oldBuild}` },
-  });
   proxmox.guests.set(9251, {
     vmid: 9251,
     name: "bb-box-linux",
@@ -2378,15 +2370,7 @@ test("proxmox.image-storage reports templates, storage room and leftover build c
     pool: "bbbox",
     status: "running",
     template: false,
-    config: { rootfs: "local-lvm:vm-9252-disk-0,size=16G", tags: `install.test;${recentBuild}` },
-  });
-  proxmox.guests.set(9253, {
-    vmid: 9253,
-    name: "bb-box-linux",
-    pool: "bbbox",
-    status: "stopped",
-    template: false,
-    config: { rootfs: "local-lvm:vm-9253-disk-0,size=16G", tags: `install.other;${oldBuild}` },
+    config: { rootfs: "local-lvm:vm-9252-disk-0,size=16G", tags: recentBuild },
   });
   proxmox.guests.set(9254, {
     vmid: 9254,
@@ -2396,25 +2380,43 @@ test("proxmox.image-storage reports templates, storage room and leftover build c
     template: false,
     config: { rootfs: "local-lvm:vm-9254-disk-0,size=16G", tags: `bb-box;install.test;warm;template.9000;${oldBuild}` },
   });
+  proxmox.guests.set(9255, {
+    vmid: 9255,
+    name: "fresh-clone-box",
+    pool: "bbbox",
+    status: "stopped",
+    template: false,
+    config: {
+      rootfs: "local-lvm:vm-9255-disk-0,size=16G",
+      tags: oldBuild,
+      description: "bb-box box bx-live\ninstall test\nthread thr-1",
+    },
+  });
+  proxmox.guests.set(9256, {
+    vmid: 9256,
+    name: "bb-box-rollback",
+    pool: "bbbox",
+    status: "stopped",
+    template: true,
+    config: { rootfs: "local-lvm:vm-9256-disk-0,size=16G", tags: "bb-box;install.test;image.rollback" },
+  });
   proxmox.statusPass();
 
   const before = await backend.doctor();
   const checkBefore = before.checks.find((check) => check.id === "proxmox.image-storage")!;
   assert.equal(before.ok, true);
   assert.equal(checkBefore.status, "warn");
-  assert.match(checkBefore.detail, /2 templates/);
-  assert.match(checkBefore.detail, /CT 9250 \(build\.20260101-000000-aaaa/);
-  assert.match(checkBefore.detail, /CT 9251 \(build\.20260101-000000-aaaa/);
-  assert.match(checkBefore.detail, /build\.sh puts no install tag on build containers/);
-  assert.match(checkBefore.fix ?? "", /pct stop 9251; pct destroy 9251/);
-  assert.doesNotMatch(checkBefore.detail, /9252|9253|9254/);
+  assert.match(checkBefore.detail, /3 templates \(/);
+  assert.doesNotMatch(checkBefore.detail, /configured:/);
+  assert.match(checkBefore.detail, /1 possible leftover build container: CT 9251 \(build\.20260101-000000-aaaa/);
+  assert.match(checkBefore.fix ?? "", /Check it is a leftover build, then remove it on the Proxmox host as root: pct stop 9251; pct destroy 9251\./);
+  assert.doesNotMatch(checkBefore.detail, /9252|9254|9255/);
 
   await backend.maintain();
-  assert.equal(proxmox.guests.has(9250), false);
   assert.equal(proxmox.guests.has(9251), true);
   assert.equal(proxmox.guests.has(9252), true);
-  assert.equal(proxmox.guests.has(9253), true);
   assert.equal(proxmox.guests.has(9254), true);
+  assert.equal(proxmox.guests.has(9255), true);
 
   proxmox.guests.delete(9251);
   proxmox.storage.set("local-lvm", { total: 100 * 2 ** 30, avail: 25 * 2 ** 30 });
@@ -2423,5 +2425,5 @@ test("proxmox.image-storage reports templates, storage room and leftover build c
   assert.equal(lowDisk.ok, true);
   assert.equal(checkLow.status, "warn");
   assert.match(checkLow.detail, /No leftover build containers\./);
-  assert.match(checkLow.detail, /local-lvm has 25 GiB free .* below the 16 GiB a build needs/);
+  assert.match(checkLow.detail, /local-lvm has 25 GiB free .* below about 16 GiB a build needs/);
 });

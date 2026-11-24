@@ -47,8 +47,8 @@ import { isDriverVersion } from "../../core/gpu-userspace.ts";
 import { GPU_RESTART_SECONDS, helperNotReadyRefusal, noDriverRefusal, noSharedCardRefusal, noWholeCardRefusal, placementOf, plannedChange, startFirstRefusal, unmarkedRefusal, type OtherOnCard, type PlanBox } from "./gpu-resize.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
-import { NoLongerOurs, OwnedGuests, adoptingOwner, boxOwner, buildWorkOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, sameDescription, templateOwner, unstampedOwner, warmOwner, type GuestOwner, type PowerAction } from "./owned.ts";
-import { leftoverBuildOf, proxmoxImageStorageCheck, type ProxmoxStorageReading, type ProxmoxTemplateUsage } from "../proxmox/image-storage.ts";
+import { NoLongerOurs, OwnedGuests, adoptingOwner, boxOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, sameDescription, templateOwner, unstampedOwner, warmOwner, type GuestOwner, type PowerAction } from "./owned.ts";
+import { leftoverBuildCandidates, proxmoxImageStorageCheck, type ProxmoxStorageReading, type ProxmoxTemplateUsage } from "../proxmox/image-storage.ts";
 import { EARLIER_GUEST, copyName, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import {
   BUILD,
@@ -1041,13 +1041,9 @@ export class ProxmoxLxcBackend implements Backend {
   /** The host's NVIDIA driver as a box last saw it; undefined until read from storage. */
   #nvidia: HostNvidia | null | undefined;
   readonly #upkeep = new Upkeep(async (signal) => {
-    try {
-      await this.#readGpus(signal).catch((error) => signal.aborted || this.#context.logError("read GPU memory", error));
-      await this.#checkCards(signal).catch((error) => signal.aborted || this.#context.logError("check boxes' cards", error));
-      await this.#topUp(signal);
-    } finally {
-      await this.#pruneLeftoverBuilds(signal).catch((error) => signal.aborted || this.#context.logError("remove leftover build containers", error));
-    }
+    await this.#readGpus(signal).catch((error) => signal.aborted || this.#context.logError("read GPU memory", error));
+    await this.#checkCards(signal).catch((error) => signal.aborted || this.#context.logError("check boxes' cards", error));
+    await this.#topUp(signal);
   });
   /** Image boxes (049) from before their clone until their capture or removal, which no sweep counts. */
   readonly #imageBoxes = new Set<number>();
@@ -3489,6 +3485,25 @@ export class ProxmoxLxcBackend implements Backend {
       const privileges = await poolPrivileges(api, pool, signal);
       const metadata = await storagesMetadata(api, templateStorages, signal);
       checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "lxc", privileges, storages: templateStorages, metadata }) });
+      const configuredTemplates = new Set(templates.map(({ template }) => template.vmid));
+      const activeVmids = new Set([
+        ...this.#reserved,
+        ...this.#filling.keys(),
+        ...this.#imageBoxes,
+        ...[...this.#acquiring.values()].flatMap((acquire) => (acquire.vmid === null ? [] : [acquire.vmid])),
+      ]);
+      const now = this.#now();
+      const candidateConfigs = new Map<number, Record<string, unknown> | Error>();
+      if (!(poolGuests instanceof Error)) {
+        for (const candidate of leftoverBuildCandidates(poolGuests, "lxc", configuredTemplates, activeVmids, now)) {
+          try {
+            candidateConfigs.set(candidate.vmid, await api.config(candidate.vmid, signal));
+          } catch (error) {
+            if (signal?.aborted) throw error;
+            candidateConfigs.set(candidate.vmid, error instanceof Error ? error : new Error(message(error)));
+          }
+        }
+      }
       checks.push(
         proxmoxImageStorageCheck({
           type: "lxc",
@@ -3497,9 +3512,10 @@ export class ProxmoxLxcBackend implements Backend {
           templates: templateUsages,
           storages: storageReadings,
           guests: poolGuests,
-          configuredTemplates: new Set(templates.map(({ template }) => template.vmid)),
-          activeVmids: new Set([...this.#reserved, ...this.#filling.keys(), ...this.#imageBoxes]),
-          now: this.#now(),
+          configuredTemplates,
+          activeVmids,
+          candidateConfigs,
+          now,
         }),
       );
     }
@@ -3579,24 +3595,6 @@ export class ProxmoxLxcBackend implements Backend {
 
   maintain(signal?: AbortSignal): Promise<void> {
     return this.#upkeep.run(signal ?? this.#stopping.signal);
-  }
-
-  async #pruneLeftoverBuilds(signal: AbortSignal): Promise<void> {
-    const api = await this.client();
-    const guests = await api.listPool(this.#config.proxmox.pool, signal);
-    const configured = new Set(LXC_FLAVOURS.flatMap((flavour) => this.#config.flavours[flavour].templates.map((template) => template.vmid)));
-    const active = new Set([...this.#reserved, ...this.#filling.keys(), ...this.#imageBoxes]);
-    const now = this.#now();
-
-    for (const guest of guests) {
-      signal.throwIfAborted();
-      const leftover = leftoverBuildOf(guest, "lxc", configured, active, now);
-      if (!leftover || leftover.install !== this.#context.installId) continue;
-
-      await this.#forget(leftover.vmid);
-      await this.#owned(api).destroy(leftover.vmid, buildWorkOwner(this.#context.installId, now), signal);
-      this.#context.log?.(`Removed leftover build container CT ${leftover.vmid} (${leftover.build}) on ${api.node}.`);
-    }
   }
 
   async dispose(): Promise<void> {

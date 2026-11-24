@@ -286,7 +286,7 @@ export function sections(text: string): Map<string, string> {
  * link (#632). When that volume is not mounted, the state fails, so the Mac
  * counts as unreachable and keeps its boxes, rather than as a Mac with none.
  */
-const VOLUME_CHECK = String.raw`for f in "${"$"}{TART_HOME:-$HOME/.tart}" "$HOME/.bb-box/qemu"; do
+export const VOLUME_CHECK = String.raw`for f in "${"$"}{TART_HOME:-$HOME/.tart}" "$HOME/.bb-box/qemu"; do
   [ ! -L "$f" ] || [ -d "$f" ] || { echo "$f links to $(readlink "$f"), which is not there: is its volume mounted?" >&2; exit 1; }
 done
 `;
