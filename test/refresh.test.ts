@@ -682,3 +682,94 @@ test("setup/windows/pins.json has the Windows build scripts' pins, Node.js inclu
     }
   }
 });
+
+test("install-tools.sh installs Codex's complete package, replaces a single-binary install of the same version, and image checks require codex-code-mode-host", () => {
+  const root = tempDir("codex-package-linux");
+  const pkg = join(root, "pkg");
+  const artifacts = join(root, "artifacts");
+  const prefix = join(root, "prefix");
+  const bindir = join(root, "bin");
+  mkdirSync(join(pkg, "bin"), { recursive: true });
+  mkdirSync(artifacts, { recursive: true });
+  writeFileSync(join(pkg, "bin", "codex"), "#!/bin/sh\necho 'codex-cli 0.157.1'\n", { mode: 0o755 });
+  writeFileSync(join(pkg, "bin", "codex-code-mode-host"), "#!/bin/sh\n", { mode: 0o755 });
+  writeFileSync(join(pkg, "codex-package.json"), '{"layoutVersion":1}\n');
+
+  const arch = process.arch === "arm64" ? "arm64" : "x86_64";
+  const target = arch === "arm64" ? "aarch64-unknown-linux-musl" : "x86_64-unknown-linux-musl";
+  const archiveName = `codex-package-${target}.tar.gz`;
+  const archive = join(artifacts, archiveName);
+  execFileSync("tar", ["-czf", archive, "-C", pkg, "bin", "codex-package.json"]);
+  const sha = execFileSync("sha256sum", [archive], { encoding: "utf8" }).split(/\s+/)[0]!;
+
+  const pinsPath = join(root, "pins.json");
+  writeFileSync(
+    pinsPath,
+    JSON.stringify({
+      tools: [
+        {
+          name: "codex",
+          version: "0.157.1",
+          arch,
+          url: `https://github.com/openai/codex/releases/download/rust-v0.157.1/${archiveName}`,
+          sha256: sha,
+          strip: 0,
+          links: { codex: "bin/codex" },
+          check: "codex",
+        },
+      ],
+    }),
+  );
+
+  const oldDest = join(prefix, "codex-0.157.1");
+  mkdirSync(oldDest, { recursive: true });
+  mkdirSync(bindir, { recursive: true });
+  writeFileSync(join(oldDest, `codex-${target}`), "#!/bin/sh\n", { mode: 0o755 });
+  execFileSync("ln", ["-sfn", join(oldDest, `codex-${target}`), join(bindir, "codex")]);
+
+  const installScript = join(SETUP, "proxmox-lxc", "template", "guest", "install-tools.sh");
+  const installed = execFileSync("bash", [installScript, pinsPath, artifacts, prefix, bindir], { encoding: "utf8" });
+
+  assert.match(installed, /installed codex 0\.157\.1/);
+  assert.equal(execFileSync("readlink", [join(bindir, "codex")], { encoding: "utf8" }).trim(), join(oldDest, "bin", "codex"));
+  assert.equal(execFileSync(join(bindir, "codex"), ["--version"], { encoding: "utf8" }).trim(), "codex-cli 0.157.1");
+  assert.equal(execFileSync("test", ["-x", join(oldDest, "bin", "codex-code-mode-host")]).length, 0);
+
+  const headless = readFileSync(join(SETUP, "proxmox-lxc", "template", "guest", "check-headless.sh"), "utf8");
+  const headlessLine = headless.split("\n").find((line) => line.includes("codex-code-mode-host"))!;
+  const headlessHelper = headless.split("\n").find((line) => line.startsWith("t() "))!;
+  const runHeadlessCheck = () =>
+    execFileSync("bash", ["-c", `${headlessHelper}\n${headlessLine}`], { env: { PATH: `${bindir}:/usr/bin:/bin` }, encoding: "utf8" });
+
+  assert.match(runHeadlessCheck(), /^codex code-mode host\s+ok   .*\/codex-0\.157\.1\/bin\/codex-code-mode-host\n$/);
+
+  rmSync(join(oldDest, "bin", "codex-code-mode-host"));
+  assert.match(runHeadlessCheck(), /^codex code-mode host\s+FAIL missing .*\/codex-0\.157\.1\/bin\/codex-code-mode-host\n$/);
+
+  const customize = readFileSync(join(SETUP, "proxmox-lxc", "template", "guest", "customize-base.sh"), "utf8");
+  assert.match(customize, /codex-code-mode-host/);
+});
+
+test("Windows scripts install Codex's complete package and check codex-code-mode-host.exe beside codex.exe", () => {
+  const pins = JSON.parse(readFileSync(join(SETUP, "windows", "pins.json"), "utf8")) as { tools: { name: string; arch: string; url: string }[] };
+  const codexPins = pins.tools.filter((tool) => tool.name === "codex");
+
+  assert.deepEqual(
+    codexPins.map((tool) => [tool.arch, tool.url.split("/").at(-1)]),
+    [
+      ["x86_64", "codex-package-x86_64-pc-windows-msvc.tar.gz"],
+      ["arm64", "codex-package-aarch64-pc-windows-msvc.tar.gz"],
+    ],
+  );
+
+  const firstLogon = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "firstlogon.ps1"), "utf8");
+  const refresh = readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8");
+  const check = readFileSync(join(SETUP, "windows", "check.ps1"), "utf8");
+
+  assert.match(firstLogon, /name = 'codex'; exe = 'bin\\codex\.exe'; host = 'bin\\codex-code-mode-host\.exe'/);
+  assert.match(firstLogon, /System32\\tar\.exe" -xzf \$file -C \$to/);
+  assert.match(refresh, /Test-Path "\$tools\\codex\\bin\\codex-code-mode-host\.exe"/);
+  assert.match(refresh, /Install-Tool codex \$file 'bin\\codex\.exe'/);
+  assert.match(refresh, /System32\\tar\.exe" -xzf \$file -C \$to/);
+  assert.match(check, /Check 'Codex code-mode host beside codex'[\s\S]*codex-code-mode-host\.exe/);
+});

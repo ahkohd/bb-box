@@ -236,7 +236,8 @@ It takes the same options as `setup.sh`, except `--reset-hook`.
   then Git, GitHub CLI and Node.js with it
 - installs Cua Driver in `/Applications`
 - installs BlackHole 2ch, pinned, as the Mac's audio input
-- installs the agent CLIs BB runs threads with, Claude Code, Codex and Pi,
+- installs the agent CLIs BB runs threads with, Claude Code, Codex (its
+  complete release package, with `codex-code-mode-host` beside `codex`) and Pi,
   in `/usr/local/lib/bb-box`, linked from `/usr/local/bin`, pinned as the
   Linux images pin them
 - adds a launch daemon that clears BB's lock and PID files in box homes at

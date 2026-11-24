@@ -2,12 +2,12 @@ import "./check-test-machine.mjs";
 import type { GuestOs } from "../src/backends/types.ts";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { toConfiguration } from "../scripts/smoke.ts";
-import { daemonOs, containerName, DockerBackend, dockerKinds, hostnameOf } from "../src/backends/docker/backend.ts";
+import { DOCKER_CHECK, daemonOs, containerName, DockerBackend, dockerKinds, hostnameOf } from "../src/backends/docker/backend.ts";
 import { boxVolumeName, createArgs, ENV_A_BOX_IS_GIVEN, type BoxContainerSettings } from "../src/backends/docker/box-container.ts";
 import { gpusOf, parseContainers, parseInfo, sshReuse } from "../src/backends/docker/cli.ts";
 import { parseDockerPart } from "../src/backends/docker/config.ts";
@@ -1050,6 +1050,29 @@ test("image operations on Docker: an image box, its commit as an image with its 
   assert.equal(JSON.parse(after["bbbox/linux:1"]["bbbox.image-record"]).build, "build.20261003-021500-3f9c");
   assert.equal(after[built.ref], undefined, "the refresh's tag goes");
   assert.match(images.check!("linux"), /for tool in node git gh claude codex pi rg fd jj uv/);
+  assert.match(images.check!("linux"), /codex-code-mode-host/);
+});
+
+test("DOCKER_CHECK fails when codex-code-mode-host is missing or not executable beside codex, and passes when it is", () => {
+  const root = tempDir("docker-codex-check");
+  const bin = join(root, "bin");
+  const pkgBin = join(root, "codex-0.157.1", "bin");
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(pkgBin, { recursive: true });
+  writeFileSync(join(pkgBin, "codex"), "#!/bin/sh\necho 'codex-cli 0.157.1'\n", { mode: 0o755 });
+  symlinkSync(join(pkgBin, "codex"), join(bin, "codex"));
+
+  const checkLine = DOCKER_CHECK.split("\n").find((line) => line.includes("codex-code-mode-host"))!;
+  const runner = [DOCKER_CHECK.split("\n")[0]!, checkLine].join("\n");
+  const runCheck = () => spawnSync("sh", ["-c", runner], { env: { PATH: `${bin}:/usr/bin:/bin` }, encoding: "utf8" });
+
+  assert.match(runCheck().stdout, /^codex code-mode host FAIL missing .*\/codex-0\.157\.1\/bin\/codex-code-mode-host\n$/);
+
+  writeFileSync(join(pkgBin, "codex-code-mode-host"), "#!/bin/sh\n", { mode: 0o644 });
+  assert.match(runCheck().stdout, /^codex code-mode host FAIL missing .*\/codex-0\.157\.1\/bin\/codex-code-mode-host\n$/);
+
+  chmodSync(join(pkgBin, "codex-code-mode-host"), 0o755);
+  assert.match(runCheck().stdout, /^codex code-mode host ok   .*\/codex-0\.157\.1\/bin\/codex-code-mode-host\n$/);
 });
 
 test("the doctor warns about a kind the host cannot hold at any preset, less the memory it keeps free (#74)", async () => {

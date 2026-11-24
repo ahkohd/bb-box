@@ -223,7 +223,8 @@ Every download is checked against a pinned SHA-256, and kept in
   with apt's own message. The two scripts that call `apt-get` themselves,
   Android's build-tree server and Docker on WSL, are not retried;
 - `template/pins.json`: Node.js, GitHub CLI, ripgrep, fd, Jujutsu, uv, Claude
-  Code, Codex and Pi, for x86_64 and arm64;
+  Code, Codex (its complete release package, including `codex-code-mode-host`
+  beside `codex`) and Pi, for x86_64 and arm64;
 - `template/desktop-pins.tsv`: TigerVNC, VirtualGL, Selkies, Google Chrome,
   Cua Driver and rustup, for x86_64 and arm64;
 - the NVIDIA installer for the host's driver version, checked against the

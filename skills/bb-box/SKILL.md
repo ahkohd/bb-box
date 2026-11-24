@@ -59,7 +59,8 @@ be forked there or start a child thread.
   a few seconds to resume.
 - Linux boxes run Ubuntu 24.04 with build tools, Git, Python with `uv`,
   Node.js with pnpm and Yarn, Docker, `gh`, `rg`, `fd`, `jj`, and the Claude
-  Code, Codex and Pi CLIs. Desktops add XFCE, Chrome, Mousepad, Ristretto,
+  Code, Codex (complete release package with `codex-code-mode-host`) and Pi
+  CLIs. Desktops add XFCE, Chrome, Mousepad, Ristretto,
   Evince and CJK fonts. Wayland desktops (`linux-desktop-wayland-cpu`) run
   Ubuntu 26.04 with Sway instead of XFCE, and the same apps on Wayland; X11
   apps do not run there.

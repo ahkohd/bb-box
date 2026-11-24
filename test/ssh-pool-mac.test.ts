@@ -629,8 +629,12 @@ function setupMac(): FakeMacos {
   writeFileSync(join(mac.state, "flags", "cua.tgz"), readFileSync(join(work, "cua.tgz")));
   // The agent CLIs' downloads, laid out as their releases are.
   writeFileSync(join(mac.state, "flags", "claude"), "#!/bin/sh\necho claude\n");
-  writeFileSync(join(work, "codex-aarch64-apple-darwin"), "#!/bin/sh\n", { mode: 0o755 });
-  assert.equal(spawnSync("tar", ["-czf", join(mac.state, "flags", "codex-aarch64-apple-darwin.tar.gz"), "-C", work, "codex-aarch64-apple-darwin"]).status, 0);
+  const codexPkg = join(work, "codex-pkg");
+  mkdirSync(join(codexPkg, "bin"), { recursive: true });
+  writeFileSync(join(codexPkg, "bin", "codex"), "#!/bin/sh\n", { mode: 0o755 });
+  writeFileSync(join(codexPkg, "bin", "codex-code-mode-host"), "#!/bin/sh\n", { mode: 0o755 });
+  writeFileSync(join(codexPkg, "codex-package.json"), '{"layoutVersion":1}\n');
+  assert.equal(spawnSync("tar", ["-czf", join(mac.state, "flags", "codex-package-aarch64-apple-darwin.tar.gz"), "-C", codexPkg, "bin", "codex-package.json"]).status, 0);
   mkdirSync(join(work, "pi"));
   writeFileSync(join(work, "pi", "pi"), "#!/bin/sh\n", { mode: 0o755 });
   assert.equal(spawnSync("tar", ["-czf", join(mac.state, "flags", "pi-darwin-arm64.tar.gz"), "-C", work, "pi"]).status, 0);
@@ -671,12 +675,13 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   // The agent CLIs, pinned, linked from /usr/local/bin (#561).
   for (const [command, target] of [
     ["claude", "/usr/local/lib/bb-box/claude-code-2.1.283/claude"],
-    ["codex", "/usr/local/lib/bb-box/codex-0.157.1/codex-aarch64-apple-darwin"],
+    ["codex", "/usr/local/lib/bb-box/codex-0.157.1/bin/codex"],
     ["pi", "/usr/local/lib/bb-box/pi-0.87.1/pi"],
   ]) {
     assert.equal(readlinkSync(join(mac.root, "usr/local/bin", command)), target, command);
     assert.ok(statSync(join(mac.root, target)).mode & 0o111, `${command} is executable`);
   }
+  assert.ok(statSync(join(mac.root, "usr/local/lib/bb-box/codex-0.157.1/bin/codex-code-mode-host")).mode & 0o111, "codex-code-mode-host is executable");
   assert.equal(mac.file("/private/var/bbbox-admin/.ssh/authorized_keys"), "restrict ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoolKeyForTests bb-box\n");
   assert.equal(mac.file("/etc/sudoers.d/bb-box"), "Defaults:bbbox-admin !requiretty\nbbbox-admin ALL=(root) NOPASSWD: /usr/local/libexec/bb-box/machine\n");
   assert.equal(statSync(join(mac.root, "usr/local/libexec/bb-box/machine")).mode & 0o777, 0o755);
@@ -738,7 +743,7 @@ test("setup-mac.sh makes the admin user, installs the helper, template, Homebrew
   assert.equal(mac.file("/usr/local/share/bb-box/home/Library/Application Support/Google/Chrome/First Run"), "");
   assert.equal(mac.file("/usr/local/share/bb-box/home/Library/Application Support/Google/Chrome/Local State"), '{"browser":{"last_whats_new_version":9999}}\n');
   assert.match(mac.file("/usr/local/libexec/bb-box/chrome-policies.mjs")!, /chrome:\/\/policy/, "the reader the image's check runs");
-  for (const file of ["/claude", "codex-aarch64-apple-darwin.tar.gz", "pi-darwin-arm64.tar.gz"]) {
+  for (const file of ["/claude", "codex-package-aarch64-apple-darwin.tar.gz", "pi-darwin-arm64.tar.gz"]) {
     assert.equal(mac.calls().filter((line) => line.startsWith("curl -fsSL --retry 3 -o") && line.endsWith(file)).length, 1, `${file} is downloaded once`);
   }
   for (const call of ["xcodebuild -license accept", "xcodebuild -runFirstLaunch", "DevToolsSecurity -enable"]) assert.equal(count(mac, call), 1, call);
@@ -1177,4 +1182,29 @@ test("on a Mac VM with macOS 26's TCC schema, as Namespace's Macs have, the help
   assert.equal(newer.stderr, "TCC's database on this Mac has columns bb-box does not know, as a newer macOS may have, so it writes nothing there. A person grants permissions in System Settings, or a newer bb-box may know them.\n");
   assert.equal(sqlite(system, "select count(*) from access;"), "0");
   assert.deepEqual(mac.helper(["vm-granted", "bbx-0"]).stdout.split("\n").filter(Boolean).slice(0, 2), ["sip=0", "tcc=0"]);
+});
+
+test("setup-mac.sh fails if the Codex package lacks codex-code-mode-host, and replaces an older single-binary install of the same version", () => {
+  const key = ["--key", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPoolKeyForTests bb-box"];
+
+  const broken = setupMac();
+  const badWork = tempDir("codex-no-host");
+  mkdirSync(join(badWork, "bin"), { recursive: true });
+  writeFileSync(join(badWork, "bin", "codex"), "#!/bin/sh\n", { mode: 0o755 });
+  assert.equal(spawnSync("tar", ["-czf", join(broken.state, "flags", "codex-package-aarch64-apple-darwin.tar.gz"), "-C", badWork, "bin"]).status, 0);
+
+  const failed = broken.setup(key);
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, /codex 0\.157\.1 has no executable bin\/codex-code-mode-host\./);
+
+  const upgraded = setupMac();
+  const oldDir = join(upgraded.root, "usr/local/lib/bb-box/codex-0.157.1");
+  mkdirSync(oldDir, { recursive: true });
+  writeFileSync(join(oldDir, "codex-aarch64-apple-darwin"), "#!/bin/sh\n", { mode: 0o755 });
+
+  const ok = upgraded.setup(key);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(readlinkSync(join(upgraded.root, "usr/local/bin/codex")), "/usr/local/lib/bb-box/codex-0.157.1/bin/codex");
+  assert.ok(statSync(join(oldDir, "bin/codex-code-mode-host")).mode & 0o111);
+  assert.equal(existsSync(join(oldDir, "codex-aarch64-apple-darwin")), false);
 });

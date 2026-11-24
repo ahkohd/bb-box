@@ -36,6 +36,15 @@ Check 'Claude Code, Codex and Pi on PATH' {
   $said = foreach ($tool in 'claude', 'codex', 'pi') { $v = & $tool --version 2>&1 | Select-Object -First 1; if ($LASTEXITCODE -or -not $v) { throw "$tool did not run" }; "$v" }
   $said -join '; '
 }
+Check 'Codex code-mode host beside codex' {
+  $codexCmd = Get-Command codex -CommandType Application -ErrorAction Stop | Select-Object -First 1
+  $codexItem = Get-Item -LiteralPath $codexCmd.Source -ErrorAction Stop
+  $resolved = $codexItem.ResolveLinkTarget($true)
+  $codexReal = if ($resolved) { $resolved.FullName } else { $codexItem.FullName }
+  $hostExe = Join-Path (Split-Path $codexReal -Parent) 'codex-code-mode-host.exe'
+  if (-not (Test-Path -LiteralPath $hostExe -PathType Leaf)) { throw "missing $hostExe" }
+  $hostExe
+}
 Check "ffmpeg with gdigrab, and ffprobe, on PATH, for box_record" {
   $v = ffmpeg -hide_banner -version | Select-Object -First 1; $p = ffprobe -hide_banner -version | Select-Object -First 1
   if (-not $v -or -not $p) { throw 'missing' }
