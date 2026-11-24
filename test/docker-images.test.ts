@@ -192,29 +192,116 @@ const WAYLAND_FREE_GB = 18;
  * /usr/share/bb-box/image.json, and a curl that gives `digest` as BB's app's,
  * gives none ("none"), or fails ("fail").
  */
-function buildWith(freeGB: number, args: readonly string[] = [], error?: string, digest = "none", record = '{"contract":1,"kind":"linux"}', extra: { readonly imageError?: string; readonly startError?: string; readonly script?: string } = {}) {
+function buildWith(
+  freeGB: number,
+  args: readonly string[] = [],
+  error?: string,
+  digest = "none",
+  record = '{"contract":1,"kind":"linux"}',
+  extra: {
+    readonly buildError?: string;
+    readonly startError?: string;
+    readonly script?: string;
+    readonly builderExists?: boolean;
+    readonly builderVolumeExists?: boolean;
+    readonly freeAfterPruneGB?: number;
+    readonly oldBuildx?: boolean;
+    readonly cacheCap?: string;
+  } = {},
+) {
   const dir = tempDir("docker-build");
   const bin = join(dir, "bin");
   mkdirSync(bin);
   const log = join(dir, "calls");
+  const buildxConfigs = join(dir, "buildx-configs");
+  const freeFile = join(dir, "free-kb");
   writeFileSync(log, "");
+  writeFileSync(buildxConfigs, "");
+  writeFileSync(freeFile, String(Math.floor((freeGB * 1e9) / 1024)));
   writeFileSync(
     join(bin, "docker"),
     `#!/bin/sh
 printf '%s\\n' "$*" >>'${log}'
+if [ -n "\${BUILDX_CONFIG:-}" ]; then printf '%s\\n' "$BUILDX_CONFIG" >>'${buildxConfigs}'; fi
 cmd=$1
 shift
 case "$cmd" in
   run|exec|attach|logs)
     exit 0
     ;;
+  container)
+    sub=$1
+    shift
+    if [ "$sub" = inspect ]; then
+      if [ "\${FAKE_BUILDER_EXISTS:-0}" = 1 ]; then exit 0; fi
+      echo "Error response from daemon: No such container: $*" >&2
+      exit 1
+    fi
+    ;;
+  volume)
+    sub=$1
+    shift
+    if [ "$sub" = inspect ]; then
+      if [ "\${FAKE_BUILDER_VOLUME_EXISTS:-0}" = 1 ]; then exit 0; fi
+      echo "Error response from daemon: get $*: no such volume" >&2
+      exit 1
+    fi
+    ;;
+  buildx)
+    sub=$1
+    shift
+    case "$sub" in
+      create)
+        echo bb-box
+        ;;
+      prune)
+        case " $* " in
+          *" --help "*)
+            if [ "\${FAKE_OLD_BUILDX:-0}" = 1 ]; then
+              echo "      --keep-storage bytes   Amount of disk space always allowed to keep for cache"
+            else
+              echo "      --max-used-space bytes   Maximum amount of disk space allowed to keep for cache"
+            fi
+            exit 0
+            ;;
+        esac
+        if [ -n "\${FAKE_FREE_AFTER_PRUNE_KB:-}" ]; then
+          printf '%s' "$FAKE_FREE_AFTER_PRUNE_KB" >'${freeFile}'
+        fi
+        echo "Total: 0B"
+        ;;
+      build)
+        if [ -n "\${FAKE_BUILD_ERROR:-}" ]; then echo "$FAKE_BUILD_ERROR" >&2; exit 1; fi
+        out_dir=
+        target=
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --target) target=$2; shift 2 ;;
+            --output)
+              case "$2" in
+                type=local,dest=*) out_dir=\${2#type=local,dest=} ;;
+              esac
+              shift 2
+              ;;
+            *) shift ;;
+          esac
+        done
+        case "$target" in
+          *-record)
+            if [ -z "$FAKE_RECORD" ]; then
+              echo 'ERROR: failed to solve: "/usr/share/bb-box/image.json": not found' >&2
+              exit 1
+            fi
+            printf '%s\\n' "$FAKE_RECORD" >"$out_dir/image.json"
+            ;;
+        esac
+        ;;
+    esac
+    ;;
   create)
     case "$*" in
       *bb-box-df*)
         if [ -n "\${FAKE_ERROR:-}" ]; then echo "$FAKE_ERROR" >&2; exit 125; fi
-        ;;
-      *)
-        if [ -n "\${FAKE_IMAGE_ERROR:-}" ]; then echo "$FAKE_IMAGE_ERROR" >&2; exit 125; fi
         ;;
     esac
     echo c0
@@ -229,17 +316,11 @@ case "$cmd" in
     case "$src" in
       *bb-box-df*)
         if [ -n "\${FAKE_ERROR:-}" ]; then echo "$FAKE_ERROR" >&2; exit 125; fi
+        free_kb=$(cat '${freeFile}')
         {
           echo 'Filesystem     1024-blocks    Used Available Capacity Mounted on'
-          echo "overlay           65871716 2899792 $FAKE_FREE_KB       5% /"
+          echo "overlay           65871716 2899792 $free_kb       5% /"
         } >"$dest/$base"
-        ;;
-      *image.json*)
-        if [ -z "$FAKE_RECORD" ]; then
-          echo "Error response from daemon: Could not find the file /usr/share/bb-box/image.json in container c0" >&2
-          exit 1
-        fi
-        printf '%s\\n' "$FAKE_RECORD" >"$dest/$base"
         ;;
       *)
         echo "Error response from daemon: Could not find the file $src" >&2
@@ -262,18 +343,37 @@ printf 'content-length: 1191955\\r\\n\\r\\n'
 `,
   );
   chmodSync(join(bin, "curl"), 0o755);
-  const env = { PATH: `${bin}:/usr/bin:/bin`, FAKE_FREE_KB: String(Math.floor((freeGB * 1e9) / 1024)), FAKE_DIGEST: digest, FAKE_RECORD: record, ...(error ? { FAKE_ERROR: error } : {}), ...(extra.imageError ? { FAKE_IMAGE_ERROR: extra.imageError } : {}), ...(extra.startError ? { FAKE_START_ERROR: extra.startError } : {}) };
+  const env: NodeJS.ProcessEnv = {
+    PATH: `${bin}:/usr/bin:/bin`,
+    FAKE_DIGEST: digest,
+    FAKE_RECORD: record,
+    ...(error ? { FAKE_ERROR: error } : {}),
+    ...(extra.buildError ? { FAKE_BUILD_ERROR: extra.buildError } : {}),
+    ...(extra.startError ? { FAKE_START_ERROR: extra.startError } : {}),
+    ...(extra.builderExists ? { FAKE_BUILDER_EXISTS: "1" } : {}),
+    ...(extra.builderVolumeExists ? { FAKE_BUILDER_VOLUME_EXISTS: "1" } : {}),
+    ...(extra.freeAfterPruneGB !== undefined ? { FAKE_FREE_AFTER_PRUNE_KB: String(Math.floor((extra.freeAfterPruneGB * 1e9) / 1024)) } : {}),
+    ...(extra.oldBuildx ? { FAKE_OLD_BUILDX: "1" } : {}),
+    ...(extra.cacheCap ? { BBBOX_BUILD_CACHE_CAP: extra.cacheCap } : {}),
+  };
   const result = spawnSync("bash", [extra.script ?? BUILD_SCRIPT, ...args], { encoding: "utf8", env });
   const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
-  // Each target's build, then a second one, from the cache, that labels it with its record (049).
-  const builds = calls.filter((call) => call.startsWith("build ") && !call.includes("bbbox.image-record="));
+  const configs = [...new Set(readFileSync(buildxConfigs, "utf8").split("\n").filter(Boolean))];
+  const recordBuilds = calls.filter((call) => call.startsWith("buildx build ") && call.includes("--output type=local,dest="));
+  const builds = calls.filter((call) => call.startsWith("buildx build ") && call.includes(" --load "));
+  const prunes = calls.filter((call) => call.startsWith("buildx prune ") && !call.includes("--help"));
   return {
     status: result.status,
     stderr: result.stderr,
+    calls,
     checks: calls.filter((call) => call.startsWith("create ") && call.includes("bb-box-df")),
+    builderCreates: calls.filter((call) => call.startsWith("buildx create ")),
+    buildxConfigs: configs,
+    recordBuilds,
     builds,
+    prunes,
+    defaultPrunes: calls.filter((call) => call.startsWith("builder prune") || (call.startsWith("buildx prune ") && !call.includes("--help") && !call.includes("--builder bb-box"))),
     labelled: calls.filter((call) => call.includes("bbbox.image-record=")),
-    reads: calls.filter((call) => call.startsWith("create ") && call.includes("bbbox/")),
     attached: calls.filter((call) => /^(run|exec|attach|logs) /.test(call)),
     built: builds.map((call) => / --target ([\w-]+) /.exec(call)?.[1]),
     sourcesDigests: builds.map((call) => / --build-arg IMAGE_SOURCES_SHA256=(\S*) /.exec(call)?.[1]),
@@ -286,6 +386,8 @@ test("build.sh does not start with less disk free than the build needs, and says
   assert.equal(short.status, 1);
   assert.equal(short.stderr, "The Docker host has 35 GB of disk free, and building 3 images needs about 36 GB. Free some, for example with docker builder prune, then build again.\n");
   assert.deepEqual(short.built, []);
+  assert.deepEqual(short.builderCreates, []);
+  assert.deepEqual(short.prunes, []);
   assert.equal(short.checks.length, 1);
   assert.match(short.checks[0]!, /^create --platform linux\/amd64 --network none --entrypoint sh ubuntu:24\.04@sha256:[0-9a-f]{64} -c df -Pk \/ > \/tmp\/bb-box-df$/, "from the Dockerfile's base image, copied out, not attached");
   assert.deepEqual(short.attached, []);
@@ -306,26 +408,60 @@ test("build.sh does not start with less disk free than the build needs, and says
   assert.equal(unseen.stderr, "build.sh could not see how much disk the Docker host has free, so it builds anyway: Unable to find image 'ubuntu:24.04' locally\n");
 });
 
-test("build.sh labels each image with its own record, and stops at an image with none (049)", () => {
+test("build.sh prunes only BB Box's builder cache first when space is short, measures again, and refuses only if still short", () => {
+  const recovered = buildWith(12, ["desktop"], undefined, "none", undefined, { builderExists: true, freeAfterPruneGB: 20 });
+
+  assert.equal(recovered.status, 0, recovered.stderr);
+  assert.equal(recovered.checks.length, 2);
+  assert.deepEqual(recovered.built, ["desktop"]);
+  assert.equal(recovered.prunes[0], "buildx prune --builder bb-box --force --all");
+  assert.equal(recovered.prunes[1], "buildx prune --builder bb-box --force --all --max-used-space 10GB");
+  assert.deepEqual(recovered.defaultPrunes, []);
+
+  const stillShort = buildWith(12, ["desktop"], undefined, "none", undefined, { builderVolumeExists: true, freeAfterPruneGB: 15.4 });
+
+  assert.equal(stillShort.status, 1);
+  assert.equal(stillShort.checks.length, 2);
+  assert.deepEqual(stillShort.built, []);
+  assert.deepEqual(stillShort.prunes, ["buildx prune --builder bb-box --force --all"]);
+  assert.deepEqual(stillShort.defaultPrunes, []);
+  assert.equal(stillShort.stderr, "The Docker host has 15 GB of disk free, and building the desktop image needs about 18 GB. Free some, for example with docker builder prune, then build again.\n");
+});
+
+test("build.sh builds with its own docker-container builder, labels each image and caps only its own build cache", () => {
   const record = '{"contract":1,"kind":"linux","build":"build.x"}';
   const built = buildWith(BUILD_FREE_GB, ["linux", "desktop"], undefined, "none", record);
+
   assert.equal(built.status, 0, built.stderr);
+  assert.deepEqual(built.builderCreates, ["buildx create --name bb-box --driver docker-container --bootstrap"]);
+  assert.equal(built.buildxConfigs.length, 1);
+  assert.equal(existsSync(built.buildxConfigs[0]!), false);
   assert.deepEqual(built.built, ["linux", "desktop"]);
-  assert.deepEqual(built.reads, [
-    "create --platform linux/amd64 bbbox/linux:1",
-    "create --platform linux/amd64 bbbox/linux-desktop:1",
-  ]);
-  assert.deepEqual(built.attached, [], "an attached stream is empty, so the record is copied out");
+  assert.deepEqual(built.recordBuilds.map((call) => / --target ([\w-]+) /.exec(call)?.[1]), ["linux-record", "desktop-record"]);
+  assert.deepEqual(built.attached, []);
   assert.equal(built.labelled.length, 2);
-  for (const [i, target] of ["linux", "desktop"].entries()) {
-    // The same build, so all from the cache, with the label.
-    assert.equal(built.labelled[i], `${built.builds[i]!.replace(/ \S+$/, "")} --quiet --label bbbox.image-record=${record} ${built.builds[i]!.split(" ").at(-1)}`, target);
+  for (const call of built.labelled) {
+    assert.ok(call.includes("--builder bb-box"), call);
+    assert.ok(call.includes("--label bbbox.image=standard"), call);
+    assert.ok(call.includes(`--label bbbox.image-record=${record}`), call);
+    assert.ok(call.includes(" --load "), call);
   }
+  assert.deepEqual(built.prunes, [
+    "buildx prune --builder bb-box --force --all --max-used-space 10GB",
+    "buildx prune --builder bb-box --force --all --max-used-space 10GB",
+  ]);
+  assert.deepEqual(built.defaultPrunes, []);
+
+  const older = buildWith(BUILD_FREE_GB, ["linux"], undefined, "none", record, { oldBuildx: true, cacheCap: "8GB" });
+
+  assert.equal(older.status, 0, older.stderr);
+  assert.deepEqual(older.prunes, ["buildx prune --builder bb-box --force --all --keep-storage 8GB"]);
 
   const none = buildWith(BUILD_FREE_GB, ["linux", "desktop"], undefined, "none", "");
+
   assert.deepEqual(
     [none.status, none.stderr, none.built, none.labelled],
-    [1, "Error response from daemon: Could not find the file /usr/share/bb-box/image.json in container c0\n", ["linux"], []],
+    [1, 'ERROR: failed to solve: "/usr/share/bb-box/image.json": not found\n', [], []],
   );
 });
 
@@ -355,13 +491,13 @@ test("build.sh gives each build the digest of the files its image is built from,
   assert.deepEqual(hidden.sourcesDigests, [await prepareDigest(setup, "docker")]);
 });
 
-test("build.sh reports Docker's own error when it cannot create a container to read an image, or start one to read the disk", () => {
+test("build.sh reports Docker's own error when a build fails, and still builds when it cannot start the disk check container", () => {
   const record = '{"contract":1,"kind":"linux","build":"build.x"}';
-  const image = buildWith(BUILD_FREE_GB, ["linux"], undefined, "none", record, { imageError: "Error response from daemon: No such image: bbbox/linux:1" });
-  assert.equal(image.status, 1);
-  assert.equal(image.stderr, "Error response from daemon: No such image: bbbox/linux:1\n");
-  assert.deepEqual(image.built, ["linux"]);
-  assert.deepEqual(image.labelled, []);
+  const failed = buildWith(BUILD_FREE_GB, ["linux"], undefined, "none", record, { buildError: "ERROR: failed to solve: network timeout" });
+  assert.equal(failed.status, 1);
+  assert.equal(failed.stderr, "ERROR: failed to solve: network timeout\n");
+  assert.deepEqual(failed.built, []);
+  assert.deepEqual(failed.labelled, []);
 
   const start = buildWith(BUILD_FREE_GB, ["linux"], undefined, "none", record, { startError: "Error response from daemon: failed to start container" });
   assert.equal(start.status, 0, start.stderr);

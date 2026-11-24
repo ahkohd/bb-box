@@ -18,7 +18,7 @@
 //   one whose labels name this install and the box (018).
 
 import { DockerSnapshotEngine, type RestorableSnapshot } from "./snapshot-engine.ts";
-import { dockerOffer, FORK_HOLD_MISSING, isBoxContainerName, restoredName } from "./snapshots.ts";
+import { dockerOffer, FORK_HOLD_MISSING, isBoxContainerName, restoredName, SNAPSHOT_LABEL } from "./snapshots.ts";
 import { RestoreCopies, type CopyFence } from "./restore-copies.ts";
 import type { CopyHooks, ForkArming, GuestIdentity, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
 import type { CheckId } from "../../core/checks.ts";
@@ -1219,6 +1219,7 @@ export class DockerBackend implements Backend {
 
   async maintain(signal?: AbortSignal): Promise<void> {
     await this.#snapshots.maintain().catch((error) => this.#context.logError("maintaining Docker snapshots", error));
+    await this.#pruneDanglingImages(signal).catch((error) => this.#context.logError("pruning old Docker images", error));
     await this.#underPlacement(async () => {
       const state = await this.#state(signal);
       await this.#dropDaemonRecords(GPU_PARTS, state, signal);
@@ -1238,6 +1239,30 @@ export class DockerBackend implements Backend {
         .catch((error) => this.#context.logError("removing copies of snapshots' Docker data", error));
       await this.#removeOrphanVolumes(state, signal);
     }, signal);
+  }
+
+  async #pruneDanglingImages(signal?: AbortSignal): Promise<void> {
+    await this.#cli.ok(
+      [
+        "image", "prune", "--force",
+        "--filter", "dangling=true",
+        "--filter", `label=${LABELS.install}=${this.#context.installId}`,
+        "--filter", `label=${LABELS.image}`,
+        "--filter", `label!=${SNAPSHOT_LABEL}`,
+      ],
+      { timeoutMs: 120_000, signal },
+    );
+
+    await this.#cli.ok(
+      [
+        "image", "prune", "--force",
+        "--filter", "dangling=true",
+        "--filter", `label=${LABELS.imageVersion}`,
+        "--filter", `label!=${LABELS.install}`,
+        "--filter", `label!=${SNAPSHOT_LABEL}`,
+      ],
+      { timeoutMs: 120_000, signal },
+    );
   }
 
   #probeImage(): string | null {

@@ -310,7 +310,7 @@ test("acquires a box as a container labelled from its first write, claimed befor
   assert.deepEqual(Object.keys(seen.timings), ["place", "network", "create", "start", "ready"]);
 
   const container = fake.inspect(name);
-  const imageLabels = new Set(["bbbox.image-version", "bbbox.fork-hold", "bbbox.image-record"]);
+  const imageLabels = new Set(["bbbox.image", "bbbox.image-version", "bbbox.fork-hold", "bbbox.image-record"]);
   const setByBbBox = Object.fromEntries(Object.entries(container.Config.Labels).filter(([key]) => !imageLabels.has(key)));
   assert.deepEqual(setByBbBox, {
     "bbbox.backend": "docker",
@@ -1871,4 +1871,75 @@ test("Docker snapshot maintenance failures leave orphan cleanup running", async 
 
   assert.equal(volumeNames(fake.binary).includes("snapshot-maintenance-orphan"), false);
   assert.match(context.errors.join("\n"), /maintaining Docker snapshots.*prune/);
+});
+
+test("replace removes the old standard image when unused, and leaves it dangling until its container goes and maintain runs", async () => {
+  const fake = fakeDockerHost();
+  const newerRecord = JSON.stringify({ contract: 1, image: "standard", kind: "linux", arch: "x86_64", build: "build.20261124-010000-aaaa", built: new Date().toISOString(), os: "Ubuntu 24.04.5 LTS", tools: { node: "24.21.0" } });
+  const newestRecord = JSON.stringify({ contract: 1, image: "standard", kind: "linux", arch: "x86_64", build: "build.20261124-020000-bbbb", built: new Date().toISOString(), os: "Ubuntu 24.04.5 LTS", tools: { node: "24.21.0" } });
+  const records = [newerRecord, newestRecord];
+  const backend = new DockerBackend(dockerConfig(), testContext(), {
+    binary: fake.binary,
+    readyTimeoutMs: 2_000,
+    script: async (_script, args) => {
+      const tag = args[args.indexOf("--tag") + 1]!;
+      const images = JSON.parse(readFileSync(join(fake.root, "images.json"), "utf8"));
+      writeFileSync(join(fake.root, "images.json"), JSON.stringify({ ...images, [tag]: { "bbbox.image": "standard", "bbbox.image-version": "1", "bbbox.fork-hold": "1", "bbbox.image-record": records.shift()! } }));
+      return 0;
+    },
+  });
+  const danglingIds = () => execFileSync(fake.binary, ["image", "ls", "--filter", "dangling=true"], { encoding: "utf8" }).split("\n").map((line) => line.trim()).filter(Boolean);
+
+  const firstLinux = (await backend.images.list(signal())).builds.find((build) => build.ref === "bbbox/linux:1")!;
+  const firstBuilt = await backend.images.build!(firstLinux, "/plugin/setup", { bbUrl: null, log: () => {}, signal: signal() });
+  await backend.images.replace(firstBuilt, firstLinux, signal());
+
+  assert.deepEqual(danglingIds(), []);
+
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const secondLinux = (await backend.images.list(signal())).builds.find((build) => build.ref === "bbbox/linux:1")!;
+  const oldId = execFileSync(fake.binary, ["image", "inspect", "--format", "{{.Id}}", "bbbox/linux:1"], { encoding: "utf8" }).trim();
+  const secondBuilt = await backend.images.build!(secondLinux, "/plugin/setup", { bbUrl: null, log: () => {}, signal: signal() });
+  await backend.images.replace(secondBuilt, secondLinux, signal());
+
+  assert.deepEqual(danglingIds(), [oldId]);
+
+  await backend.maintain(signal());
+
+  assert.deepEqual(danglingIds(), [oldId]);
+
+  await backend.release(guest, releasing, signal());
+  await backend.maintain(signal());
+
+  assert.deepEqual(danglingIds(), []);
+});
+
+test("maintenance removes only this install's unused dangling BB Box images and leaves other installs', snapshots' and unrelated images alone", async () => {
+  const { fake, backend } = setup();
+  const danglingPath = join(fake.root, "dangling-images.json");
+  writeFileSync(
+    danglingPath,
+    JSON.stringify({
+      "sha256:std-old": { "bbbox.image-version": "1" },
+      "sha256:own-project": { "bbbox.install": "test", "bbbox.image": "rust-tools", "bbbox.kind": "linux", "bbbox.image-version": "1" },
+      "sha256:other-project": { "bbbox.install": "other", "bbbox.image": "rust-tools", "bbbox.kind": "linux", "bbbox.image-version": "1" },
+      "sha256:other-snapshot": { "bbbox.install": "", "bbbox.image": "standard", "bbbox.image-version": "1", "bbbox.snapshot": "sn1", "bbbox.snapshot.install": "other" },
+      "sha256:unrelated": { "org.example.app": "web" },
+    }),
+  );
+
+  await backend.maintain(signal());
+
+  const remaining = Object.keys(JSON.parse(readFileSync(danglingPath, "utf8")) as Record<string, unknown>).sort();
+  assert.deepEqual(remaining, ["sha256:other-project", "sha256:other-snapshot", "sha256:unrelated"]);
+});
+
+test("dangling image prune failures log an error and leave orphan cleanup running", async () => {
+  const { backend, fake, context } = setup({}, { failImagePrune: true });
+  execFileSync(fake.binary, ["volume", "create", "--label", "bbbox.install=test", "--label", "bbbox.volume-of=bbbox-gone", "image-prune-failure-orphan"]);
+
+  await backend.maintain(signal());
+
+  assert.equal(volumeNames(fake.binary).includes("image-prune-failure-orphan"), false);
+  assert.match(context.errors.join("\n"), /pruning old Docker images.*prune/);
 });
