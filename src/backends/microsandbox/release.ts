@@ -62,6 +62,10 @@ export function canonicalRepositoryOf(ref: string): string {
   const firstSlash = repo.indexOf("/");
   if (firstSlash === -1) return `docker.io/library/${repo}`;
   const head = repo.slice(0, firstSlash);
+  if (head === "docker.io" || head === "index.docker.io") {
+    const tail = repo.slice(firstSlash + 1);
+    return tail.includes("/") ? `docker.io/${tail}` : `docker.io/library/${tail}`;
+  }
   if (head === "localhost" || head.includes(".") || head.includes(":")) return repo;
   return `docker.io/${repo}`;
 }
@@ -88,6 +92,7 @@ export function isLegacyRefreshOf(ref: string, configured: string): boolean {
 }
 
 export function isRestoreDigestOf(ref: string, configured: string): boolean {
+  if (ref === configured) return false;
   const canonical = canonicalRepositoryOf(configured);
   if (ref.startsWith(`${canonical}@`)) return RESTORE_DIGEST.test(ref.slice(canonical.length));
   const raw = repositoryOf(configured);

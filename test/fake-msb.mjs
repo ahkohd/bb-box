@@ -493,14 +493,16 @@ switch (command) {
     console.log("INFO microsandbox_runtime::runner::relay: agent relay: client disconnected slot=0 error=agent relay: unexpected EOF");
     break;
   case "image": {
+    if (host.failImage) fail(host.failImage);
     const images = read("images.json", {});
     if (rest[0] === "list" || rest[0] === "ls") {
       const refs = Object.keys(images);
       const baseNow = Date.now();
+      const emptyDigests = new Set(host.emptyDigestRefs ?? []);
       const list = refs.map((reference, index) => ({
         architecture: "amd64",
         created_at: host.imageCreatedAt?.[reference] ?? new Date(baseNow - (refs.length - index) * 1000).toISOString(),
-        digest: digestOf(reference, images),
+        digest: emptyDigests.has(reference) ? "" : digestOf(reference, images),
         layer_count: 2,
         os: "linux",
         reference,
@@ -512,6 +514,12 @@ switch (command) {
     if (rest[0] === "remove" || rest[0] === "rm") {
       const { values, rest: refs } = flags(rest.slice(1), []);
       const target = refs[0];
+      if (host.holdImageRemove) {
+        writeFileSync(join(root, "image-remove-entered"), target ?? "");
+        while (!existsSync(join(root, "release-image-remove"))) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
       if (!target || !(target in images)) fail(`image not found: ${target ?? ""}`);
       if (!values["--force"]) {
         const targetDigest = digestOf(target, images);

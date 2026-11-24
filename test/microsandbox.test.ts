@@ -824,6 +824,13 @@ test("doctor image cache check handles absent sqlite3, pre-change untagged manif
   assert.equal(staleUnheld.status, "warn");
   assert.match(staleUnheld.fix ?? "", /Upkeep could not remove an earlier build/);
 
+  fake.facts({ sqlite3: "0" });
+  const staleAndNoSqlite = (await backend.doctor(signal())).checks.find((check) => check.id === "microsandbox.images")!;
+  assert.equal(staleAndNoSqlite.status, "warn");
+  assert.match(staleAndNoSqlite.fix ?? "", /Upkeep could not remove an earlier build/);
+  assert.match(staleAndNoSqlite.fix ?? "", /Install sqlite3/);
+  fake.facts({ sqlite3: "1" });
+
   const validId = "mwulbvjg3755a5";
   const digest = "a".repeat(64);
   assert.equal(buildImageRef("bbbox/linux:1-arm64", validId), `bbbox/linux:1-arm64-b${validId}`);
@@ -838,9 +845,16 @@ test("doctor image cache check handles absent sqlite3, pre-change untagged manif
   assert.equal(isBuildOf("org/linux:1-beta", "org/linux:1"), false);
   assert.equal(canonicalRepositoryOf("bbbox/linux:1"), "docker.io/bbbox/linux");
   assert.equal(canonicalRepositoryOf("linux:1"), "docker.io/library/linux");
+  assert.equal(canonicalRepositoryOf("docker.io/probe:1"), "docker.io/library/probe");
+  assert.equal(canonicalRepositoryOf("index.docker.io/probe:1"), "docker.io/library/probe");
+  assert.equal(canonicalRepositoryOf("index.docker.io/bbbox/linux:1"), "docker.io/bbbox/linux");
   assert.equal(canonicalRepositoryOf("localhost:5000/bbbox/linux:1"), "localhost:5000/bbbox/linux");
   assert.equal(canonicalRepositoryOf(`ghcr.io/org/linux@sha256:${digest}`), "ghcr.io/org/linux");
   assert.equal(isRestoreDigestOf(`docker.io/bbbox/linux@sha256:${digest}`, "bbbox/linux:1"), true);
+  assert.equal(isRestoreDigestOf(`docker.io/library/probe@sha256:${digest}`, "docker.io/probe:1"), true);
+  assert.equal(isRestoreDigestOf(`docker.io/library/probe@sha256:${digest}`, "index.docker.io/probe:1"), true);
+  assert.equal(isRestoreDigestOf(`org/linux@sha256:${digest}`, `org/linux@sha256:${digest}`), false);
+  assert.equal(isRestoreDigestOf(`docker.io/bbbox/linux@sha256:${digest}`, `docker.io/bbbox/linux@sha256:${digest}`), false);
   assert.equal(isRestoreDigestOf(`docker.io/bbbox/other@sha256:${digest}`, "bbbox/linux:1"), false);
   assert.equal(scriptArgsOk("retag", ["bbbox/linux:refresh-1", "bbbox/linux:1"]), false);
   assert.equal(scriptArgsOk("import", ["bbbox/linux:1"]), false);
@@ -1072,4 +1086,196 @@ test("removeImage refuses configured images, active builds even without a stored
   writeFileSync(join(singleFake.root, "images.json"), JSON.stringify({ ...singleFake.images(), [oldRef]: imageLabels("linux", "build.next") }));
   await singleStorage.set("current/bbbox/linux:1", oldRef);
   await assert.rejects(singleBackend.images.remove(activeRef, signal()), /in use by sandbox/);
+});
+
+test("prune runs msb image remove outside the image lock so acquires do not stall or lose their ready deadline, and resolveImage skips builds being removed", async () => {
+  const fake = fakeMsbHost({ imported: false });
+  const storage = new MemoryStorage();
+  const backend = new MsbBackend(msbConfig(), testContext(storage, "test"), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
+
+  const guest1 = await backend.acquire(identity(), null, hooks().hooks, signal());
+  const build1 = fake.inspect(guest1.ref).config.image.Oci.reference;
+  fake.docker.set("bbbox/linux:1", { id: "sha256:linux2", labels: imageLabels("linux", "build.two") });
+  await backend.maintain(signal());
+  const build2 = (await storage.get<string>("current/bbbox/linux:1"))!;
+  assert.notEqual(build2, build1);
+  await backend.release(guest1, releasing);
+
+  fake.set({ holdImageRemove: true });
+  const pruning = backend.maintain(signal());
+  const entered = join(fake.root, "image-remove-entered");
+  for (let i = 0; i < 200 && !existsSync(entered); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.ok(existsSync(entered));
+
+  const guest2 = await backend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(fake.inspect(guest2.ref).config.image.Oci.reference, build2);
+  await backend.release(guest2, releasing);
+
+  const remaining = { ...fake.images() };
+  delete remaining[build2];
+  writeFileSync(join(fake.root, "images.json"), JSON.stringify(remaining));
+  await backend.doctor(signal());
+  assert.equal(await storage.get("current/bbbox/linux:1"), undefined);
+
+  writeFileSync(join(fake.root, "release-image-remove"), "");
+  fake.set({ holdImageRemove: false });
+  await pruning;
+  assert.ok(!fake.images()[build1]);
+
+  const slowFake = fakeMsbHost({ imported: false });
+  const slowStorage = new MemoryStorage();
+  const slowBackend = new MsbBackend(msbConfig(), testContext(slowStorage, "test"), {
+    dir: slowFake.dir,
+    readyTimeoutMs: 2_000,
+    script: async (name, args) => {
+      if (name === "import") await new Promise((resolve) => setTimeout(resolve, 1_300));
+      return slowFake.script(name, args);
+    },
+  });
+  await slowBackend.acquire(identity(), null, hooks().hooks, signal());
+  const readyExec = slowFake.calls().find((call) => call[0] === "exec" && call.some((arg) => arg.includes("/run/bb-box/ready")));
+  assert.ok(readyExec);
+  const readyScript = readyExec.at(-1) ?? "";
+  assert.match(readyScript, /"-le" 20|-le 20/);
+});
+
+test("candidate holds do not leak on failed removeImage or replaceImage, and removeImage refuses held builds", async () => {
+  const fake = fakeMsbHost();
+  fake.facts({ os: "Darwin", arch: "arm64", docker: "" });
+  fake.docker.clear();
+  const baseStorage = new MemoryStorage();
+  let failImportedWrite = false;
+  const hookedStorage = {
+    get: <T>(key: string) => baseStorage.get<T>(key),
+    set: async <T>(key: string, value: T) => {
+      if (failImportedWrite && key === "imported/bbbox/linux:1-arm64") {
+        failImportedWrite = false;
+        throw new Error("storage full");
+      }
+      return baseStorage.set(key, value);
+    },
+    delete: (key: string) => baseStorage.delete(key),
+    list: (prefix?: string) => baseStorage.list(prefix),
+  };
+  const backend = new MsbBackend(msbConfig(), testContext(hookedStorage, "test"), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
+  const images = backend.images!;
+  const current = (await images.list(signal())).builds.find((build) => build.kind === "linux-arm64")!;
+  const setupCopy = (await import("./helpers.ts")).tempDir("candidate-leaks");
+
+  const leakedCandidate = await images.build!(current, setupCopy, { bbUrl: null, log: () => {}, signal: signal() });
+  fake.set({ failImage: "connection lost" });
+  await assert.rejects(images.remove(leakedCandidate.ref, signal()), /connection lost/);
+  fake.set({ failImage: null });
+
+  const docBeforeMaintain = (await backend.doctor(signal())).checks.find((check) => check.id === "microsandbox.images")!;
+  assert.ok(docBeforeMaintain.detail.includes(leakedCandidate.ref));
+  await backend.maintain(signal());
+  assert.ok(!fake.images()[leakedCandidate.ref]);
+
+  const candidate1 = await images.build!(current, setupCopy, { bbUrl: null, log: () => {}, signal: signal() });
+  failImportedWrite = true;
+  await assert.rejects(images.replace(candidate1, current, signal()), /storage full/);
+  assert.equal(await baseStorage.get("current/bbbox/linux:1-arm64"), candidate1.ref);
+  await assert.rejects(images.remove(candidate1.ref, signal()), /is not a refresh's build/);
+
+  const candidate2 = await images.build!(current, setupCopy, { bbUrl: null, log: () => {}, signal: signal() });
+  await images.replace(candidate2, current, signal());
+  assert.ok(!fake.images()[candidate1.ref]);
+  assert.ok(fake.images()[candidate2.ref]);
+
+  const candidate3 = await images.build!(current, setupCopy, { bbUrl: null, log: () => {}, signal: signal() });
+  fake.set({ holdCreate: true });
+  let sawImage!: () => void;
+  const imageHeld = new Promise<void>((resolve) => {
+    sawImage = resolve;
+  });
+  const acquirePromise = backend.acquire(
+    identity("linux-arm64"),
+    null,
+    { claim: async () => {}, starting: async () => {}, timing: (step) => { if (step === "image") sawImage(); } },
+    signal(),
+  );
+  await imageHeld;
+
+  await images.replace(candidate3, current, signal());
+  await assert.rejects(images.remove(candidate2.ref, signal()), /in use right now/);
+  assert.ok(fake.images()[candidate2.ref]);
+
+  writeFileSync(join(fake.root, "release-create"), "");
+  fake.set({ holdCreate: false });
+  const box = await acquirePromise;
+  assert.equal(fake.inspect(box.ref).config.image.Oci.reference, candidate2.ref);
+  await backend.release(box, releasing);
+  await backend.maintain(signal());
+  assert.ok(!fake.images()[candidate2.ref]);
+});
+
+test("doctor serializes resolveImage with import so a concurrent import pointer is never overwritten back to bare", async () => {
+  const fake = fakeMsbHost();
+  const baseStorage = new MemoryStorage();
+  let triggerImportOnBareAdopt = true;
+  let maintainPromise: Promise<void> | null = null;
+  let pointerSetDuringPause!: () => void;
+  const sawPointerSet = new Promise<void>((resolve) => {
+    pointerSetDuringPause = resolve;
+  });
+  const hookedStorage = {
+    get: <T>(key: string) => baseStorage.get<T>(key),
+    set: async <T>(key: string, value: T) => {
+      if (key === "current/bbbox/linux:1" && value === "bbbox/linux:1" && triggerImportOnBareAdopt) {
+        triggerImportOnBareAdopt = false;
+        fake.docker.set("bbbox/linux:1", { id: "sha256:linux2", labels: imageLabels("linux", "build.two") });
+        maintainPromise = backend.maintain(signal());
+        await Promise.race([sawPointerSet, new Promise<void>((resolve) => setTimeout(resolve, 1_500))]);
+      }
+      await baseStorage.set(key, value);
+      if (key === "current/bbbox/linux:1" && typeof value === "string" && isBuildOf(value, "bbbox/linux:1")) {
+        pointerSetDuringPause();
+      }
+    },
+    delete: (key: string) => baseStorage.delete(key),
+    list: (prefix?: string) => baseStorage.list(prefix),
+  };
+  const backend = new MsbBackend(msbConfig(), testContext(hookedStorage, "test"), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
+
+  await backend.doctor(signal());
+  assert.ok(maintainPromise);
+  await maintainPromise;
+  await backend.maintain(signal());
+
+  const currentRef = await baseStorage.get<string>("current/bbbox/linux:1");
+  assert.ok(currentRef && isBuildOf(currentRef, "bbbox/linux:1"), `expected new build ref, got ${String(currentRef)}`);
+  assert.ok(fake.images()[currentRef]);
+  assert.ok(!fake.images()["bbbox/linux:1"]);
+});
+
+test("two-segment docker.io restore references are pruned and restore references with unknown digest are protected", async () => {
+  const fake = fakeMsbHost({ imported: false });
+  fake.docker.set("docker.io/probe:1", { id: "sha256:probe1", labels: imageLabels("linux", "build.one") });
+  const storage = new MemoryStorage();
+  const backend = new MsbBackend(msbConfig({ "linux-image": "docker.io/probe:1" }), testContext(storage, "test"), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
+
+  const box1 = identity();
+  const guest1 = await backend.acquire(box1, null, hooks().hooks, signal());
+  const build1 = fake.inspect(guest1.ref).config.image.Oci.reference;
+  const snapId = "sncccccccccccc";
+  const taken = await backend.snapshot(guest1, { id: snapId, box: box1.boxId, memory: false, forkSafe: 7 }, QUIET_SNAPSHOT, signal());
+  const forked = await backend.forkSnapshot({ id: snapId, ref: taken.ref, guest: guest1 }, identity(), null, hooks().hooks, signal());
+  const restoreRef = Object.keys(fake.images()).find((ref) => ref.startsWith("docker.io/library/probe@sha256:"));
+  assert.ok(restoreRef);
+
+  fake.docker.set("docker.io/probe:1", { id: "sha256:probe2", labels: imageLabels("linux", "build.two") });
+  await backend.maintain(signal());
+  await backend.release(guest1, releasing);
+  await backend.release(forked, releasing);
+  await backend.deleteSnapshot({ id: snapId, ref: taken.ref, guest: guest1 }, QUIET_SNAPSHOT, signal());
+
+  fake.set({ emptyDigestRefs: [restoreRef] });
+  await backend.maintain(signal());
+  assert.ok(!fake.images()[build1]);
+  assert.ok(fake.images()[restoreRef]);
+
+  fake.set({ emptyDigestRefs: [] });
+  await backend.maintain(signal());
+  assert.ok(!fake.images()[restoreRef]);
 });
