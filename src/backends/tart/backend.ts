@@ -3874,24 +3874,6 @@ export class TartBackend implements Backend {
       await this.#run(target.host, qemuReplaceScript(image, dir), { timeoutMs: 10 * 60_000, signal });
       return { ...build, ref: current.ref, image: "standard", current: true };
     }
-    if (!current.current && !build.current && current.image !== "standard" && build.image === current.image && build.kind === current.kind && build.ref !== current.ref && target.host === source.host) {
-      const state = await this.#state(target.host, signal);
-      const isOwnedBuild = (vm: string) => {
-        const fields = state.owners.get(vm);
-        const configured = TART_KINDS.some((kind) => this.#config.kinds[kind].image === vm) || this.#config.iosImage === vm;
-        return !configured && fields?.install === this.#context.installId && fields["image-build"] === current.image && fields.kind === current.kind;
-      };
-      if (!isOwnedBuild(source.vm)) {
-        throw new Error(`${source.vm} on ${source.host.name} is not a build of ${current.image} for ${current.kind} of this install's.`);
-      }
-      if (state.vms.some((vm) => vm.name === target.vm)) {
-        if (!isOwnedBuild(target.vm)) {
-          throw new Error(`${target.vm} on ${target.host.name} is not a build of ${current.image} for ${current.kind} of this install's.`);
-        }
-        await this.#removeImage(current.ref, signal);
-      }
-      return { ...build, current: false };
-    }
     if (!current.current || build.current || target.host !== source.host) throw new Error(`${current.ref} is not a configured image, or ${build.ref} is not a build on its Mac.`);
     await this.#run(target.host, replaceScript(source.vm, target.vm, this.#context.installId), { timeoutMs: 10 * 60_000, signal });
     // The base's copies no tag names, as a pull before the build left them (#475).

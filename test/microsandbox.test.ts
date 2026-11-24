@@ -11,17 +11,7 @@ import { BUILDER_IMAGE, MsbBackend, OWN_HOSTNAME, RUN_IN_MEMORY, msbKinds, parse
 import { MsbCli } from "../src/backends/microsandbox/cli.ts";
 import { parseMsbPart } from "../src/backends/microsandbox/config.ts";
 import { microsandboxDriver } from "../src/backends/microsandbox/index.ts";
-import {
-  buildImageRef,
-  canonicalRepositoryOf,
-  isBuildOf,
-  isRestoreDigestOf,
-  msbScript,
-  parseImageCache,
-  parseProjectImageBuild,
-  projectImageBase,
-  scriptArgsOk,
-} from "../src/backends/microsandbox/release.ts";
+import { buildImageRef, canonicalRepositoryOf, isBuildOf, isRestoreDigestOf, msbScript, parseImageCache, scriptArgsOk } from "../src/backends/microsandbox/release.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type MachineSize, type FieldValue, type Guest, type MachineAccess, type ReleaseHooks, type SnapshotHooks } from "../src/backends/types.ts";
 import { dockerConfig } from "./fake-docker.ts";
 import { fakeMsbHost, imageLabels, msbConfig } from "./fake-msb.ts";
@@ -1288,49 +1278,4 @@ test("two-segment docker.io restore references are pruned and restore references
   fake.set({ emptyDigestRefs: [] });
   await backend.maintain(signal());
   assert.ok(!fake.images()[restoreRef]);
-});
-
-test("project images build, replace and prune old builds without touching standard, holding builds used by a box until release and maintain", async () => {
-  assert.equal(projectImageBase("conformance", "linux"), "bbbox-image/conformance:linux");
-  assert.equal(projectImageBase("standard", "linux"), null);
-  assert.deepEqual(
-    parseProjectImageBuild("bbbox-image/conformance:linux-bmwulbvjg3755a5", ["linux", "linux-desktop-cpu"]),
-    { image: "conformance", kind: "linux", base: "bbbox-image/conformance:linux" },
-  );
-  assert.equal(parseProjectImageBuild("bbbox/linux:1-bmwulbvjg3755a5", ["linux"]), null);
-
-  const { fake, backend } = setup();
-  const images = backend.images;
-  const setupCopy = (await import("./helpers.ts")).tempDir("msb-project-replace");
-  const target = { ref: "", image: "conformance", kind: "linux", build: null, record: null, current: false };
-
-  const first = await images.build!(target, setupCopy, { bbUrl: null, log: () => {}, signal: signal() });
-  const second = await images.build!(target, setupCopy, { bbUrl: null, log: () => {}, signal: signal() });
-  assert.equal((await images.list(signal())).builds.some((build) => build.ref === first.ref && build.image === "conformance"), true);
-  assert.equal((await images.list(signal())).builds.some((build) => build.ref === second.ref && build.image === "conformance"), true);
-
-  const replacedFirst = await images.replace(second, first, signal());
-  assert.deepEqual([replacedFirst.ref, replacedFirst.image, replacedFirst.current], [second.ref, "conformance", false]);
-  assert.equal((await images.list(signal())).builds.some((build) => build.ref === first.ref), false);
-  await assert.rejects(images.box(first, "gone", signal()));
-
-  const holder = await images.box(second, "holder", signal());
-  const third = await images.build!(target, setupCopy, { bbUrl: null, log: () => {}, signal: signal() });
-  await images.replace(third, second, signal());
-
-  assert.equal((await images.list(signal())).builds.some((build) => build.ref === second.ref), true);
-  await backend.maintain(signal());
-  assert.equal((await images.list(signal())).builds.some((build) => build.ref === second.ref), true);
-
-  await images.remove(holder.ref, signal());
-  await backend.maintain(signal());
-
-  assert.equal((await images.list(signal())).builds.some((build) => build.ref === second.ref), false);
-  await assert.rejects(images.box(second, "gone after release", signal()));
-  const standardRef = Object.keys(fake.images()).find((ref) => ref === "bbbox/linux:1" || isBuildOf(ref, "bbbox/linux:1"));
-  assert.ok(standardRef, "the standard image stays");
-  assert.equal(JSON.parse(fake.images()[standardRef]!["bbbox.image-record"]!).build, "build.fake");
-
-  await images.remove(third.ref, signal());
-  assert.deepEqual((await images.list(signal())).builds, []);
 });

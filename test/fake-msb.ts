@@ -8,8 +8,8 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ScriptResult } from "../src/backends/microsandbox/cli.ts";
-import { MSB_KINDS, parseMsbPart, type MsbConfig } from "../src/backends/microsandbox/config.ts";
-import { isBuildOf, parseProjectImageBuild, type MsbScript } from "../src/backends/microsandbox/release.ts";
+import { parseMsbPart, type MsbConfig } from "../src/backends/microsandbox/config.ts";
+import { isBuildOf, type MsbScript } from "../src/backends/microsandbox/release.ts";
 import type { FieldValue } from "../src/backends/types.ts";
 import { fakeGroup, tempDir } from "./helpers.ts";
 
@@ -133,20 +133,8 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
         return { exitCode: 0, stdout: disks.map((file) => `${file.replace(/\.ext4$/, "")}=${Math.round((Date.now() - statSync(join(dir, "disks", file)).mtimeMs) / 1000)}\n`).join(""), stderr: "" };
       }
       if (name === "transfer") {
-        const project = parseProjectImageBuild(args[1]!, MSB_KINDS);
-        if (project) {
-          const build = `build.${project.image}-${Date.now()}-${Object.keys(readImages()).length}`;
-          const labels = {
-            "bbbox.image-version": "1",
-            "bbbox.image": project.image,
-            "bbbox.kind": project.kind,
-            "bbbox.image-record": JSON.stringify({ contract: 1, image: project.image, kind: project.kind, arch: "x86_64", build, built: new Date().toISOString(), os: "Ubuntu 24.04.5 LTS", tools: {} }),
-          };
-          writeFileSync(imagesFile, JSON.stringify({ ...readImages(), [args[1]!]: labels }));
-        } else {
-          const kind = args[1]!.includes("desktop") ? "linux-arm64-desktop-cpu" : "linux-arm64";
-          writeFileSync(imagesFile, JSON.stringify({ ...readImages(), [args[1]!]: imageLabels(kind, "build.builder") }));
-        }
+        const kind = args[1]!.includes("desktop") ? "linux-arm64-desktop-cpu" : "linux-arm64";
+        writeFileSync(imagesFile, JSON.stringify({ ...readImages(), [args[1]!]: imageLabels(kind, "build.builder") }));
         notifyImage(args[1]!);
         return { exitCode: 0, stdout: `transferred=${args[1]}\n`, stderr: "" };
       }

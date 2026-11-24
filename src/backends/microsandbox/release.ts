@@ -45,33 +45,6 @@ export type MsbScript = "install" | "status" | "images" | "import" | "undisk" | 
 
 const BUILD_ID = /^[a-z0-9]{8,12}[0-9a-f]{6}$/;
 const RESTORE_DIGEST = /^@sha256:[0-9a-f]{64}$/;
-export const PROJECT_IMAGE_PREFIX = "bbbox-image/";
-const PROJECT_IMAGE_NAME = /^[a-z0-9][a-z0-9-]*$/;
-
-export function projectImageBase(image: string, kind: string): string | null {
-  if (!image || image === "standard" || !PROJECT_IMAGE_NAME.test(image)) return null;
-  const base = `${PROJECT_IMAGE_PREFIX}${image}:${kind}`;
-  return IMAGE_REF.test(base) ? base : null;
-}
-
-export function parseProjectImageBuild<K extends string>(
-  ref: string,
-  kinds: readonly K[],
-): { readonly image: string; readonly kind: K; readonly base: string } | null {
-  if (!ref.startsWith(PROJECT_IMAGE_PREFIX)) return null;
-  const rest = ref.slice(PROJECT_IMAGE_PREFIX.length);
-  const colon = rest.indexOf(":");
-  if (colon <= 0) return null;
-  const image = rest.slice(0, colon);
-  if (image === "standard" || !PROJECT_IMAGE_NAME.test(image)) return null;
-
-  for (const kind of kinds) {
-    const base = projectImageBase(image, kind);
-    if (base && isBuildOf(ref, base)) return { image, kind, base };
-  }
-
-  return null;
-}
 
 function withoutDigest(ref: string): string {
   return ref.replace(/@.*$/, "");

@@ -66,6 +66,7 @@ import type { ByteChannel, CommandTransport, DisplaySize, RunResult } from "../.
 import { MemoryStorage } from "../helpers.ts";
 import { FileStorage } from "./file-storage.ts";
 import { interruptStep, type ElsewhereBackend, type StepSeen } from "./interrupt.ts";
+import type { ReplacedImageProbe } from "./replaced-image-probe.ts";
 import type { RestoreCopyProbe } from "./restore-copy-probe.ts";
 
 export type ConformanceCheck =
@@ -159,6 +160,8 @@ export interface ConformanceOptions {
   readonly testDevice?: boolean;
   readonly elsewhere?: ElsewhereBackend;
   readonly restoreCopy?: RestoreCopyProbe;
+  readonly disposable?: boolean;
+  readonly replacedImage?: ReplacedImageProbe;
 }
 
 const THREAD = "thr_conformance";
@@ -1471,7 +1474,6 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
         const leftBoxes: string[] = [];
         const leftBuilds: string[] = [];
         const leftDirs: string[] = [];
-        let captureUnsupported = false;
 
         const untrack = (list: string[], ref: string) => {
           const at = list.indexOf(ref);
@@ -1489,7 +1491,22 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
 
         const readMarkerCommand = (os: string | undefined, dir: string) => (os === "windows" ? `Get-Content '${dir}\\conformance'` : `cat ${dir}/conformance`);
 
-        const writeBuildSetup = (kind: string, marker: string, record: Record<string, unknown>): string => {
+        const writeMarkerScript = (os: string | undefined, dir: string, marker: string, record: Record<string, unknown>) =>
+          os === "windows"
+            ? [
+                "$ErrorActionPreference = 'Stop'",
+                `New-Item -ItemType Directory -Force '${dir}' | Out-Null`,
+                `Set-Content '${dir}\\conformance' '${marker}'`,
+                `Set-Content '${dir}\\image.json' '${JSON.stringify(record)}'`,
+              ].join("\n")
+            : [
+                "set -e",
+                `sudo -n mkdir -p ${dir}`,
+                `printf '%s\\n' '${marker}' | sudo -n tee ${dir}/conformance >/dev/null`,
+                `printf '%s\\n' '${JSON.stringify(record)}' | sudo -n tee ${dir}/image.json >/dev/null`,
+              ].join("\n");
+
+        const writeBuildSetup = (marker: string, record: Record<string, unknown>): string => {
           const rootDir = mkdtempSync(join(tmpdir(), "bb-box-conformance-image-"));
           leftDirs.push(rootDir);
           const dockerDir = join(rootDir, "setup", "docker");
@@ -1524,9 +1541,7 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
             "COPY conformance /usr/share/bb-box/conformance",
             "COPY image.json /usr/share/bb-box/image.json",
             "BBBOX_DOCKERFILE",
-            'docker build --quiet --label "bbbox.image-version=1" --label "bbbox.image=conformance" --label "bbbox.kind=' +
-              kind +
-              '" --label "bbbox.image-record=$(cat "$work/image.json")" --tag "$tag" "$work"',
+            'docker build --quiet --label "bbbox.image-version=1" --label "bbbox.image-record=$(cat "$work/image.json")" --tag "$tag" "$work"',
             "",
           ].join("\n");
           writeFileSync(scriptPath, script);
@@ -1534,75 +1549,42 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           return join(rootDir, "setup");
         };
 
-        const pickTarget = async () => {
+        const pickStandard = async () => {
           const images = backend.images!;
-          const listed = await images.list(signal());
-          const standard = listed.builds
-            .filter((build) => build.current && kinds.some((kind) => kind.id === build.kind))
-            .sort((a, b) => orderBySize(a.kind) - orderBySize(b.kind))[0] ?? null;
-          const kind = standard ? standard.kind : [...kinds].sort((a, b) => orderBySize(a.id) - orderBySize(b.id))[0]!.id;
-          const os = kinds.find((candidate) => candidate.id === kind)?.capabilities.os;
-          return { standard, kind, os, dir: dirForOs(os) };
+          const standard = (await images.list(signal()))
+            .builds.filter((build) => build.current && kinds.some((kind) => kind.id === build.kind))
+            .sort((a, b) => orderBySize(a.kind) - orderBySize(b.kind))[0];
+          assert.ok(standard, `the backend lists a standard build of ${kinds.map((kind) => kind.id).join(" or ")}`);
+          const os = kinds.find((kind) => kind.id === standard.kind)?.capabilities.os;
+          return { standard, os, dir: dirForOs(os) };
         };
 
-        const makeConformanceBuild = async (
-          target: { readonly standard: ImageBuild | null; readonly kind: string; readonly os: string | undefined; readonly dir: string },
+        const makeStandardBuild = async (
+          current: ImageBuild,
+          os: string | undefined,
+          dir: string,
           label: string,
-        ): Promise<{ readonly build: ImageBuild; readonly marker: string; readonly via: "capture" | "build" }> => {
+        ): Promise<ImageBuild> => {
           const images = backend.images!;
           const marker = `BB Box conformance ${randomBytes(4).toString("hex")}`;
           const buildId = `build.conformance-${Date.now()}-${randomBytes(2).toString("hex")}`;
-          const record = { contract: 1, image: "conformance", kind: target.kind, arch: "", build: buildId, built: new Date().toISOString(), os: "", tools: {} };
-
-          if (target.standard && !captureUnsupported) {
-            const box = await images.box(target.standard, label, signal());
-            leftBoxes.push(box.ref);
-            assert.equal((await backend.held(signal())).find((guest) => guest.ref === box.ref), undefined, "an image box is no box's guest");
-            assert.ok((await images.list(signal())).boxes.includes(box.ref), "an image box is listed until it goes");
-
-            const script =
-              target.os === "windows"
-                ? [
-                    "$ErrorActionPreference = 'Stop'",
-                    `New-Item -ItemType Directory -Force '${target.dir}' | Out-Null`,
-                    `Set-Content '${target.dir}\\conformance' '${marker}'`,
-                    `Set-Content '${target.dir}\\image.json' '${JSON.stringify(record)}'`,
-                  ].join("\n")
-                : [
-                    "set -e",
-                    `sudo -n mkdir -p ${target.dir}`,
-                    `printf '%s\\n' '${marker}' | sudo -n tee ${target.dir}/conformance >/dev/null`,
-                    `printf '%s\\n' '${JSON.stringify(record)}' | sudo -n tee ${target.dir}/image.json >/dev/null`,
-                  ].join("\n");
-            const ran = await box.command.run(script, { timeoutMs: timeout, signal: signal() });
-            assert.equal(ran.exitCode, 0, ran.stderr);
-
-            try {
-              const made = await images.capture(box, target.standard, "conformance", signal());
-              untrack(leftBoxes, box.ref);
-              leftBuilds.push(made.ref);
-              assert.deepEqual([made.image, made.kind, made.build, made.current, made.record?.build], ["conformance", target.kind, buildId, false, buildId]);
-              const listed = await images.list(signal());
-              assert.ok(listed.builds.some((other) => other.ref === made.ref && other.image === "conformance"), "the build is listed");
-              assert.ok(!listed.boxes.includes(box.ref), "the captured box is a build, not a box");
-              return { build: made, marker, via: "capture" };
-            } catch (error) {
-              await images.remove(box.ref, signal()).catch(() => undefined);
-              untrack(leftBoxes, box.ref);
-              if (!(error instanceof BackendError && error.code === "unsupported" && images.build)) throw error;
-              captureUnsupported = true;
-            }
+          const record = { contract: 1, image: "standard", kind: current.kind, arch: "", build: buildId, built: new Date().toISOString(), os: "", tools: {} };
+          if (images.build) {
+            const setup = writeBuildSetup(marker, record);
+            const made = await images.build(current, setup, { bbUrl: null, log: () => {}, signal: signal() });
+            leftBuilds.push(made.ref);
+            assert.deepEqual([made.image, made.kind, made.current], ["standard", current.kind, false]);
+            return made;
           }
-
-          assert.ok(images.build, `the backend lists no standard build of ${target.kind} and has no build operation`);
-          const stub: ImageBuild = { ref: "", image: "conformance", kind: target.kind, build: null, record: null, current: false };
-          const setup = writeBuildSetup(target.kind, marker, record);
-          const made = await images.build(stub, setup, { bbUrl: null, log: () => {}, signal: signal() });
+          const box = await images.box(current, label, signal());
+          leftBoxes.push(box.ref);
+          const ran = await box.command.run(writeMarkerScript(os, dir, marker, record), { timeoutMs: timeout, signal: signal() });
+          assert.equal(ran.exitCode, 0, ran.stderr);
+          const made = await images.capture(box, current, "standard", signal());
+          untrack(leftBoxes, box.ref);
           leftBuilds.push(made.ref);
-          assert.deepEqual([made.image, made.kind, made.build, made.current, made.record?.build], ["conformance", target.kind, buildId, false, buildId]);
-          const listed = await images.list(signal());
-          assert.ok(listed.builds.some((other) => other.ref === made.ref && other.image === "conformance"), "the build is listed");
-          return { build: made, marker, via: "build" };
+          assert.deepEqual([made.image, made.kind, made.current], ["standard", current.kind, false]);
+          return made;
         };
 
         after(async () => {
@@ -1623,20 +1605,41 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
 
         it("builds a small image: a box from a standard build, a script as root, a capture, and a trial box that has what the script made", { timeout: timeout * 6 }, async (t) => {
           const images = backend.images!;
-          const target = await pickTarget();
-          if (!target.standard && images.room) {
-            const noRoom = await images.room({ ref: "", image: "conformance", kind: target.kind, build: null, record: null, current: false }, signal());
-            if (noRoom) {
-              t.skip(noRoom);
+          const { standard, os, dir } = await pickStandard();
+          const box = await images.box(standard, "conformance image", signal());
+          leftBoxes.push(box.ref);
+          assert.equal((await backend.held(signal())).find((guest) => guest.ref === box.ref), undefined, "an image box is no box's guest");
+          assert.ok((await images.list(signal())).boxes.includes(box.ref), "an image box is listed until it goes");
+
+          const marker = `BB Box conformance ${randomBytes(4).toString("hex")}`;
+          const build = `build.conformance-${Date.now()}`;
+          const record = { contract: 1, image: "conformance", kind: standard.kind, arch: "", build, built: new Date().toISOString(), os: "", tools: {} };
+          const ran = await box.command.run(writeMarkerScript(os, dir, marker, record), { timeoutMs: timeout, signal: signal() });
+          assert.equal(ran.exitCode, 0, ran.stderr);
+
+          let made: ImageBuild;
+          try {
+            made = await images.capture(box, standard, "conformance", signal());
+            untrack(leftBoxes, box.ref);
+            leftBuilds.push(made.ref);
+          } catch (error) {
+            await images.remove(box.ref, signal()).catch(() => undefined);
+            untrack(leftBoxes, box.ref);
+            if (error instanceof BackendError && error.code === "unsupported") {
+              t.skip(error.message);
               return;
             }
+            throw error;
           }
 
-          const { build: made, marker } = await makeConformanceBuild(target, "conformance image");
+          assert.deepEqual([made.image, made.kind, made.build, made.current, made.record?.build], ["conformance", standard.kind, build, false, build]);
+          const listed = await images.list(signal());
+          assert.ok(listed.builds.some((other) => other.ref === made.ref && other.image === "conformance"), "the build is listed");
+          assert.ok(!listed.boxes.includes(box.ref), "the captured box is a build, not a box");
 
           const trial = await images.box(made, "conformance trial", signal());
           leftBoxes.push(trial.ref);
-          const read = await trial.command.run(readMarkerCommand(target.os, target.dir), { timeoutMs: timeout, signal: signal() });
+          const read = await trial.command.run(readMarkerCommand(os, dir), { timeoutMs: timeout, signal: signal() });
           assert.equal(read.stdout.trim(), marker, "a box from the build has what the script made");
 
           await images.remove(trial.ref, signal());
@@ -1647,92 +1650,68 @@ export async function conformance(options: ConformanceOptions): Promise<void> {
           const remaining = await images.list(signal());
           assert.ok(!remaining.builds.some((other) => other.image === "conformance"), "the build is gone");
           assert.deepEqual(remaining.boxes, [], "no image box is left");
-          if (target.standard) {
-            assert.ok(remaining.builds.some((other) => other.ref === target.standard!.ref && other.current), "the standard build stays");
-          }
+          assert.ok(remaining.builds.some((other) => other.ref === standard.ref && other.current), "the standard build stays");
         });
 
-        it("replaces a conformance image build: removes the old build when unused, and keeps it while a box uses it until release and maintain", { timeout: timeout * 10 }, async (t) => {
+        const replaceSkip = options.disposable ? false : "replaces the backend's standard image; pass disposable: true or --disposable on a disposable backend";
+        it("replaces the standard image: removes the old build when unused, and keeps it while a box uses it until release and maintain", { timeout: timeout * 10, skip: replaceSkip }, async (t) => {
           const images = backend.images!;
-          const target = await pickTarget();
-          if (!target.standard && images.room) {
-            const noRoom = await images.room({ ref: "", image: "conformance", kind: target.kind, build: null, record: null, current: false }, signal());
+          const { standard, os, dir } = await pickStandard();
+          if (images.room) {
+            const noRoom = await images.room(standard, signal());
             if (noRoom) {
               t.skip(noRoom);
               return;
             }
           }
 
-          const standardsBefore = (await images.list(signal())).builds
-            .filter((build) => build.current)
-            .map((build) => ({ ref: build.ref, build: build.build }));
+          const buildA = await makeStandardBuild(standard, os, dir, "conformance replace A");
+          const replacedA = await images.replace(buildA, standard, signal());
+          untrack(leftBuilds, buildA.ref);
+          assert.deepEqual([replacedA.ref, replacedA.image, replacedA.kind, replacedA.current], [standard.ref, "standard", standard.kind, true]);
 
-          const first = await makeConformanceBuild(target, "conformance replace A");
-          const second = await makeConformanceBuild(target, "conformance replace B");
+          const idA = (await options.replacedImage?.currentId(replacedA, buildA, signal())) ?? null;
+          if (idA) assert.equal(await options.replacedImage!.exists(idA, signal()), true, "build A exists before it is replaced");
 
-          const replacedFirst = await images.replace(second.build, first.build, signal());
-          assert.deepEqual([replacedFirst.image, replacedFirst.kind, replacedFirst.build, replacedFirst.current], ["conformance", target.kind, second.build.build, false]);
+          const buildB = await makeStandardBuild(replacedA, os, dir, "conformance replace B");
+          const replacedB = await images.replace(buildB, replacedA, signal());
+          untrack(leftBuilds, buildB.ref);
+          assert.deepEqual([replacedB.ref, replacedB.image, replacedB.kind, replacedB.current], [standard.ref, "standard", standard.kind, true]);
 
-          const afterFirstReplace = await images.list(signal());
-          assert.ok(!afterFirstReplace.builds.some((other) => other.ref === first.build.ref), "images.list no longer lists the replaced build A");
-          assert.ok(afterFirstReplace.builds.some((other) => other.ref === replacedFirst.ref && other.image === "conformance"), "images.list lists the replacement build B");
-          await assert.rejects(images.box(first.build, "conformance gone A", signal()), "images.box fails on the replaced build A");
-          untrack(leftBuilds, first.build.ref);
+          if (idA) assert.equal(await options.replacedImage!.exists(idA, signal()), false, "unused build A is removed when replaced");
+          const afterUnused = await images.list(signal());
+          assert.ok(!afterUnused.builds.some((other) => other.ref === buildA.ref), "images.list no longer lists build A");
+          assert.ok(afterUnused.builds.some((other) => other.ref === standard.ref && other.current && other.build === replacedB.build), "images.list lists build B as current");
+          await assert.rejects(images.box(buildA, "conformance gone A", signal()), "images.box fails on replaced build A");
 
-          let heldGuest: Guest | null = null;
-          let heldImageBox: { readonly ref: string; readonly command: CommandTransport } | null = null;
-          let heldCommand: CommandTransport;
-          if (images.startsFrom) {
-            heldGuest = await acquire({ ...identity(target.kind), from: replacedFirst.ref }, recordingHooks().hooks);
-            leftGuests.push(heldGuest);
-            heldCommand = (await backend.transports(heldGuest, target.kind)).command!;
-          } else {
-            heldImageBox = await images.box(replacedFirst, "conformance holder", signal());
-            leftBoxes.push(heldImageBox.ref);
-            heldCommand = heldImageBox.command;
-          }
+          const idB = (await options.replacedImage?.currentId(replacedB, buildB, signal())) ?? null;
+          if (idB) assert.equal(await options.replacedImage!.exists(idB, signal()), true, "build B exists before it is replaced");
 
-          const markerBeforeReplace = await heldCommand.run(readMarkerCommand(target.os, target.dir), { timeoutMs: timeout, signal: signal() });
-          assert.equal(markerBeforeReplace.stdout.trim(), second.marker, "the box from build B has build B's marker");
+          const heldGuest = await acquire(identity(standard.kind), recordingHooks().hooks);
+          leftGuests.push(heldGuest);
+          const heldCommand = (await backend.transports(heldGuest, standard.kind)).command!;
+          assert.equal((await heldCommand.run("true", { timeoutMs: timeout, signal: signal() })).exitCode, 0, "the box on build B answers before replace");
 
-          const third = await makeConformanceBuild(target, "conformance replace C");
-          const replacedSecond = await images.replace(third.build, replacedFirst, signal());
-          assert.deepEqual([replacedSecond.image, replacedSecond.kind, replacedSecond.build, replacedSecond.current], ["conformance", target.kind, third.build.build, false]);
+          const buildC = await makeStandardBuild(replacedB, os, dir, "conformance replace C");
+          const replacedC = await images.replace(buildC, replacedB, signal());
+          untrack(leftBuilds, buildC.ref);
+          assert.deepEqual([replacedC.ref, replacedC.image, replacedC.kind, replacedC.current], [standard.ref, "standard", standard.kind, true]);
 
-          assert.ok((await images.list(signal())).builds.some((other) => other.ref === replacedFirst.ref), "build B stays while a box uses it");
+          if (idB) assert.equal(await options.replacedImage!.exists(idB, signal()), true, "build B stays while a box uses it");
           await backend.maintain?.(signal());
-          assert.ok((await images.list(signal())).builds.some((other) => other.ref === replacedFirst.ref), "build B still stays across maintain while its box runs");
-          const markerAfterReplace = await heldCommand.run(readMarkerCommand(target.os, target.dir), { timeoutMs: timeout, signal: signal() });
-          assert.equal(markerAfterReplace.stdout.trim(), second.marker, "the running box from build B keeps answering after replace");
+          if (idB) assert.equal(await options.replacedImage!.exists(idB, signal()), true, "build B still stays across maintain while its box runs");
+          assert.equal((await heldCommand.run("true", { timeoutMs: timeout, signal: signal() })).exitCode, 0, "the box on build B keeps answering after replace");
 
-          if (heldGuest) {
-            await release(backend, heldGuest);
-            untrackGuest(heldGuest);
-            heldGuest = null;
-          } else if (heldImageBox) {
-            await images.remove(heldImageBox.ref, signal());
-            untrack(leftBoxes, heldImageBox.ref);
-            heldImageBox = null;
-          }
-
+          await release(backend, heldGuest);
+          untrackGuest(heldGuest);
           await backend.maintain?.(signal());
 
-          const afterReleaseAndMaintain = await images.list(signal());
-          assert.ok(!afterReleaseAndMaintain.builds.some((other) => other.ref === replacedFirst.ref), "images.list no longer lists build B after its box is released and maintain runs");
-          await assert.rejects(images.box(replacedFirst, "conformance gone B", signal()), "images.box fails on build B after release and maintain");
-          untrack(leftBuilds, replacedFirst.ref);
-
-          await images.remove(replacedSecond.ref, signal());
-          untrack(leftBuilds, replacedSecond.ref);
-
-          const remaining = await images.list(signal());
-          assert.ok(!remaining.builds.some((other) => other.image === "conformance"), "no conformance build is left");
-          assert.deepEqual(remaining.boxes, [], "no image box is left");
-          assert.deepEqual(
-            remaining.builds.filter((build) => build.current).map((build) => ({ ref: build.ref, build: build.build })),
-            standardsBefore,
-            "the standard builds were never touched",
-          );
+          if (idB) assert.equal(await options.replacedImage!.exists(idB, signal()), false, "build B is removed after its box is released and maintain runs");
+          const afterRelease = await images.list(signal());
+          assert.ok(!afterRelease.builds.some((other) => other.ref === buildB.ref), "images.list no longer lists build B");
+          assert.ok(afterRelease.builds.some((other) => other.ref === standard.ref && other.current && other.build === replacedC.build), "images.list lists build C as current");
+          assert.deepEqual(afterRelease.boxes, [], "no image box is left");
+          await assert.rejects(images.box(buildB, "conformance gone B", signal()), "images.box fails on build B after release and maintain");
         });
       });
 

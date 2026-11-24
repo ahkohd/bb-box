@@ -17,9 +17,12 @@ import { SLOT_KINDS } from "../src/core/device-host.ts";
 import { MemoryStorage } from "../test/helpers.ts";
 import { liveBackend, liveConfig } from "./live-backend.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
+import { microsandboxDriver } from "../src/backends/microsandbox/index.ts";
+import { dockerReplacedImageProbe } from "../test/conformance/docker-image-probe.ts";
 import { dockerRestoreCopyProbe } from "../test/conformance/docker-restore-copy.ts";
+import { msbReplacedImageProbe } from "../test/conformance/msb-image-probe.ts";
 
-const USAGE = "usage: npm run conformance -- --backend <type> --settings <settings.json> [--kind <kind>]... [--skip <check>=<reason>]...";
+const USAGE = "usage: npm run conformance -- --backend <type> --settings <settings.json> [--kind <kind>]... [--skip <check>=<reason>]... [--disposable]";
 
 const { values } = parseArgs({
   options: {
@@ -27,6 +30,7 @@ const { values } = parseArgs({
     settings: { type: "string" },
     kind: { type: "string", multiple: true },
     skip: { type: "string", multiple: true },
+    disposable: { type: "boolean" },
   },
 });
 if (!values.backend || !values.settings) throw new Error(USAGE);
@@ -56,4 +60,11 @@ await conformance({
   testDevice: true,
   elsewhere: { module: new URL("./live-backend.ts", import.meta.url).href, args: [driver.type, settings] },
   restoreCopy: driver.type === dockerDriver.type ? dockerRestoreCopyProbe(liveConfig(dockerDriver, settings)) : undefined,
+  disposable: values.disposable === true,
+  replacedImage:
+    driver.type === dockerDriver.type
+      ? dockerReplacedImageProbe(liveConfig(dockerDriver, settings))
+      : driver.type === microsandboxDriver.type
+        ? msbReplacedImageProbe(liveConfig(microsandboxDriver, settings))
+        : undefined,
 });

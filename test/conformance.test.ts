@@ -4,6 +4,9 @@ import "./check-test-machine.mjs";
 // against the Tart backend on a fake Mac, against the Docker backend on a
 // fake Docker host, and against the microsandbox backend on a fake msb host.
 
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { DockerBackend } from "../src/backends/docker/backend.ts";
 import { DockerCli } from "../src/backends/docker/cli.ts";
 import { MsbBackend } from "../src/backends/microsandbox/backend.ts";
@@ -11,6 +14,8 @@ import { NamespaceBackend } from "../src/backends/namespace/backend.ts";
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
 import { TartBackend } from "../src/backends/tart/backend.ts";
 import type { CommandTransport } from "../src/transports/types.ts";
+import { dockerReplacedImageProbe } from "./conformance/docker-image-probe.ts";
+import { msbReplacedImageProbe } from "./conformance/msb-image-probe.ts";
 import { conformance, type ConformanceBb } from "./conformance/suite.ts";
 import { FakeBackend } from "./fake-backend.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
@@ -163,14 +168,37 @@ await conformance({
   timeoutMs: 20_000,
 });
 
-// A container's name comes from its box ID, so the Docker backend has no ref to reuse.
 const docker = fakeDockerHost();
 const dockerSettings = dockerConfig();
+let dockerBuildSeq = 0;
 await conformance({
   name: "Docker on a fake host",
   storage: new MemoryStorage(),
-  create: (storage, installId) => new DockerBackend(dockerSettings, testContext(storage, installId), { binary: docker.binary, readyTimeoutMs: 20_000, selkiesLauncher: "/bin/sh" }),
+  create: (storage, installId) =>
+    new DockerBackend(dockerSettings, testContext(storage, installId), {
+      binary: docker.binary,
+      readyTimeoutMs: 20_000,
+      selkiesLauncher: "/bin/sh",
+      script: async (_script, args) => {
+        const tag = args[args.indexOf("--tag") + 1]!;
+        const target = args.at(-1) ?? "linux";
+        const kind = target === "desktop" ? "linux-desktop-cpu" : target === "wayland-desktop" ? "linux-desktop-wayland-cpu" : "linux";
+        const buildId = `build.fake-${++dockerBuildSeq}`;
+        const images = JSON.parse(readFileSync(join(docker.root, "images.json"), "utf8"));
+        const idsPath = join(docker.root, "image-ids.json");
+        const ids = existsSync(idsPath) ? JSON.parse(readFileSync(idsPath, "utf8")) : {};
+        const record = { contract: 1, image: "standard", kind, arch: "x86_64", build: buildId, built: new Date().toISOString(), os: "Ubuntu 24.04.5 LTS", tools: {} };
+        writeFileSync(
+          join(docker.root, "images.json"),
+          JSON.stringify({ ...images, [tag]: { "bbbox.image-version": "1", "bbbox.fork-hold": "1", "bbbox.image-record": JSON.stringify(record) } }),
+        );
+        writeFileSync(idsPath, JSON.stringify({ ...ids, [tag]: `sha256:${createHash("sha256").update(buildId).digest("hex")}` }));
+        return 0;
+      },
+    }),
   bb: fakeBb(),
+  disposable: true,
+  replacedImage: dockerReplacedImageProbe(dockerSettings, docker.binary),
   skip: {
     fork: "the fake docker runs commands on the test machine, which has no identity reset; test/docker-forks.test.ts checks forks",
     arch: "the fake docker runs commands on the test machine",
@@ -202,14 +230,17 @@ await conformance({
   timeoutMs: 20_000,
 });
 
-// A box's microVM is named from its box ID, so the microsandbox backend has no ref to reuse.
 const msb = fakeMsbHost();
+msb.facts({ docker: "" });
+msb.docker.clear();
 const msbSettings = msbConfig();
 await conformance({
   name: "microsandbox on a fake msb host",
   storage: new MemoryStorage(),
   create: (storage, installId) => new MsbBackend(msbSettings, testContext(storage, installId), { dir: msb.dir, script: msb.script, readyTimeoutMs: 20_000 }),
   bb: fakeBb(),
+  disposable: true,
+  replacedImage: msbReplacedImageProbe(msbSettings, { dir: msb.dir, script: msb.script }),
   skip: {
     fork: "the fake msb runs commands on the test machine, which has no identity reset",
     arch: "the fake msb runs commands on the test machine",
@@ -217,7 +248,6 @@ await conformance({
     display: "the fake msb host has no desktop to stream",
     "computer-use": "the fake microVM has no computer-use driver",
     size: "the fake msb runs commands on the test machine",
-    images: "the fake msb host has no KVM to run a builder microVM; microsandbox's image replace and cleanup are checked in test/microsandbox.test.ts and live on a KVM host",
     keep: "the fake msb host does not list a snapshot taken by the backend alone yet; microsandbox's Keep is checked in its own snapshot tests",
     snapshots: "the fake msb host does not list a snapshot taken by the backend alone yet; microsandbox's restores are checked in its own snapshot tests",
   },

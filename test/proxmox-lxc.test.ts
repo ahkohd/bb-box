@@ -2044,52 +2044,6 @@ test("image operations replace a template on storage other than LVM-thin with a 
   assert.equal(proxmox.guests.has(7000), false);
 });
 
-test("replace removes a captured project template when unused, and keeps it while a box uses it until release and maintain", async () => {
-  const dir = tempDir("image-replace-project");
-  const binary = join(dir, "ssh");
-  let nextBuild = 0;
-  writeFileSync(
-    binary,
-    `#!/bin/sh\ncase "$*" in *"cat /usr/share/bb-box/image.json"*) n=$(cat '${dir}/n' 2>/dev/null || echo 0); n=$((n+1)); echo "$n" >'${dir}/n'; echo "{\\"contract\\":1,\\"image\\":\\"conformance\\",\\"kind\\":\\"linux\\",\\"build\\":\\"build.c$n\\",\\"built\\":\\"2026-10-03T00:00:00Z\\"}"; exit 0;; esac\nexec "${FAKE_SSH_BINARY}" "$@"\n`,
-    { mode: 0o755 },
-  );
-  const { backend, proxmox } = setup({}, new MemoryStorage(), { sshBinary: binary });
-  const images = backend.images;
-  const standard = (await images.list()).builds.find((build) => build.ref === "9000")!;
-
-  const captureConformance = async () => {
-    nextBuild += 1;
-    const box = await images.box(standard, `conformance ${nextBuild}`, signal());
-    const made = await images.capture(box, standard, "conformance", signal());
-    proxmox.statusPass();
-    return made;
-  };
-
-  const first = await captureConformance();
-  const second = await captureConformance();
-  const replaced = await images.replace(second, first, signal());
-
-  assert.deepEqual([replaced.ref, replaced.image, replaced.current], [second.ref, "conformance", false]);
-  assert.equal(proxmox.guests.has(Number(first.ref)), false);
-  assert.equal((await images.list()).builds.some((build) => build.ref === first.ref), false);
-
-  const guest = await backend.acquire({ ...identity(), from: second.ref }, null, hooks().value, signal());
-  const third = await captureConformance();
-  await images.replace(third, second, signal());
-
-  assert.equal(proxmox.guests.has(Number(second.ref)), true);
-  await backend.maintain();
-  assert.equal(proxmox.guests.has(Number(second.ref)), true);
-
-  await backend.release(guest, releasing());
-  await backend.maintain();
-
-  assert.equal(proxmox.guests.has(Number(second.ref)), false);
-  assert.equal((await images.list()).builds.some((build) => build.ref === second.ref), false);
-  assert.equal((await images.list()).builds.some((build) => build.ref === "9000" && build.current), true);
-  await images.remove(third.ref, signal());
-});
-
 test("doctor warns about a kind the node cannot hold at any preset (#74)", async () => {
   const { backend, proxmox } = setup();
   proxmox.cpus = 2;
