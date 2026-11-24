@@ -121,12 +121,3 @@ COPY --chmod=0755 docker/start /usr/local/sbin/bb-box-start
 COPY --chmod=0755 docker/fork-hold /usr/local/libexec/bb-box/fork-hold
 LABEL bbbox.image-version="1" bbbox.fork-hold="1" bbbox.bb-app="$BB_APP_SHA256"
 CMD ["/usr/local/sbin/bb-box-start"]
-
-FROM scratch AS linux-record
-COPY --from=linux /usr/share/bb-box/image.json /image.json
-
-FROM scratch AS desktop-record
-COPY --from=desktop /usr/share/bb-box/image.json /image.json
-
-FROM scratch AS desktop-wayland-record
-COPY --from=desktop-wayland /usr/share/bb-box/image.json /image.json

@@ -94,7 +94,7 @@ export function fakeDockerHost(host: Record<string, unknown> = {}): FakeDockerHo
   fakeIdentityTools(join(root, "identity-bin"));
   // As setup/docker/build.sh labels its images: the layout, and a fresh record (049).
   const record = (kind: string) => JSON.stringify({ contract: 1, image: "standard", kind, arch: "x86_64", build: "build.fake", built: new Date().toISOString(), os: "Ubuntu 24.04.5 LTS", tools: { node: "24.21.0" } });
-  const label = (kind: string) => ({ "bbbox.image": "standard", "bbbox.image-version": "1", "bbbox.fork-hold": "1", "bbbox.image-record": record(kind) });
+  const label = (kind: string) => ({ "bbbox.image-version": "1", "bbbox.fork-hold": "1", "bbbox.image-record": record(kind) });
   writeFileSync(
     join(root, "images.json"),
     JSON.stringify({

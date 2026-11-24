@@ -98,48 +98,14 @@ case "${targets[*]}" in
   *) need=36 what="${#targets[@]} images" ;;
 esac
 base=$(sed -n 's/^ARG UBUNTU=//p' "$here/Dockerfile")
-builder=bb-box
-cache_cap=${BBBOX_BUILD_CACHE_CAP:-10GB}
-buildx_config=
-builder_ready=
 
-cleanup() {
-  [ -z "$buildx_config" ] || rm -rf "$buildx_config"
-}
-trap cleanup EXIT
-
-builder_exists() {
-  docker container inspect "buildx_buildkit_${builder}0" >/dev/null 2>&1 ||
-    docker volume inspect "buildx_buildkit_${builder}0_state" >/dev/null 2>&1
-}
-
-ensure_builder() {
-  if [ -n "$builder_ready" ]; then
-    return 0
-  fi
-  buildx_config=$(mktemp -d)
-  export BUILDX_CONFIG="$buildx_config"
-  docker buildx create --name "$builder" --driver docker-container --bootstrap >/dev/null
-  builder_ready=1
-}
-
-prune_cap_flag() {
-  if docker buildx prune --help 2>&1 | grep -q -- '--max-used-space'; then
-    echo --max-used-space
-  else
-    echo --keep-storage
-  fi
-}
-
-prune_builder_cache() {
-  ensure_builder
-  docker buildx prune --builder "$builder" --force --all >/dev/null
-}
-
-prune_builder_to_cap() {
-  local flag
-  flag=$(prune_cap_flag)
-  docker buildx prune --builder "$builder" --force --all "$flag" "$cache_cap" >/dev/null
+copy_from_image() {
+  local platform=$1 image=$2 path=$3 dest=$4
+  local id status=0
+  id=$(docker create --platform "$platform" "$image") || return $?
+  docker cp "$id:$path" "$dest/" || status=$?
+  docker rm "$id" >/dev/null || true
+  return "$status"
 }
 
 host_disk() {
@@ -172,10 +138,24 @@ free_disk_kb() {
   return 1
 }
 
+prune_stale_build_cache() {
+  local help out freed
+  help=$(docker builder prune --help 2>&1 || true)
+  if grep -q -- '--max-used-space' <<<"$help"; then
+    out=$(docker builder prune --force --filter until=24h --max-used-space 4GB 2>&1) || return $?
+  elif grep -q -- '--keep-storage' <<<"$help"; then
+    out=$(docker builder prune --force --filter until=24h --keep-storage 4GB 2>&1) || return $?
+  else
+    out=$(docker builder prune --force --filter until=24h 2>&1) || return $?
+  fi
+  freed=$(awk '/^Total( reclaimed space)?:/ { print $NF }' <<<"$out" | tail -n 1)
+  echo "build.sh pruned Docker build cache unused for 24h (freed ${freed:-0B})." >&2
+}
+
 need_kb=$((need * 1000000000 / 1024))
 if free=$(free_disk_kb); then
-  if [ "$free" -lt "$need_kb" ] && builder_exists; then
-    prune_builder_cache || true
+  if [ "$free" -lt "$need_kb" ]; then
+    prune_stale_build_cache || echo "build.sh could not prune Docker's build cache." >&2
     if measured=$(free_disk_kb); then
       free=$measured
     else
@@ -189,8 +169,6 @@ if free=$(free_disk_kb); then
   fi
 fi
 
-ensure_builder
-
 for target in "${targets[@]}"; do
   case $target in
     linux) image=bbbox/linux:$version$suffix ;;
@@ -198,14 +176,18 @@ for target in "${targets[@]}"; do
     desktop-wayland) image=bbbox/linux-desktop-wayland:$version ;;
   esac
   image=${tag:-$image}
-  build=(docker buildx build --builder "$builder" --platform "$platform" --build-arg BB_URL="$bb_url"
-    --build-arg BB_APP_SHA256="$app_sha256" --build-arg IMAGE_SOURCES_SHA256="$image_sources_sha256" -f "$here/Dockerfile")
+  # The guest scripts install the tools built for the image's architecture.
+  build=(docker build --platform "$platform" --target "$target" --build-arg BB_URL="$bb_url"
+    --build-arg BB_APP_SHA256="$app_sha256" --build-arg IMAGE_SOURCES_SHA256="$image_sources_sha256" -t "$image" -f "$here/Dockerfile")
+  "${build[@]}" "$here/.."
+  # Its record (049) in a label, where the plugin's doctor reads it without
+  # starting the image: the image's own, which a second build, all from the
+  # cache, puts on the image. Copied out, not attached.
   record_dir=$(mktemp -d)
-  "${build[@]}" --target "${target}-record" --output "type=local,dest=$record_dir" "$here/.." || { rm -rf "$record_dir"; exit 1; }
+  copy_from_image "$platform" "$image" /usr/share/bb-box/image.json "$record_dir" || { rm -rf "$record_dir"; exit 1; }
   record=$(cat "$record_dir/image.json") || { rm -rf "$record_dir"; exit 1; }
   rm -rf "$record_dir"
   [ "${record:0:1}" = "{" ] && [[ $record != *$'\n'* ]] || { echo "$image: /usr/share/bb-box/image.json is not one JSON object" >&2; exit 1; }
-  "${build[@]}" --target "$target" --quiet --label "bbbox.image=standard" --label "bbbox.image-record=$record" -t "$image" --load "$here/.." >/dev/null
+  "${build[@]}" --quiet --label "bbbox.image-record=$record" "$here/.." >/dev/null
   echo "built $image"
-  prune_builder_to_cap || echo "build.sh could not prune $builder's build cache" >&2
 done

@@ -14,6 +14,7 @@ import { parseDockerPart } from "../src/backends/docker/config.ts";
 import { dockerDriver } from "../src/backends/docker/index.ts";
 import { offerChecks } from "../src/backends/index.ts";
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
+import { ImageJobs } from "../src/plugin/images.ts";
 import { BackendError, type AcquireHooks, type Backend, type BoxIdentity, type MachineSize, type FieldValue, type GpuPart, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { backendPart } from "../src/core/document.ts";
 import { TransportError } from "../src/transports/types.ts";
@@ -310,7 +311,7 @@ test("acquires a box as a container labelled from its first write, claimed befor
   assert.deepEqual(Object.keys(seen.timings), ["place", "network", "create", "start", "ready"]);
 
   const container = fake.inspect(name);
-  const imageLabels = new Set(["bbbox.image", "bbbox.image-version", "bbbox.fork-hold", "bbbox.image-record"]);
+  const imageLabels = new Set(["bbbox.image-version", "bbbox.fork-hold", "bbbox.image-record"]);
   const setByBbBox = Object.fromEntries(Object.entries(container.Config.Labels).filter(([key]) => !imageLabels.has(key)));
   assert.deepEqual(setByBbBox, {
     "bbbox.backend": "docker",
@@ -1884,7 +1885,7 @@ test("replace removes the old standard image when unused, and leaves it dangling
     script: async (_script, args) => {
       const tag = args[args.indexOf("--tag") + 1]!;
       const images = JSON.parse(readFileSync(join(fake.root, "images.json"), "utf8"));
-      writeFileSync(join(fake.root, "images.json"), JSON.stringify({ ...images, [tag]: { "bbbox.image": "standard", "bbbox.image-version": "1", "bbbox.fork-hold": "1", "bbbox.image-record": records.shift()! } }));
+      writeFileSync(join(fake.root, "images.json"), JSON.stringify({ ...images, [tag]: { "bbbox.image-version": "1", "bbbox.fork-hold": "1", "bbbox.image-record": records.shift()! } }));
       return 0;
     },
   });
@@ -1923,7 +1924,8 @@ test("maintenance removes only this install's unused dangling BB Box images and 
       "sha256:std-old": { "bbbox.image-version": "1" },
       "sha256:own-project": { "bbbox.install": "test", "bbbox.image": "rust-tools", "bbbox.kind": "linux", "bbbox.image-version": "1" },
       "sha256:other-project": { "bbbox.install": "other", "bbbox.image": "rust-tools", "bbbox.kind": "linux", "bbbox.image-version": "1" },
-      "sha256:other-snapshot": { "bbbox.install": "", "bbbox.image": "standard", "bbbox.image-version": "1", "bbbox.snapshot": "sn1", "bbbox.snapshot.install": "other" },
+      "sha256:other-snapshot": { "bbbox.install": "", "bbbox.image-version": "1", "bbbox.snapshot": "sn1", "bbbox.snapshot.install": "other" },
+      "sha256:other-snapshot-no-install": { "bbbox.image-version": "1", "bbbox.snapshot": "sn2", "bbbox.snapshot.install": "other" },
       "sha256:unrelated": { "org.example.app": "web" },
     }),
   );
@@ -1931,7 +1933,35 @@ test("maintenance removes only this install's unused dangling BB Box images and 
   await backend.maintain(signal());
 
   const remaining = Object.keys(JSON.parse(readFileSync(danglingPath, "utf8")) as Record<string, unknown>).sort();
-  assert.deepEqual(remaining, ["sha256:other-project", "sha256:other-snapshot", "sha256:unrelated"]);
+  assert.deepEqual(remaining, ["sha256:other-project", "sha256:other-snapshot", "sha256:other-snapshot-no-install", "sha256:unrelated"]);
+});
+
+test("a docker commit of a box container under a user tag survives refreshAll and maintain", async () => {
+  const { fake, backend } = setup();
+  const guest = await backend.acquire(identity(), null, hooks().hooks, signal());
+  execFileSync(fake.binary, ["container", "commit", guest.ref, "user-saved-work:1"]);
+  execFileSync(fake.binary, ["container", "commit", "--change", 'LABEL bbbox.image="standard"', guest.ref, "user-saved-standard:1"]);
+  execFileSync(fake.binary, ["container", "commit", "--change", 'LABEL bbbox.image="rust-tools"', guest.ref, "user-saved-project:1"]);
+  await backend.release(guest, releasing, signal());
+
+  const jobs = new ImageJobs({
+    backends: () => [backend],
+    setup: "/plugin/setup",
+    bbUrl: () => null,
+    facts: { pins: async () => null, bbApp: async () => null },
+    storage: new MemoryStorage(),
+  });
+  await jobs.refreshAll();
+  await backend.maintain(signal());
+
+  const listed = (await backend.images.list(signal())).builds.map((build) => build.ref);
+  assert.equal(listed.includes("user-saved-work:1"), false);
+  assert.equal(listed.includes("user-saved-standard:1"), false);
+  assert.equal(listed.includes("user-saved-project:1"), false);
+  for (const tag of ["user-saved-work:1", "user-saved-standard:1", "user-saved-project:1"]) {
+    assert.ok(execFileSync(fake.binary, ["image", "inspect", "--format", "{{.Id}}", tag], { encoding: "utf8" }).trim());
+    await assert.rejects(backend.images.remove(tag, signal()), /is not an image build of this install's/);
+  }
 });
 
 test("dangling image prune failures log an error and leave orphan cleanup running", async () => {

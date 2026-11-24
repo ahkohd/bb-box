@@ -53,8 +53,9 @@ shared connection. How bb-box drives a box is in the
   least 12 GiB.
 - Disk to build the images, on the Docker host: about 36 GB free for all
   three, 10 GB for the linux image alone and 18 GB for either desktop image
-  alone. When space is short, `build.sh` prunes BB Box's own BuildKit builder
-  cache first, measures again, and refuses only if space is still short.
+  alone. When space is short, `build.sh` prunes Docker build cache unused for
+  24 hours first, prints how much it freed, measures again, and refuses only
+  if space is still short.
 
 Before you rely on it:
 
@@ -173,22 +174,21 @@ DOCKER_HOST=ssh://user@host setup/docker/build.sh     # on a Docker host over SS
   packages from a pinned snapshot, and checks every other download against
   its pinned SHA-256. When the snapshot service has an outage, the build
   retries for a few minutes, then fails: run it again later.
-- `build.sh` builds with its own `docker-container` buildx builder (`bb-box`,
-  which runs the `buildx_buildkit_bb-box0` container and keeps its cache in the
-  `buildx_buildkit_bb-box0_state` volume on the Docker host). The first build
-  pulls `moby/buildkit:buildx-stable-1`. Keeping BB Box's cache in its own
-  builder leaves Docker's default builder and its cache untouched.
-- The builder keeps the build's downloads between builds, in two of
+- The Docker host keeps the build's downloads between builds, in two of
   BuildKit's cache mounts (#96): the pinned tool files (`bb-box-artifacts`)
   and Ubuntu's packages (`bb-box-apt`). Each holds only what the current
   pins and snapshot use, and each file is still checked, so a rebuild
   downloads only what changed.
-- After each image builds, `build.sh` prunes only the `bb-box` builder's
-  cache down to 10 GB (`BBBOX_BUILD_CACHE_CAP` overrides this), using
-  `--max-used-space` on buildx 0.17 and later (Docker 27, 28, 29 and Docker
-  Desktop) or `--keep-storage` on older buildx. When disk space is short before
-  a build starts, `build.sh` prunes the `bb-box` builder's cache first and
-  measures again. It never prunes Docker's default builder.
+- `build.sh` touches the host's shared Docker build cache only when a build
+  would otherwise fail for space. Before refusing, it runs
+  `docker builder prune --force --filter until=24h` (with
+  `--max-used-space 4GB` on buildx 0.17 and later, such as Docker 27, 28, 29
+  and Docker Desktop, or `--keep-storage 4GB` on older buildx), prints how
+  much it freed, and measures free space again. Cache used in the last 24
+  hours is never pruned, and nothing is pruned when the host already has
+  enough free space.
+- Once the images are built, `docker builder prune` frees the build cache by
+  hand, the downloads too.
 - `--arch arm64`, on an arm64 Docker host, builds `bbbox/linux:1-arm64` and
   `bbbox/linux-desktop:1-arm64` for microsandbox on a Mac (053), from the
   same scripts with their arm64 pins, as for Tart's Linux images. Ubuntu has
@@ -349,7 +349,8 @@ npm run conformance -- --backend docker --settings docker.json
   is removed straight away when no container uses it; otherwise it stays
   untagged until those containers go, when BB Box's maintenance prunes
   untagged images that carry BB Box's image labels. Images without BB Box's
-  labels are left alone.
+  labels are left alone; untagged images built `FROM bbbox/*` inherit BB
+  Box's image label and are pruned when unused and dangling.
 - **Rebuild by hand** with `build.sh`. BB's app is the images' last layer, so
   after it changes, `build.sh` installs the new app and keeps the rest
   cached.
@@ -374,8 +375,7 @@ npm run conformance -- --backend docker --settings docker.json
    docker image ls 'bbbox/*'
    docker image ls 'bbbox-image/*'                     # projects' images
    docker image rm <image>
-   docker rm -f buildx_buildkit_bb-box0
-   docker volume rm buildx_buildkit_bb-box0_state
+   docker builder prune
    ```
 
 ## When it goes wrong

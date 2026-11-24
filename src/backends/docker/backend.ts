@@ -2755,6 +2755,14 @@ export class DockerBackend implements Backend {
     return { ref, image, kind, build: record?.build ?? null, record, current };
   }
 
+  #isCapturedTag(ref: string): boolean {
+    return ref.startsWith("bbbox-image/");
+  }
+
+  #isRefreshTag(ref: string): boolean {
+    return DOCKER_KINDS.some((kind) => this.#config.images[kind] && ref.startsWith(`${this.#config.images[kind]!.replace(/:[^:/]*$/, "")}:refresh-`));
+  }
+
   /** The configured images, as standard builds, and this install's captured images and image boxes. */
   async #imageList(signal?: AbortSignal): Promise<{ builds: ImageBuild[]; boxes: string[] }> {
     await this.#cli.prepare(signal);
@@ -2771,9 +2779,12 @@ export class DockerBackend implements Backend {
       { timeoutMs: 30_000, signal },
     );
     for (const ref of listed.split("\n").map((line) => line.trim()).filter(Boolean)) {
+      if (!this.#isCapturedTag(ref) && !this.#isRefreshTag(ref)) continue;
       const labels = await this.#imageLabels(ref, signal);
       const image = labels?.[LABELS.image];
-      if (labels && typeof image === "string" && image) builds.push(this.#imageBuild(ref, String(labels[LABELS.kind] ?? ""), image, labels, false));
+      if (labels && typeof image === "string" && image && image !== "standard") {
+        builds.push(this.#imageBuild(ref, String(labels[LABELS.kind] ?? ""), image, labels, false));
+      }
     }
     const boxes = await this.#cli.list({ [LABELS.backend]: "docker", [LABELS.install]: install, [LABELS.imageBox]: install }, signal);
     return { builds, boxes: boxes.map((container) => container.name) };
@@ -2865,8 +2876,8 @@ export class DockerBackend implements Backend {
     const labels = await this.#imageLabels(ref, signal);
     if (!labels) return;
     const configured = DOCKER_KINDS.some((kind) => this.#config.images[kind] === ref);
-    const captured = labels[LABELS.install] === install && !!labels[LABELS.image];
-    const refreshing = DOCKER_KINDS.some((kind) => this.#config.images[kind] && ref.startsWith(`${this.#config.images[kind]!.replace(/:[^:/]*$/, "")}:refresh-`));
+    const captured = labels[LABELS.install] === install && typeof labels[LABELS.image] === "string" && !!labels[LABELS.image] && labels[LABELS.image] !== "standard" && this.#isCapturedTag(ref);
+    const refreshing = this.#isRefreshTag(ref);
     if (configured || !(captured || refreshing)) throw new Error(`The image ${ref} is not an image build of this install's, so ${PRODUCT} leaves it.`);
     await this.#cli.run(["image", "rm", ref], { timeoutMs: 120_000, signal });
   }

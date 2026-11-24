@@ -41,10 +41,10 @@ command again to see.
   desktops. To offer the X11 desktop, run `bb box backend set
   docker:<name> --unset desktop-image`, then `bb box docker-build <machine>`,
   which builds what is missing there. All three images need about 36 GB
-  free. `setup/docker/build.sh` builds in its own `bb-box` buildx builder,
-  caps that builder's cache to 10 GB after each build, and prunes it first
-  before refusing for low disk; maintenance removes old untagged BB Box
-  images once no container uses them.
+  free. When free space is too low to start a build, `setup/docker/build.sh`
+  prunes build cache unused for 24 hours first and measures again before
+  refusing; maintenance removes old untagged BB Box images once no container
+  uses them.
 
 ## On a Linux host over SSH
 
