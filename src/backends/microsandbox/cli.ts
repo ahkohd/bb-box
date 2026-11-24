@@ -141,7 +141,7 @@ export class MsbCli {
         throw new MsbError(error instanceof Error ? error.message : String(error), true);
       }
     }
-    const timeoutMs = name === "import" || name === "transfer" || name === "retag" ? 30 * 60_000 : name === "install" ? 10 * 60_000 : 60_000;
+    const timeoutMs = name === "import" || name === "transfer" ? 30 * 60_000 : name === "install" ? 10 * 60_000 : 60_000;
     const command = this.host
       ? [this.#options.ssh ?? "ssh", "-o", "BatchMode=yes", "-T", ...sshTarget(this.host), `sh -c ${quote(msbScript(name))} bb-box-msb ${args.map(quote).join(" ")}`]
       : ["sh", "-c", msbScript(name), "bb-box-msb", ...args];
@@ -195,15 +195,15 @@ export class MsbCli {
     return parseSandbox(result.stdout);
   }
 
-  /** The names of every sandbox with all of `labels`, running or not. */
-  async list(labels: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<{ name: string; status: string }[]> {
+  async list(labels: Readonly<Record<string, string>>, signal?: AbortSignal): Promise<{ name: string; status: string; image: string | null }[]> {
     const filters = Object.entries(labels).flatMap(([key, value]) => ["--label", `${key}=${value}`]);
     const text = await this.ok(["ls", "--format", "json", ...filters], { timeoutMs: 30_000, signal });
     const list: unknown = text.trim() ? JSON.parse(text) : [];
-    return (Array.isArray(list) ? list : []).map((entry) => record(entry)).map((entry) => ({ name: String(entry.name ?? ""), status: String(entry.status ?? "") }));
+    return (Array.isArray(list) ? list : [])
+      .map((entry) => record(entry))
+      .map((entry) => ({ name: String(entry.name ?? ""), status: String(entry.status ?? ""), image: typeof entry.image === "string" ? entry.image : null }));
   }
 
-  /** Every sandbox with its cores and memory, as `msb status --all` gives them. */
   async status(signal?: AbortSignal): Promise<{ name: string; status: string; cpus: number; memoryMiB: number }[]> {
     const text = await this.ok(["status", "--all", "--format", "json"], { timeoutMs: 30_000, signal });
     const list: unknown = text.trim() ? JSON.parse(text) : [];
@@ -215,7 +215,23 @@ export class MsbCli {
     }));
   }
 
-  /** An image's labels, or null when msb has no such image. */
+  async imageList(signal?: AbortSignal): Promise<MsbImageInfo[]> {
+    const text = await this.ok(["image", "list", "--format", "json"], { timeoutMs: 30_000, signal });
+    const list: unknown = text.trim() ? JSON.parse(text) : [];
+    return (Array.isArray(list) ? list : [])
+      .map((entry) => record(entry))
+      .filter((entry) => typeof entry.reference === "string" && entry.reference.length > 0)
+      .map((entry) => {
+        const parsed = typeof entry.created_at === "string" ? Date.parse(entry.created_at) : Number.NaN;
+        return {
+          reference: String(entry.reference),
+          digest: String(entry.digest ?? ""),
+          sizeBytes: Number(entry.size_bytes) || 0,
+          createdAt: Number.isFinite(parsed) ? parsed : null,
+        };
+      });
+  }
+
   async imageLabels(ref: string, signal?: AbortSignal): Promise<Record<string, string> | null> {
     const result = await this.run(["image", "inspect", ref, "--format", "json"], { timeoutMs: 30_000, signal });
     if (result.exitCode !== 0) {
@@ -224,6 +240,13 @@ export class MsbCli {
     }
     return strings(record(record(JSON.parse(result.stdout)).config).labels);
   }
+}
+
+export interface MsbImageInfo {
+  readonly reference: string;
+  readonly digest: string;
+  readonly sizeBytes: number;
+  readonly createdAt: number | null;
 }
 
 export interface SandboxInfo {

@@ -88,9 +88,9 @@ import { CUA_DRIVER, DOCKER_CHECK } from "../docker/backend.ts";
 import { judgeImage, recordFromJson } from "../images.ts";
 import { quote } from "../../transports/process.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
-import { MsbCli, MsbError, NOT_FOUND, type MsbCliOptions, type SandboxInfo } from "./cli.ts";
+import { MsbCli, MsbError, NOT_FOUND, type MsbCliOptions, type MsbImageInfo, type SandboxInfo } from "./cli.ts";
 import { MSB_KINDS, type MsbConfig, type MsbKind } from "./config.ts";
-import { MSB_VERSION, scriptValues } from "./release.ts";
+import { MSB_VERSION, buildImageRef, isBuildOf, isLegacyRefreshOf, parseImageCache, scriptValues } from "./release.ts";
 import { BOX_USER, MsbTransport } from "./transport.ts";
 import { IDENTITY_VARIABLE, withDesktopForkSafety } from "../../core/identity.ts";
 import {
@@ -291,8 +291,14 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const IN_USE_OR_GONE = /in use|dependency|not found/i;
+
 function formatMiB(value: number): string {
   return value >= MiB_PER_GiB ? `${Math.round((value / MiB_PER_GiB) * 10) / 10} GiB` : `${value} MiB`;
+}
+
+function formatKiB(value: number): string {
+  return formatMiB(Math.round(value / 1024));
 }
 
 /** The microVM of a box. Box IDs are letters and digits; anything else becomes "-". */
@@ -444,8 +450,8 @@ export class MsbBackend implements Backend {
   #facts: { at: number; facts: HostFacts } | null = null;
   /** msb installed at the pinned release, once checked or done this run. */
   #installed: Promise<void> | null = null;
-  /** Imports under way, by image, so two acquires wait for one. */
-  readonly #importing = new Map<string, Promise<void>>();
+  readonly #importing = new Map<string, Promise<string>>();
+  readonly #inFlightImages = new Set<string>();
   readonly #placing = new Map<string, Placing>();
   #placement: Promise<unknown> = Promise.resolve();
 
@@ -541,44 +547,132 @@ export class MsbBackend implements Backend {
     return this.#installed;
   }
 
-  /** Storage key of the Docker image ID an msb image was imported from. */
   #importedKey(image: string): string {
     return `imported/${image}`;
   }
 
-  /**
-   * Imports `image` from Docker on the host when msb lacks it, or when
-   * Docker's image is not the one imported (`refresh`), one import of an
-   * image at a time.
-   */
-  #import(image: string, kind: MsbKind, refresh: boolean, signal?: AbortSignal): Promise<void> {
+  #currentKey(image: string): string {
+    return `current/${image}`;
+  }
+
+  #newBuildRef(configured: string): string {
+    return buildImageRef(configured, `${Date.now().toString(36)}${randomBytes(3).toString("hex")}`);
+  }
+
+  #configuredImages(): string[] {
+    return [...new Set(this.kinds().map((kind) => this.#config.images[kind.id as MsbKind]).filter((image): image is string => !!image))];
+  }
+
+  async #resolveImage(configured: string, signal?: AbortSignal): Promise<{ readonly ref: string; readonly labels: Record<string, string> } | null> {
+    const stored = await this.#context.storage.get<string>(this.#currentKey(configured));
+    if (stored) {
+      const labels = await this.#cli.imageLabels(stored, signal);
+      if (labels) return { ref: stored, labels };
+    }
+
+    const listed = await this.#cli.imageList(signal);
+    const builds = listed
+      .filter((entry) => isBuildOf(entry.reference, configured) && !this.#inFlightImages.has(entry.reference))
+      .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0) || b.reference.localeCompare(a.reference));
+
+    for (const candidate of builds) {
+      const labels = await this.#cli.imageLabels(candidate.reference, signal);
+      if (!labels) continue;
+      await this.#context.storage.set(this.#currentKey(configured), candidate.reference);
+      return { ref: candidate.reference, labels };
+    }
+
+    if (listed.some((entry) => entry.reference === configured)) {
+      const labels = await this.#cli.imageLabels(configured, signal);
+      if (labels) return { ref: configured, labels };
+    }
+
+    return null;
+  }
+
+  #oldBuilds(listed: readonly MsbImageInfo[], currentByConfigured: ReadonlyMap<string, string | null>): string[] {
+    const active = new Set<string>();
+    for (const ref of currentByConfigured.values()) if (ref) active.add(ref);
+    for (const ref of this.#inFlightImages) active.add(ref);
+
+    const old: string[] = [];
+    const seen = new Set<string>();
+    for (const [configured, current] of currentByConfigured) {
+      for (const entry of listed) {
+        const ref = entry.reference;
+        if (active.has(ref) || seen.has(ref)) continue;
+        const supersededBuild = isBuildOf(ref, configured);
+        const migratedBare = ref === configured && current !== null && current !== configured;
+        const legacyRefresh = isLegacyRefreshOf(ref, configured);
+        if (supersededBuild || migratedBare || legacyRefresh) {
+          seen.add(ref);
+          old.push(ref);
+        }
+      }
+    }
+    return old;
+  }
+
+  async #pruneOldBuilds(signal?: AbortSignal): Promise<void> {
+    const configured = this.#configuredImages();
+    if (!configured.length) return;
+
+    const currentByConfigured = new Map<string, string | null>();
+    for (const image of configured) {
+      const resolved = await this.#resolveImage(image, signal);
+      currentByConfigured.set(image, resolved?.ref ?? null);
+    }
+
+    const listed = await this.#cli.imageList(signal);
+    for (const ref of this.#oldBuilds(listed, currentByConfigured)) {
+      const removed = await this.#cli.run(["image", "remove", ref], { timeoutMs: 120_000, signal });
+      if (removed.exitCode === 0) continue;
+      if (IN_USE_OR_GONE.test(removed.stderr)) continue;
+      const error = this.#cli.error(`msb image remove ${ref}`, removed);
+      if (error.unreachable) throw error;
+      this.#context.logError(`remove old image ${ref}`, error);
+    }
+  }
+
+  #import(image: string, kind: MsbKind, refresh: boolean, signal?: AbortSignal): Promise<string> {
     const running = this.#importing.get(image);
     if (running) return running;
     const work = (async () => {
       await this.#install(signal);
-      const present = (await this.#cli.imageLabels(image, signal)) !== null;
-      if (present && !refresh) return;
+      const resolved = await this.#resolveImage(image, signal);
+      if (resolved && !refresh) return resolved.ref;
+
       const ids = scriptValues((await this.#cli.script("images", [image], signal)).stdout);
       const docker = ids[`docker:${image}`] || null;
       const imported = await this.#context.storage.get<string>(this.#importedKey(image));
-      if (present && (!docker || docker === imported)) return;
+      if (resolved && (!docker || docker === imported)) return resolved.ref;
+
       if (!docker) {
-        // No Docker on the host to import it from, as on a Mac: bb-box builds it there, in a microVM of its own.
         const building = this.#startBuild(image, kind);
         throw new BackendError(
           "no_capacity",
           `${this.#host} has no image ${image} yet. ${PRODUCT} is building it there in a microVM, which takes about 10 minutes from when it started, ${Math.round((Date.now() - building.since) / 60_000)} min ago.`,
         );
       }
-      const result = await this.#cli.script("import", [image], signal);
-      if (result.exitCode !== 0) throw this.#cli.error(`Importing ${image} from Docker on ${this.#host}`, result);
-      await this.#context.storage.set(this.#importedKey(image), scriptValues(result.stdout).imported || docker);
+
+      const target = this.#newBuildRef(image);
+      this.#inFlightImages.add(target);
+      try {
+        const result = await this.#cli.script("import", [image, target], signal);
+        if (result.exitCode !== 0) throw this.#cli.error(`Importing ${image} from Docker on ${this.#host}`, result);
+        await this.#context.storage.set(this.#currentKey(image), target);
+        await this.#context.storage.set(this.#importedKey(image), scriptValues(result.stdout).imported || docker);
+      } finally {
+        this.#inFlightImages.delete(target);
+      }
+
+      await this.#pruneOldBuilds(signal).catch((error) => this.#context.logError("remove old image builds", error));
+      return target;
     })().finally(() => this.#importing.delete(image));
     this.#importing.set(image, work);
     return work;
   }
 
-  /** Starts a build of `image` in a builder microVM, unless one runs; the one running, or this one. */
   #startBuild(image: string, kind: MsbKind): { readonly image: string; readonly since: number } {
     if (this.#building) return this.#building;
     const since = Date.now();
@@ -591,17 +685,18 @@ export class MsbBackend implements Backend {
     return this.#building;
   }
 
-  /**
-   * Builds `image` on the host, which has no Docker to import it from, as a
-   * Mac: in a builder microVM from Docker's own image, pinned by digest, with
-   * Docker inside on a disk of its own, from a copy of bb-box's setup/, with
-   * setup/docker/build.sh for the host's architecture. Then moves it into msb
-   * (`transfer`) and removes the builder. About 10 minutes on a Mac for both
-   * images; it needs BUILD_FREE_GIB free.
-   */
   async #build(image: string, kind: MsbKind): Promise<void> {
-    await this.#buildImage(image, kind, {});
-    await this.#context.storage.set(this.#importedKey(image), `built:${Date.now()}`);
+    const target = this.#newBuildRef(image);
+    this.#inFlightImages.add(target);
+    try {
+      await this.#buildImage(target, kind, {});
+      await this.#context.storage.set(this.#currentKey(image), target);
+      await this.#context.storage.set(this.#importedKey(image), `built:${Date.now()}`);
+    } finally {
+      this.#inFlightImages.delete(target);
+    }
+
+    await this.#pruneOldBuilds().catch((error) => this.#context.logError("remove old image builds", error));
   }
 
   /**
@@ -748,7 +843,6 @@ export class MsbBackend implements Backend {
     },
   };
 
-  /** The kinds' images that bb-box builds here, as standard builds, and the trial boxes a refresh left. */
   async #imageList(signal?: AbortSignal): Promise<{ builds: ImageBuild[]; boxes: string[] }> {
     await this.#knowArch(signal);
     const facts = await this.#hostFacts(signal);
@@ -759,9 +853,9 @@ export class MsbBackend implements Backend {
         const image = this.#config.images[kind.id as MsbKind];
         if (!image || seen.has(image)) continue;
         seen.add(image);
-        const labels = await this.#cli.imageLabels(image, signal);
-        if (!labels) continue;
-        const record = recordFromJson(labels[LABELS.imageRecord]);
+        const resolved = await this.#resolveImage(image, signal);
+        if (!resolved) continue;
+        const record = recordFromJson(resolved.labels[LABELS.imageRecord]);
         builds.push({ ref: image, image: "standard", kind: kind.id, build: record?.build ?? null, record, current: true });
       }
     }
@@ -769,28 +863,36 @@ export class MsbBackend implements Backend {
     return { builds, boxes };
   }
 
-  /** A new build of a kind's image, built as `<image>:refresh-<time>` from the refresh's setup/, with BB's app. */
   async #buildStandard(current: ImageBuild, setup: string, options: { bbUrl: string | null; log: (line: string) => void; signal: AbortSignal }): Promise<ImageBuild> {
     const kind = current.kind as MsbKind;
     if (!current.current || this.#config.images[kind] !== current.ref) throw new Error(`${current.ref} is not a configured image of microsandbox.`);
-    const tag = `${current.ref.replace(/:[^:/]*$/, "")}:refresh-${Date.now().toString(36)}`;
-    await this.#buildImage(tag, kind, { setup, bbUrl: options.bbUrl, log: options.log, signal: options.signal });
-    const labels = await this.#cli.imageLabels(tag, options.signal);
-    if (!labels) throw new Error(`The build made no image ${tag} in msb.`);
-    const record = recordFromJson(labels[LABELS.imageRecord]);
-    return { ref: tag, image: "standard", kind, build: record?.build ?? null, record, current: false };
+
+    const tag = this.#newBuildRef(current.ref);
+    this.#inFlightImages.add(tag);
+    try {
+      await this.#buildImage(tag, kind, { setup, bbUrl: options.bbUrl, log: options.log, signal: options.signal });
+      const labels = await this.#cli.imageLabels(tag, options.signal);
+      if (!labels) throw new Error(`The build made no image ${tag} in msb.`);
+      const record = recordFromJson(labels[LABELS.imageRecord]);
+      return { ref: tag, image: "standard", kind, build: record?.build ?? null, record, current: false };
+    } catch (error) {
+      this.#inFlightImages.delete(tag);
+      throw error;
+    }
   }
 
-  /** A trial box of a build, made as a box of its kind is, labelled so that no sweep takes it. */
   async #imageBox(build: ImageBuild, label: string, signal: AbortSignal): Promise<ImageBox> {
     const kind = this.#kind(build.kind);
     const name = `bbbox-image-${randomBytes(6).toString("hex")}`;
     const { cores, memoryMiB } = this.#context.kind(build.kind).defaultSize;
+    const imageRef = build.current ? (await this.#resolveImage(build.ref, signal))?.ref : build.ref;
+    if (!imageRef) throw new Error(`${this.#host} has no image ${build.ref} in msb.`);
+
     try {
       const docker = this.#dockerDisk();
       await this.#cli.ok(
         [
-          "create", build.ref, "--name", name, "--pull", "never", "--quiet",
+          "create", imageRef, "--name", name, "--pull", "never", "--quiet",
           "--label", `${LABELS.backend}=microsandbox`, "--label", `${LABELS.imageBox}=${this.#context.installId}`, "--label", `${LABELS.name}=${label.slice(0, 120).replace(/[^\w .:()/-]/g, "-")}`,
           "--hostname", "bb-box-image", "--cpus", String(cores), "--memory", `${memoryMiB}M`, "--root-disk", `${this.#config.diskGiB}G`,
           "--tmpfs", "/run", "--net", this.#config.network, ...docker,
@@ -806,16 +908,23 @@ export class MsbBackend implements Backend {
     }
   }
 
-  /** Puts a build under the image's name, which msb cannot tag: saved under the one and loaded under the other, sharing its layers, then its own tag goes. */
   async #replaceImage(build: ImageBuild, current: ImageBuild, signal: AbortSignal): Promise<ImageBuild> {
-    if (!current.current || build.current) throw new Error(`${current.ref} is not a configured image, or ${build.ref} is one.`);
-    const moved = await this.#cli.script("retag", [build.ref, current.ref], signal);
-    if (moved.exitCode !== 0) throw this.#cli.error(`Putting ${build.ref} under ${current.ref} on ${this.#host}`, moved);
+    const kind = current.kind as MsbKind;
+    if (!current.current || build.current || this.#config.images[kind] !== current.ref || !isBuildOf(build.ref, current.ref)) {
+      throw new Error(`${current.ref} is not a configured image, or ${build.ref} is not a build of it.`);
+    }
+
+    const labels = await this.#cli.imageLabels(build.ref, signal);
+    if (!labels) throw new Error(`${this.#host} has no image ${build.ref} in msb.`);
+
+    await this.#context.storage.set(this.#currentKey(current.ref), build.ref);
     await this.#context.storage.set(this.#importedKey(current.ref), `built:${Date.now()}`);
+    this.#inFlightImages.delete(build.ref);
+
+    await this.#pruneOldBuilds(signal).catch((error) => this.#context.logError("remove old image builds", error));
     return { ...build, ref: current.ref, image: "standard", current: true };
   }
 
-  /** Removes a trial box of this install's, or a refresh's build, and nothing else. */
   async #removeImage(ref: string, signal?: AbortSignal): Promise<void> {
     if (ref.startsWith("bbbox-image-")) {
       const found = await this.#cli.inspect(ref, signal);
@@ -824,8 +933,13 @@ export class MsbBackend implements Backend {
       await this.#cli.script("undisk", [ref], signal);
       return;
     }
-    const refreshing = MSB_KINDS.some((kind) => this.#config.images[kind] && ref.startsWith(`${this.#config.images[kind]!.replace(/:[^:/]*$/, "")}:refresh-`));
-    if (!refreshing) throw new Error(`The image ${ref} is not a refresh's build, so ${PRODUCT} leaves it.`);
+
+    const configured = MSB_KINDS.map((kind) => this.#config.images[kind]).filter((image): image is string => !!image);
+    const matches = configured.find((image) => isBuildOf(ref, image) || isLegacyRefreshOf(ref, image));
+    const current = matches ? await this.#context.storage.get<string>(this.#currentKey(matches)) : null;
+    if (!matches || current === ref) throw new Error(`The image ${ref} is not a refresh's build, so ${PRODUCT} leaves it.`);
+
+    this.#inFlightImages.delete(ref);
     await this.#cli.run(["image", "remove", ref], { timeoutMs: 120_000, signal });
   }
 
@@ -852,6 +966,7 @@ export class MsbBackend implements Backend {
         if (!(error instanceof BackendError)) this.#context.logError(`import ${image}`, error);
       });
     }
+    await this.#pruneOldBuilds(signal).catch((error) => this.#context.logError("remove old image builds", error));
     await this.#sweepBuilders(signal).catch((error) => this.#context.logError("remove leftover builders", error));
     await this.#sweepDisks(signal).catch((error) => this.#context.logError("remove leftover Docker disks", error));
     await this.#reclaim(signal).catch((error) => this.#context.logError("reclaim idle boxes' memory", error));
@@ -1035,8 +1150,8 @@ export class MsbBackend implements Backend {
     const guest = (size: MachineSize | null = null): Guest => ({ ref: name, host: this.#host, address: null, size, data: { box: box.boxId } });
     try {
       await hooks.claim(guest());
-      await step("image", () => this.#import(image, box.kind as MsbKind, false, signal));
-      await step("create", () => this.#create(box, image, signal));
+      const resolvedImage = await step("image", () => this.#import(image, box.kind as MsbKind, false, signal));
+      await step("create", () => this.#create(box, resolvedImage, signal));
       await hooks.starting();
       await step("ready", () => this.#ready(name, deadline, signal));
       const made = await this.#cli.inspect(name, signal);
@@ -1288,7 +1403,7 @@ export class MsbBackend implements Backend {
     if (!image) return null;
     const found = await this.#owned(guest.ref, this.#boxOf(guest), signal);
     const made = found ? recordFromJson(found.labels[LABELS.imageRecord])?.build : null;
-    const now = made ? recordFromJson((await this.#cli.imageLabels(image, signal))?.[LABELS.imageRecord])?.build : null;
+    const now = made ? recordFromJson((await this.#resolveImage(image, signal))?.labels[LABELS.imageRecord])?.build : null;
     return made && now ? made === now : null;
   }
 
@@ -1418,13 +1533,16 @@ export class MsbBackend implements Backend {
         this.#context.images?.chrome?.("x86_64") ?? null,
         this.#context.images?.chrome?.("arm64") ?? null,
       ]).catch(() => [null, null, null, null, null] as const);
-      const images = [...new Set(this.kinds().map((kind) => this.#config.images[kind.id as MsbKind]).filter((image): image is string => !!image))];
+      const images = this.#configuredImages();
       const ids = images.length ? scriptValues((await this.#cli.script("images", images, signal).catch(() => ({ stdout: "" }))).stdout) : {};
+      const currentByConfigured = new Map<string, string | null>();
       for (const image of images) {
         const serves = this.kinds().map((kind) => kind.id).filter((kind) => this.#config.images[kind as MsbKind] === image);
         const id = `image.${image}` as const;
         const name = `Image ${image}`;
-        const labels = facts.installed ? await this.#cli.imageLabels(image, signal).catch(() => null) : null;
+        const resolved = facts.installed ? await this.#resolveImage(image, signal).catch(() => null) : null;
+        currentByConfigured.set(image, resolved?.ref ?? null);
+        const labels = resolved?.labels ?? null;
         const inDocker = ids[`docker:${image}`] || null;
         if (!labels) {
           if (inDocker) push(id, name, "warn", `msb on ${this.#host} has no ${image} yet. Docker there has it.`, `${PRODUCT} imports it from Docker with the first ${serves.join(" or ")} box, or within a few minutes.`);
@@ -1445,6 +1563,12 @@ export class MsbBackend implements Backend {
         const judged = judgeImage(recorded, { os: "linux", pins: serves.some((kind) => !kind.includes("desktop")) ? linuxPins : desktopPins, bbApp: app, pinChrome: recorded?.arch === "arm64" ? chromeArm : chromeAmd }, `Build it again on the host with setup/docker/build.sh, and ${PRODUCT} imports it.`);
         const behind = inDocker && imported && inDocker !== imported ? ` Docker has a newer build, which ${PRODUCT} imports within a few minutes.` : "";
         push(id, name, judged.status, `For ${serves.join(", ")} boxes. ${judged.detail}${behind}`, judged.fix);
+      }
+
+      if (facts.installed) {
+        checks.push(await this.#doctorImageCache(currentByConfigured, signal));
+      } else {
+        skip("microsandbox.images", "Image cache");
       }
 
       let state: HostState | null = null;
@@ -1478,11 +1602,86 @@ export class MsbBackend implements Backend {
       skip("microsandbox.msb", "msb");
       skip("microsandbox.kvm", "KVM");
       for (const image of new Set(this.kinds().map((kind) => this.#config.images[kind.id as MsbKind]).filter((image): image is string => !!image))) skip(`image.${image}`, `Image ${image}`);
+      skip("microsandbox.images", "Image cache");
     }
 
     const ok = checks.every((check) => check.status !== "fail");
     const first = checks.find((check) => check.status === "fail");
     return { ok, summary: ok ? `msb ${MSB_VERSION} on ${this.#host}` : `${first!.name}: ${first!.detail}`, checks, notes };
+  }
+
+  async #doctorImageCache(currentByConfigured: ReadonlyMap<string, string | null>, signal?: AbortSignal): Promise<DoctorCheck> {
+    const [cacheResult, listed] = await Promise.all([
+      this.#cli.script("cache", [], signal).catch(() => null),
+      this.#cli.imageList(signal).catch(() => [] as MsbImageInfo[]),
+    ]);
+    const cache = cacheResult && cacheResult.exitCode === 0 ? parseImageCache(cacheResult.stdout) : null;
+    const oldBuilds = this.#oldBuilds(listed, currentByConfigured);
+
+    const sandboxesByRef = new Map<string, string[]>();
+    const snapshotsByRef = new Map<string, string[]>();
+    if (cache?.sqlite3) {
+      for (const [ref, names] of cache.sandboxesByRef) sandboxesByRef.set(ref, [...names]);
+      for (const [ref, names] of cache.snapshotsByRef) snapshotsByRef.set(ref, [...names]);
+    } else if (oldBuilds.length) {
+      const [sandboxes, snapshots] = await Promise.all([
+        this.#cli.list({}, signal).catch(() => []),
+        this.#snapshotList(signal).catch(() => []),
+      ]);
+      for (const sandbox of sandboxes) {
+        if (!sandbox.image) continue;
+        const list = sandboxesByRef.get(sandbox.image) ?? [];
+        if (!list.includes(sandbox.name)) list.push(sandbox.name);
+        sandboxesByRef.set(sandbox.image, list);
+      }
+      for (const snapshot of snapshots) {
+        if (!snapshot.imageRef) continue;
+        const label = groupMember(snapshot);
+        const list = snapshotsByRef.get(snapshot.imageRef) ?? [];
+        if (!list.includes(label)) list.push(label);
+        snapshotsByRef.set(snapshot.imageRef, list);
+      }
+    }
+
+    const heldDescription = (ref: string): string => {
+      const boxes = sandboxesByRef.get(ref) ?? [];
+      const snaps = snapshotsByRef.get(ref) ?? [];
+      const holders: string[] = [];
+      if (boxes.length) holders.push(`${boxes.length === 1 ? "box" : "boxes"} ${boxes.join(", ")}`);
+      if (snaps.length) holders.push(`${snaps.length === 1 ? "snapshot" : "snapshots"} ${snaps.join(", ")}`);
+      return holders.length ? `${ref} (used by ${holders.join(" and ")})` : `${ref} (no box or snapshot uses it; upkeep removes it)`;
+    };
+
+    const parts: string[] = [cache ? `Image cache takes ${formatKiB(cache.cacheKiB)}.` : "Could not read msb's image cache size."];
+    parts.push(
+      oldBuilds.length
+        ? `${oldBuilds.length} earlier ${oldBuilds.length === 1 ? "build" : "builds"} kept: ${oldBuilds.map(heldDescription).join("; ")}.`
+        : "No earlier builds are kept.",
+    );
+
+    let status: DoctorCheck["status"] = "ok";
+    let fix: string | null = null;
+    if (!cache) {
+      status = "warn";
+      parts.push("Could not read msb.db.");
+    } else if (!cache.db) {
+      parts.push("msb.db does not exist yet.");
+    } else if (!cache.sqlite3) {
+      status = "warn";
+      parts.push(`sqlite3 is not installed on ${this.#host}, so ${PRODUCT} cannot read the untagged manifest count from msb.db.`);
+      fix = `Install sqlite3 on ${this.#host} so ${PRODUCT} can read the untagged manifest count from msb.db.`;
+    } else if (cache.untagged === null) {
+      status = "warn";
+      parts.push("Could not read the untagged manifest count from msb.db.");
+    } else if (cache.untagged > 0) {
+      status = "warn";
+      parts.push(`${cache.untagged} untagged ${cache.untagged === 1 ? "manifest" : "manifests"} in msb.db.`);
+      fix = `Untagged manifests stay in msb ${MSB_VERSION}'s cache from earlier runs. Check free disk on ${this.#host}.`;
+    } else {
+      parts.push("0 untagged manifests in msb.db.");
+    }
+
+    return { id: "microsandbox.images", name: "Image cache", status, detail: parts.join(" "), fix };
   }
 
   snapshotting(kind: string): Snapshotting | null {

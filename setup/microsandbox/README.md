@@ -261,6 +261,9 @@ Run `bb box doctor`. For the microsandbox backend it checks:
 - `/dev/kvm` is there and the user may use it;
 - each image is in `msb`, or in Docker for bb-box to import, and how old it
   is;
+- `msb`'s image cache size, any earlier builds kept because a box or snapshot
+  still uses them, and the untagged manifest count read from `msb.db` (or
+  whether `sqlite3` is absent on the host);
 - whether the host's `msb` is the release whose snapshots bb-box measured;
 - whether the host is an LXC container;
 - the room on the host for a box at each kind's default size.
@@ -286,13 +289,16 @@ npm run conformance -- --backend microsandbox --settings msb.json
   named by its version, such as `0.7.7`.
 - **Images.** On a host with Docker, rebuild them with `build.sh`, or let the
   nightly run rebuild Docker's
-  ([setup](../README.md#rebuild-images-each-night)). bb-box imports each
-  changed image into `msb` within a few minutes.
+  ([setup](../README.md#rebuild-images-each-night)). BB Box imports each
+  changed image into `msb` under a build tag of its own within a few minutes,
+  switches new boxes to it, and removes the earlier build once no box or
+  snapshot uses it.
 - **Images on a host without Docker**, such as a Mac: the nightly run
   rebuilds them there itself, once set up. It builds each in a builder
-  microVM with BB's app, so boxes enrol without downloading it, under a tag
-  of its own, then checks a box of the new build. Only when that passes
-  does the build take the image's name. It needs 80 GiB free on the volume
+  microVM with BB's app, so boxes enrol without downloading it, under a build
+  tag of its own, then checks a box of the new build. Only when that passes
+  does BB Box switch new boxes to the new build and remove the earlier build
+  once no box or snapshot uses it. It needs 80 GiB free on the volume
   where `msb` keeps its images and build files, measured through any link
   to another volume. With less, the image waits for the next night, and
   `bb box doctor` says so. `bb box images build <name>`, with the name
@@ -301,7 +307,9 @@ npm run conformance -- --backend microsandbox --settings msb.json
   fails, its last lines in `bb box images list --json` include the guest's
   kernel log and memory (`guest:`) and the builder's last `msb logs` lines
   (`msb:`), as bb-box removes the builder.
-- Boxes made before keep running from the image they started with.
+- Boxes made before keep running from the build they started with. Once the
+  last box and snapshot using an earlier build go, BB Box removes that build
+  and its unshared layers at the next upkeep.
 
 ## Remove
 

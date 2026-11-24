@@ -47,6 +47,7 @@ export interface MsbSnapshot {
   readonly availability: string;
   readonly parent: string | null;
   readonly createdAt: number | null;
+  readonly imageRef: string | null;
 }
 
 export function groupMember(snapshot: Pick<MsbSnapshot, "group" | "name">): string {
@@ -81,6 +82,7 @@ export function parseSnapshotList(stdout: string): MsbSnapshot[] {
         availability: text(fields.availability) ?? "unknown",
         parent: text(fields.parent_digest),
         createdAt: Number.isFinite(at) ? at : null,
+        imageRef: text(fields.image_ref),
       },
     ];
   });

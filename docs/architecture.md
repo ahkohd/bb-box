@@ -1048,10 +1048,14 @@ microVM only when it asks for this backend.
   the command, so the transport's probe asks `msb ping` first. As over SSH,
   what a command leaves running survives its `msb exec` only with `nohup`
   and its output redirected.
-- Images come from Docker on the host, built by `setup/docker/build.sh`:
-  bb-box imports a kind's image with `docker save` and `msb load` at its
-  first box, and again when Docker's image ID changes; bb-box never pulls
-  one.
+- Images come from Docker on the host, built by `setup/docker/build.sh`, or
+  from a builder microVM on a host without Docker: BB Box loads each build
+  under a unique build tag (`<configured>-b<id>`) with `docker save` by image
+  ID and `msb load`, records the current build tag in its storage, and removes
+  earlier builds with `msb image remove` (without `--force`) once no box or
+  snapshot uses them. A host that still holds a bare configured tag keeps
+  using it until the next import or refresh, then removes it the same way;
+  BB Box never pulls an image or moves an existing tag.
 - Capacity is the host's memory, less a reserve and the memory of the
   running bb-box microVMs, its cores, and a most-boxes budget counting every
   install's. `msb` reserves no memory and takes back what a guest frees.

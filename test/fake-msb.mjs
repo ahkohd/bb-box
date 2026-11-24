@@ -280,7 +280,7 @@ function snapshot(rest) {
       labels,
       source: sandbox.name,
       config: { resources: { ...sandbox.config.resources }, owned: sandbox.config.owned ?? [], disk_mib: sandbox.config.image.Oci.root_disk.size_mib, image: sandbox.config.image.Oci.reference },
-      listed: { artifact_path: snapshotDir(id), availability: host.snapshotAvailability ?? "ready", created_at: at, group, name, parent_digest: parent, scope: values["--full"] ? "full" : "disk", size_bytes: values["--full"] ? null : 4294967296, snapshot_id: id },
+      listed: { artifact_path: snapshotDir(id), availability: host.snapshotAvailability ?? "ready", created_at: at, group, image_ref: sandbox.config.image.Oci.reference, name, parent_digest: parent, scope: values["--full"] ? "full" : "disk", size_bytes: values["--full"] ? null : 4294967296, snapshot_id: id },
     });
     saveSnapshots(list);
     const allHeads = heads();
@@ -469,9 +469,29 @@ switch (command) {
     break;
   case "image": {
     const images = read("images.json", {});
-    if (rest[0] === "remove") {
-      if (!(rest[1] in images)) fail(`image not found: ${rest[1]}`);
-      delete images[rest[1]];
+    if (rest[0] === "list" || rest[0] === "ls") {
+      const list = Object.keys(images).map((reference, index) => ({
+        architecture: "amd64",
+        created_at: new Date(1_790_000_000_000 + index * 1000).toISOString(),
+        digest: `sha256:${reference}`,
+        layer_count: 2,
+        os: "linux",
+        reference,
+        size_bytes: 3_000_000,
+      }));
+      console.log(JSON.stringify(list));
+      break;
+    }
+    if (rest[0] === "remove" || rest[0] === "rm") {
+      const { values, rest: refs } = flags(rest.slice(1), []);
+      const target = refs[0];
+      if (!target || !(target in images)) fail(`image not found: ${target ?? ""}`);
+      if (!values["--force"]) {
+        const usedBySandbox = names().map(load).some((sandbox) => sandbox && sandbox.config.image.Oci.reference === target);
+        const usedBySnapshot = snapshots().some((snap) => snap.config.image === target);
+        if (usedBySandbox || usedBySnapshot) fail("image in use by sandbox(es): sandbox or snapshot dependency");
+      }
+      delete images[target];
       writeFileSync(join(root, "images.json"), JSON.stringify(images));
       break;
     }

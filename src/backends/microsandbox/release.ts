@@ -40,8 +40,80 @@ export const MSB_HOME_MAX = 57;
 /** An image reference as bb-box passes it to docker and msb: no spaces or quotes, and no leading "-". */
 export const IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/;
 
-/** The scripts a host runs for bb-box, by name. */
-export type MsbScript = "install" | "status" | "images" | "import" | "undisk" | "disks" | "memory" | "oom" | "transfer" | "retag" | "snapshots" | "keep";
+export type MsbScript = "install" | "status" | "images" | "import" | "undisk" | "disks" | "memory" | "oom" | "transfer" | "snapshots" | "keep" | "cache";
+
+const BUILD_ID = /^[a-z0-9]+$/;
+
+function repositoryOf(ref: string): string {
+  const slash = ref.lastIndexOf("/");
+  const colon = ref.indexOf(":", slash + 1);
+  return colon === -1 ? ref : ref.slice(0, colon);
+}
+
+export function buildImagePrefix(configured: string): string {
+  const slash = configured.lastIndexOf("/");
+  const colon = configured.indexOf(":", slash + 1);
+  return colon === -1 ? `${configured}:b` : `${configured}-b`;
+}
+
+export function buildImageRef(configured: string, id: string): string {
+  return `${buildImagePrefix(configured)}${id}`;
+}
+
+export function isBuildOf(ref: string, configured: string): boolean {
+  const prefix = buildImagePrefix(configured);
+  return ref.startsWith(prefix) && BUILD_ID.test(ref.slice(prefix.length));
+}
+
+export function isLegacyRefreshOf(ref: string, configured: string): boolean {
+  const prefix = `${repositoryOf(configured)}:refresh-`;
+  return ref.startsWith(prefix) && BUILD_ID.test(ref.slice(prefix.length));
+}
+
+export interface MsbCacheInfo {
+  readonly cacheKiB: number;
+  readonly db: boolean;
+  readonly sqlite3: boolean;
+  readonly untagged: number | null;
+  readonly sandboxesByRef: ReadonlyMap<string, readonly string[]>;
+  readonly snapshotsByRef: ReadonlyMap<string, readonly string[]>;
+}
+
+export function parseImageCache(stdout: string): MsbCacheInfo {
+  let cacheKiB = 0;
+  let db = false;
+  let sqlite3 = false;
+  let untagged: number | null = null;
+  const sandboxesByRef = new Map<string, string[]>();
+  const snapshotsByRef = new Map<string, string[]>();
+
+  for (const line of stdout.split("\n")) {
+    const at = line.indexOf("=");
+    if (at <= 0) continue;
+    const key = line.slice(0, at).trim();
+    const value = line.slice(at + 1).trim();
+
+    if (key === "cache_kib") cacheKiB = Number(value) || 0;
+    else if (key === "db") db = value === "1";
+    else if (key === "sqlite3") sqlite3 = value === "1";
+    else if (key === "untagged") {
+      const parsed = Number(value);
+      untagged = value !== "" && Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+    } else if (key.startsWith("sandbox:") && value) {
+      const ref = key.slice("sandbox:".length);
+      const list = sandboxesByRef.get(ref) ?? [];
+      if (!list.includes(value)) list.push(value);
+      sandboxesByRef.set(ref, list);
+    } else if (key.startsWith("snapshot:") && value) {
+      const ref = key.slice("snapshot:".length);
+      const list = snapshotsByRef.get(ref) ?? [];
+      if (!list.includes(value)) list.push(value);
+      snapshotsByRef.set(ref, list);
+    }
+  }
+
+  return { cacheKiB, db, sqlite3, untagged, sandboxesByRef, snapshotsByRef };
+}
 
 /** A builder microVM's name (#build in backend.ts). */
 export const BUILDER_NAME = /^bb-box-builder-[a-z0-9]{1,32}$/;
@@ -237,45 +309,64 @@ fi
 echo "adjusted=$n"
 `,
 
-  /**
-   * Puts image $1 under the reference $2, which msb cannot tag: `msb save`
-   * of the one into `msb load` of the other, which share their layers, then
-   * $1's own reference goes.
-   */
-  retag: () => `${PRELUDE}"$msb" save "$1" | "$msb" load --quiet --tag "$2"
-"$msb" image remove "$1" >/dev/null
-echo "retagged=$2"
-`,
-
-  /**
-   * Moves image $2 from Docker in builder microVM $1 into msb on the host,
-   * under the same reference, with `docker save` there and `msb load` here.
-   */
-  transfer: () => `${PRELUDE}"$msb" exec "$1" -- docker save "$2" | "$msb" load --quiet --tag "$2"
+  transfer: () => `${PRELUDE}id=$("$msb" exec "$1" -- docker image inspect --format '{{.Id}}' "$2")
+[ -n "$id" ] || { echo "Docker in builder $1 has no image $2 to transfer." >&2; exit 2; }
+"$msb" exec "$1" -- docker save "$id" | "$msb" load --quiet --tag "$2"
 echo "transferred=$2"
 `,
 
-  import: () => `${PRELUDE}image=$1
+  import: () => `${PRELUDE}source=$1
+target=$2
 [ -x "$msb" ] || { echo "msb is not installed in $dir." >&2; exit 2; }
-id=$(docker image inspect --format '{{.Id}}' "$image") || { echo "Docker on this host has no image $image to import." >&2; exit 2; }
-docker save "$image" | "$msb" load --quiet --tag "$image"
+id=$(docker image inspect --format '{{.Id}}' "$source") || { echo "Docker on this host has no image $source to import." >&2; exit 2; }
+docker save "$id" | "$msb" load --quiet --tag "$target"
 echo "imported=$id"
+`,
+
+  cache: () => `${PRELUDE}set +e
+if [ -d "$dir/home/cache" ]; then
+  echo "cache_kib=$(du -sk "$dir/home/cache" 2>/dev/null | awk '{print $1}')"
+else
+  echo "cache_kib=0"
+fi
+db=$dir/home/db/msb.db
+if [ ! -f "$db" ]; then
+  echo "db=0"
+  exit 0
+fi
+echo "db=1"
+if ! command -v sqlite3 >/dev/null 2>&1; then
+  echo "sqlite3=0"
+  exit 0
+fi
+echo "sqlite3=1"
+untagged=$(sqlite3 -readonly "$db" "SELECT COUNT(*) FROM manifest m LEFT JOIN image_ref r ON r.manifest_id = m.id WHERE r.id IS NULL;" 2>/dev/null)
+if [ -n "$untagged" ]; then
+  echo "untagged=$untagged"
+fi
+sqlite3 -readonly -separator '|' "$db" "SELECT r.reference, s.name FROM image_ref r JOIN sandbox_rootfs sr ON sr.manifest_id = r.manifest_id JOIN sandbox s ON s.id = sr.sandbox_id ORDER BY r.reference, s.name;" 2>/dev/null | while IFS='|' read -r ref name; do
+  [ -n "$ref" ] && [ -n "$name" ] && echo "sandbox:$ref=$name"
+done
+sqlite3 -readonly -separator '|' "$db" "SELECT r.reference, si.group_name, si.name, si.snapshot_id FROM image_ref r JOIN manifest m ON m.id = r.manifest_id JOIN snapshot_index si ON si.image_manifest_digest = m.digest ORDER BY r.reference, si.group_name, si.name;" 2>/dev/null | while IFS='|' read -r ref grp snap sid; do
+  if [ -n "$ref" ]; then
+    label=$sid
+    [ -n "$grp" ] && [ -n "$snap" ] && label="$grp:$snap"
+    echo "snapshot:$ref=$label"
+  fi
+done
 `,
 };
 
-/** A script's text, which takes its arguments as $1 and on. */
 export function msbScript(name: MsbScript): string {
   return SCRIPTS[name]();
 }
 
-/** Whether `args` are what script `name` takes, so a host entry runs nothing else. */
 export function scriptArgsOk(name: string, args: readonly string[]): name is MsbScript {
   if (name === "install" || name === "status") return args.length === 0;
-  if (name === "import") return args.length === 1 && IMAGE_REF.test(args[0]!);
+  if (name === "import") return args.length === 2 && IMAGE_REF.test(args[0]!) && IMAGE_REF.test(args[1]!);
   if (name === "undisk") return args.length >= 1 && args.length <= 4 && args.every((arg) => DISK_NAME.test(arg));
-  if (name === "disks" || name === "memory" || name === "oom" || name === "snapshots") return args.length === 0;
+  if (name === "disks" || name === "memory" || name === "oom" || name === "snapshots" || name === "cache") return args.length === 0;
   if (name === "keep") return args.length === 2 && MSB_SNAPSHOT_ID.test(args[0]!) && KEEP_DATE.test(args[1]!);
-  if (name === "retag") return args.length === 2 && args.every((arg) => IMAGE_REF.test(arg)) && /:refresh-[a-z0-9]+$/.test(args[0]!);
   if (name === "transfer") return args.length === 2 && BUILDER_NAME.test(args[0]!) && IMAGE_REF.test(args[1]!);
   if (name === "images") return args.length >= 1 && args.length <= 4 && args.every((arg) => IMAGE_REF.test(arg));
   return false;
