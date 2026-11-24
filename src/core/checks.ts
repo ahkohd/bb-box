@@ -173,6 +173,11 @@ export const CHECKS = {
   "microsandbox.snapshots": { name: "Snapshots", from: ["microsandbox"], what: `The host's msb is the release whose snapshots ${PRODUCT}'s checks measured, so ${PRODUCT} takes, restores, forks and deletes snapshots there.` },
   "microsandbox.lxc": { name: "LXC", from: ["microsandbox"], what: "The host is an LXC container, where msb's snapshots and flat roots fail." },
   "microsandbox.overcommit": { name: "Memory overcommit", from: ["microsandbox"], what: `Above 1, whether it applies on the host: a Mac keeps the memory a box has used, so ${PRODUCT} counts each box there at its full size.` },
+  "microsandbox.images": {
+    name: "Image cache",
+    from: ["microsandbox"],
+    what: "The size of msb's image cache on the host, any earlier builds kept because a box or snapshot still uses them, and the count of untagged manifests read from msb.db.",
+  },
   "microsandbox.capacity": { name: "Room on <host>", from: ["microsandbox"], what: "Room on the host for a box at its default size." },
   "microsandbox.sizes": { name: "Room for each kind", from: ["microsandbox"], what: "The host holds a box of each kind at its default size." },
 

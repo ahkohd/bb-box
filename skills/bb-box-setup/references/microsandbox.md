@@ -51,6 +51,8 @@ idle boxes on a host.
 
 ## Check and prove
 
-`bb box doctor` checks KVM, `msb`, the images and the room. Prove it with
+`bb box doctor` checks KVM, `msb`, the images, the image cache and the room. Prove it with
 `bb box acquire linux --on microsandbox`. The first box of a kind waits for
-its image to import, about 6 s for linux and 20 s for the desktop.
+its image to import, about 6 s for linux and 20 s for the desktop. BB Box
+loads each build under a unique build tag and removes earlier builds once no
+box or snapshot uses them.

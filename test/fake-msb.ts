@@ -4,11 +4,12 @@
 // imports from Docker into msb.
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ScriptResult } from "../src/backends/microsandbox/cli.ts";
 import { parseMsbPart, type MsbConfig } from "../src/backends/microsandbox/config.ts";
-import type { MsbScript } from "../src/backends/microsandbox/release.ts";
+import { isBuildOf, type MsbScript } from "../src/backends/microsandbox/release.ts";
 import type { FieldValue } from "../src/backends/types.ts";
 import { fakeGroup, tempDir } from "./helpers.ts";
 
@@ -29,7 +30,7 @@ export interface FakeMsbHost {
   /** The scripts run so far, with their arguments. */
   readonly scripts: string[][];
   sandboxes(): string[];
-  inspect(name: string): { status: string; config: { labels: Record<string, string>; env: string[]; mounts: { guest: string; type: string }[]; owned: string[]; disks: string[]; network: string; tmpfs: string; resources: { cpus: number; memory_mib: number }; restoredFrom?: string } };
+  inspect(name: string): { status: string; config: { labels: Record<string, string>; env: string[]; mounts: { guest: string; type: string }[]; owned: string[]; disks: string[]; network: string; tmpfs: string; resources: { cpus: number; memory_mib: number }; image: { Oci: { reference: string } }; restoredFrom?: string } };
   snapshots(): { id: string; group: string; name: string; labels: Record<string, string>; listed: { parent_digest: string | null; scope: string } }[];
   heads(): Record<string, string>;
   /** msb's images, by reference, with their labels. */
@@ -64,11 +65,16 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
   const imagesFile = join(root, "images.json");
   const readImages = (): Record<string, Record<string, string>> => (existsSync(imagesFile) ? JSON.parse(readFileSync(imagesFile, "utf8")) : {});
   const imageWaiters = new Map<string, Array<() => void>>();
-  const notifyImage = (ref: string) => {
-    const waiting = imageWaiters.get(ref);
-    if (!waiting) return;
-    imageWaiters.delete(ref);
-    for (const wake of waiting) wake();
+  const hasImageOrBuild = (ref: string): boolean => {
+    const current = readImages();
+    return ref in current || Object.keys(current).some((key) => isBuildOf(key, ref));
+  };
+  const notifyImage = (added: string) => {
+    for (const [wanted, waiting] of [...imageWaiters.entries()]) {
+      if (wanted !== added && !isBuildOf(added, wanted)) continue;
+      imageWaiters.delete(wanted);
+      for (const wake of waiting) wake();
+    }
   };
   writeFileSync(imagesFile, JSON.stringify(options.imported === false ? {} : Object.fromEntries([...docker].map(([ref, image]) => [ref, image.labels]))));
   let facts: Record<string, string> = {
@@ -126,25 +132,65 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
         const disks = existsSync(join(dir, "disks")) ? readdirSync(join(dir, "disks")) : [];
         return { exitCode: 0, stdout: disks.map((file) => `${file.replace(/\.ext4$/, "")}=${Math.round((Date.now() - statSync(join(dir, "disks", file)).mtimeMs) / 1000)}\n`).join(""), stderr: "" };
       }
-      if (name === "retag") {
-        const images = readImages();
-        if (!images[args[0]!]) return { exitCode: 1, stdout: "", stderr: `error: image not found: ${args[0]}\n` };
-        const { [args[0]!]: moved, ...rest } = images;
-        writeFileSync(imagesFile, JSON.stringify({ ...rest, [args[1]!]: moved }));
-        return { exitCode: 0, stdout: `retagged=${args[1]}\n`, stderr: "" };
-      }
       if (name === "transfer") {
         const kind = args[1]!.includes("desktop") ? "linux-arm64-desktop-cpu" : "linux-arm64";
         writeFileSync(imagesFile, JSON.stringify({ ...readImages(), [args[1]!]: imageLabels(kind, "build.builder") }));
         notifyImage(args[1]!);
         return { exitCode: 0, stdout: `transferred=${args[1]}\n`, stderr: "" };
       }
+      if (name === "cache") {
+        const cacheKiB = facts.cache_kib ?? String(3 * 1024 * 1024);
+        const db = facts.db ?? "1";
+        const sqlite3 = facts.sqlite3 ?? "1";
+        const out = [`cache_kib=${cacheKiB}`, `db=${db}`];
+        if (db === "1") {
+          out.push(`sqlite3=${sqlite3}`);
+          if (sqlite3 === "1") {
+            if (facts.untagged !== "") out.push(`untagged=${facts.untagged ?? "0"}`);
+            const images = readImages();
+            const digestsFile = join(root, "image-digests.json");
+            const digests: Record<string, string> = existsSync(digestsFile) ? JSON.parse(readFileSync(digestsFile, "utf8")) : {};
+            const digestOf = (ref: string): string =>
+              digests[ref] ?? `sha256:${createHash("sha256").update(JSON.stringify({ ref, labels: images[ref] ?? null })).digest("hex")}`;
+            const refsByDigest = new Map<string, string[]>();
+            for (const ref of Object.keys(images)) {
+              const d = digestOf(ref);
+              const list = refsByDigest.get(d) ?? [];
+              list.push(ref);
+              refsByDigest.set(d, list);
+            }
+            const boxesDir = join(root, "sandboxes");
+            if (existsSync(boxesDir)) {
+              for (const boxName of readdirSync(boxesDir).sort()) {
+                const file = join(boxesDir, boxName, "config.json");
+                if (!existsSync(file)) continue;
+                const config = JSON.parse(readFileSync(file, "utf8")) as { config?: { image?: { Oci?: { reference?: string } } } };
+                const ref = config.config?.image?.Oci?.reference;
+                if (!ref) continue;
+                for (const matched of refsByDigest.get(digestOf(ref)) ?? [ref]) out.push(`sandbox:${matched}=${boxName}`);
+              }
+            }
+            const snapsFile = join(root, "snapshots.json");
+            if (existsSync(snapsFile)) {
+              const snaps = JSON.parse(readFileSync(snapsFile, "utf8")) as { group: string; name: string; config?: { image?: string } }[];
+              for (const snap of snaps) {
+                const ref = snap.config?.image;
+                if (!ref) continue;
+                for (const matched of refsByDigest.get(digestOf(ref)) ?? [ref]) out.push(`snapshot:${matched}=${snap.group}:${snap.name}`);
+              }
+            }
+          }
+        }
+        return { exitCode: 0, stdout: `${out.join("\n")}\n`, stderr: "" };
+      }
       if (name === "memory") return { exitCode: 0, stdout: `available_kib=${facts.available_kib}\n`, stderr: "" };
       if (name === "oom") return { exitCode: 0, stdout: "adjusted=0\n", stderr: "" };
       if (name === "images") return { exitCode: 0, stdout: args.map((ref) => `docker:${ref}=${docker.get(ref)?.id ?? ""}\n`).join(""), stderr: "" };
       const image = docker.get(args[0]!);
       if (!image) return { exitCode: 2, stdout: "", stderr: `Docker on this host has no image ${args[0]} to import.\n` };
-      writeFileSync(imagesFile, JSON.stringify({ ...readImages(), [args[0]!]: image.labels }));
+      const target = args[1]!;
+      writeFileSync(imagesFile, JSON.stringify({ ...readImages(), [target]: image.labels }));
+      notifyImage(target);
       return { exitCode: 0, stdout: `imported=${image.id}\n`, stderr: "" };
     },
     set: (more) => {
@@ -165,12 +211,12 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
     inspect: (name) => JSON.parse(readFileSync(join(root, "sandboxes", name, "config.json"), "utf8")),
     images: readImages,
     whenImage: (ref) => {
-      if (readImages()[ref]) return Promise.resolve();
+      if (hasImageOrBuild(ref)) return Promise.resolve();
       return new Promise((resolve) => {
         const waiting = imageWaiters.get(ref) ?? [];
         waiting.push(resolve);
         imageWaiters.set(ref, waiting);
-        if (readImages()[ref]) notifyImage(ref);
+        if (hasImageOrBuild(ref)) notifyImage(ref);
       });
     },
     snapshots: () => (existsSync(join(root, "snapshots.json")) ? JSON.parse(readFileSync(join(root, "snapshots.json"), "utf8")) : []),

@@ -1492,7 +1492,7 @@ export interface MachineAccess {
 }
 
 /** The scripts bb-box runs on an msb host (src/backends/microsandbox/release.ts). */
-export type MsbScriptName = "install" | "status" | "images" | "import" | "undisk" | "disks" | "memory" | "oom" | "transfer" | "retag" | "snapshots" | "keep";
+export type MsbScriptName = "install" | "status" | "images" | "import" | "undisk" | "disks" | "memory" | "oom" | "transfer" | "snapshots" | "keep" | "cache";
 
 /** How a backend runs bb-box's msb on a BB machine, through bb-box's msb relay (053). */
 export interface MsbAccess {
