@@ -40,20 +40,37 @@ export const MSB_HOME_MAX = 57;
 /** An image reference as bb-box passes it to docker and msb: no spaces or quotes, and no leading "-". */
 export const IMAGE_REF = /^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/;
 
+/** The scripts a host runs for bb-box, by name. */
 export type MsbScript = "install" | "status" | "images" | "import" | "undisk" | "disks" | "memory" | "oom" | "transfer" | "snapshots" | "keep" | "cache";
 
-const BUILD_ID = /^[a-z0-9]+$/;
+const BUILD_ID = /^[a-z0-9]{8,12}[0-9a-f]{6}$/;
+const RESTORE_DIGEST = /^@sha256:[0-9a-f]{64}$/;
+
+function withoutDigest(ref: string): string {
+  return ref.replace(/@.*$/, "");
+}
 
 function repositoryOf(ref: string): string {
-  const slash = ref.lastIndexOf("/");
-  const colon = ref.indexOf(":", slash + 1);
-  return colon === -1 ? ref : ref.slice(0, colon);
+  const base = withoutDigest(ref);
+  const slash = base.lastIndexOf("/");
+  const colon = base.indexOf(":", slash + 1);
+  return colon === -1 ? base : base.slice(0, colon);
+}
+
+export function canonicalRepositoryOf(ref: string): string {
+  const repo = repositoryOf(ref);
+  const firstSlash = repo.indexOf("/");
+  if (firstSlash === -1) return `docker.io/library/${repo}`;
+  const head = repo.slice(0, firstSlash);
+  if (head === "localhost" || head.includes(".") || head.includes(":")) return repo;
+  return `docker.io/${repo}`;
 }
 
 export function buildImagePrefix(configured: string): string {
-  const slash = configured.lastIndexOf("/");
-  const colon = configured.indexOf(":", slash + 1);
-  return colon === -1 ? `${configured}:b` : `${configured}-b`;
+  const base = withoutDigest(configured);
+  const slash = base.lastIndexOf("/");
+  const colon = base.indexOf(":", slash + 1);
+  return colon === -1 ? `${base}:b` : `${base}-b`;
 }
 
 export function buildImageRef(configured: string, id: string): string {
@@ -67,7 +84,15 @@ export function isBuildOf(ref: string, configured: string): boolean {
 
 export function isLegacyRefreshOf(ref: string, configured: string): boolean {
   const prefix = `${repositoryOf(configured)}:refresh-`;
-  return ref.startsWith(prefix) && BUILD_ID.test(ref.slice(prefix.length));
+  return ref.startsWith(prefix) && /^[a-z0-9]+$/.test(ref.slice(prefix.length));
+}
+
+export function isRestoreDigestOf(ref: string, configured: string): boolean {
+  const canonical = canonicalRepositoryOf(configured);
+  if (ref.startsWith(`${canonical}@`)) return RESTORE_DIGEST.test(ref.slice(canonical.length));
+  const raw = repositoryOf(configured);
+  if (raw !== canonical && ref.startsWith(`${raw}@`)) return RESTORE_DIGEST.test(ref.slice(raw.length));
+  return false;
 }
 
 export interface MsbCacheInfo {
@@ -246,11 +271,6 @@ for image in "$@"; do
 done
 `,
 
-  /**
-   * Imports image $1 from Docker on the host into msb under the same
-   * reference, with `docker save` and `msb load`. Prints Docker's ID of what
-   * it imported.
-   */
   /** Removes the Docker disks of the boxes named. */
   undisk: () => `${PRELUDE}for name in "$@"; do rm -f "$dir/disks/$name.ext4" "$dir/disks/$name.ext4.new"; done
 `,
@@ -309,7 +329,7 @@ fi
 echo "adjusted=$n"
 `,
 
-  transfer: () => `${PRELUDE}id=$("$msb" exec "$1" -- docker image inspect --format '{{.Id}}' "$2")
+  transfer: () => `${PRELUDE}id=$("$msb" exec "$1" -- docker image inspect --format '{{.Id}}' "$2") || { echo "Docker in builder $1 has no image $2 to transfer." >&2; exit 2; }
 [ -n "$id" ] || { echo "Docker in builder $1 has no image $2 to transfer." >&2; exit 2; }
 "$msb" exec "$1" -- docker save "$id" | "$msb" load --quiet --tag "$2"
 echo "transferred=$2"
@@ -340,14 +360,14 @@ if ! command -v sqlite3 >/dev/null 2>&1; then
   exit 0
 fi
 echo "sqlite3=1"
-untagged=$(sqlite3 -readonly "$db" "SELECT COUNT(*) FROM manifest m LEFT JOIN image_ref r ON r.manifest_id = m.id WHERE r.id IS NULL;" 2>/dev/null)
+untagged=$(sqlite3 -readonly -cmd ".timeout 5000" "$db" "SELECT COUNT(*) FROM manifest m LEFT JOIN image_ref r ON r.manifest_id = m.id WHERE r.id IS NULL;" 2>/dev/null)
 if [ -n "$untagged" ]; then
   echo "untagged=$untagged"
 fi
-sqlite3 -readonly -separator '|' "$db" "SELECT r.reference, s.name FROM image_ref r JOIN sandbox_rootfs sr ON sr.manifest_id = r.manifest_id JOIN sandbox s ON s.id = sr.sandbox_id ORDER BY r.reference, s.name;" 2>/dev/null | while IFS='|' read -r ref name; do
+sqlite3 -readonly -cmd ".timeout 5000" -separator '|' "$db" "SELECT r.reference, s.name FROM image_ref r JOIN sandbox_rootfs sr ON sr.manifest_id = r.manifest_id JOIN sandbox s ON s.id = sr.sandbox_id ORDER BY r.reference, s.name;" 2>/dev/null | while IFS='|' read -r ref name; do
   [ -n "$ref" ] && [ -n "$name" ] && echo "sandbox:$ref=$name"
 done
-sqlite3 -readonly -separator '|' "$db" "SELECT r.reference, si.group_name, si.name, si.snapshot_id FROM image_ref r JOIN manifest m ON m.id = r.manifest_id JOIN snapshot_index si ON si.image_manifest_digest = m.digest ORDER BY r.reference, si.group_name, si.name;" 2>/dev/null | while IFS='|' read -r ref grp snap sid; do
+sqlite3 -readonly -cmd ".timeout 5000" -separator '|' "$db" "SELECT r.reference, si.group_name, si.name, si.snapshot_id FROM image_ref r JOIN manifest m ON m.id = r.manifest_id JOIN snapshot_index si ON si.image_manifest_digest = m.digest ORDER BY r.reference, si.group_name, si.name;" 2>/dev/null | while IFS='|' read -r ref grp snap sid; do
   if [ -n "$ref" ]; then
     label=$sid
     [ -n "$grp" ] && [ -n "$snap" ] && label="$grp:$snap"
@@ -357,10 +377,12 @@ done
 `,
 };
 
+/** A script's text, which takes its arguments as $1 and on. */
 export function msbScript(name: MsbScript): string {
   return SCRIPTS[name]();
 }
 
+/** Whether `args` are what script `name` takes, so a host entry runs nothing else. */
 export function scriptArgsOk(name: string, args: readonly string[]): name is MsbScript {
   if (name === "install" || name === "status") return args.length === 0;
   if (name === "import") return args.length === 2 && IMAGE_REF.test(args[0]!) && IMAGE_REF.test(args[1]!);

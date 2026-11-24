@@ -11,7 +11,7 @@ import { BUILDER_IMAGE, MsbBackend, OWN_HOSTNAME, RUN_IN_MEMORY, msbKinds, parse
 import { MsbCli } from "../src/backends/microsandbox/cli.ts";
 import { parseMsbPart } from "../src/backends/microsandbox/config.ts";
 import { microsandboxDriver } from "../src/backends/microsandbox/index.ts";
-import { buildImageRef, isBuildOf, msbScript, parseImageCache, scriptArgsOk } from "../src/backends/microsandbox/release.ts";
+import { buildImageRef, canonicalRepositoryOf, isBuildOf, isRestoreDigestOf, msbScript, parseImageCache, scriptArgsOk } from "../src/backends/microsandbox/release.ts";
 import { BackendError, type AcquireHooks, type BoxIdentity, type MachineSize, type FieldValue, type Guest, type MachineAccess, type ReleaseHooks, type SnapshotHooks } from "../src/backends/types.ts";
 import { dockerConfig } from "./fake-docker.ts";
 import { fakeMsbHost, imageLabels, msbConfig } from "./fake-msb.ts";
@@ -189,6 +189,7 @@ test("installs msb on a host that lacks it, once, and imports a kind's image fro
   assert.ok(isBuildOf(initialImports[0]![2]!, "bbbox/linux:1"));
   assert.deepEqual(Object.keys(fake.images()), [initialImports[0]![2]!]);
 
+  // The upkeep imports the desktop image, and the linux image again once Docker's build is new.
   await backend.maintain(signal());
   assert.equal(fake.scripts.filter(([name]) => name === "import").length, 2);
 
@@ -233,6 +234,7 @@ test("a kind whose image neither msb nor Docker has is refused for now, and BB B
   await untilSeen(join(fake.root, "sandboxes"), () => !fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")));
   assert.deepEqual(fake.sandboxes(), []);
   assert.ok(!fake.calls().some((call) => call[0] === "pull"));
+  // The next box starts from the built image.
   await backend.acquire(identity(), null, hooks().hooks, signal());
 });
 
@@ -243,6 +245,7 @@ test("on a Mac, the backend offers the arm64 kinds, checks the Hypervisor framew
   const report = await backend.doctor(signal());
   assert.deepEqual(backend.kinds().map((kind) => kind.id), ["linux-arm64", "linux-arm64-desktop-cpu"]);
   assert.ok(backend.kinds().every((kind) => kind.capabilities.arch === "arm64"));
+  // The desktop has Selkies beside its VNC server, as on x86_64, and opens as video (060).
   assert.deepEqual(backend.kinds().find((kind) => kind.id === "linux-arm64-desktop-cpu")!.capabilities.displays.map((display) => [display.protocol, display.byChoice ?? false]), [["rfb", false], ["selkies", false]]);
   assert.equal(backend.hostOs, "macos");
   const by = Object.fromEntries(report.checks.map((check) => [check.id, check]));
@@ -259,6 +262,7 @@ test("on a Mac, the backend offers the arm64 kinds, checks the Hypervisor framew
   assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /nohup sh -c .*build\.sh --arch arm64.*echo \$\? >\/build\/build\.exit/);
   assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /cat \/build\/build\.exit/);
   assert.match(readFileSync(join(fake.root, "builder"), "utf8"), /build\.sh --arch arm64 --tag bbbox\/linux:1-arm64-b[a-z0-9]+ linux /);
+  // The builder goes in the background after its image is in msb: the next box waits for that, so no fake reads a sandbox as it is removed.
   await untilSeen(join(fake.root, "sandboxes"), () => !fake.sandboxes().some((name) => name.startsWith("bb-box-builder-")));
   const box = await backend.acquire(identity("linux-arm64"), null, hooks().hooks, signal());
   assert.deepEqual(after(fake.calls().find((call) => call[0] === "create" && call.includes(box.ref))!, "--mount-owned"), ["/var/lib/docker:kind=disk,size=64G"]);
@@ -417,6 +421,7 @@ test("the doctor checks the host, msb, KVM and the images, warns in LXC, and say
   const report = await backend.doctor(signal());
   assert.equal(report.ok, true, JSON.stringify(report.checks.filter((check) => check.status !== "ok")));
   assert.equal(report.summary, "msb 0.7.7 on BB's server");
+  // The largest desktop preset has more cores than the fake host, which sizes warns of.
   assert.deepEqual(report.checks.map((check) => check.id).filter((id) => id !== "microsandbox.sizes"), ["microsandbox.host", "microsandbox.msb", "microsandbox.kvm", "microsandbox.snapshots", "image.bbbox/linux:1", "image.bbbox/linux-desktop:1", "microsandbox.images", "microsandbox.capacity"]);
   assert.match(report.notes.join("\n"), /msb's state and images take 3 GiB in .+\/home on BB's server\. Its file system has no reflinks, so msb copies a box's disk to fork or snapshot it\./);
 
@@ -554,6 +559,7 @@ test("on a host without Docker, the nightly refresh's image operations build wit
   assert.equal(images.startsFrom, undefined, "no project images on microsandbox yet");
   assert.match(images.check!("linux-arm64"), /docker on first use/);
 
+  // The build: in a builder, from the refresh's setup/, with BB's app, under a tag of its own.
   const lines: string[] = [];
   const setupCopy = (await import("./helpers.ts")).tempDir("refresh-setup");
   const made = await images.build!(builds[0]!, setupCopy, { bbUrl: "https://bb.example.com", log: (line) => lines.push(line), signal: signal() });
@@ -564,6 +570,7 @@ test("on a host without Docker, the nightly refresh's image operations build wit
   assert.ok(fake.images()[made.ref]);
   assert.ok(fake.images()["bbbox/linux:1-arm64"]);
 
+  // A trial box of it, as a box of its kind, which no sweep takes.
   const trial = await images.box(made, "trial of a build", signal());
   assert.match(trial.ref, /^bbbox-image-[0-9a-f]{12}$/);
   const created = fake.calls().find((call) => call[0] === "create" && call.includes(trial.ref))!;
@@ -787,7 +794,7 @@ test("a refresh build stays protected while in flight, switches boxes on replace
   assert.ok(fake.images()[candidate.ref]);
 });
 
-test("doctor image cache check warns when sqlite3 is absent or untagged manifests exist, and release helpers validate scripts and parse cache output", async () => {
+test("doctor image cache check handles absent sqlite3, pre-change untagged manifests, stale unheld builds, and release script validation", async () => {
   const { fake, backend } = setup({}, { imported: false });
 
   const guest1 = await backend.acquire(identity(), null, hooks().hooks, signal());
@@ -804,16 +811,40 @@ test("doctor image cache check warns when sqlite3 is absent or untagged manifest
 
   fake.facts({ sqlite3: "1", untagged: "4" });
   const withUntagged = (await backend.doctor(signal())).checks.find((check) => check.id === "microsandbox.images")!;
-  assert.equal(withUntagged.status, "warn");
-  assert.match(withUntagged.detail, /4 untagged manifests in msb\.db\./);
+  assert.equal(withUntagged.status, "ok");
+  assert.match(withUntagged.detail, /4 untagged manifests in msb\.db from before unique build tags/);
 
-  assert.equal(buildImageRef("bbbox/linux:1-arm64", "abc123"), "bbbox/linux:1-arm64-babc123");
-  assert.equal(buildImageRef("localhost:5000/bbbox/linux", "abc123"), "localhost:5000/bbbox/linux:babc123");
-  assert.equal(isBuildOf("bbbox/linux:1-arm64-babc123", "bbbox/linux:1-arm64"), true);
-  assert.equal(isBuildOf("bbbox/linux:1-arm64-babc123", "bbbox/linux:1"), false);
+  await backend.release(guest1, releasing);
+  fake.facts({ untagged: "0" });
+  const recentUnheld = (await backend.doctor(signal())).checks.find((check) => check.id === "microsandbox.images")!;
+  assert.equal(recentUnheld.status, "ok");
+
+  fake.set({ imageCreatedAt: { [build1]: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString() } });
+  const staleUnheld = (await backend.doctor(signal())).checks.find((check) => check.id === "microsandbox.images")!;
+  assert.equal(staleUnheld.status, "warn");
+  assert.match(staleUnheld.fix ?? "", /Upkeep could not remove an earlier build/);
+
+  const validId = "mwulbvjg3755a5";
+  const digest = "a".repeat(64);
+  assert.equal(buildImageRef("bbbox/linux:1-arm64", validId), `bbbox/linux:1-arm64-b${validId}`);
+  assert.equal(buildImageRef("localhost:5000/bbbox/linux", validId), `localhost:5000/bbbox/linux:b${validId}`);
+  assert.equal(buildImageRef(`org/linux@sha256:${digest}`, validId), `org/linux:b${validId}`);
+  assert.equal(buildImageRef(`org/linux:1@sha256:${digest}`, validId), `org/linux:1-b${validId}`);
+  assert.equal(isBuildOf(`bbbox/linux:1-arm64-b${validId}`, "bbbox/linux:1-arm64"), true);
+  assert.equal(isBuildOf(`bbbox/linux:1-arm64-b${validId}`, "bbbox/linux:1"), false);
+  assert.equal(isBuildOf(`org/linux:b${validId}`, `org/linux@sha256:${digest}`), true);
+  assert.equal(isBuildOf("org/linux:beta", "org/linux"), false);
+  assert.equal(isBuildOf("org/linux:base", "org/linux"), false);
+  assert.equal(isBuildOf("org/linux:1-beta", "org/linux:1"), false);
+  assert.equal(canonicalRepositoryOf("bbbox/linux:1"), "docker.io/bbbox/linux");
+  assert.equal(canonicalRepositoryOf("linux:1"), "docker.io/library/linux");
+  assert.equal(canonicalRepositoryOf("localhost:5000/bbbox/linux:1"), "localhost:5000/bbbox/linux");
+  assert.equal(canonicalRepositoryOf(`ghcr.io/org/linux@sha256:${digest}`), "ghcr.io/org/linux");
+  assert.equal(isRestoreDigestOf(`docker.io/bbbox/linux@sha256:${digest}`, "bbbox/linux:1"), true);
+  assert.equal(isRestoreDigestOf(`docker.io/bbbox/other@sha256:${digest}`, "bbbox/linux:1"), false);
   assert.equal(scriptArgsOk("retag", ["bbbox/linux:refresh-1", "bbbox/linux:1"]), false);
   assert.equal(scriptArgsOk("import", ["bbbox/linux:1"]), false);
-  assert.equal(scriptArgsOk("import", ["bbbox/linux:1", "bbbox/linux:1-babc123"]), true);
+  assert.equal(scriptArgsOk("import", ["bbbox/linux:1", `bbbox/linux:1-b${validId}`]), true);
   assert.equal(scriptArgsOk("cache", []), true);
   assert.equal(scriptArgsOk("cache", ["extra"]), false);
 
@@ -825,11 +856,23 @@ test("doctor image cache check warns when sqlite3 is absent or untagged manifest
   assert.deepEqual(parsed.sandboxesByRef.get("bbbox/linux:1-b1"), ["bbbox-bx1", "bbbox-bx2"]);
   assert.deepEqual(parsed.snapshotsByRef.get("bbbox/linux:1-b1"), ["bbbox-bx1:s1"]);
 
-  const { execFileSync } = await import("node:child_process");
-  const { mkdirSync } = await import("node:fs");
+  const { execFileSync, spawnSync } = await import("node:child_process");
+  const { chmodSync, mkdirSync } = await import("node:fs");
+  assert.match(msbScript("cache"), /sqlite3 -readonly -cmd "\.timeout 5000"/);
+
   const msbDir = (await import("./helpers.ts")).tempDir("msb-cache-script");
   mkdirSync(join(msbDir, "home", "db"), { recursive: true });
   mkdirSync(join(msbDir, "home", "cache"), { recursive: true });
+  mkdirSync(join(msbDir, "bin"), { recursive: true });
+  writeFileSync(join(msbDir, "bin", "msb"), "#!/bin/sh\nexit 1\n");
+  chmodSync(join(msbDir, "bin", "msb"), 0o755);
+  const transferFail = spawnSync("sh", ["-c", msbScript("transfer"), "bb-box-msb", "bb-box-builder-1234", "bbbox/linux:1-bm"], {
+    encoding: "utf8",
+    env: { ...process.env, BBBOX_MSB_DIR: msbDir },
+  });
+  assert.equal(transferFail.status, 2);
+  assert.match(transferFail.stderr, /Docker in builder bb-box-builder-1234 has no image bbbox\/linux:1-bm to transfer\./);
+
   const dbPath = join(msbDir, "home", "db", "msb.db");
   execFileSync("sqlite3", [
     dbPath,
@@ -851,4 +894,182 @@ test("doctor image cache check warns when sqlite3 is absent or untagged manifest
   assert.equal(scriptParsed.untagged, 1);
   assert.deepEqual(scriptParsed.sandboxesByRef.get("bbbox/linux:1-b1"), ["bbbox-bx1"]);
   assert.deepEqual(scriptParsed.snapshotsByRef.get("bbbox/linux:1-b1"), ["grp1:s1"]);
+});
+
+test("snapshot restore adds a canonical digest reference that doctor deduplicates by digest, keeps while current or used, and prunes once free", async () => {
+  const { fake, backend } = setup({}, { imported: false });
+
+  const box1 = identity();
+  const guest1 = await backend.acquire(box1, null, hooks().hooks, signal());
+  const build1 = fake.inspect(guest1.ref).config.image.Oci.reference;
+  const snapId = "snbbbbbbbbbbbb";
+  const taken = await backend.snapshot(guest1, { id: snapId, box: box1.boxId, memory: false, forkSafe: 7 }, QUIET_SNAPSHOT, signal());
+
+  const forkedBox = identity();
+  const forked = await backend.forkSnapshot({ id: snapId, ref: taken.ref, guest: guest1 }, forkedBox, null, hooks().hooks, signal());
+  const restoreRef = Object.keys(fake.images()).find((ref) => isRestoreDigestOf(ref, "bbbox/linux:1"));
+  assert.ok(restoreRef);
+
+  await backend.maintain(signal());
+  assert.ok(fake.images()[restoreRef]);
+
+  fake.docker.set("bbbox/linux:1", { id: "sha256:linux2", labels: imageLabels("linux", "build.two") });
+  await backend.maintain(signal());
+  assert.ok(fake.images()[build1]);
+  assert.ok(fake.images()[restoreRef]);
+
+  const docWhileHeld = (await backend.doctor(signal())).checks.find((check) => check.id === "microsandbox.images")!;
+  assert.equal(docWhileHeld.status, "ok");
+  assert.match(docWhileHeld.detail, new RegExp(`1 earlier build kept: ${build1.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(`));
+  assert.ok(!docWhileHeld.detail.includes(restoreRef));
+
+  await backend.release(guest1, releasing);
+  await backend.release(forked, releasing);
+  await backend.deleteSnapshot({ id: snapId, ref: taken.ref, guest: guest1 }, QUIET_SNAPSHOT, signal());
+  await backend.maintain(signal());
+
+  assert.ok(!fake.images()[build1]);
+  assert.ok(!fake.images()[restoreRef]);
+  const docClean = (await backend.doctor(signal())).checks.find((check) => check.id === "microsandbox.images")!;
+  assert.match(docClean.detail, /No earlier builds are kept\./);
+});
+
+test("a bare host with no stored pointer keeps the bare image even if an unchecked refresh build exists after restart, and dead pointers repair or clear", async () => {
+  const fake = fakeMsbHost();
+  const storage = new MemoryStorage();
+  fake.facts({ os: "Darwin", arch: "arm64", docker: "" });
+  fake.docker.clear();
+  const make = () => new MsbBackend(msbConfig(), testContext(storage, "test"), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
+
+  const first = make();
+  const current = (await first.images.list(signal())).builds.find((build) => build.kind === "linux-arm64")!;
+  assert.equal(await storage.get("current/bbbox/linux:1-arm64"), "bbbox/linux:1-arm64");
+
+  await storage.delete("current/bbbox/linux:1-arm64");
+  const setupCopy = (await import("./helpers.ts")).tempDir("bare-restart");
+  const candidate = await first.images.build!(current, setupCopy, { bbUrl: null, log: () => {}, signal: signal() });
+
+  const restarted = make();
+  const box = await restarted.acquire(identity("linux-arm64"), null, hooks().hooks, signal());
+  assert.equal(fake.inspect(box.ref).config.image.Oci.reference, "bbbox/linux:1-arm64");
+  assert.equal(await storage.get("current/bbbox/linux:1-arm64"), "bbbox/linux:1-arm64");
+
+  await restarted.maintain(signal());
+  assert.ok(!fake.images()[candidate.ref]);
+  assert.ok(fake.images()["bbbox/linux:1-arm64"]);
+
+  await storage.set("current/bbbox/linux:1-arm64", "bbbox/linux:1-arm64-bmissing00000000");
+  await restarted.acquire(identity("linux-arm64"), null, hooks().hooks, signal());
+  assert.equal(await storage.get("current/bbbox/linux:1-arm64"), "bbbox/linux:1-arm64");
+
+  const empty = fakeMsbHost({ imported: false });
+  const emptyStorage = new MemoryStorage();
+  await emptyStorage.set("current/bbbox/linux:1", "bbbox/linux:1-bmissing00000000");
+  const emptyBackend = new MsbBackend(msbConfig(), testContext(emptyStorage, "test"), { dir: empty.dir, script: empty.script, readyTimeoutMs: 2_000 });
+  await emptyBackend.doctor(signal());
+  assert.equal(await emptyStorage.get("current/bbbox/linux:1"), undefined);
+});
+
+test("pointer moves serialize with prune so a finishing replace build is never removed, and acquires hold their image across msb create", async () => {
+  const fake = fakeMsbHost();
+  fake.facts({ os: "Darwin", arch: "arm64", docker: "" });
+  fake.docker.clear();
+  const baseStorage = new MemoryStorage();
+  let readsToSkip = 0;
+  let onPruneRead: (() => void) | null = null;
+  let resumePrune: (() => void) | null = null;
+  let replaceDone: Promise<unknown> | null = null;
+  const hookedStorage = {
+    get: async <T>(key: string): Promise<T | undefined> => {
+      const value = await baseStorage.get<T>(key);
+      if (key === "current/bbbox/linux:1-arm64" && onPruneRead) {
+        if (readsToSkip > 0) {
+          readsToSkip--;
+        } else {
+          const trigger = onPruneRead;
+          onPruneRead = null;
+          trigger();
+          await new Promise<void>((resolve) => {
+            resumePrune = resolve;
+          });
+        }
+      }
+      return value;
+    },
+    set: <T>(key: string, value: T) => baseStorage.set(key, value),
+    delete: (key: string) => baseStorage.delete(key),
+    list: (prefix?: string) => baseStorage.list(prefix),
+  };
+  const backend = new MsbBackend(msbConfig(), testContext(hookedStorage, "test"), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
+
+  const current = (await backend.images.list(signal())).builds.find((build) => build.kind === "linux-arm64")!;
+  const setupCopy = (await import("./helpers.ts")).tempDir("serial-prune");
+  const candidate = await backend.images.build!(current, setupCopy, { bbUrl: null, log: () => {}, signal: signal() });
+
+  readsToSkip = 1;
+  onPruneRead = () => {
+    replaceDone = backend.images.replace(candidate, current, signal());
+    setTimeout(() => resumePrune?.(), 30);
+  };
+  await Promise.all([backend.maintain(signal()), new Promise<void>((resolve) => setTimeout(resolve, 80)).then(() => replaceDone)]);
+  assert.ok(replaceDone);
+  await replaceDone;
+  assert.ok(fake.images()[candidate.ref]);
+  assert.equal(await baseStorage.get("current/bbbox/linux:1-arm64"), candidate.ref);
+
+  const candidate2 = await backend.images.build!(current, setupCopy, { bbUrl: null, log: () => {}, signal: signal() });
+  fake.set({ holdCreate: true });
+  let imageResolved!: () => void;
+  const sawImage = new Promise<void>((resolve) => {
+    imageResolved = resolve;
+  });
+  const acquireHooks: AcquireHooks = {
+    claim: async () => {},
+    starting: async () => {},
+    timing: (step) => {
+      if (step === "image") imageResolved();
+    },
+  };
+  const acquiringBox = backend.acquire(identity("linux-arm64"), null, acquireHooks, signal());
+  await sawImage;
+
+  await backend.images.replace(candidate2, current, signal());
+  assert.ok(fake.images()[candidate.ref]);
+
+  writeFileSync(join(fake.root, "release-create"), "");
+  fake.set({ holdCreate: false });
+  const box = await acquiringBox;
+  assert.equal(fake.inspect(box.ref).config.image.Oci.reference, candidate.ref);
+
+  await backend.release(box, releasing);
+  await backend.maintain(signal());
+  assert.ok(!fake.images()[candidate.ref]);
+  assert.ok(fake.images()[candidate2.ref]);
+});
+
+test("removeImage refuses configured images, active builds even without a stored pointer, overlapping configured refs, and reports msb refusals", async () => {
+  const validId = "mwulbvjg3755a5";
+  const overlapRef = `org/linux:b${validId}`;
+  const fake = fakeMsbHost({ imported: false });
+  const storage = new MemoryStorage();
+  writeFileSync(join(fake.root, "images.json"), JSON.stringify({ [overlapRef]: imageLabels("linux", "build.one") }));
+  const config = msbConfig({ "linux-image": "org/linux", "desktop-image": overlapRef });
+  const backend = new MsbBackend(config, testContext(storage, "test"), { dir: fake.dir, script: fake.script, readyTimeoutMs: 2_000 });
+
+  await assert.rejects(backend.images.remove(overlapRef, signal()), /is not a refresh's build/);
+
+  const singleFake = fakeMsbHost({ imported: false });
+  const activeRef = buildImageRef("bbbox/linux:1", validId);
+  const oldRef = buildImageRef("bbbox/linux:1", "mwulbvjg3755a6");
+  writeFileSync(join(singleFake.root, "images.json"), JSON.stringify({ [activeRef]: imageLabels("linux", "build.active") }));
+  const singleStorage = new MemoryStorage();
+  const singleBackend = new MsbBackend(msbConfig(), testContext(singleStorage, "test"), { dir: singleFake.dir, script: singleFake.script, readyTimeoutMs: 2_000 });
+
+  await assert.rejects(singleBackend.images.remove(activeRef, signal()), /is not a refresh's build/);
+
+  const box = await singleBackend.acquire(identity(), null, hooks().hooks, signal());
+  assert.equal(singleFake.inspect(box.ref).config.image.Oci.reference, activeRef);
+  writeFileSync(join(singleFake.root, "images.json"), JSON.stringify({ ...singleFake.images(), [oldRef]: imageLabels("linux", "build.next") }));
+  await singleStorage.set("current/bbbox/linux:1", oldRef);
+  await assert.rejects(singleBackend.images.remove(activeRef, signal()), /in use by sandbox/);
 });

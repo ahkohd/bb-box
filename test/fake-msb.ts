@@ -4,6 +4,7 @@
 // imports from Docker into msb.
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ScriptResult } from "../src/backends/microsandbox/cli.ts";
@@ -146,6 +147,18 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
           out.push(`sqlite3=${sqlite3}`);
           if (sqlite3 === "1") {
             if (facts.untagged !== "") out.push(`untagged=${facts.untagged ?? "0"}`);
+            const images = readImages();
+            const digestsFile = join(root, "image-digests.json");
+            const digests: Record<string, string> = existsSync(digestsFile) ? JSON.parse(readFileSync(digestsFile, "utf8")) : {};
+            const digestOf = (ref: string): string =>
+              digests[ref] ?? `sha256:${createHash("sha256").update(JSON.stringify({ ref, labels: images[ref] ?? null })).digest("hex")}`;
+            const refsByDigest = new Map<string, string[]>();
+            for (const ref of Object.keys(images)) {
+              const d = digestOf(ref);
+              const list = refsByDigest.get(d) ?? [];
+              list.push(ref);
+              refsByDigest.set(d, list);
+            }
             const boxesDir = join(root, "sandboxes");
             if (existsSync(boxesDir)) {
               for (const boxName of readdirSync(boxesDir).sort()) {
@@ -153,14 +166,17 @@ export function fakeMsbHost(options: { imported?: boolean } = {}): FakeMsbHost {
                 if (!existsSync(file)) continue;
                 const config = JSON.parse(readFileSync(file, "utf8")) as { config?: { image?: { Oci?: { reference?: string } } } };
                 const ref = config.config?.image?.Oci?.reference;
-                if (ref) out.push(`sandbox:${ref}=${boxName}`);
+                if (!ref) continue;
+                for (const matched of refsByDigest.get(digestOf(ref)) ?? [ref]) out.push(`sandbox:${matched}=${boxName}`);
               }
             }
             const snapsFile = join(root, "snapshots.json");
             if (existsSync(snapsFile)) {
               const snaps = JSON.parse(readFileSync(snapsFile, "utf8")) as { group: string; name: string; config?: { image?: string } }[];
               for (const snap of snaps) {
-                if (snap.config?.image) out.push(`snapshot:${snap.config.image}=${snap.group}:${snap.name}`);
+                const ref = snap.config?.image;
+                if (!ref) continue;
+                for (const matched of refsByDigest.get(digestOf(ref)) ?? [ref]) out.push(`snapshot:${matched}=${snap.group}:${snap.name}`);
               }
             }
           }

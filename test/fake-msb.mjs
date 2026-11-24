@@ -16,9 +16,10 @@
 // does; neither create nor start runs it, as msb's do not. Every call is logged to log, one JSON array per line.
 import { spawn } from "node:child_process";
 import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { constants } from "node:os";
 import { join } from "node:path";
+import { canonicalRepositoryOf } from "../src/backends/microsandbox/release.ts";
 import { ownedFoldersEnv, pathWithHostStubs, refusalForRealHostTools } from "./host-stubs.mjs";
 
 const root = process.env.FAKE_MSB_ROOT;
@@ -79,10 +80,13 @@ function flags(rest, takes) {
   return { values, many, rest: rest.slice(i) };
 }
 
-function create(rest) {
+async function create(rest) {
   const [image, ...after] = rest;
   const { values, many } = flags(after, ["--name", "--pull", "--hostname", "--cpus", "--memory", "--root-disk", "--tmpfs", "--net", "--mount-dir"]);
   const name = values["--name"];
+  while (host.holdCreate && !name.startsWith("bb-box-builder-") && !existsSync(join(root, "release-create"))) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   if (host.ghost === name && !values["--replace"]) fail(`sandbox already exists: sandbox '${name}' already exists; remove it, start the stopped sandbox, or recreate with .replace()`);
   if (load(name) && !values["--replace"]) fail(`sandbox already exists: sandbox '${name}' already exists; remove it, start the stopped sandbox, or recreate with .replace()`);
   const images = read("images.json", {});
@@ -197,6 +201,16 @@ function exec(rest) {
   child.on("error", (error) => fail(`exec failed: ${error.message}`, 126));
   child.on("exit", (code, signal) => process.exit(code ?? 128 + (constants.signals[signal] ?? 0)));
 }
+
+const digestsFile = join(root, "image-digests.json");
+const readDigests = () => read("image-digests.json", {});
+const saveDigests = (map) => writeFileSync(digestsFile, JSON.stringify(map, null, 2));
+const digestOf = (ref, images) => {
+  const map = readDigests();
+  if (map[ref]) return map[ref];
+  const hex = createHash("sha256").update(JSON.stringify({ ref, labels: images[ref] ?? null })).digest("hex");
+  return `sha256:${hex}`;
+};
 
 const snapshotsFile = join(root, "snapshots.json");
 const snapshots = () => read("snapshots.json", []);
@@ -341,6 +355,17 @@ function snapshot(rest) {
     mkdirSync(join(dir(name), "home"), { recursive: true });
     mkdirSync(join(dir(name), "run", "bb-box"), { recursive: true });
     const resources = full ? { ...target.config.resources } : { cpus: Number(values["--cpus"] ?? 1), memory_mib: memoryMiB ?? 512 };
+    const images = read("images.json", {});
+    const digest = digestOf(target.config.image, images);
+    const restoreRef = `${canonicalRepositoryOf(target.config.image)}@${digest}`;
+    if (!(restoreRef in images)) {
+      images[restoreRef] = images[target.config.image] ?? {};
+      writeFileSync(join(root, "images.json"), JSON.stringify(images));
+    }
+    const digests = readDigests();
+    digests[target.config.image] = digest;
+    digests[restoreRef] = digest;
+    saveDigests(digests);
     save({
       name,
       status: "Running",
@@ -357,7 +382,7 @@ function snapshot(rest) {
         resources,
         snapshot_parent: target.id,
         restoredFrom: target.id,
-        image: { Oci: { reference: target.config.image, root_disk: { kind: "managed", size_mib: target.config.disk_mib } } },
+        image: { Oci: { reference: restoreRef, root_disk: { kind: "managed", size_mib: target.config.disk_mib } } },
       },
     });
     return;
@@ -371,7 +396,7 @@ switch (command) {
     console.log(`msb ${host.version ?? "0.7.7"}`);
     break;
   case "create":
-    create(rest);
+    await create(rest);
     break;
   case "inspect":
     console.log(JSON.stringify(found(rest[0]), null, 2));
@@ -470,10 +495,12 @@ switch (command) {
   case "image": {
     const images = read("images.json", {});
     if (rest[0] === "list" || rest[0] === "ls") {
-      const list = Object.keys(images).map((reference, index) => ({
+      const refs = Object.keys(images);
+      const baseNow = Date.now();
+      const list = refs.map((reference, index) => ({
         architecture: "amd64",
-        created_at: new Date(1_790_000_000_000 + index * 1000).toISOString(),
-        digest: `sha256:${reference}`,
+        created_at: host.imageCreatedAt?.[reference] ?? new Date(baseNow - (refs.length - index) * 1000).toISOString(),
+        digest: digestOf(reference, images),
         layer_count: 2,
         os: "linux",
         reference,
@@ -487,8 +514,15 @@ switch (command) {
       const target = refs[0];
       if (!target || !(target in images)) fail(`image not found: ${target ?? ""}`);
       if (!values["--force"]) {
-        const usedBySandbox = names().map(load).some((sandbox) => sandbox && sandbox.config.image.Oci.reference === target);
-        const usedBySnapshot = snapshots().some((snap) => snap.config.image === target);
+        const targetDigest = digestOf(target, images);
+        const usedBySandbox = names().map(load).some((sandbox) => {
+          const ref = sandbox?.config?.image?.Oci?.reference;
+          return ref && (ref === target || digestOf(ref, images) === targetDigest);
+        });
+        const usedBySnapshot = snapshots().some((snap) => {
+          const ref = snap?.config?.image;
+          return ref && (ref === target || digestOf(ref, images) === targetDigest);
+        });
         if (usedBySandbox || usedBySnapshot) fail("image in use by sandbox(es): sandbox or snapshot dependency");
       }
       delete images[target];
