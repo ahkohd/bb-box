@@ -819,29 +819,49 @@ switch (command) {
   case "image": {
     const images = read("images.json", {});
     const ids = read("image-ids.json", {});
+    const dangling = read("dangling-images.json", {});
     const idOf = (name) => ids[name] ?? `sha256:${createHash("sha256").update(name).digest("hex")}`;
-    /** The names of an image, by a name or an ID. */
     const named = (ref) => (ref in images ? [ref] : Object.keys(images).filter((name) => idOf(name) === ref));
-    const used = (names) => names.find((name) => (names.length === Object.keys(images).filter((other) => idOf(other) === idOf(name)).length) && containersOf(name));
-    const containersOf = (name) => listContainers().some((container) => container.Config.Image === name);
     const listContainers = () => readdirSync(join(root, "containers")).filter((n) => existsSync(join(root, "containers", n, "config.json"))).map((n) => JSON.parse(readFileSync(join(root, "containers", n, "config.json"), "utf8")));
+    const containersOfId = (id) => listContainers().some((container) => container.Image === id);
+    const containersOf = (name) => listContainers().some((container) => container.Config.Image === name || container.Image === idOf(name));
+    const used = (names) => names.find((name) => (names.length === Object.keys(images).filter((other) => idOf(other) === idOf(name)).length) && containersOf(name));
+    const matchesLabelFilters = (labels, filters) => filters.every((filter) => {
+      if (filter.startsWith("label!=")) {
+        const body = filter.slice("label!=".length);
+        const [key, ...parts] = body.split("=");
+        return parts.length ? labels[key] !== parts.join("=") : !(key in labels);
+      }
+      if (filter.startsWith("label=")) {
+        const body = filter.slice("label=".length);
+        const [key, ...parts] = body.split("=");
+        return parts.length ? labels[key] === parts.join("=") : key in labels;
+      }
+      return true;
+    });
     const [sub, ...more] = rest;
     if (sub === "inspect") {
       if (!more.includes("--format")) {
         console.log(JSON.stringify(more.map((ref) => {
           const [name] = named(ref);
-          if (!name) fail(`No such image: ${ref}`);
-          return { Id: idOf(name), RepoTags: Object.keys(images).filter((tag) => idOf(tag) === idOf(name)), Config: { Labels: images[name], Env: read("image-env.json", {})[name] ?? [] }, RootFS: { Layers: layersOf(idOf(name)).map((layer) => layer.id) }, Size: imageBytes(idOf(name)) };
+          if (name) {
+            return { Id: idOf(name), RepoTags: Object.keys(images).filter((tag) => idOf(tag) === idOf(name)), Config: { Labels: images[name], Env: read("image-env.json", {})[name] ?? [] }, RootFS: { Layers: layersOf(idOf(name)).map((layer) => layer.id) }, Size: imageBytes(idOf(name)) };
+          }
+          if (ref in dangling) {
+            return { Id: ref, RepoTags: [], Config: { Labels: dangling[ref], Env: [] }, RootFS: { Layers: layersOf(ref).map((layer) => layer.id) }, Size: imageBytes(ref) };
+          }
+          fail(`No such image: ${ref}`);
         })));
         break;
       }
       const image = more.at(-1);
       const [name] = named(image);
-      if (!name) fail(`Error response from daemon: No such image: ${image}`);
+      const labels = name ? images[name] : dangling[image];
+      if (!labels) fail(`Error response from daemon: No such image: ${image}`);
+      const id = name ? idOf(name) : image;
       const format = more[more.indexOf("--format") + 1];
-      // Its size, in bytes, from image-sizes.json where a test sets it, else as a desktop image's (#474).
-      const size = read("image-sizes.json", {})[name] ?? 6_500_000_000;
-      console.log(format === "{{.Id}}" ? idOf(name) : format === "{{.Size}} {{json .Config.Labels}}" ? `${size} ${JSON.stringify(images[name])}` : JSON.stringify(images[name]));
+      const size = (name ? read("image-sizes.json", {})[name] : undefined) ?? 6_500_000_000;
+      console.log(format === "{{.Id}}" ? id : format === "{{.Size}} {{json .Config.Labels}}" ? `${size} ${JSON.stringify(labels)}` : JSON.stringify(labels));
     } else if (sub === "history") {
       if (host.failImageHistory) fail("Error response from daemon: the image store could not read the image's history");
       const [name] = named(more.at(-1));
@@ -852,14 +872,31 @@ switch (command) {
       const [source, target] = more;
       const [name] = named(source);
       if (!name) fail(`Error response from daemon: No such image: ${source}`);
-      write("images.json", { ...images, [target]: images[name] });
-      write("image-ids.json", { ...ids, [target]: idOf(name) });
+      const nextImages = { ...images, [target]: images[name] };
+      const nextIds = { ...ids, [target]: idOf(name) };
+      const nextDangling = { ...dangling };
+      delete nextDangling[idOf(name)];
+      if (target in images) {
+        const previousId = idOf(target);
+        const stillTagged = Object.keys(nextImages).some((tag) => (nextIds[tag] ?? `sha256:${createHash("sha256").update(tag).digest("hex")}`) === previousId);
+        if (!stillTagged) nextDangling[previousId] = images[target];
+      }
+      write("images.json", nextImages);
+      write("image-ids.json", nextIds);
+      write("dangling-images.json", nextDangling);
     } else if (sub === "rm") {
       const ref = more.at(-1);
       if (host.failImageRmMatching && new RegExp(host.failImageRmMatching).test(ref)) fail(`Error response from daemon: the image store could not remove ${ref}`);
       const names = named(ref);
-      if (!names.length) fail(`Error response from daemon: No such image: ${ref}`);
-      // By ID, every name goes, unless a container uses the image; by name, the name goes, as a tag, unless it is the image's last and a container uses it.
+      if (!names.length) {
+        if (!(ref in dangling)) fail(`Error response from daemon: No such image: ${ref}`);
+        if (containersOfId(ref) && !more.includes("--force")) fail(`Error response from daemon: conflict: unable to delete ${ref} - image is being used by stopped container`);
+        const leftDangling = { ...dangling };
+        delete leftDangling[ref];
+        write("dangling-images.json", leftDangling);
+        console.log(`Deleted: ${ref}`);
+        break;
+      }
       const gone = ref in images ? [ref] : names;
       const busy = ref in images ? (used([ref]) ? ref : null) : names.find(containersOf) ?? null;
       if (busy && !more.includes("--force")) fail(`Error response from daemon: conflict: unable to delete ${ref} - image is being used by stopped container`);
@@ -868,24 +905,35 @@ switch (command) {
       write("images.json", left);
       console.log(`Untagged: ${gone.join(" ")}`);
     } else if (sub === "ls") {
-      if (more.includes("dangling=true")) {
-        const install = more.find((arg) => arg.startsWith("label=bbbox.snapshot.install="))?.split("=").at(-1);
+      const filters = [];
+      for (let i = 0; i < more.length; i++) if (more[i] === "--filter") filters.push(more[++i]);
+      if (filters.includes("dangling=true")) {
+        const install = filters.find((arg) => arg.startsWith("label=bbbox.snapshot.install="))?.split("=").at(-1);
         for (const image of host.snapshotDangling ?? []) if (image.install === install) console.log(image.id);
+        for (const [id, labels] of Object.entries(dangling)) {
+          if (matchesLabelFilters(labels, filters)) console.log(id);
+        }
         break;
       }
-      const filters = [];
-      for (let i = 0; i < more.length; i++) if (more[i] === "--filter") filters.push(more[++i].replace(/^label=/, ""));
       for (const [name, labels] of Object.entries(images)) {
-        const matches = filters.every((filter) => {
-          const [key, ...parts] = filter.split("=");
-          return parts.length ? labels[key] === parts.join("=") : key in labels;
-        });
-        if (matches) console.log(name);
+        if (matchesLabelFilters(labels, filters)) console.log(name);
       }
     } else if (sub === "prune") {
-      if (host.failSnapshotPrune) fail("a prune operation is already running");
-      const install = more.find((arg) => arg.startsWith("label=bbbox.snapshot.install="))?.split("=").at(-1);
-      if (host.snapshotDangling) write("host.json", { ...host, snapshotDangling: (host.snapshotDangling ?? []).filter((image) => image.install !== install || image.inUse) });
+      const filters = [];
+      for (let i = 0; i < more.length; i++) if (more[i] === "--filter") filters.push(more[++i]);
+      const snapshotFilter = filters.find((arg) => arg.startsWith("label=bbbox.snapshot.install="));
+      if (snapshotFilter && host.failSnapshotPrune) fail("a prune operation is already running");
+      if (!snapshotFilter && host.failImagePrune) fail("a prune operation is already running");
+      const install = snapshotFilter?.split("=").at(-1);
+      if (snapshotFilter && host.snapshotDangling) {
+        write("host.json", { ...host, snapshotDangling: (host.snapshotDangling ?? []).filter((image) => image.install !== install || image.inUse) });
+      }
+      const keptDangling = {};
+      for (const [id, labels] of Object.entries(dangling)) {
+        const removable = matchesLabelFilters(labels, filters) && !containersOfId(id);
+        if (!removable) keptDangling[id] = labels;
+      }
+      write("dangling-images.json", keptDangling);
       console.log("Total reclaimed space: 0B");
     } else fail(`fake docker: unknown command image ${sub}`, 2);
     break;

@@ -192,12 +192,28 @@ const WAYLAND_FREE_GB = 18;
  * /usr/share/bb-box/image.json, and a curl that gives `digest` as BB's app's,
  * gives none ("none"), or fails ("fail").
  */
-function buildWith(freeGB: number, args: readonly string[] = [], error?: string, digest = "none", record = '{"contract":1,"kind":"linux"}', extra: { readonly imageError?: string; readonly startError?: string; readonly script?: string } = {}) {
+function buildWith(
+  freeGB: number,
+  args: readonly string[] = [],
+  error?: string,
+  digest = "none",
+  record = '{"contract":1,"kind":"linux"}',
+  extra: {
+    readonly imageError?: string;
+    readonly startError?: string;
+    readonly script?: string;
+    readonly freeAfterPruneGB?: number;
+    readonly pruneFreed?: string;
+    readonly pruneMode?: "max-used-space" | "keep-storage" | "filter-only";
+  } = {},
+) {
   const dir = tempDir("docker-build");
   const bin = join(dir, "bin");
   mkdirSync(bin);
   const log = join(dir, "calls");
+  const freeFile = join(dir, "free-kb");
   writeFileSync(log, "");
+  writeFileSync(freeFile, String(Math.floor((freeGB * 1e9) / 1024)));
   writeFileSync(
     join(bin, "docker"),
     `#!/bin/sh
@@ -207,6 +223,32 @@ shift
 case "$cmd" in
   run|exec|attach|logs)
     exit 0
+    ;;
+  builder)
+    sub=$1
+    shift
+    if [ "$sub" = prune ]; then
+      case " $* " in
+        *" --help "*)
+          case "\${FAKE_PRUNE_MODE:-max-used-space}" in
+            max-used-space)
+              echo "      --max-used-space bytes   Maximum amount of disk space allowed to keep for cache"
+              ;;
+            keep-storage)
+              echo "      --keep-storage bytes     Amount of disk space always allowed to keep for cache"
+              ;;
+            filter-only)
+              echo "      --filter filter          Provide filter values"
+              ;;
+          esac
+          exit 0
+          ;;
+      esac
+      if [ -n "\${FAKE_FREE_AFTER_PRUNE_KB:-}" ]; then
+        printf '%s' "$FAKE_FREE_AFTER_PRUNE_KB" >'${freeFile}'
+      fi
+      printf 'Total:\t%s\\n' "\${FAKE_PRUNE_FREED:-0B}"
+    fi
     ;;
   create)
     case "$*" in
@@ -229,9 +271,10 @@ case "$cmd" in
     case "$src" in
       *bb-box-df*)
         if [ -n "\${FAKE_ERROR:-}" ]; then echo "$FAKE_ERROR" >&2; exit 125; fi
+        free_kb=$(cat '${freeFile}')
         {
           echo 'Filesystem     1024-blocks    Used Available Capacity Mounted on'
-          echo "overlay           65871716 2899792 $FAKE_FREE_KB       5% /"
+          echo "overlay           65871716 2899792 $free_kb       5% /"
         } >"$dest/$base"
         ;;
       *image.json*)
@@ -262,16 +305,28 @@ printf 'content-length: 1191955\\r\\n\\r\\n'
 `,
   );
   chmodSync(join(bin, "curl"), 0o755);
-  const env = { PATH: `${bin}:/usr/bin:/bin`, FAKE_FREE_KB: String(Math.floor((freeGB * 1e9) / 1024)), FAKE_DIGEST: digest, FAKE_RECORD: record, ...(error ? { FAKE_ERROR: error } : {}), ...(extra.imageError ? { FAKE_IMAGE_ERROR: extra.imageError } : {}), ...(extra.startError ? { FAKE_START_ERROR: extra.startError } : {}) };
+  const env: NodeJS.ProcessEnv = {
+    PATH: `${bin}:/usr/bin:/bin`,
+    FAKE_DIGEST: digest,
+    FAKE_RECORD: record,
+    ...(error ? { FAKE_ERROR: error } : {}),
+    ...(extra.imageError ? { FAKE_IMAGE_ERROR: extra.imageError } : {}),
+    ...(extra.startError ? { FAKE_START_ERROR: extra.startError } : {}),
+    ...(extra.freeAfterPruneGB !== undefined ? { FAKE_FREE_AFTER_PRUNE_KB: String(Math.floor((extra.freeAfterPruneGB * 1e9) / 1024)) } : {}),
+    ...(extra.pruneFreed ? { FAKE_PRUNE_FREED: extra.pruneFreed } : {}),
+    ...(extra.pruneMode ? { FAKE_PRUNE_MODE: extra.pruneMode } : {}),
+  };
   const result = spawnSync("bash", [extra.script ?? BUILD_SCRIPT, ...args], { encoding: "utf8", env });
   const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
-  // Each target's build, then a second one, from the cache, that labels it with its record (049).
   const builds = calls.filter((call) => call.startsWith("build ") && !call.includes("bbbox.image-record="));
+  const prunes = calls.filter((call) => call.startsWith("builder prune ") && !call.includes("--help"));
   return {
     status: result.status,
     stderr: result.stderr,
+    calls,
     checks: calls.filter((call) => call.startsWith("create ") && call.includes("bb-box-df")),
     builds,
+    prunes,
     labelled: calls.filter((call) => call.includes("bbbox.image-record=")),
     reads: calls.filter((call) => call.startsWith("create ") && call.includes("bbbox/")),
     attached: calls.filter((call) => /^(run|exec|attach|logs) /.test(call)),
@@ -284,29 +339,61 @@ printf 'content-length: 1191955\\r\\n\\r\\n'
 test("build.sh does not start with less disk free than the build needs, and says how much is free", () => {
   const short = buildWith(35.9);
   assert.equal(short.status, 1);
-  assert.equal(short.stderr, "The Docker host has 35 GB of disk free, and building 3 images needs about 36 GB. Free some, for example with docker builder prune, then build again.\n");
+  assert.equal(
+    short.stderr,
+    "build.sh pruned Docker build cache unused for 24h (freed 0B).\n" +
+      "The Docker host has 35 GB of disk free, and building 3 images needs about 36 GB. Free some, for example with docker builder prune, then build again.\n",
+  );
   assert.deepEqual(short.built, []);
-  assert.equal(short.checks.length, 1);
-  assert.match(short.checks[0]!, /^create --platform linux\/amd64 --network none --entrypoint sh ubuntu:24\.04@sha256:[0-9a-f]{64} -c df -Pk \/ > \/tmp\/bb-box-df$/, "from the Dockerfile's base image, copied out, not attached");
+  assert.equal(short.checks.length, 2);
+  assert.match(short.checks[0]!, /^create --platform linux\/amd64 --network none --entrypoint sh ubuntu:24\.04@sha256:[0-9a-f]{64} -c df -Pk \/ > \/tmp\/bb-box-df$/);
   assert.deepEqual(short.attached, []);
 
   const enough = buildWith(BUILD_FREE_GB);
-  assert.deepEqual([enough.status, enough.built], [0, ["linux", "desktop", "desktop-wayland"]], enough.stderr);
+  assert.deepEqual([enough.status, enough.built, enough.prunes], [0, ["linux", "desktop", "desktop-wayland"], []], enough.stderr);
   assert.match(buildWith(BUILD_FREE_GB - 0.5, ["linux", "desktop"]).stderr, /building 2 images needs about 36 GB\./);
 
   for (const [target, need] of [["linux", LINUX_FREE_GB], ["desktop", DESKTOP_FREE_GB], ["desktop-wayland", WAYLAND_FREE_GB]] as const) {
     const less = buildWith(need - 0.5, [target]);
     assert.equal(less.status, 1, target);
-    assert.match(less.stderr, new RegExp(`^The Docker host has ${need - 1} GB of disk free, and building the ${target} image needs about ${need} GB\\.`));
-    assert.deepEqual(buildWith(need, [target]).built, [target]);
+    assert.match(less.stderr, new RegExp(`The Docker host has ${need - 1} GB of disk free, and building the ${target} image needs about ${need} GB\\.`));
+    const ok = buildWith(need, [target]);
+    assert.deepEqual([ok.built, ok.prunes], [[target], []]);
   }
 
   const unseen = buildWith(1, [], "Unable to find image 'ubuntu:24.04' locally");
-  assert.deepEqual([unseen.status, unseen.built], [0, ["linux", "desktop", "desktop-wayland"]], "a check that cannot run does not stop the build");
+  assert.deepEqual([unseen.status, unseen.built, unseen.prunes], [0, ["linux", "desktop", "desktop-wayland"], []]);
   assert.equal(unseen.stderr, "build.sh could not see how much disk the Docker host has free, so it builds anyway: Unable to find image 'ubuntu:24.04' locally\n");
 });
 
-test("build.sh labels each image with its own record, and stops at an image with none (049)", () => {
+test("build.sh prunes only build cache unused for 24h when space is short, reports what it freed, measures again and refuses only if still short", () => {
+  const recovered = buildWith(12, ["desktop"], undefined, "none", undefined, { freeAfterPruneGB: 20, pruneFreed: "8.2GB" });
+
+  assert.equal(recovered.status, 0, recovered.stderr);
+  assert.equal(recovered.checks.length, 2);
+  assert.deepEqual(recovered.built, ["desktop"]);
+  assert.deepEqual(recovered.prunes, ["builder prune --force --filter until=24h --max-used-space 4GB"]);
+  assert.equal(recovered.stderr, "build.sh pruned Docker build cache unused for 24h (freed 8.2GB).\n");
+
+  const stillShort = buildWith(12, ["desktop"], undefined, "none", undefined, { freeAfterPruneGB: 15.4, pruneFreed: "3.4GB", pruneMode: "keep-storage" });
+
+  assert.equal(stillShort.status, 1);
+  assert.equal(stillShort.checks.length, 2);
+  assert.deepEqual(stillShort.built, []);
+  assert.deepEqual(stillShort.prunes, ["builder prune --force --filter until=24h --keep-storage 4GB"]);
+  assert.equal(
+    stillShort.stderr,
+    "build.sh pruned Docker build cache unused for 24h (freed 3.4GB).\n" +
+      "The Docker host has 15 GB of disk free, and building the desktop image needs about 18 GB. Free some, for example with docker builder prune, then build again.\n",
+  );
+
+  const filterOnly = buildWith(12, ["desktop"], undefined, "none", undefined, { freeAfterPruneGB: 20, pruneFreed: "8GB", pruneMode: "filter-only" });
+
+  assert.equal(filterOnly.status, 0, filterOnly.stderr);
+  assert.deepEqual(filterOnly.prunes, ["builder prune --force --filter until=24h"]);
+});
+
+test("build.sh labels each image with its own record, adds no bbbox.image label, and stops at an image with none (049)", () => {
   const record = '{"contract":1,"kind":"linux","build":"build.x"}';
   const built = buildWith(BUILD_FREE_GB, ["linux", "desktop"], undefined, "none", record);
   assert.equal(built.status, 0, built.stderr);
@@ -315,11 +402,12 @@ test("build.sh labels each image with its own record, and stops at an image with
     "create --platform linux/amd64 bbbox/linux:1",
     "create --platform linux/amd64 bbbox/linux-desktop:1",
   ]);
-  assert.deepEqual(built.attached, [], "an attached stream is empty, so the record is copied out");
+  assert.deepEqual(built.attached, []);
+  assert.deepEqual(built.prunes, []);
   assert.equal(built.labelled.length, 2);
   for (const [i, target] of ["linux", "desktop"].entries()) {
-    // The same build, so all from the cache, with the label.
     assert.equal(built.labelled[i], `${built.builds[i]!.replace(/ \S+$/, "")} --quiet --label bbbox.image-record=${record} ${built.builds[i]!.split(" ").at(-1)}`, target);
+    assert.equal(built.labelled[i]!.includes("bbbox.image="), false, target);
   }
 
   const none = buildWith(BUILD_FREE_GB, ["linux", "desktop"], undefined, "none", "");

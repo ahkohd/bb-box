@@ -53,7 +53,9 @@ shared connection. How bb-box drives a box is in the
   least 12 GiB.
 - Disk to build the images, on the Docker host: about 36 GB free for all
   three, 10 GB for the linux image alone and 18 GB for either desktop image
-  alone. `build.sh` does not start with less free.
+  alone. When space is short, `build.sh` prunes Docker build cache unused for
+  24 hours first, prints how much it freed, measures again, and refuses only
+  if space is still short.
 
 Before you rely on it:
 
@@ -177,8 +179,16 @@ DOCKER_HOST=ssh://user@host setup/docker/build.sh     # on a Docker host over SS
   and Ubuntu's packages (`bb-box-apt`). Each holds only what the current
   pins and snapshot use, and each file is still checked, so a rebuild
   downloads only what changed.
-- Once the images are built, `docker builder prune` frees the build cache,
-  the downloads too.
+- `build.sh` touches the host's shared Docker build cache only when a build
+  would otherwise fail for space. Before refusing, it runs
+  `docker builder prune --force --filter until=24h` (with
+  `--max-used-space 4GB` on buildx 0.17 and later, such as Docker 27, 28, 29
+  and Docker Desktop, or `--keep-storage 4GB` on older buildx), prints how
+  much it freed, and measures free space again. Cache used in the last 24
+  hours is never pruned, and nothing is pruned when the host already has
+  enough free space.
+- Once the images are built, `docker builder prune` frees the build cache by
+  hand, the downloads too.
 - `--arch arm64`, on an arm64 Docker host, builds `bbbox/linux:1-arm64` and
   `bbbox/linux-desktop:1-arm64` for microsandbox on a Mac (053), from the
   same scripts with their arm64 pins, as for Tart's Linux images. Ubuntu has
@@ -334,8 +344,13 @@ npm run conformance -- --backend docker --settings docker.json
 ## Update
 
 - **Images rebuild each night** once the nightly run is set up
-  ([setup](../README.md#rebuild-images-each-night)): bb-box builds a new
-  image, checks a box of it, then moves the image's tag to it.
+  ([setup](../README.md#rebuild-images-each-night)): BB Box builds a new
+  image, checks a box of it, then moves the image's tag to it. The old image
+  is removed straight away when no container uses it; otherwise it stays
+  untagged until those containers go, when BB Box's maintenance prunes
+  untagged images that carry BB Box's image labels. Images without BB Box's
+  labels are left alone; untagged images built `FROM bbbox/*` inherit BB
+  Box's image label and are pruned when unused and dangling.
 - **Rebuild by hand** with `build.sh`. BB's app is the images' last layer, so
   after it changes, `build.sh` installs the new app and keeps the rest
   cached.

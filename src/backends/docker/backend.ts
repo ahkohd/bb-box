@@ -18,7 +18,7 @@
 //   one whose labels name this install and the box (018).
 
 import { DockerSnapshotEngine, type RestorableSnapshot } from "./snapshot-engine.ts";
-import { dockerOffer, FORK_HOLD_MISSING, isBoxContainerName, restoredName } from "./snapshots.ts";
+import { dockerOffer, FORK_HOLD_MISSING, isBoxContainerName, restoredName, SNAPSHOT_LABEL } from "./snapshots.ts";
 import { RestoreCopies, type CopyFence } from "./restore-copies.ts";
 import type { CopyHooks, ForkArming, GuestIdentity, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
 import type { CheckId } from "../../core/checks.ts";
@@ -1219,6 +1219,7 @@ export class DockerBackend implements Backend {
 
   async maintain(signal?: AbortSignal): Promise<void> {
     await this.#snapshots.maintain().catch((error) => this.#context.logError("maintaining Docker snapshots", error));
+    await this.#pruneDanglingImages(signal).catch((error) => this.#context.logError("pruning old Docker images", error));
     await this.#underPlacement(async () => {
       const state = await this.#state(signal);
       await this.#dropDaemonRecords(GPU_PARTS, state, signal);
@@ -1238,6 +1239,30 @@ export class DockerBackend implements Backend {
         .catch((error) => this.#context.logError("removing copies of snapshots' Docker data", error));
       await this.#removeOrphanVolumes(state, signal);
     }, signal);
+  }
+
+  async #pruneDanglingImages(signal?: AbortSignal): Promise<void> {
+    await this.#cli.ok(
+      [
+        "image", "prune", "--force",
+        "--filter", "dangling=true",
+        "--filter", `label=${LABELS.install}=${this.#context.installId}`,
+        "--filter", `label=${LABELS.image}`,
+        "--filter", `label!=${SNAPSHOT_LABEL}`,
+      ],
+      { timeoutMs: 120_000, signal },
+    );
+
+    await this.#cli.ok(
+      [
+        "image", "prune", "--force",
+        "--filter", "dangling=true",
+        "--filter", `label=${LABELS.imageVersion}`,
+        "--filter", `label!=${LABELS.install}`,
+        "--filter", `label!=${SNAPSHOT_LABEL}`,
+      ],
+      { timeoutMs: 120_000, signal },
+    );
   }
 
   #probeImage(): string | null {
@@ -2730,6 +2755,14 @@ export class DockerBackend implements Backend {
     return { ref, image, kind, build: record?.build ?? null, record, current };
   }
 
+  #isCapturedTag(ref: string): boolean {
+    return ref.startsWith("bbbox-image/");
+  }
+
+  #isRefreshTag(ref: string): boolean {
+    return DOCKER_KINDS.some((kind) => this.#config.images[kind] && ref.startsWith(`${this.#config.images[kind]!.replace(/:[^:/]*$/, "")}:refresh-`));
+  }
+
   /** The configured images, as standard builds, and this install's captured images and image boxes. */
   async #imageList(signal?: AbortSignal): Promise<{ builds: ImageBuild[]; boxes: string[] }> {
     await this.#cli.prepare(signal);
@@ -2746,9 +2779,12 @@ export class DockerBackend implements Backend {
       { timeoutMs: 30_000, signal },
     );
     for (const ref of listed.split("\n").map((line) => line.trim()).filter(Boolean)) {
+      if (!this.#isCapturedTag(ref) && !this.#isRefreshTag(ref)) continue;
       const labels = await this.#imageLabels(ref, signal);
       const image = labels?.[LABELS.image];
-      if (labels && typeof image === "string" && image) builds.push(this.#imageBuild(ref, String(labels[LABELS.kind] ?? ""), image, labels, false));
+      if (labels && typeof image === "string" && image && image !== "standard") {
+        builds.push(this.#imageBuild(ref, String(labels[LABELS.kind] ?? ""), image, labels, false));
+      }
     }
     const boxes = await this.#cli.list({ [LABELS.backend]: "docker", [LABELS.install]: install, [LABELS.imageBox]: install }, signal);
     return { builds, boxes: boxes.map((container) => container.name) };
@@ -2840,8 +2876,8 @@ export class DockerBackend implements Backend {
     const labels = await this.#imageLabels(ref, signal);
     if (!labels) return;
     const configured = DOCKER_KINDS.some((kind) => this.#config.images[kind] === ref);
-    const captured = labels[LABELS.install] === install && !!labels[LABELS.image];
-    const refreshing = DOCKER_KINDS.some((kind) => this.#config.images[kind] && ref.startsWith(`${this.#config.images[kind]!.replace(/:[^:/]*$/, "")}:refresh-`));
+    const captured = labels[LABELS.install] === install && typeof labels[LABELS.image] === "string" && !!labels[LABELS.image] && labels[LABELS.image] !== "standard" && this.#isCapturedTag(ref);
+    const refreshing = this.#isRefreshTag(ref);
     if (configured || !(captured || refreshing)) throw new Error(`The image ${ref} is not an image build of this install's, so ${PRODUCT} leaves it.`);
     await this.#cli.run(["image", "rm", ref], { timeoutMs: 120_000, signal });
   }

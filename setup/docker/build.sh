@@ -123,21 +123,50 @@ host_disk() {
   return "$status"
 }
 
-disk=$(mktemp -d)
-disk_err=$(mktemp)
-if host_disk "$platform" "$base" "$disk" 2>"$disk_err" &&
-  free=$(awk '$NF == "/" && $4 ~ /^[0-9]+$/ { print $4 }' "$disk/bb-box-df") && [ -n "$free" ]; then
-  rm -rf "$disk"
-  rm -f "$disk_err"
-  if [ "$free" -lt $((need * 1000000000 / 1024)) ]; then
+free_disk_kb() {
+  local disk disk_err free
+  disk=$(mktemp -d)
+  disk_err=$(mktemp)
+  if host_disk "$platform" "$base" "$disk" 2>"$disk_err" &&
+    free=$(awk '$NF == "/" && $4 ~ /^[0-9]+$/ { print $4 }' "$disk/bb-box-df") && [ -n "$free" ]; then
+    rm -rf "$disk" "$disk_err"
+    printf '%s\n' "$free"
+    return 0
+  fi
+  echo "build.sh could not see how much disk the Docker host has free, so it builds anyway: $(tail -n 1 "$disk_err")" >&2
+  rm -rf "$disk" "$disk_err"
+  return 1
+}
+
+prune_stale_build_cache() {
+  local help out freed
+  help=$(docker builder prune --help 2>&1 || true)
+  if grep -q -- '--max-used-space' <<<"$help"; then
+    out=$(docker builder prune --force --filter until=24h --max-used-space 4GB 2>&1) || return $?
+  elif grep -q -- '--keep-storage' <<<"$help"; then
+    out=$(docker builder prune --force --filter until=24h --keep-storage 4GB 2>&1) || return $?
+  else
+    out=$(docker builder prune --force --filter until=24h 2>&1) || return $?
+  fi
+  freed=$(awk '/^Total( reclaimed space)?:/ { print $NF }' <<<"$out" | tail -n 1)
+  echo "build.sh pruned Docker build cache unused for 24h (freed ${freed:-0B})." >&2
+}
+
+need_kb=$((need * 1000000000 / 1024))
+if free=$(free_disk_kb); then
+  if [ "$free" -lt "$need_kb" ]; then
+    prune_stale_build_cache || echo "build.sh could not prune Docker's build cache." >&2
+    if measured=$(free_disk_kb); then
+      free=$measured
+    else
+      free=$need_kb
+    fi
+  fi
+  if [ "$free" -lt "$need_kb" ]; then
     echo "The Docker host has $((free * 1024 / 1000000000)) GB of disk free, and building $what needs about $need GB." \
       "Free some, for example with docker builder prune, then build again." >&2
     exit 1
   fi
-else
-  echo "build.sh could not see how much disk the Docker host has free, so it builds anyway: $(tail -n 1 "$disk_err")" >&2
-  rm -rf "$disk"
-  rm -f "$disk_err"
 fi
 
 for target in "${targets[@]}"; do
