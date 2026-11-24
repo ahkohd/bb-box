@@ -191,7 +191,9 @@ function exec(rest) {
     text
       .replaceAll("/run/bb-box/", `${join(dir(name), "run", "bb-box")}/`)
       .replaceAll("/var/lib/bb-box/", `${join(dir(name), "var-lib", "bb-box")}/`)
-      .replaceAll("/home/box", home);
+      .replace(/\/usr\/share\/bb-box(?=\/|$|[\s'"])/g, join(dir(name), "usr-share", "bb-box"))
+      .replaceAll("/home/box", home)
+      .replaceAll("sudo -n ", "");
   const [program, ...programArgs] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), ...command.map(own)];
   const sandboxEnv = { PATH: pathWithHostStubs(root, [], process.env.PATH), HOME: home, ...ownedFoldersEnv([root], join(root, "tmp")), ...env };
   const refusal = refusalForRealHostTools("The fake microsandbox", sandboxEnv.PATH);

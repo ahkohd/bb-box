@@ -216,9 +216,12 @@ checks against any backend:
   `npm run conformance` makes the second process, so `npm test` skips
   these two and says why;
 - for each preset: a box of that size, measured as soon as it is ready;
-- interrupted acquires that leave nothing behind, a small image build, two
-  installs on one backend that leave each other alone, and a reused
-  reference that reads as gone.
+- interrupted acquires that leave nothing behind, a small image build and,
+  when `--disposable` (or `disposable: true` in suite options) is passed on a
+  disposable backend, standard-image replacement and cleanup (removing the old
+  build when unused, and keeping it while a box uses it until release and
+  maintenance), two installs on one backend that leave each other alone, and a
+  reused reference that reads as gone.
 
 Steps a kind does not declare are skipped by its capabilities, never by
 backend name, and any other skip gives its reason.
@@ -233,7 +236,8 @@ and against Docker on a fake Docker host:
 node --test test/conformance.test.ts
 ```
 
-Against real hosts:
+Against real hosts (add `--disposable` on a disposable host to also run the
+standard-image replacement and cleanup check):
 
 - **Docker**, with the images built:
 
