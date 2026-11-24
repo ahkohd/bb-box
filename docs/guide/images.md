@@ -52,4 +52,4 @@ When a rebuild fails, the image's old build stays, and later runs skip the image
 
 A rebuild does not fail for a short outage of Ubuntu's package archive. Each step that installs packages through BB Box's helper retries a download the archive did not serve, for at most 10 minutes after the first failure. A slow download is never stopped while it is still arriving. Any other package error, such as a package that does not exist, fails at once with apt's own message.
 
-To see each standard image's age and its last rebuild, run `bb box images list`. `bb box doctor` warns when a rebuild failed, or when no nightly run has finished for 8 days. See [health checks](../reference/checks.md).
+To see each standard image's age and its last rebuild, run `bb box images list`. `bb box doctor` warns when a rebuild failed, when no nightly run has finished for 8 days, or when a backend's image storage check finds low free disk, leftover build guests or unreadable image state. See [health checks](../reference/checks.md).

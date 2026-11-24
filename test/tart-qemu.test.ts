@@ -5,7 +5,7 @@ import "./check-test-machine.mjs";
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, statfsSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, test } from "node:test";
@@ -1172,4 +1172,61 @@ test("a Windows image's operations on a Mac (#450): a box of its build, a captur
   assert.equal(realpathSync(join(dir, "current")), realpathSync(later));
   assert.equal(realpathSync(join(dir, "rollback")), realpathSync(built), "the build it replaced is the rollback");
   assert.ok(!existsSync(join(dir, "1")), "the rollback before goes");
+});
+
+test("maintain removes unused old Windows image builds while keeping current, rollback, builds in use and unpromoted refresh builds", async () => {
+  const { backend, mac, qemu, owners } = setup();
+  const imagesDir = join(qemu, "images", FAKE_WINDOWS_IMAGE);
+  const snapsDir = join(mac, ".tart", "bb-box-snapshots");
+  const makeBuild = (name: string, owner?: string) => {
+    mkdirSync(join(imagesDir, name), { recursive: true });
+    writeFileSync(join(imagesDir, name, "disk.qcow2"), `disk ${name}`);
+    chmodSync(join(imagesDir, name, "disk.qcow2"), 0o444);
+    writeFileSync(join(imagesDir, name, "vars.fd"), "vars");
+    if (owner) writeFileSync(join(imagesDir, name, "owner"), owner);
+  };
+
+  makeBuild("build.2");
+  makeBuild("build.3");
+  makeBuild("build.old-unused");
+  makeBuild("build.old-vm");
+  makeBuild("build.old-snap");
+  makeBuild("build.refresh", "install=test\nimage-build=standard\n");
+  rmSync(join(imagesDir, "current"), { force: true });
+  symlinkSync("build.3", join(imagesDir, "current"));
+  symlinkSync("build.2", join(imagesDir, "rollback"));
+
+  mkdirSync(join(qemu, "vms", "bb-box-bx-old"), { recursive: true });
+  writeFileSync(join(qemu, "vms", "bb-box-bx-old", "config"), `image=${FAKE_WINDOWS_IMAGE}\nbuild=build.old-vm\ncores=4\nmemory=8192\nssh=42000\nvnc=42001\n`);
+  mkdirSync(owners, { recursive: true });
+  writeFileSync(join(owners, "bb-box-bx-old"), ownerText({ install: "test", box: "bx-old", name: "win-keeper", kind: KIND, engine: "qemu" }));
+
+  mkdirSync(join(snapsDir, "sn-old", "vm"), { recursive: true });
+  writeFileSync(join(snapsDir, "sn-old", "vm", "config"), `image=${FAKE_WINDOWS_IMAGE}\nbuild=build.old-snap\n`);
+
+  const before = (await backend.doctor(signal())).checks.find((check) => check.id === "image-storage.mac1")!;
+  assert.equal(before.status, "ok");
+  assert.match(before.detail, /Windows rollback build\.2 .* kept\./);
+  assert.match(before.detail, /build\.old-vm .*used by box win-keeper/);
+  assert.match(before.detail, /build\.old-snap .*used by snapshot sn-old/);
+  assert.match(before.detail, /build\.old-unused .*nothing stands on it; upkeep removes it/);
+
+  await backend.maintain(signal());
+
+  assert.equal(existsSync(join(imagesDir, "build.old-unused")), false);
+  assert.equal(existsSync(join(imagesDir, "1")), false);
+  assert.equal(existsSync(join(imagesDir, "build.3")), true);
+  assert.equal(existsSync(join(imagesDir, "build.2")), true);
+  assert.equal(existsSync(join(imagesDir, "build.old-vm")), true);
+  assert.equal(existsSync(join(imagesDir, "build.old-snap")), true);
+  assert.equal(existsSync(join(imagesDir, "build.refresh")), true);
+
+  rmSync(join(qemu, "vms", "bb-box-bx-old"), { recursive: true, force: true });
+  rmSync(join(snapsDir, "sn-old"), { recursive: true, force: true });
+  await backend.maintain(signal());
+
+  assert.equal(existsSync(join(imagesDir, "build.old-vm")), false);
+  assert.equal(existsSync(join(imagesDir, "build.old-snap")), false);
+  assert.equal(existsSync(join(imagesDir, "build.2")), true);
+  assert.equal(existsSync(join(imagesDir, "build.3")), true);
 });

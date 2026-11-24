@@ -31,9 +31,9 @@ import { TURN_NOT_TAKEN, named, parseFields, script, sections } from "./host.ts"
 const FIRST_PORT = 42000;
 const LAST_PORT = 42999;
 
-const BASE_IN_USE = 0;
-const BASE_UNUSED = 1;
-const BASE_USE_UNKNOWN = 2;
+export const BASE_IN_USE = 0;
+export const BASE_UNUSED = 1;
+export const BASE_USE_UNKNOWN = 2;
 const BASES_UNREAD = `${PRODUCT} could not read the config of every Windows VM, snapshot and restore on the Mac to tell which builds they stand on`;
 
 const BASES_SH = String.raw`base_disk_of() { printf '%s/images/%s/%s/disk.qcow2' "$q" "$(sed -n 's/^image=//p' "$1/config" 2>/dev/null | head -n 1)" "$(sed -n 's/^build=//p' "$1/config" 2>/dev/null | head -n 1)"; }
@@ -74,6 +74,23 @@ build_in_use() {
   done
   IFS=$_bu_ifs
   return ${BASE_UNUSED}
+}
+prune_unused_builds() {
+  _pb_im="$q/images/$1"
+  [ -d "$_pb_im" ] || return 0
+  _pb_cur=$(cd "$_pb_im/current" 2>/dev/null && pwd -P) && _pb_cur=$(basename "$_pb_cur")
+  [ -n "$_pb_cur" ] && [ -f "$_pb_im/$_pb_cur/disk.qcow2" ] || return 0
+  _pb_rb=$(cd "$_pb_im/rollback" 2>/dev/null && pwd -P) && _pb_rb=$(basename "$_pb_rb")
+  removed=
+  unsure=
+  for _pb_o in "$_pb_im"/*; do
+    _pb_n=$(basename "$_pb_o")
+    published_build "$_pb_o" && ! awaits_promotion "$_pb_o" && [ "$_pb_n" != "$_pb_cur" ] && [ "$_pb_n" != "$_pb_rb" ] || continue
+    build_in_use "$1" "$_pb_n"
+    case $? in ${BASE_IN_USE}) continue ;; ${BASE_UNUSED}) ;; *) unsure="$unsure $_pb_n"; continue ;; esac
+    chmod -R u+w "$_pb_o"; rm -rf "$_pb_o"
+    removed="$removed $_pb_n"
+  done
 }
 `;
 
@@ -612,19 +629,29 @@ was=$(cd "$im/current" 2>/dev/null && pwd -P) && was=$(basename "$was")
 if [ -n "$was" ] && [ "$was" != "$b" ] && [ -f "$im/$was/disk.qcow2" ]; then ln -sfn "$was" "$im/rollback" || exit 1; fi
 ln -sfn "$b" "$im/current" || exit 1
 rm -f "$im/$b/owner"
-rb=$(cd "$im/rollback" 2>/dev/null && pwd -P) && rb=$(basename "$rb")
-unsure=
-for o in "$im"/*; do
-  n=$(basename "$o")
-  published_build "$o" && ! awaits_promotion "$o" && [ "$n" != "$b" ] && [ "$n" != "$rb" ] || continue
-  build_in_use "$image" "$n"
-  case $? in ${BASE_IN_USE}) continue ;; ${BASE_UNUSED}) ;; *) unsure="$unsure $n"; continue ;; esac
-  chmod -R u+w "$o"; rm -rf "$o"
-done
+prune_unused_builds "$image"
 free_turn
 [ -z "$unsure" ] || echo "${BASES_UNREAD}, so it kept the image's builds$unsure. A later refresh removes those that nothing stands on." >&2
 echo replaced
 `);
+}
+
+export function qemuPruneBuildsScript(image: string): string {
+  return qemu(String.raw`image=${quote(image)}
+hold_turn || exit 1
+prune_unused_builds "$image"
+free_turn
+[ -z "$unsure" ] || echo "${BASES_UNREAD}, so it kept the image's builds$unsure. Upkeep removes those that nothing stands on once they can be read." >&2
+for _pb_r in $removed; do printf 'removed=%s\n' "$_pb_r"; done
+`);
+}
+
+export function parsePrunedBuilds(text: string): string[] {
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith("removed="))
+    .map((line) => line.slice("removed=".length).trim())
+    .filter(Boolean);
 }
 
 /** Removes a refresh's build of a Windows image (049). Prints "removed" or "kept". */

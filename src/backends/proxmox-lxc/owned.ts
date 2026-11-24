@@ -1,5 +1,6 @@
 import { ProxmoxError, parseTags, rootDiskGiB, type GuestSettings, type Proxmox } from "../proxmox/api.ts";
 import { copyTags, isEarlierGuest, isHeldCopy } from "../proxmox/copies.ts";
+import { isOwnedBuildWorkConfig } from "../proxmox/image-storage.ts";
 import { TAG, installFromDescription, installFromTags, installTag, namesOf, ownerFromDescription, ownerFromTags } from "../proxmox/owner.ts";
 import { PRODUCT } from "../../brand.ts";
 
@@ -102,6 +103,10 @@ export function imageOwner(install: string, imageBox: string, imageTag: string):
 
 export function templateOwner(install: string, vmid: number, as: Config): GuestOwner {
   return guarded({ words: `template ${vmid}, as this install's settings name it`, owns: (config) => isTemplate(config) && sameDescription(config.description, as.description) && config.hostname === as.hostname }, install);
+}
+
+export function buildWorkOwner(install: string, now: number): GuestOwner {
+  return guarded({ words: "a leftover build container of this install", owns: (config) => isOwnedBuildWorkConfig(config, install, now) }, install);
 }
 
 export function eitherOwner(first: GuestOwner, second: GuestOwner): GuestOwner {

@@ -2296,6 +2296,7 @@ same guest.
 | `#writesFor`, `disarm`, `armFork`, `dropHalfMadeFork`, `forkByFullClone` | a fork's guest, in the fork module | network, delete | as above, or box |
 | `#fill`, `#topUp`, `#retireForWhole` | warm guests | cores and memory, labels and marker, start, retirement, delete; `#retireForWhole` retires and deletes this install's warm desktops on a card it keeps whole for a box (unit 8) | the warm guest of this install that bb-box made, by its description |
 | `#imageBox`, `#capture`, `#removeImage` | image boxes and builds | settings, labels, start, shutdown, template, protection, delete | image box or build of this install |
+| `#pruneLeftoverBuilds` | leftover build containers older than a build takes | stop, protection, delete | build container of this install, not a template, with no box or role tag |
 | `#askPower` | a guest bb-box starts, stops, shuts down or deletes through the helper | the helper's request tag, added | the owner of the action asked for |
 | `#withdrawPower` | the same guest, once bb-box has sent the write that adds the request and then has its answer or stops waiting for one, as when the write's answer is lost ([104](104-a-card-nvidia-smi-did-not-read-is-not-known-yet-and-blocks-only-itself.md)) | the helper's request tag, taken off, with 10 s of its own even when the start was cancelled | the owner of the action asked for |
 | `#replaceTemplate` | a configured template, and the guest made in its place | protection, delete, template, labels | the template as read, then the guest with the description bb-box gave it |

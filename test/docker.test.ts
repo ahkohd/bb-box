@@ -15,7 +15,7 @@ import { dockerDriver } from "../src/backends/docker/index.ts";
 import { offerChecks } from "../src/backends/index.ts";
 import { ProxmoxLxcBackend } from "../src/backends/proxmox-lxc/backend.ts";
 import { ImageJobs } from "../src/plugin/images.ts";
-import { BackendError, type AcquireHooks, type Backend, type BoxIdentity, type MachineSize, type FieldValue, type GpuPart, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
+import { BackendError, type AcquireHooks, type Backend, type BoxIdentity, type MachineSize, type FieldValue, type GpuPart, type Guest, type ImageBuild, type ReleaseHooks } from "../src/backends/types.ts";
 import { backendPart } from "../src/core/document.ts";
 import { TransportError } from "../src/transports/types.ts";
 import { dockerConfig, fakeDockerHost } from "./fake-docker.ts";
@@ -896,6 +896,7 @@ test("the doctor checks the CLI, the daemon, the images, the network and the roo
       ["image.bbbox/linux:1", "ok"],
       ["image.bbbox/linux-desktop:1", "ok"],
       ["image.bbbox/linux-desktop-wayland:1", "ok"],
+      ["docker.image-storage", "ok"],
       ["docker.network", "ok"],
       ["docker.privileged", "ok"],
       ["docker.capacity", "ok"],
@@ -1124,6 +1125,7 @@ test("the doctor fails without a daemon or a CLI, and skips what depends on them
       ["image.bbbox/linux:1", "skipped"],
       ["image.bbbox/linux-desktop:1", "skipped"],
       ["image.bbbox/linux-desktop-wayland:1", "skipped"],
+      ["docker.image-storage", "skipped"],
     ],
   );
   assert.match(down.checks[1]!.fix!, /Start Docker on BB's server/);
@@ -1972,4 +1974,60 @@ test("dangling image prune failures log an error and leave orphan cleanup runnin
 
   assert.equal(volumeNames(fake.binary).includes("image-prune-failure-orphan"), false);
   assert.match(context.errors.join("\n"), /pruning old Docker images.*prune/);
+});
+
+test("docker.image-storage reports image space, kept untagged builds with their containers, build cache and free disk against build.sh's need", async () => {
+  const { fake, backend } = setup({}, { buildCacheSize: "3.4GB", buildCacheReclaimable: "2.1GB", freeDiskKb: 50_000_000 });
+  const box = identity();
+  const guest = await backend.acquire(box, null, hooks().hooks, signal());
+  const oldId = execFileSync(fake.binary, ["image", "inspect", "--format", "{{.Id}}", "bbbox/linux:1"], { encoding: "utf8" }).trim();
+  const images = JSON.parse(readFileSync(join(fake.root, "images.json"), "utf8")) as Record<string, Record<string, string>>;
+  const idsPath = join(fake.root, "image-ids.json");
+  const ids = existsSync(idsPath) ? (JSON.parse(readFileSync(idsPath, "utf8")) as Record<string, string>) : {};
+  const newId = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+  writeFileSync(join(fake.root, "images.json"), JSON.stringify({ ...images, "bbbox/linux:refresh-c3": { "bbbox.image-version": "1" } }));
+  writeFileSync(idsPath, JSON.stringify({ ...ids, "bbbox/linux:refresh-c3": newId }));
+
+  const checkBefore = (await backend.doctor(signal())).checks.find((check) => check.id === "docker.image-storage")!;
+  assert.equal(checkBefore.status, "ok");
+  assert.match(checkBefore.detail, /No earlier untagged builds are kept\./);
+  assert.match(checkBefore.detail, /Build cache takes 3\.4GB \(2\.1GB reclaimable\)\./);
+  assert.match(checkBefore.detail, /building the desktop image needs about 18 GB/);
+
+  const current: ImageBuild = { ref: "bbbox/linux:1", image: "standard", kind: "linux", build: null, record: null, current: true };
+  const candidate: ImageBuild = { ref: "bbbox/linux:refresh-c3", image: "standard", kind: "linux", build: "build.20261124-010000-abcd", record: null, current: false };
+  await backend.images.replace(candidate, current, signal());
+
+  const checkHeld = (await backend.doctor(signal())).checks.find((check) => check.id === "docker.image-storage")!;
+  assert.equal(checkHeld.status, "ok");
+  assert.match(checkHeld.detail, new RegExp(`1 earlier untagged build kept: .*${oldId.slice(7, 19)}.*used by container ${box.name}`));
+
+  await backend.release(guest, releasing, signal());
+  const checkUnheld = (await backend.doctor(signal())).checks.find((check) => check.id === "docker.image-storage")!;
+  assert.equal(checkUnheld.status, "ok");
+  assert.match(checkUnheld.detail, /no container uses it; upkeep removes it/);
+
+  await backend.maintain(signal());
+  const checkClean = (await backend.doctor(signal())).checks.find((check) => check.id === "docker.image-storage")!;
+  assert.equal(checkClean.status, "ok");
+  assert.match(checkClean.detail, /No earlier untagged builds are kept\./);
+});
+
+test("docker.image-storage warns when free disk is below build.sh's need and on read failures without failing the doctor", async () => {
+  const linuxOnly = setup({ "desktop-image": "", "wayland-desktop-image": "" }, { buildCacheSize: "5.2GB", freeDiskKb: 8_000_000 });
+  const lowLinux = await linuxOnly.backend.doctor(signal());
+  const lowCheck = lowLinux.checks.find((check) => check.id === "docker.image-storage")!;
+
+  assert.equal(lowLinux.ok, true);
+  assert.equal(lowCheck.status, "warn");
+  assert.match(lowCheck.detail, /below the 10 GB building the linux image needs/);
+  assert.match(lowCheck.fix ?? "", /docker builder prune/);
+
+  const unread = setup({}, { failSystemDf: true, failDiskFree: true });
+  const unreadReport = await unread.backend.doctor(signal());
+  const unreadCheck = unreadReport.checks.find((check) => check.id === "docker.image-storage")!;
+
+  assert.equal(unreadReport.ok, true);
+  assert.equal(unreadCheck.status, "warn");
+  assert.match(unreadCheck.detail, /Could not read Docker's build cache size, free disk space on fake-docker\./);
 });

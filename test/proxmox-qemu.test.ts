@@ -761,6 +761,7 @@ test("doctor passes on a complete setup, and warns that a template from build.sh
       ["proxmox.bridge", "Network bridge", "ok"],
       ["proxmox.vmids", "VMID range", "ok"],
       ["proxmox.snapshots", "Snapshots", "ok"],
+      ["proxmox.image-storage", "Image storage", "ok"],
       ["ssh.key", "SSH key", "warn"],
     ],
   );
@@ -1769,4 +1770,75 @@ test("maintain reads the warm counts of the kinds the driver says it keeps warm,
   const recorded = recordingWarm(context);
   await make(recorded.context).maintain();
   assert.deepEqual([...recorded.asked].sort(), [...proxmoxQemuDriver.warmKinds!].sort());
+});
+
+test("proxmox.image-storage reports VM templates, storage room and leftover build VMs, and maintain removes only this install's old build VMs", async () => {
+  const { proxmox, backend } = setup({ "ssh-private-key": "" });
+  const oldBuild = "build.20260101-000000-cccc";
+  const recentStamp = new Date(Date.now() - 30 * 60_000).toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  const recentBuild = `build.${recentStamp}-dddd`;
+
+  proxmox.guests.set(9210, {
+    vmid: 9210,
+    type: "qemu",
+    name: "bb-box-windows-9210",
+    pool: "bbbox",
+    status: "stopped",
+    template: false,
+    config: { scsi0: "local-lvm:vm-9210-disk-0,size=64G", tags: `install.test;${oldBuild}` },
+  });
+  proxmox.guests.set(9211, {
+    vmid: 9211,
+    type: "qemu",
+    name: "bb-box-windows-9211",
+    pool: "bbbox",
+    status: "running",
+    template: false,
+    config: { scsi0: "local-lvm:vm-9211-disk-0,size=64G", tags: `bbbox;windows;${oldBuild}` },
+  });
+  proxmox.guests.set(9212, {
+    vmid: 9212,
+    type: "qemu",
+    name: "bb-box-windows-9212",
+    pool: "bbbox",
+    status: "running",
+    template: false,
+    config: { scsi0: "local-lvm:vm-9212-disk-0,size=64G", tags: `install.test;${recentBuild}` },
+  });
+  proxmox.guests.set(9213, {
+    vmid: 9213,
+    type: "qemu",
+    name: "bb-box-windows-9213",
+    pool: "bbbox",
+    status: "stopped",
+    template: false,
+    config: { scsi0: "local-lvm:vm-9213-disk-0,size=64G", tags: `install.other;${oldBuild}` },
+  });
+  proxmox.statusPass();
+
+  const before = await backend.doctor();
+  const checkBefore = before.checks.find((check) => check.id === "proxmox.image-storage")!;
+  assert.equal(before.ok, true);
+  assert.equal(checkBefore.status, "warn");
+  assert.match(checkBefore.detail, /VM 9104 \(64 GiB on local-lvm\)/);
+  assert.match(checkBefore.detail, /VM 9210 \(build\.20260101-000000-cccc/);
+  assert.match(checkBefore.detail, /VM 9211 \(build\.20260101-000000-cccc/);
+  assert.match(checkBefore.detail, /build\.sh puts no install tag on build VMs/);
+  assert.match(checkBefore.fix ?? "", /qm stop 9211; qm destroy 9211 --purge 1/);
+  assert.doesNotMatch(checkBefore.detail, /9212|9213/);
+
+  await backend.maintain();
+  assert.equal(proxmox.guests.has(9210), false);
+  assert.equal(proxmox.guests.has(9211), true);
+  assert.equal(proxmox.guests.has(9212), true);
+  assert.equal(proxmox.guests.has(9213), true);
+
+  proxmox.guests.delete(9211);
+  proxmox.storage.set("local-lvm", { total: 100 * 2 ** 30, avail: 70 * 2 ** 30 });
+  const lowDisk = await backend.doctor();
+  const checkLow = lowDisk.checks.find((check) => check.id === "proxmox.image-storage")!;
+  assert.equal(lowDisk.ok, true);
+  assert.equal(checkLow.status, "warn");
+  assert.match(checkLow.detail, /No leftover build VMs\./);
+  assert.match(checkLow.detail, /local-lvm has 70 GiB free .* below the 64 GiB a build needs/);
 });

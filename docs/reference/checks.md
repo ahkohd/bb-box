@@ -78,6 +78,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `tart.hosts` | Macs | At least one Mac is set up. |
 | `host.<mac>` | Mac &lt;mac> | The Mac answers over SSH, is Apple silicon, and has Tart. |
 | `image.<mac>.<kind>` | &lt;kind> image on &lt;mac> | The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old. For the iOS image, also that it offers iOS devices, built on the macOS image's current build, with an idb_companion and Xcode an image check has passed together. |
+| `image-storage.<mac>` | Image storage on &lt;mac> | The images on the Mac and their disk use, any earlier Windows builds kept with what stands on them, cached OCI bases, and free disk against what a build needs. |
 | `forks.<mac>` | macOS forks on &lt;mac> | Whether the Mac's diskutil can attach a fork's disk, so BB Box can clean it of its source's identity before the fork first boots (070 unit 9). Without it, macOS boxes there take and restore snapshots, but make no forks and keep none past a release. |
 | `spotlight.<mac>` | Spotlight on &lt;mac> | Whether Spotlight indexes the folder of Tart's VMs, so it opens each new VM's disk, and how to keep it out (F-12). |
 | `qemu.<mac>` | QEMU on &lt;mac> | QEMU, the Hypervisor framework and UEFI firmware, for Windows boxes on the Mac. |
@@ -113,6 +114,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `proxmox.snapshots` | Snapshots | Whether the token may take and restore snapshots, with VM.Snapshot and VM.Snapshot.Rollback on the pool, and what each template's storage restores: any snapshot on LVM-thin, Ceph RBD, BTRFS and qcow2 files, the newest only on ZFS, none on LVM or raw files (070). |
 | `template.<vmid>` | &lt;flavour> template &lt;vmid> | A template is there, is a template, and has what its kind needs. |
 | `template.<vmid>.image` | Image of &lt;flavour> template &lt;vmid> | The template's image record: its age, pins and tools, against this BB Box's. |
+| `proxmox.image-storage` | Image storage | BB Box's templates and their storage use, any leftover build containers or VMs older than a build takes, and free space on each template's storage against what a build needs. |
 | `proxmox.gpu-helper` | Host's GPU helper | Where host/setup-gpu.sh has installed the GPU helper, bb-box-gpu: it reported under 3 minutes ago, speaks a protocol this BB Box speaks, serves this install's pool, runs on a pve-container version it was tested on, and has writes on. It warns while the helper runs with writes off, a dry run, and on a node with cards and no helper, where servers get no GPU (071). |
 | `proxmox.gpu-cards` | Boxes on their cards | Where the GPU helper reports: every running box with a GPU lists its claimed card in nvidia-smi, as BB Box checks every 10 minutes, and the helper reports no running guest on another card's lines. It fails naming each box on the wrong card or none (071). |
 | `proxmox.gpu-migration` | Markers on GPU guests | Where the GPU helper, bb-box-gpu, reports: every guest of this install whose device lines name a card carries the marker bb box gpu mark gives it, the helper answered each, and, in its dry run, it would write no guest (071). It names the guests that fail. |
@@ -137,6 +139,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `template.<vmid>.image` | Image of &lt;flavour> template &lt;vmid> | The template's image record: its age, pins and tools, against this BB Box's. |
 | `proxmox.android-kvm` | KVM for Android | Where Android templates are listed, the host allows nested virtualization, as the linux-kvm setting says: the Android emulator needs KVM. |
 | `proxmox.android-disk` | Disk for Android | The storage of each Android template has room beyond the reserve for a refresh's build and trial boxes and an Android box in use. |
+| `proxmox.image-storage` | Image storage | BB Box's templates and their storage use, any leftover build containers or VMs older than a build takes, and free space on each template's storage against what a build needs. |
 | `ssh.key` | SSH key | BB Box's SSH key reads, and, where BB Box made it, its public key to install. |
 
 ## Docker
@@ -163,6 +166,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | `docker.gpus` | GPUs | The NVIDIA cards Docker lists as CDI devices, for GPU boxes, as nvidia-smi in a container given them reads them; whether every box can open every card there; another install's GPU boxes on the host; and a box with a whole card that BB Box cannot match to a card it reads, which stops GPU boxes there (071). |
 | `docker.capacity` | Room on &lt;host> | Room on the host for a Linux box at its default size. |
 | `docker.sizes` | Room for each kind | The host holds a box of each kind at its default size. |
+| `docker.image-storage` | Image storage | The space BB Box's images and Docker's build cache use, any earlier untagged builds kept with the containers holding them, and free disk against what the next build needs. |
 | `image.<image>` | Image &lt;image> | An image a kind runs is on the host, built by BB Box's build script, and not too old. |
 
 ## Hetzner Cloud
