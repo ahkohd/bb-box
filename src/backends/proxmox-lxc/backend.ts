@@ -48,6 +48,7 @@ import { GPU_RESTART_SECONDS, helperNotReadyRefusal, noDriverRefusal, noSharedCa
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone, type ForkWrites } from "../proxmox/forks.ts";
 import { NoLongerOurs, OwnedGuests, adoptingOwner, boxOwner, carriesAnother, copyOwner, describedOwner, eitherOwner, imageOwner, madeOwner, sameDescription, templateOwner, unstampedOwner, warmOwner, type GuestOwner, type PowerAction } from "./owned.ts";
+import { leftoverBuildCandidates, proxmoxImageStorageCheck, type ProxmoxStorageReading, type ProxmoxTemplateUsage } from "../proxmox/image-storage.ts";
 import { EARLIER_GUEST, copyName, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import {
   BUILD,
@@ -404,6 +405,7 @@ const GPU_HELPER_GUIDE = "setup/proxmox-lxc/README.md#the-gpu-helper";
 const GPU_MIGRATION: Check = ["proxmox.gpu-migration", "Markers on GPU guests"];
 const GPU_CARDS: Check = ["proxmox.gpu-cards", "Boxes on their cards"];
 const SNAPSHOTS: Check = ["proxmox.snapshots", "Snapshots"];
+const IMAGE_STORAGE: Check = ["proxmox.image-storage", "Image storage"];
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 
 function powerOf(status: string): PowerState {
@@ -3203,8 +3205,10 @@ export class ProxmoxLxcBackend implements Backend {
       `template.${template.vmid}`,
       `${FLAVOUR_NAMES[flavour]} template ${template.vmid}${template.gpu ? ` (GPU ${template.gpu})` : ""}`,
     ];
-    const later = [NODE, MEMORY, POOL, ...templates.map(templateCheck), BRIDGE, VMIDS, SNAPSHOTS];
+    const later = [NODE, MEMORY, POOL, ...templates.map(templateCheck), BRIDGE, VMIDS, SNAPSHOTS, IMAGE_STORAGE];
     const templateStorages: GuestDiskStorage[] = [];
+    const templateUsages: ProxmoxTemplateUsage[] = [];
+    const storageReadings = new Map<string, ProxmoxStorageReading | Error>();
     let version = "";
 
     try {
@@ -3290,11 +3294,16 @@ export class ProxmoxLxcBackend implements Backend {
           } else {
             const disk = await api.storageStatus(storage, signal).catch((error: unknown) => error);
             if (disk instanceof Error) {
+              storageReadings.set(storage, disk);
+              templateUsages.push({ vmid: template, storage, diskGiB: rootDiskGiB(config) });
               fail(name, `CT template ${template} is on ${storage}, whose free space cannot be read.`, audit(disk, `Give the token Datastore.Audit on /storage/${storage}.`));
             } else {
+              const status = disk as StorageStatus;
+              storageReadings.set(storage, { availableGiB: Math.floor(status.available / GiB), totalGiB: Math.floor(status.total / GiB), type: status.type });
+              templateUsages.push({ vmid: template, storage, diskGiB: rootDiskGiB(config) });
               this.#templates.set(template, templateInfo(storage, config));
-              templateStorages.push({ name: storage, type: (disk as StorageStatus).type, volume: String(config.rootfs) });
-              pass(name, `CT template ${template} on ${storage}, ${Math.floor((disk as { available: number }).available / GiB)} GiB free.`);
+              templateStorages.push({ name: storage, type: status.type, volume: String(config.rootfs) });
+              pass(name, `CT template ${template} on ${storage}, ${Math.floor(status.available / GiB)} GiB free.`);
               const [linuxPins, desktopPins, bbApp, nvidia, chromeAmd] = await facts;
               const recorded = recordInDescription(String(config.description ?? ""));
               const rebuild = `Rebuild it with the setup guide's template/build.sh, as root on ${node}: build.sh ${REBUILD[listed.flavour](template, listed.template.gpu)} --replace.`;
@@ -3448,8 +3457,10 @@ export class ProxmoxLxcBackend implements Backend {
         fail(BRIDGE, message(error), audit(error, `Give the token Sys.Audit on /nodes/${node}.`));
       }
 
+      let poolGuests: readonly PoolGuest[] | Error = new Error("pool guests were not read");
       try {
         const guests = await api.listPool(pool, signal);
+        poolGuests = guests;
         const { first, last } = this.#config.vmids;
         const used = guests.filter((guest) => this.#inRange(guest.vmid)).length;
         const total = last - first + 1;
@@ -3467,12 +3478,46 @@ export class ProxmoxLxcBackend implements Backend {
         const others = await this.#others(api, guests, signal);
         if (others) notes.push(others);
       } catch (error) {
+        poolGuests = error instanceof Error ? error : new Error(message(error));
         fail(VMIDS, message(error), audit(error, `Give the token VM.Audit on /pool/${pool}.`));
       }
 
       const privileges = await poolPrivileges(api, pool, signal);
       const metadata = await storagesMetadata(api, templateStorages, signal);
       checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "lxc", privileges, storages: templateStorages, metadata }) });
+      const configuredTemplates = new Set(templates.map(({ template }) => template.vmid));
+      const activeVmids = new Set([
+        ...this.#reserved,
+        ...this.#filling.keys(),
+        ...this.#imageBoxes,
+        ...[...this.#acquiring.values()].flatMap((acquire) => (acquire.vmid === null ? [] : [acquire.vmid])),
+      ]);
+      const now = this.#now();
+      const candidateConfigs = new Map<number, Record<string, unknown> | Error>();
+      if (!(poolGuests instanceof Error)) {
+        for (const candidate of leftoverBuildCandidates(poolGuests, "lxc", configuredTemplates, activeVmids, now)) {
+          try {
+            candidateConfigs.set(candidate.vmid, await api.config(candidate.vmid, signal));
+          } catch (error) {
+            if (signal?.aborted) throw error;
+            candidateConfigs.set(candidate.vmid, error instanceof Error ? error : new Error(message(error)));
+          }
+        }
+      }
+      checks.push(
+        proxmoxImageStorageCheck({
+          type: "lxc",
+          installId: this.#context.installId,
+          reserveDiskGiB: this.#config.reserve.diskGiB,
+          templates: templateUsages,
+          storages: storageReadings,
+          guests: poolGuests,
+          configuredTemplates,
+          activeVmids,
+          candidateConfigs,
+          now,
+        }),
+      );
     }
     notes.unshift(`This install's ID is ${this.#context.installId}. Its containers carry the tag ${installTag(this.#context.installId)}.`);
 

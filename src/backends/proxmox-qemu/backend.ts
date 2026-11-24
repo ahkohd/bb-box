@@ -33,6 +33,7 @@ import type { CheckId } from "../../core/checks.ts";
 import { withDesktopForkSafety } from "../../core/identity.ts";
 import { randomUUID } from "node:crypto";
 import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
+import { leftoverBuildCandidates, proxmoxImageStorageCheck, type ProxmoxStorageReading, type ProxmoxTemplateUsage } from "../proxmox/image-storage.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { ProxmoxSnapshotting, cloneWaitMs, storageOfVolume, storagesMetadata, type KeptGuest } from "../proxmox/snapshotting.ts";
 import { armFork, disarm, disarmFork, forkByFullClone } from "../proxmox/forks.ts";
@@ -284,6 +285,7 @@ const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 const ANDROID_KVM: Check = ["proxmox.android-kvm", "KVM for Android"];
 const ANDROID_DISK: Check = ["proxmox.android-disk", "Disk for Android"];
 const SNAPSHOTS: Check = ["proxmox.snapshots", "Snapshots"];
+const IMAGE_STORAGE: Check = ["proxmox.image-storage", "Image storage"];
 const ANDROID_ROOM_GIB = 40;
 
 function powerOf(status: string): PowerState {
@@ -393,6 +395,7 @@ export interface QemuBackendOptions {
   readonly readyTimeoutMs?: number;
   /** Replaces how long a clone waits for a template that is being replaced, for tests. */
   readonly templateWaitMs?: number;
+  readonly now?: () => number;
 }
 
 /** Times one step of an acquire. */
@@ -449,6 +452,7 @@ export class ProxmoxQemuBackend implements Backend {
   readonly #reserved = new Set<number>();
   /** The template of each acquire running in this process that has chosen one, by box. */
   readonly #acquiring = new Map<string, number>();
+  readonly #acquiringVmids = new Set<number>();
   /** Storage, boot disk and its size of each template. */
   readonly #templates = new Map<number, TemplateInfo>();
   #api: Promise<Proxmox> | null = null;
@@ -1139,6 +1143,7 @@ export class ProxmoxQemuBackend implements Backend {
     let warm: number | null = null;
     const claim = async (id: number) => {
       claimed = id;
+      this.#acquiringVmids.add(id);
       await hooks.claim(this.#guest(api.node, id, template, box.boxId, null, build));
     };
     try {
@@ -1146,6 +1151,7 @@ export class ProxmoxQemuBackend implements Backend {
       let display: { mode: string; reason: string } | null = null;
       if (previous && this.#inRange(Number(previous.ref)) && (await this.#owns(api, Number(previous.ref), box.boxId, signal))) {
         vmid = Number(previous.ref);
+        this.#acquiringVmids.add(vmid);
         template = typeof previous.data?.template === "number" ? previous.data.template : null;
         build = typeof previous.data?.build === "string" ? previous.data.build : null;
         resumed = true;
@@ -1247,6 +1253,8 @@ export class ProxmoxQemuBackend implements Backend {
       throw error;
     } finally {
       this.#acquiring.delete(box.boxId);
+      if (claimed !== null) this.#acquiringVmids.delete(claimed);
+      if (vmid !== null) this.#acquiringVmids.delete(vmid);
       // The box's now, or deleted after a failed claim.
       if (warm !== null) this.#claimed.delete(warm);
     }
@@ -1598,8 +1606,10 @@ export class ProxmoxQemuBackend implements Backend {
       for (const [id, name] of skipped) checks.push({ id, name, status: "skipped", detail: "Skipped until the checks above pass.", fix: null });
     };
     const templateCheck = (template: number): Check => [`template.${template}`, this.#templateName(template)];
-    const later = [NODE, MEMORY, POOL, ...this.#allTemplates().map(templateCheck), BRIDGE, VMIDS, SNAPSHOTS];
+    const later = [NODE, MEMORY, POOL, ...this.#allTemplates().map(templateCheck), BRIDGE, VMIDS, SNAPSHOTS, IMAGE_STORAGE];
     const templateStorages: GuestDiskStorage[] = [];
+    const templateUsages: ProxmoxTemplateUsage[] = [];
+    const storageReadings = new Map<string, ProxmoxStorageReading | Error>();
     let version = "";
 
     try {
@@ -1678,14 +1688,20 @@ export class ProxmoxQemuBackend implements Backend {
           } else if (!disk || !storage) {
             fail(name, `VM template ${template} has no boot disk.`, "Rebuild the template with setup/proxmox-qemu/build.sh.");
           } else {
+            const kind = this.#kindOf(template);
+            const minBuildNeedGiB = kind === ANDROID_IMAGE_KIND ? ANDROID_ROOM_GIB : undefined;
             const free = await api.storageStatus(storage, signal).catch((error: unknown) => error);
             if (free instanceof Error) {
+              storageReadings.set(storage, free);
+              templateUsages.push({ vmid: template, storage, diskGiB: rootDiskGiB(config, disk), minBuildNeedGiB });
               fail(name, `VM template ${template} is on ${storage}, whose free space cannot be read.`, audit(free, `Give the token Datastore.Audit on /storage/${storage}.`));
             } else {
+              const status = free as StorageStatus;
+              const freeGiB = Math.floor(status.available / GiB);
+              storageReadings.set(storage, { availableGiB: freeGiB, totalGiB: Math.floor(status.total / GiB), type: status.type });
+              templateUsages.push({ vmid: template, storage, diskGiB: rootDiskGiB(config, disk), minBuildNeedGiB });
               this.#templates.set(template, { storage, bootDisk: disk, diskGiB: rootDiskGiB(config, disk) });
-              templateStorages.push({ name: storage, type: (free as StorageStatus).type, volume: String(config[disk]) });
-              const freeGiB = Math.floor((free as { available: number }).available / GiB);
-              const kind = this.#kindOf(template);
+              templateStorages.push({ name: storage, type: status.type, volume: String(config[disk]) });
               pass(name, `VM template ${template} on ${storage}, ${freeGiB} GiB free.`);
               if (kind === ANDROID_IMAGE_KIND) this.#androidDisk(template, storage, freeGiB, { pass, warn });
               // A Windows image carries no build of BB's app: BB's installer puts it in as a box joins BB. A Linux one does (057).
@@ -1732,8 +1748,10 @@ export class ProxmoxQemuBackend implements Backend {
         fail(BRIDGE, message(error), audit(error, `Give the token Sys.Audit on /nodes/${node}.`));
       }
 
+      let poolGuests: readonly PoolGuest[] | Error = new Error("pool guests were not read");
       try {
         const guests = await api.listPool(pool, signal);
+        poolGuests = guests;
         const { first, last } = this.#config.vmids;
         const used = guests.filter((guest) => this.#inRange(guest.vmid)).length;
         const total = last - first + 1;
@@ -1750,12 +1768,41 @@ export class ProxmoxQemuBackend implements Backend {
           );
         }
       } catch (error) {
+        poolGuests = error instanceof Error ? error : new Error(message(error));
         fail(VMIDS, message(error), audit(error, `Give the token VM.Audit on /pool/${pool}.`));
       }
 
       const privileges = await poolPrivileges(api, pool, signal);
       const metadata = await storagesMetadata(api, templateStorages, signal);
       checks.push({ id: SNAPSHOTS[0], name: SNAPSHOTS[1], ...snapshotsCheck({ pool, node, guest: "qemu", privileges, storages: templateStorages, metadata }) });
+      const configuredTemplates = new Set(this.#allTemplates());
+      const activeVmids = new Set([...this.#reserved, ...this.#filling.keys(), ...this.#imageBoxes, ...this.#acquiringVmids, ...this.#claimed, ...this.#retiring]);
+      const now = this.#now();
+      const candidateConfigs = new Map<number, Record<string, unknown> | Error>();
+      if (!(poolGuests instanceof Error)) {
+        for (const candidate of leftoverBuildCandidates(poolGuests, "qemu", configuredTemplates, activeVmids, now)) {
+          try {
+            candidateConfigs.set(candidate.vmid, await api.config(candidate.vmid, signal));
+          } catch (error) {
+            if (signal?.aborted) throw error;
+            candidateConfigs.set(candidate.vmid, error instanceof Error ? error : new Error(message(error)));
+          }
+        }
+      }
+      checks.push(
+        proxmoxImageStorageCheck({
+          type: "qemu",
+          installId: this.#context.installId,
+          reserveDiskGiB: this.#config.reserve.diskGiB,
+          templates: templateUsages,
+          storages: storageReadings,
+          guests: poolGuests,
+          configuredTemplates,
+          activeVmids,
+          candidateConfigs,
+          now,
+        }),
+      );
     }
     notes.unshift(`This install's ID is ${this.#context.installId}. Its VMs carry the tag ${installTag(this.#context.installId)}.`);
 
@@ -1790,6 +1837,10 @@ export class ProxmoxQemuBackend implements Backend {
 
   maintain(signal?: AbortSignal): Promise<void> {
     return this.#upkeep.run(signal ?? this.#stopping.signal);
+  }
+
+  #now(): number {
+    return this.#options.now?.() ?? Date.now();
   }
 
   async dispose(): Promise<void> {

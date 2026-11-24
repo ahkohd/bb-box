@@ -170,6 +170,7 @@ import {
 } from "./host.ts";
 import { VNC_BRIDGE_PY } from "./vnc-holder.ts";
 import {
+  parsePrunedBuilds,
   parseQemuState,
   parseQemuSize,
   parseQemuVm,
@@ -177,6 +178,7 @@ import {
   qemuCaptureScript,
   qemuCloneScript,
   qemuDeleteScript,
+  qemuPruneBuildsScript,
   qemuRemoveBuildScript,
   qemuReplaceScript,
   parseQemuBuilds,
@@ -194,6 +196,7 @@ import {
   type QemuVm,
 } from "./qemu.ts";
 import { parseQemuVideo, qemuVideoBuild, qemuVideoBuildScript, qemuVideoOpenScript, qemuVideoSource, qemuVideoSourcePath, qemuVideoStateBody, type QemuVideo } from "./qemu-video.ts";
+import { parseTartImageStorage, tartImageStorageCheck, tartImageStorageScript } from "./image-storage.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import {
   LINUX_FORK_KINDS,
@@ -2555,7 +2558,36 @@ export class TartBackend implements Backend {
       await this.#upkeep.run(signal ?? this.#stopping.signal);
       await this.slots?.maintain(signal ?? this.#stopping.signal).catch((error) => this.#context.logError("shared iOS hosts", error));
     } finally {
-      await this.#leftovers(signal).catch((error) => this.#context.logError("image leftovers", error));
+      const states = await this.#states(signal).catch((error) => {
+        if (signal?.aborted) throw error;
+        this.#context.logError("read Macs for upkeep", error);
+        return null;
+      });
+      if (states) {
+        await this.#leftovers(states, signal).catch((error) => this.#context.logError("image leftovers", error));
+        await this.#pruneWindowsBuilds(states, signal).catch((error) => this.#context.logError("old Windows image builds", error));
+      }
+    }
+  }
+
+  async #pruneWindowsBuilds(states: ReadonlyMap<string, MacState | Error>, signal?: AbortSignal): Promise<void> {
+    const windowsImage = this.#config.kinds["windows-arm64-desktop"].image;
+    if (!windowsImage) return;
+
+    for (const host of this.#on()) {
+      signal?.throwIfAborted();
+      const state = states.get(host.name);
+      if (!state || state instanceof Error) continue;
+      try {
+        const result = await this.#run(host, qemuPruneBuildsScript(windowsImage), { timeoutMs: 120_000, signal });
+        const removed = parsePrunedBuilds(result.stdout);
+        if (removed.length) {
+          this.#context.log?.(`Removed unused Windows image ${removed.length === 1 ? "build" : "builds"} ${removed.join(", ")} of ${windowsImage} on ${host.name}.`);
+        }
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        this.#context.logError(`prune old Windows builds on ${host.name}`, error);
+      }
     }
   }
 
@@ -2567,8 +2599,7 @@ export class TartBackend implements Backend {
    * its prepare script's own VM is the name with -build, which has no owner
    * file. Builds of projects' images are the bakes' to remove.
    */
-  async #leftovers(signal?: AbortSignal): Promise<void> {
-    const states = await this.#states(signal);
+  async #leftovers(states: ReadonlyMap<string, MacState | Error>, signal?: AbortSignal): Promise<void> {
     const now = Date.now();
     for (const host of this.#on()) {
       const state = states.get(host.name);
@@ -3075,6 +3106,7 @@ export class TartBackend implements Backend {
         for (const kind of [...images, ...(windowsImage ? (["windows-arm64-desktop"] as const) : [])]) {
           push(`image.${host.name}.${kind}`, `${kind} image on ${host.name}`, "skipped", "Skipped until the checks above pass.");
         }
+        push(`image-storage.${host.name}`, `Image storage on ${host.name}`, "skipped", "Skipped until the checks above pass.");
         continue;
       }
       if (state.arch !== "arm64") {
@@ -3108,6 +3140,7 @@ export class TartBackend implements Backend {
         }
       }
       if (this.#config.iosImage) this.#doctorIos(host, state, this.#config.iosImage, iosPins, app, push);
+      checks.push(await this.#doctorImageStorage(host, state, images, windowsImage, signal));
       const room = this.#room(host, state, this.#context.kind("macos").defaultSize);
       push(
         `capacity.${host.name}`,
@@ -3253,6 +3286,45 @@ export class TartBackend implements Backend {
       push(id, name, judged.status, judged.detail, judged.fix);
     } catch (error) {
       push(id, name, "warn", `${PRODUCT} could not ask Spotlight on ${host.name} about Tart's VMs: ${message(error)}`, null);
+    }
+  }
+
+  async #doctorImageStorage(
+    host: TartHost,
+    state: MacState,
+    tartKindsList: readonly TartKind[],
+    windowsImage: string | null,
+    signal?: AbortSignal,
+  ): Promise<DoctorCheck> {
+    const tartImages = [
+      ...new Set([
+        ...tartKindsList.map((kind) => this.#config.kinds[kind].image).filter((image): image is string => image !== null),
+        ...(this.#config.iosImage ? [this.#config.iosImage] : []),
+      ]),
+    ];
+    const hasMacos = tartKindsList.some((kind) => guestOsOf(kind) === "macos") || Boolean(this.#config.iosImage);
+
+    try {
+      const output = (await this.#run(host, tartImageStorageScript(tartImages, windowsImage), { timeoutMs: 30_000, signal })).stdout;
+      const report = parseTartImageStorage(output);
+      return tartImageStorageCheck({
+        hostName: host.name,
+        windowsImage,
+        hasMacos,
+        diskFreeGiB: Math.floor(state.disk.freeMiB / 1024),
+        reserveDiskGiB: this.#config.reserve.diskGiB,
+        owners: state.owners,
+        report,
+      });
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      return {
+        id: `image-storage.${host.name}`,
+        name: `Image storage on ${host.name}`,
+        status: "warn",
+        detail: `${PRODUCT} could not read image storage on ${host.name}: ${message(error)}`,
+        fix: `Check SSH access and disk permissions on ${host.name}, then run the doctor again.`,
+      };
     }
   }
 

@@ -5,13 +5,14 @@ import "./check-test-machine.mjs";
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, statfsSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, statfsSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, test } from "node:test";
 import { TartBackend, type TartBackendOptions } from "../src/backends/tart/backend.ts";
 import { ownerText } from "../src/backends/tart/host.ts";
-import { parseQemuState, qemuStartScript } from "../src/backends/tart/qemu.ts";
+import { parseTartImageStorage, tartImageStorageScript } from "../src/backends/tart/image-storage.ts";
+import { parseQemuState, qemuPruneBuildsScript, qemuReplaceScript, qemuStartScript } from "../src/backends/tart/qemu.ts";
 import type { AcquireHooks, BoxIdentity, MachineSize, Guest, ReleaseHooks } from "../src/backends/types.ts";
 import { CUA_PIPE, NAME_WINDOWS_SCRIPT, parseNamed } from "../src/backends/windows.ts";
 import { FAKE_DISK_GIB, FAKE_MAC, FAKE_WINDOWS_IMAGE, WINDOWS_TOOLS, addImage, addWindowsImage, fakeMacTools, fakeQemu, fakeSwift, imageRecord, tartConfig } from "./fake-mac.ts";
@@ -1172,4 +1173,143 @@ test("a Windows image's operations on a Mac (#450): a box of its build, a captur
   assert.equal(realpathSync(join(dir, "current")), realpathSync(later));
   assert.equal(realpathSync(join(dir, "rollback")), realpathSync(built), "the build it replaced is the rollback");
   assert.ok(!existsSync(join(dir, "1")), "the rollback before goes");
+});
+
+test("maintain removes unused old Windows image builds while keeping current, rollback, builds in use and unpromoted refresh builds", async () => {
+  const { backend, mac, qemu, owners } = setup();
+  const imagesDir = join(qemu, "images", FAKE_WINDOWS_IMAGE);
+  const snapsDir = join(mac, ".tart", "bb-box-snapshots");
+  const makeBuild = (name: string, owner?: string) => {
+    mkdirSync(join(imagesDir, name), { recursive: true });
+    writeFileSync(join(imagesDir, name, "disk.qcow2"), `disk ${name}`);
+    chmodSync(join(imagesDir, name, "disk.qcow2"), 0o444);
+    writeFileSync(join(imagesDir, name, "vars.fd"), "vars");
+    if (owner) writeFileSync(join(imagesDir, name, "owner"), owner);
+  };
+
+  makeBuild("build.2");
+  makeBuild("build.3");
+  makeBuild("build.old-unused");
+  makeBuild("build.old-vm");
+  makeBuild("build.old-snap");
+  makeBuild("build.refresh", "install=test\nimage-build=standard\n");
+  rmSync(join(imagesDir, "current"), { force: true });
+  symlinkSync("build.3", join(imagesDir, "current"));
+  symlinkSync("build.2", join(imagesDir, "rollback"));
+
+  mkdirSync(join(qemu, "vms", "bb-box-bx-old"), { recursive: true });
+  writeFileSync(join(qemu, "vms", "bb-box-bx-old", "config"), `image=${FAKE_WINDOWS_IMAGE}\nbuild=build.old-vm\ncores=4\nmemory=8192\nssh=42000\nvnc=42001\n`);
+  mkdirSync(owners, { recursive: true });
+  writeFileSync(join(owners, "bb-box-bx-old"), ownerText({ install: "test", box: "bx-old", name: "win-keeper", kind: KIND, engine: "qemu" }));
+
+  mkdirSync(join(snapsDir, "sn-old", "vm"), { recursive: true });
+  writeFileSync(join(snapsDir, "sn-old", "vm", "config"), `image=${FAKE_WINDOWS_IMAGE}\nbuild=build.old-snap\n`);
+
+  const before = (await backend.doctor(signal())).checks.find((check) => check.id === "image-storage.mac1")!;
+  assert.equal(before.status, "ok");
+  assert.match(before.detail, /Windows rollback build\.2 .* kept\./);
+  assert.match(before.detail, /build\.old-vm .*used by box win-keeper/);
+  assert.match(before.detail, /build\.old-snap .*used by snapshot sn-old/);
+  assert.match(before.detail, /build\.old-unused .*nothing stands on it; upkeep removes it/);
+
+  await backend.maintain(signal());
+
+  assert.equal(existsSync(join(imagesDir, "build.old-unused")), false);
+  assert.equal(existsSync(join(imagesDir, "1")), false);
+  assert.equal(existsSync(join(imagesDir, "build.3")), true);
+  assert.equal(existsSync(join(imagesDir, "build.2")), true);
+  assert.equal(existsSync(join(imagesDir, "build.old-vm")), true);
+  assert.equal(existsSync(join(imagesDir, "build.old-snap")), true);
+  assert.equal(existsSync(join(imagesDir, "build.refresh")), true);
+
+  rmSync(join(qemu, "vms", "bb-box-bx-old"), { recursive: true, force: true });
+  rmSync(join(snapsDir, "sn-old"), { recursive: true, force: true });
+  await backend.maintain(signal());
+
+  assert.equal(existsSync(join(imagesDir, "build.old-vm")), false);
+  assert.equal(existsSync(join(imagesDir, "build.old-snap")), false);
+  assert.equal(existsSync(join(imagesDir, "build.2")), true);
+  assert.equal(existsSync(join(imagesDir, "build.3")), true);
+});
+
+test("Windows build prune and replace keep earlier builds when a volume, vms or snapshots path is a dangling symlink", async () => {
+  const { backend, mac, qemu } = setup();
+  const imagesDir = join(qemu, "images", FAKE_WINDOWS_IMAGE);
+  const makeBuild = (name: string) => {
+    mkdirSync(join(imagesDir, name), { recursive: true });
+    writeFileSync(join(imagesDir, name, "disk.qcow2"), `disk ${name}`);
+    chmodSync(join(imagesDir, name, "disk.qcow2"), 0o444);
+    writeFileSync(join(imagesDir, name, "vars.fd"), "vars");
+  };
+
+  makeBuild("build.1");
+  makeBuild("build.2");
+  makeBuild("build.3");
+  rmSync(join(imagesDir, "current"), { force: true });
+  symlinkSync("build.2", join(imagesDir, "current"));
+  symlinkSync("build.1", join(imagesDir, "rollback"));
+
+  rmSync(join(qemu, "vms"), { recursive: true, force: true });
+  symlinkSync(join(mac, "unmounted-drive", "vms"), join(qemu, "vms"));
+
+  await backend.maintain(signal());
+  assert.equal(existsSync(join(imagesDir, "1")), true, "dangling qemu/vms symlink keeps earlier build");
+
+  const replaced = execFileSync("/bin/sh", ["-c", qemuReplaceScript(FAKE_WINDOWS_IMAGE, "build.3")], {
+    env: { ...process.env, HOME: mac, TART_HOME: join(mac, ".tart") },
+    encoding: "utf8",
+  });
+  assert.match(replaced, /replaced/);
+  assert.equal(existsSync(join(imagesDir, "1")), true, "replace keeps earlier build when qemu/vms is a dangling symlink");
+  assert.equal(existsSync(join(imagesDir, "build.1")), true, "replace keeps previous rollback when qemu/vms is a dangling symlink");
+
+  rmSync(join(qemu, "vms"), { force: true });
+  mkdirSync(join(qemu, "vms"), { recursive: true });
+  symlinkSync(join(mac, "unmounted-drive", "vm-entry"), join(qemu, "vms", "bb-box-bx-dangling"));
+  await backend.maintain(signal());
+  assert.equal(existsSync(join(imagesDir, "1")), true, "dangling symlink inside qemu/vms keeps earlier build");
+
+  rmSync(join(qemu, "vms", "bb-box-bx-dangling"), { force: true });
+  rmSync(join(mac, ".tart", "bb-box-snapshots"), { recursive: true, force: true });
+  symlinkSync(join(mac, "unmounted-drive", "snaps"), join(mac, ".tart", "bb-box-snapshots"));
+  await backend.maintain(signal());
+  assert.equal(existsSync(join(imagesDir, "1")), true, "dangling bb-box-snapshots symlink keeps earlier build");
+
+  rmSync(join(mac, ".tart"), { recursive: true, force: true });
+  symlinkSync(join(mac, "unmounted-drive", "tart"), join(mac, ".tart"));
+  await backend.maintain(signal());
+  assert.equal(existsSync(join(imagesDir, "1")), true, "dangling ~/.tart symlink skips prune in maintain");
+  assert.equal(existsSync(join(mac, "unmounted-drive")), false, "prune never mkdir -p creates through a broken symlink");
+
+  assert.throws(
+    () => execFileSync("/bin/sh", ["-c", qemuPruneBuildsScript(FAKE_WINDOWS_IMAGE)], {
+      env: { ...process.env, HOME: mac, TART_HOME: join(mac, ".tart") },
+      encoding: "utf8",
+      stdio: "pipe",
+    }),
+    /is its volume mounted/,
+  );
+  assert.equal(existsSync(join(imagesDir, "1")), true);
+});
+
+test("image-storage.<mac> reports ok with no snapshots yet on a Windows-only Mac with no ~/.tart folder", async () => {
+  const { backend, mac } = setup({ "tart-macos-image": "", "tart-macos-desktop-image": "" });
+  rmSync(join(mac, ".nix-profile", "bin", "tart"));
+  rmSync(join(mac, ".tart"), { recursive: true, force: true });
+
+  const scriptOut = execFileSync("/bin/sh", ["-c", tartImageStorageScript([], FAKE_WINDOWS_IMAGE)], {
+    env: { ...process.env, HOME: mac, TART_HOME: join(mac, ".tart") },
+    encoding: "utf8",
+  });
+  const parsed = parseTartImageStorage(scriptOut);
+  assert.equal(parsed.windowsUnreadable, false);
+  assert.equal(parsed.windowsNoSnapshotsDir, true);
+  assert.equal(existsSync(join(mac, ".tart")), false, "tartImageStorageScript does not create ~/.tart");
+
+  const report = await backend.doctor(signal());
+  const check = report.checks.find((each) => each.id === "image-storage.mac1")!;
+  assert.equal(report.ok, true);
+  assert.equal(check.status, "ok");
+  assert.match(check.detail, /No snapshots yet\./);
+  assert.doesNotMatch(check.detail, /Could not read/);
 });

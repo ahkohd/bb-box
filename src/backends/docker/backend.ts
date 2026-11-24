@@ -19,6 +19,7 @@
 
 import { DockerSnapshotEngine, type RestorableSnapshot } from "./snapshot-engine.ts";
 import { dockerOffer, FORK_HOLD_MISSING, isBoxContainerName, restoredName, SNAPSHOT_LABEL } from "./snapshots.ts";
+import { doctorDockerImageStorage } from "./image-storage.ts";
 import { RestoreCopies, type CopyFence } from "./restore-copies.ts";
 import type { CopyHooks, ForkArming, GuestIdentity, SnapshotHooks, SnapshotPlan, SnapshotRef, SnapshotTake, SnapshotTaken, Snapshotting, HeldSnapshot, TaskRef, TaskOutcome } from "../types.ts";
 import type { CheckId } from "../../core/checks.ts";
@@ -2217,6 +2218,7 @@ export class DockerBackend implements Backend {
         this.#context.images?.chrome?.("x86_64") ?? null,
         this.#context.images?.chrome?.("arm64") ?? null,
       ]).catch(() => [null, null, null, null, null] as const);
+      const existingImages: string[] = [];
       for (const image of images) {
         const serves = DOCKER_KINDS.filter((kind) => this.#config.images[kind] === image);
         const kinds = serves.join(", ");
@@ -2227,6 +2229,7 @@ export class DockerBackend implements Backend {
           push(id, name, "fail", `${info.name} has no image ${image}, which ${kinds} boxes run. ${PRODUCT} never pulls images.`, this.#buildFix("Build it with setup/docker/build.sh, or pull or load it on the Docker host."));
           continue;
         }
+        existingImages.push(image);
         const { labels, sizeBytes } = imageFacts(result.stdout.trim());
         const gpuDesktops = image === this.#config.images["linux-desktop"];
         if (gpuDesktops) this.#gpuBusId = labels[LABELS.gpuBusId] === "1";
@@ -2259,6 +2262,18 @@ export class DockerBackend implements Backend {
           );
         }
       }
+
+      checks.push(
+        await doctorDockerImageStorage({
+          cli: this.#cli,
+          installId: this.#context.installId,
+          images: this.#config.images,
+          existingImages,
+          containers: state.containers,
+          hostName: info.name,
+          signal,
+        }),
+      );
 
       const network = await this.#cli.run(["network", "inspect", "--format", "{{json .Labels}}", this.#config.network], { timeoutMs: 30_000, signal });
       if (network.exitCode !== 0) {
@@ -2333,6 +2348,7 @@ export class DockerBackend implements Backend {
       }
     } else {
       for (const image of images) skip(`image.${image}`, `Image ${image}`);
+      skip("docker.image-storage", "Image storage");
     }
 
     if (checks.some((check) => check.id === "docker.daemon" && check.status === "ok")) {

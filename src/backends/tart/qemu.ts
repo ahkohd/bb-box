@@ -25,23 +25,40 @@
 import { PRODUCT } from "../../brand.ts";
 import { quote } from "../../transports/process.ts";
 import { recordFromJson, type ImageRecord } from "../images.ts";
-import { TURN_NOT_TAKEN, named, parseFields, script, sections } from "./host.ts";
+import { TURN_NOT_TAKEN, VOLUME_CHECK, named, parseFields, script, sections } from "./host.ts";
 
 /** The ports VMs take on the Mac's loopback, below macOS's ephemeral ports. */
 const FIRST_PORT = 42000;
 const LAST_PORT = 42999;
 
-const BASE_IN_USE = 0;
-const BASE_UNUSED = 1;
-const BASE_USE_UNKNOWN = 2;
+export const BASE_IN_USE = 0;
+export const BASE_UNUSED = 1;
+export const BASE_USE_UNKNOWN = 2;
 const BASES_UNREAD = `${PRODUCT} could not read the config of every Windows VM, snapshot and restore on the Mac to tell which builds they stand on`;
 
 const BASES_SH = String.raw`base_disk_of() { printf '%s/images/%s/%s/disk.qcow2' "$q" "$(sed -n 's/^image=//p' "$1/config" 2>/dev/null | head -n 1)" "$(sed -n 's/^build=//p' "$1/config" 2>/dev/null | head -n 1)"; }
 base_present_for() { grep -q '^image=.' "$1/config" 2>/dev/null && grep -q '^build=.' "$1/config" && [ -f "$(base_disk_of "$1")" ]; }
-readable_folder() { [ ! -d "$1" ] || { [ -r "$1" ] && [ -x "$1" ]; }; }
+readable_folder() { [ ! -L "$1" ] && [ ! -e "$1" ] || { [ -d "$1" ] && [ -r "$1" ] && [ -x "$1" ]; }; }
+snaps_dir_if_present() {
+  _sd_th="${"$"}{TART_HOME:-$HOME/.tart}"
+  if [ -L "$_sd_th" ] && [ ! -d "$_sd_th" ]; then return 1; fi
+  if [ -L "$tart_vms" ] && [ ! -d "$tart_vms" ]; then return 1; fi
+  if [ -d "$tart_vms" ]; then
+    snaps_dir
+    return $?
+  fi
+  if [ -e "$tart_vms" ]; then return 1; fi
+  if [ -d "$_sd_th" ]; then
+    _sd_rp=$(cd "$_sd_th" 2>/dev/null && pwd -P) || return 1
+    printf '%s/bb-box-snapshots\n' "$_sd_rp"
+    return 0
+  fi
+  if [ -e "$_sd_th" ]; then return 1; fi
+  return 0
+}
 folder_stands_on() {
   readable_folder "$1" || return ${BASE_USE_UNKNOWN}
-  [ -e "$1/config" ] || [ -e "$1/disk.qcow2" ] || return ${BASE_UNUSED}
+  [ -e "$1/config" ] || [ -L "$1/config" ] || [ -e "$1/disk.qcow2" ] || [ -L "$1/disk.qcow2" ] || return ${BASE_UNUSED}
   _so_i=$(sed -n 's/^image=//p' "$1/config" 2>/dev/null | head -n 1)
   _so_b=$(sed -n 's/^build=//p' "$1/config" 2>/dev/null | head -n 1)
   [ -n "$_so_i" ] && [ -n "$_so_b" ] || return ${BASE_USE_UNKNOWN}
@@ -49,10 +66,21 @@ folder_stands_on() {
   return ${BASE_UNUSED}
 }
 folders_on_bases() {
-  for _fb_f in "$q"/vms/* "$1"/.restore-* "$1"/.replaced-*; do [ ! -e "$_fb_f" ] || printf '%s\n' "$_fb_f"; done
+  for _fb_f in "$q"/vms/*; do
+    [ -e "$_fb_f" ] || [ -L "$_fb_f" ] || continue
+    printf '%s\n' "$_fb_f"
+  done
+  [ -n "$1" ] || return 0
+  for _fb_f in "$1"/.restore-* "$1"/.replaced-*; do
+    [ -e "$_fb_f" ] || [ -L "$_fb_f" ] || continue
+    printf '%s\n' "$_fb_f"
+  done
   for _fb_f in "$1"/*; do
-    [ -d "$_fb_f" ] || continue
-    if readable_folder "$_fb_f"; then printf '%s\n' "$_fb_f/vm"; else printf '%s\n' "$_fb_f"; fi
+    [ -e "$_fb_f" ] || [ -L "$_fb_f" ] || continue
+    if [ -L "$_fb_f" ] && [ ! -d "$_fb_f" ]; then printf '%s\n' "$_fb_f"
+    elif [ -d "$_fb_f" ]; then
+      if readable_folder "$_fb_f"; then printf '%s\n' "$_fb_f/vm"; else printf '%s\n' "$_fb_f"; fi
+    fi
   done
 }
 published_build() {
@@ -61,9 +89,10 @@ published_build() {
 }
 awaits_promotion() { [ -e "$1/owner" ]; }
 build_in_use() {
-  [ -d "$tart_vms" ] || mkdir -p "$tart_vms" || return ${BASE_USE_UNKNOWN}
-  _bu_s=$(snaps_dir) || return ${BASE_USE_UNKNOWN}
-  readable_folder "$q/vms" && readable_folder "$_bu_s" || return ${BASE_USE_UNKNOWN}
+  [ ! -L "$q" ] || [ -d "$q" ] || return ${BASE_USE_UNKNOWN}
+  _bu_s=$(snaps_dir_if_present) || return ${BASE_USE_UNKNOWN}
+  readable_folder "$q/vms" || return ${BASE_USE_UNKNOWN}
+  if [ -n "$_bu_s" ]; then readable_folder "$_bu_s" || return ${BASE_USE_UNKNOWN}; fi
   _bu_all=$(folders_on_bases "$_bu_s") || return ${BASE_USE_UNKNOWN}
   _bu_ifs=$IFS; IFS='
 '
@@ -74,6 +103,23 @@ build_in_use() {
   done
   IFS=$_bu_ifs
   return ${BASE_UNUSED}
+}
+prune_unused_builds() {
+  ${VOLUME_CHECK}_pb_im="$q/images/$1"
+  [ -d "$_pb_im" ] || return 0
+  _pb_cur=$(cd "$_pb_im/current" 2>/dev/null && pwd -P) && _pb_cur=$(basename "$_pb_cur")
+  [ -n "$_pb_cur" ] && [ -f "$_pb_im/$_pb_cur/disk.qcow2" ] || return 0
+  _pb_rb=$(cd "$_pb_im/rollback" 2>/dev/null && pwd -P) && _pb_rb=$(basename "$_pb_rb")
+  removed=
+  unsure=
+  for _pb_o in "$_pb_im"/*; do
+    _pb_n=$(basename "$_pb_o")
+    published_build "$_pb_o" && ! awaits_promotion "$_pb_o" && [ "$_pb_n" != "$_pb_cur" ] && [ "$_pb_n" != "$_pb_rb" ] || continue
+    build_in_use "$1" "$_pb_n"
+    case $? in ${BASE_IN_USE}) continue ;; ${BASE_UNUSED}) ;; *) unsure="$unsure $_pb_n"; continue ;; esac
+    chmod -R u+w "$_pb_o"; rm -rf "$_pb_o"
+    removed="$removed $_pb_n"
+  done
 }
 `;
 
@@ -605,26 +651,37 @@ echo captured
  * build from the ISO takes the operator's ISO and an hour. Prints "replaced".
  */
 export function qemuReplaceScript(image: string, build: string): string {
-  return qemu(String.raw`image=${quote(image)}; im="$q/images/$image"; b=${quote(build)}
+  return qemu(String.raw`${VOLUME_CHECK}image=${quote(image)}; im="$q/images/$image"; b=${quote(build)}
 hold_turn || exit 1
 [ -f "$im/$b/disk.qcow2" ] || { echo "The image has no build $b." >&2; exit 1; }
 was=$(cd "$im/current" 2>/dev/null && pwd -P) && was=$(basename "$was")
 if [ -n "$was" ] && [ "$was" != "$b" ] && [ -f "$im/$was/disk.qcow2" ]; then ln -sfn "$was" "$im/rollback" || exit 1; fi
 ln -sfn "$b" "$im/current" || exit 1
 rm -f "$im/$b/owner"
-rb=$(cd "$im/rollback" 2>/dev/null && pwd -P) && rb=$(basename "$rb")
-unsure=
-for o in "$im"/*; do
-  n=$(basename "$o")
-  published_build "$o" && ! awaits_promotion "$o" && [ "$n" != "$b" ] && [ "$n" != "$rb" ] || continue
-  build_in_use "$image" "$n"
-  case $? in ${BASE_IN_USE}) continue ;; ${BASE_UNUSED}) ;; *) unsure="$unsure $n"; continue ;; esac
-  chmod -R u+w "$o"; rm -rf "$o"
-done
+prune_unused_builds "$image"
 free_turn
 [ -z "$unsure" ] || echo "${BASES_UNREAD}, so it kept the image's builds$unsure. A later refresh removes those that nothing stands on." >&2
 echo replaced
 `);
+}
+
+export function qemuPruneBuildsScript(image: string): string {
+  return qemu(String.raw`${VOLUME_CHECK}image=${quote(image)}
+[ -d "$q/images/$image" ] || exit 0
+hold_turn || exit 1
+prune_unused_builds "$image"
+free_turn
+[ -z "$unsure" ] || echo "${BASES_UNREAD}, so it kept the image's builds$unsure. Upkeep removes those that nothing stands on once they can be read." >&2
+for _pb_r in $removed; do printf 'removed=%s\n' "$_pb_r"; done
+`);
+}
+
+export function parsePrunedBuilds(text: string): string[] {
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith("removed="))
+    .map((line) => line.slice("removed=".length).trim())
+    .filter(Boolean);
 }
 
 /** Removes a refresh's build of a Windows image (049). Prints "removed" or "kept". */

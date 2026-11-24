@@ -640,7 +640,7 @@ note_older_builds() {
     [ -d "$images/$_b" ] || continue
     _older="$_older $_b"
   done
-  [ -z "$_older" ] || step "older builds stay in $images while a VM, a snapshot or a restore stands on them, and BB Box's next image refresh removes those that nothing stands on. Do not delete them by hand:$_older"
+  [ -z "$_older" ] || step "older builds stay in $images while a VM, a snapshot or a restore stands on them, and BB Box's upkeep removes those that nothing stands on. Do not delete them by hand:$_older"
 }
 note_older_builds
 step "done: $name is $build ($(du -sh "$images/$build" | cut -f1) on disk, $(($(kib) / 1048576)) GiB free)"

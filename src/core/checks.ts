@@ -107,6 +107,11 @@ export const CHECKS = {
   "template.<vmid>.image": { name: "Image of <flavour> template <vmid>", from: ["proxmox-lxc", "proxmox-qemu"], what: `The template's image record: its age, pins and tools, against this ${PRODUCT}'s.` },
   "proxmox.android-kvm": { name: "KVM for Android", from: ["proxmox-qemu"], what: "Where Android templates are listed, the host allows nested virtualization, as the linux-kvm setting says: the Android emulator needs KVM." },
   "proxmox.android-disk": { name: "Disk for Android", from: ["proxmox-qemu"], what: "The storage of each Android template has room beyond the reserve for a refresh's build and trial boxes and an Android box in use." },
+  "proxmox.image-storage": {
+    name: "Image storage",
+    from: ["proxmox-lxc", "proxmox-qemu"],
+    what: `${PRODUCT}'s templates and their storage use, any leftover build containers or VMs older than a build takes, and free space on each template's storage against what a build needs.`,
+  },
   "proxmox.gpu-helper": {
     name: "Host's GPU helper",
     from: ["proxmox-lxc"],
@@ -151,6 +156,11 @@ export const CHECKS = {
   "docker.gpus": { name: "GPUs", from: ["docker"], what: `The NVIDIA cards Docker lists as CDI devices, for GPU boxes, as nvidia-smi in a container given them reads them; whether every box can open every card there; another install's GPU boxes on the host; and a box with a whole card that ${PRODUCT} cannot match to a card it reads, which stops GPU boxes there (071).` },
   "docker.capacity": { name: "Room on <host>", from: ["docker"], what: "Room on the host for a Linux box at its default size." },
   "docker.sizes": { name: "Room for each kind", from: ["docker"], what: "The host holds a box of each kind at its default size." },
+  "docker.image-storage": {
+    name: "Image storage",
+    from: ["docker"],
+    what: `The space ${PRODUCT}'s images and Docker's build cache use, any earlier untagged builds kept with the containers holding them, and free disk (read with a short-lived container on the host) against what the next build needs.`,
+  },
 
   // Hetzner Cloud.
   "hetzner.api": { name: "Hetzner Cloud API", from: ["hetzner"], what: "The API answers and the token reads the project." },
@@ -204,6 +214,11 @@ export const CHECKS = {
     name: "<kind> image on <mac>",
     from: ["tart"],
     what: "The VM a kind's boxes are cloned from is on the Mac, of the right OS, and not too old. For the iOS image, also that it offers iOS devices, built on the macOS image's current build, with an idb_companion and Xcode an image check has passed together.",
+  },
+  "image-storage.<mac>": {
+    name: "Image storage on <mac>",
+    from: ["tart"],
+    what: `The images on the Mac and their disk use, any earlier Windows builds kept with what stands on them, cached OCI bases, and free disk against what a build needs.`,
   },
   "forks.<mac>": { name: "macOS forks on <mac>", from: ["tart"], what: `Whether the Mac's diskutil can attach a fork's disk, so ${PRODUCT} can clean it of its source's identity before the fork first boots (070 unit 9). Without it, macOS boxes there take and restore snapshots, but make no forks and keep none past a release.` },
   "spotlight.<mac>": { name: "Spotlight on <mac>", from: ["tart"], what: "Whether Spotlight indexes the folder of Tart's VMs, so it opens each new VM's disk, and how to keep it out (F-12)." },

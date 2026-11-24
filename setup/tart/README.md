@@ -546,8 +546,9 @@ snapshot. Nothing is installed for them on the Mac; they use the Mac's
   ([054](../../docs/decisions/054-windows-images-are-refreshed-in-a-box-of-the-current-build.md)).
   [`../windows/refresh.ps1`](../windows/refresh.ps1) installs Windows'
   updates and the pinned tools, a trial box runs `check.ps1`, and the new
-  build becomes current only if every check passes. Older builds go once no
-  box, snapshot or restore cut short stands on them. The build before stays
+  build becomes current only if every check passes. Older builds go during
+  BB Box's regular upkeep once no box, snapshot or restore cut short stands
+  on them, as well as at the next replace. The build before stays
   as a rollback until the next refresh succeeds, whatever boxes use it: the
   link `rollback` beside `current` in `~/.bb-box/qemu/images/<image>` names
   it. To go back to it, on the Mac:

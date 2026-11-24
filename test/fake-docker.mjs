@@ -247,6 +247,12 @@ function runCopy(found) {
 function run(rest) {
   if (rest.at(-1) === "du -sk /from") return console.log(`${host.snapshotVolumeKiB ?? 1024} /from`);
   if (rest.at(-1) === "df -Pk /space") return console.log(`Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/fake 1000000 ${host.snapshotUsedKiB ?? 100000} 900000 10% /space`);
+  if (rest.at(-1) === "df -Pk /") {
+    if (host.failDiskFree) fail(typeof host.failDiskFree === "string" ? host.failDiskFree : "disk probe failed", 1);
+    const avail = host.freeDiskKb ?? 104_857_600;
+    const total = Math.max(avail + 20_000_000, 209_715_200);
+    return console.log(`Filesystem 1024-blocks Used Available Capacity Mounted on\noverlay ${total} ${total - avail} ${avail} 10% /`);
+  }
   if (rest.includes("/from/.")) {
     if (host.failSnapshotCopy) fail("Snapshot copy failed");
     const { source, target } = copyVolumes(rest);
@@ -693,8 +699,10 @@ function imageIdOf(name) {
 function imageBytes(id) {
   const chained = read("image-chain.json", {})[id];
   if (chained) return chained.bytes;
+  const sizes = read("image-sizes.json", {});
+  if (id in sizes) return sizes[id];
   const name = Object.keys(read("images.json", {})).find((each) => imageIdOf(each) === id);
-  return read("image-sizes.json", {})[name] ?? 6_500_000_000;
+  return sizes[name] ?? 6_500_000_000;
 }
 
 function layersOf(id) {
@@ -713,6 +721,22 @@ switch (command) {
   case "info":
     info();
     break;
+  case "system": {
+    if (rest[0] === "df") {
+      if (host.failSystemDf) fail(typeof host.failSystemDf === "string" ? host.failSystemDf : "system df failed", 1);
+      const cacheSize = host.buildCacheSize ?? "0B";
+      const cacheReclaimable = host.buildCacheReclaimable ?? "0B";
+      const rows = [
+        { Active: "0", Reclaimable: "0B", Size: "0B", TotalCount: String(Object.keys(read("images.json", {})).length), Type: "Images" },
+        { Active: "0", Reclaimable: "0B", Size: "0B", TotalCount: String(names().length), Type: "Containers" },
+        { Active: "0", Reclaimable: "0B", Size: "0B", TotalCount: String(Object.keys(read("volumes.json", {})).length), Type: "Local Volumes" },
+        { Active: "0", Reclaimable: cacheReclaimable, Size: cacheSize, TotalCount: cacheSize === "0B" ? "0" : "1", Type: "Build Cache" },
+      ];
+      for (const row of rows) console.log(JSON.stringify(row));
+      break;
+    }
+    fail(`fake docker: unknown command system ${rest[0]}`, 2);
+  }
   case "container":
     container(rest[0], rest.slice(1));
     break;

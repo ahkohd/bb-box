@@ -1554,3 +1554,32 @@ test("a check's doctor run as the backend first connects shows the SSH key the b
   assert.equal(keyIn(checked), kept.publicKey);
   assert.equal(keyIn(live), kept.publicKey);
 });
+
+test("image-storage.<mac> reports Tart images, cached OCI bases, free disk against a build's need and warns on low disk", async () => {
+  const { mac, backend } = setup();
+  const repo = join(mac, ".tart", "cache", "OCIs", "ghcr.io", "cirruslabs", "macos-sequoia-xcode");
+  mkdirSync(join(repo, "sha256:currentbase"), { recursive: true });
+  mkdirSync(join(repo, "sha256:oldbase"), { recursive: true });
+  writeFileSync(join(repo, "sha256:currentbase", "disk.img"), "current");
+  writeFileSync(join(repo, "sha256:oldbase", "disk.img"), "old");
+  symlinkSync("sha256:currentbase", join(repo, "latest"));
+
+  const okReport = await backend.doctor();
+  const okCheck = okReport.checks.find((check) => check.id === "image-storage.mac1")!;
+  assert.equal(okReport.ok, true);
+  assert.equal(okCheck.status, "ok");
+  assert.match(okCheck.detail, /1 image .*bb-box-macos/);
+  assert.match(okCheck.detail, /Tart OCI cache: 1 cached base .*, 1 old untagged base/);
+  assert.match(okCheck.detail, /500 GiB free \(450 GiB beyond the 50 GiB reserve; a build needs about 60 GiB\)/);
+
+  const dfBin = join(mac, ".nix-profile", "bin", "df");
+  writeFileSync(dfBin, "#!/bin/sh\necho 'Filesystem 1024-blocks Used Available Capacity Mounted on'\necho 'fake 1073741824 989855744 83886080 92% /'\n");
+  chmodSync(dfBin, 0o755);
+
+  const lowReport = await backend.doctor();
+  const lowCheck = lowReport.checks.find((check) => check.id === "image-storage.mac1")!;
+  assert.equal(lowReport.ok, true);
+  assert.equal(lowCheck.status, "warn");
+  assert.match(lowCheck.detail, /80 GiB free \(30 GiB beyond the 50 GiB reserve\), below the 60 GiB a build needs/);
+  assert.match(lowCheck.fix ?? "", /prune old cached OCI bases with tart prune --entries caches/);
+});

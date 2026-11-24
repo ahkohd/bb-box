@@ -66,5 +66,5 @@ test("the Windows image build never says older builds can go, as a snapshot may 
   const run = await inOwnProcessGroup(`step() { printf '%s\\n' "$*"; }\n${scriptFunction("note_older_builds")}images='${images}'; build=build.3; note_older_builds`);
 
   assert.doesNotMatch(run.stdout, /can go/);
-  assert.equal(run.stdout.trim(), `older builds stay in ${images} while a VM, a snapshot or a restore stands on them, and BB Box's next image refresh removes those that nothing stands on. Do not delete them by hand: build.1 build.2`);
+  assert.equal(run.stdout.trim(), `older builds stay in ${images} while a VM, a snapshot or a restore stands on them, and BB Box's upkeep removes those that nothing stands on. Do not delete them by hand: build.1 build.2`);
 });
