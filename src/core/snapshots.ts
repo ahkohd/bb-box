@@ -2978,7 +2978,7 @@ export class Snapshots {
     return `Since the restore was asked, something more would go with box ${box.name}'s disk: ${fresh.map((loss) => loss.words).join("; ")}.${context.operation.by.is === "agent" ? "" : " Ask again, with --force if you mean it."}`;
   }
 
-  #stepHooks(operation: SnapshotOperation, part: "undo" | "rollback"): SnapshotHooks {
+  #stepHooks(operation: SnapshotOperation, part: "undo" | "rollback", waiting?: (words: string | null) => Promise<void>): SnapshotHooks {
     const ledger = this.#deps.ledger;
     const journaled = part === "rollback";
     const attempts = () => (ledger.operation(operation.id) ?? operation).attempts;
@@ -2990,6 +2990,7 @@ export class Snapshots {
         ledger.updateOperation(operation.id, { step: `${part}-task`, task, ...(journaled ? { attempts: withAttemptTask(attempts(), task) } : {}) });
         await this.#deps.hold?.(operation, "task", this.#stopping.signal);
       },
+      ...(waiting ? { waiting } : {}),
     };
   }
 
@@ -3150,15 +3151,20 @@ export class Snapshots {
       if (!context.swap && reach < stepAt("rolled-back")) {
         await this.#recordedClaim(context, guest, signal);
         at("rollback-submitting");
+        const reportRollbackWaiting = async (words: string | null): Promise<void> => {
+          box = await this.#moved(box!, { waitingOn: words });
+        };
         try {
-          await backend.rollbackSnapshot!(guest, { id: target.id, ref: target.ref ?? "", guest }, this.#stepHooks(operation, "rollback"), signal);
+          await backend.rollbackSnapshot!(guest, { id: target.id, ref: target.ref ?? "", guest }, this.#stepHooks(operation, "rollback", reportRollbackWaiting), signal);
         } catch (error) {
+          box = await this.#moved(box!, { waitingOn: null });
           if (signal.aborted) throw error;
           const words = sentence(message(error));
           if (error instanceof SnapshotFailed) return await this.#putBack(context, box, "rollback-submitting", `${backend.label} refused the rollback: ${words}`);
           if (error instanceof RestoreChanged) return await this.#leftStopped(context, box, "rollback-task", words, false);
           throw this.#restoreUnsure(context, box, "rollback-task", words);
         }
+        box = await this.#moved(box!, { waitingOn: null });
         at("rolled-back");
         await this.#deps.hold?.(operation, "rolled-back", signal);
       }
@@ -3284,7 +3290,10 @@ export class Snapshots {
       };
       if (ahead("starting")) {
         at("starting");
-        box = await this.#moved(box, { state: "starting" });
+        box = await this.#moved(box, { state: "starting", waitingOn: null });
+        const reportStartWaiting = async (words: string | null): Promise<void> => {
+          box = await this.#moved(box!, { waitingOn: words });
+        };
         try {
           const answered = async (): Promise<void> => {
             timePart("access");
@@ -3292,8 +3301,10 @@ export class Snapshots {
             await this.#deps.hold?.(operation, "answered", signal);
           };
           await this.#holdCard(context, guest, signal);
-          started = await backend.start!(guest, signal, (part, ms) => startParts.push(`${part} ${seconds(ms)}`), answered);
+          started = await backend.start!(guest, signal, (part, ms) => startParts.push(`${part} ${seconds(ms)}`), answered, undefined, reportStartWaiting);
+          box = await this.#moved(box!, { waitingOn: null });
         } catch (error) {
+          box = await this.#moved(box!, { waitingOn: null });
           if (signal.aborted) throw error;
           if (accessFailed && context.fromSnapshot) return await this.#swapBack(context, box, `${PRODUCT} could not write its new guest's access file: ${sentence(message(accessFailed))}`);
           if (accessFailed) return await this.#leftStopped(context, box, "access", accessFailedWords(accessFailed), true);

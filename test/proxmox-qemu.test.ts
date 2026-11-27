@@ -69,7 +69,16 @@ function setup(values: Record<string, unknown> = {}, storage = new MemoryStorage
   proxmox.addVmTemplate(9105);
   const context = testContext(storage, "test", { id: "proxmox-qemu", warm });
   const config = qemuConfig(values);
-  const fakes: QemuBackendOptions = { fetch: proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 };
+  const fakes: QemuBackendOptions = {
+    fetch: proxmox.fetch,
+    now: () => proxmox.now(),
+    sleep: async (ms) => {
+      if (ms >= 1_000) proxmox.passOnNodeClockAndUptime(Math.ceil(ms / 1000));
+    },
+    sshBinary: FAKE_SSH_BINARY,
+    portCheck: async () => true,
+    readyTimeoutMs: 0,
+  };
   const make = (on = context) => {
     const backend = new ProxmoxQemuBackend(config, on, { ...fakes, ...options });
     made.push(backend);
@@ -641,7 +650,7 @@ test("an unknown kind is refused", async () => {
 });
 
 test("capacity keeps the memory and disk reserves, and counts a larger disk against the template's storage", async () => {
-  const { backend, proxmox } = setup();
+  const { backend, proxmox } = setup({ "start-memory-margin-mib": 0 });
   const ok = await backend.capacity(KIND, sized(), [], signal());
   assert.equal(ok.ok, true, ok.message ?? "");
   assert.deepEqual(ok.warm, { ready: 0, target: 0 });
@@ -962,7 +971,7 @@ test("the warm pool keeps hibernated VMs at the kind's default size, each filled
 });
 
 test("a claim resumes a warm VM as the box, gives it the box's tags and name, sets its clock, and the pool fills again", async () => {
-  const { proxmox, ssh, make, context } = warmSetup(1);
+  const { proxmox, ssh, make, context } = warmSetup(1, { "heavy-start-settle-seconds": 0 });
   await make().maintain(signal());
   // Another backend, as after a restart, finds the warm VM.
   const backend = make();
@@ -1016,7 +1025,7 @@ test("a box the warm VMs do not fit is cloned, and a box with a smaller disk tak
 });
 
 test("two acquires never claim the same warm VM", async () => {
-  const { backend, proxmox } = warmSetup(1);
+  const { backend, proxmox } = warmSetup(1, { "heavy-start-settle-seconds": 0 });
   await backend.maintain(signal());
   // Neither resumes its VM until both have claimed one.
   let claims = 0;
@@ -1051,7 +1060,7 @@ test("a warm VM that fails to resume is deleted", async () => {
 });
 
 test("the pool deletes warm VMs beyond the count, from a replaced build or a template no longer listed, at another size, or running", async () => {
-  const { backend, proxmox, warm, context } = warmSetup(2, { "windows-templates": "9104 9105" });
+  const { backend, proxmox, warm, context } = warmSetup(2, { "windows-templates": "9104 9105", "heavy-start-settle-seconds": 0 });
   for (const vmid of [9104, 9105]) proxmox.guests.get(vmid)!.config.tags = "bbbox;windows;build.20260920-000000-aaaa";
   await backend.maintain(signal());
   assert.deepEqual(warmVms(proxmox), [9700, 9701]);
@@ -1275,7 +1284,8 @@ test("the pool fills only while there is room, and a box a ready warm VM serves 
   low.proxmox.memory = { total: 64 * GiB, available: 10 * GiB };
   await low.backend.maintain(signal());
   assert.equal(clones(low.proxmox), 0);
-  assert.match(low.context.short.at(-1)![0]!.reason, /^pve has 10 GiB of memory free/);
+  assert.match(low.context.short.at(-1)![0]!.reason, /short by 14 GiB of free memory/);
+  assert.match(low.context.short.at(-1)![0]!.reason, /start memory margin/);
   low.proxmox.memory = { total: 64 * GiB, available: 48 * GiB };
   await low.backend.maintain(signal());
   assert.equal(clones(low.proxmox), 1);

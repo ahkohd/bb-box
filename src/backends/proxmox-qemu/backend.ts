@@ -42,6 +42,14 @@ import { WINDOWS_DESKTOP_NO_FORK, WINDOWS_DESKTOP_SNAPSHOTS, windowsDesktopSnaps
 import { EARLIER_GUEST, copyName, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
+  ProxmoxStartGate,
+  configuredMemoryMiB,
+  effectiveStartMemoryMarginMiB,
+  placementMemoryProblem,
+  sharedStartGate,
+  type StartPriority,
+} from "../proxmox/start-gate.ts";
+import {
   BUILD,
   TAG,
   boxTags,
@@ -481,6 +489,7 @@ export class ProxmoxQemuBackend implements Backend {
   readonly #imageBoxes = new Set<number>();
   #androidDevices: { readonly offer: DeviceOffer | null; readonly at: number; readonly why: string | null } | null = null;
   #androidReading: Promise<void> | null = null;
+  readonly #startGates = new Map<string, ProxmoxStartGate>();
   readonly #snapshots: ProxmoxSnapshotting;
 
   /**
@@ -526,6 +535,26 @@ export class ProxmoxQemuBackend implements Backend {
         copies: (api, signal) => this.#keptGuests(api, signal),
         freeVmids: async (api, signal) => ({ free: this.#freeCount(await api.listPool(this.#config.proxmox.pool, signal)), range: `from ${this.#config.vmids.first} to ${this.#config.vmids.last}` }),
         sizeOf: (config) => sizeOf(config),
+        gateStart: async (api, guest, vmid, guestConfig, waiting, signal, run) => {
+          const kind = this.#kindOf(guest.data?.template);
+          await this.#startGate(api).start(
+            api,
+            {
+              vmid,
+              kind: kind.id,
+              os: kind.capabilities.os,
+              memoryMiB: configuredMemoryMiB(guestConfig),
+              heavy: true,
+              priority: "acquire",
+              config: this.#config.startGate,
+              waiting,
+              now: () => this.#now(),
+              sleep: this.#options.sleep ?? pause,
+              signal,
+            },
+            run,
+          );
+        },
       },
       ["disk", "disk-and-memory"],
     );
@@ -1066,24 +1095,25 @@ export class ProxmoxQemuBackend implements Backend {
     const diskFree = diskTotal - diskUsed;
     const { first, last } = this.#config.vmids;
     const used = new Set([...this.#reserved, ...guests.map((guest) => guest.vmid).filter((vmid) => this.#inRange(vmid))]);
+    const effectiveMargin = effectiveStartMemoryMarginMiB(this.#config.startGate.memoryMarginMiB, node.memoryTotal);
+    const keepMemoryMiB = Math.max(reserve.memoryMiB, effectiveMargin);
     const limits: Limit[] = [
-      { resource: "memory", used: memoryUsed, total: memoryTotal, reserve: reserve.memoryMiB, unit: "MiB" },
+      { resource: "memory", used: memoryUsed, total: memoryTotal, reserve: keepMemoryMiB, unit: "MiB" },
       { resource: "disk", used: diskUsed, total: diskTotal, reserve: reserve.diskGiB * 1024, unit: "MiB" },
       { resource: "guests", used: used.size, total: last - first + 1, reserve: 0, unit: "count" },
     ];
     const problems: string[] = [];
-    // A refusal leads with what binds: the box when it needs more than is free, otherwise what is kept free.
-    if (memoryFree - size.memoryMiB < reserve.memoryMiB) {
-      const box = `a ${kind} box with ${formatMiB(size.memoryMiB)} memory`;
-      problems.push(
-        size.memoryMiB > memoryFree
-          ? `${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${box} needs. Release a box or ask for less memory.`
-          : `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so ${box} does not fit. ` +
-            (memoryFree > reserve.memoryMiB
-              ? `Release a box, ask for less memory, or lower the memory kept free in ${PRODUCT}'s settings.`
-              : `Release a box, or lower the memory kept free in ${PRODUCT}'s settings.`),
-      );
-    }
+    const memoryProblem = placementMemoryProblem({
+      node: api.node,
+      memoryTotalMiB: memoryTotal,
+      memoryFreeMiB: memoryFree,
+      needMiB: size.memoryMiB,
+      boxWords: `a ${kind} box with ${formatMiB(size.memoryMiB)} memory`,
+      grown: false,
+      reserveMiB: reserve.memoryMiB,
+      effectiveMarginMiB: effectiveMargin,
+    });
+    if (memoryProblem) problems.push(memoryProblem);
     if (node.cpus !== null && size.cores > node.cpus) {
       problems.push(`${api.node} has ${node.cpus} CPU threads, fewer than the ${size.cores} cores asked for. Ask for at most ${node.cpus} cores.`);
     }
@@ -1132,7 +1162,7 @@ export class ProxmoxQemuBackend implements Backend {
     this.#offer(box.kind);
     const linux = this.#linuxKind(box.kind);
     const os: GuestOs = linux ? "linux" : "windows";
-    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? KIND.readyTimeoutMs);
+    let deadline = Date.now() + (this.#options.readyTimeoutMs ?? KIND.readyTimeoutMs);
     const api = await this.client();
     const installId = this.#context.installId;
     const step = timed((name, ms) => hooks.timing(name, ms));
@@ -1156,6 +1186,18 @@ export class ProxmoxQemuBackend implements Backend {
         build = typeof previous.data?.build === "string" ? previous.data.build : null;
         resumed = true;
       }
+      if (vmid === null && box.threadId === SPARES) {
+        const admitted = await this.#startGate(api).canStartNow(api, {
+          memoryMiB: box.size.memoryMiB,
+          kind: box.kind,
+          os,
+          priority: "refill",
+          config: { ...this.#config.startGate, memoryWaitSeconds: 0 },
+          signal,
+          now: () => this.#now(),
+        });
+        if (!admitted.ok) throw new BackendError("no_capacity", admitted.reason);
+      }
       // Linux boxes have no warm pool here: their spares wait hibernated (#612).
       if (vmid === null && !linux) {
         const member = await step("warm", () =>
@@ -1178,7 +1220,22 @@ export class ProxmoxQemuBackend implements Backend {
       if (warm !== null) {
         const id = warm;
         await hooks.starting();
-        await step("resume", () => api.start(id, signal));
+        await step("resume", async () => {
+          const isSpare = box.threadId === SPARES;
+          deadline += await this.#startGuest(
+            api,
+            id,
+            {
+              priority: isSpare ? "refill" : "acquire",
+              kind: box.kind,
+              os,
+              memoryMiB: box.size.memoryMiB,
+              waiting: hooks.waiting,
+              ...(isSpare ? { memoryWaitSeconds: 0 } : {}),
+            },
+            signal,
+          );
+        });
         // The tags first, as a running VM tagged warm is deleted. onboot was off while it was warm.
         await step("relabel", async () => {
           // A warm VM keeps its low CPU weight, and the tag, until it is ready (#888).
@@ -1222,7 +1279,22 @@ export class ProxmoxQemuBackend implements Backend {
       const grew = await this.#grow(api, id, config, box.size.diskGiB, step, signal);
       await hooks.starting();
       await step("start", async () => {
-        if ((await api.status(id, signal))?.status !== "running") await api.start(id, signal);
+        if ((await api.status(id, signal))?.status !== "running") {
+          const isSpare = box.threadId === SPARES;
+          deadline += await this.#startGuest(
+            api,
+            id,
+            {
+              priority: isSpare ? "refill" : "acquire",
+              kind: box.kind,
+              os,
+              memoryMiB: box.size.memoryMiB,
+              waiting: hooks.waiting,
+              ...(isSpare ? { memoryWaitSeconds: 0 } : {}),
+            },
+            signal,
+          );
+        }
       });
       // Read while the box comes up: the size it has, as Proxmox gives it.
       const size = api.config(id, signal).then(sizeOf, () => null);
@@ -1280,20 +1352,47 @@ export class ProxmoxQemuBackend implements Backend {
    * Resumes a hibernated VM, or boots a stopped one, and waits for SSH. Then
    * sets Windows' clock, which a resume leaves at the time it stopped (039).
    */
-  async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, answered?: () => Promise<void>, readyWithinMs?: number): Promise<Started | void> {
+  start(
+    guest: Guest,
+    signal?: AbortSignal,
+    timing: (step: string, ms: number) => void = () => {},
+    answered?: () => Promise<void>,
+    readyWithinMs?: number,
+    waiting?: (words: string | null) => Promise<void>,
+  ): Promise<Started | void> {
+    return this.#startWithWait(guest, undefined, signal, timing, answered, readyWithinMs, waiting);
+  }
+
+  async #startWithWait(
+    guest: Guest,
+    memoryWaitSeconds: number | undefined,
+    signal?: AbortSignal,
+    timing: (step: string, ms: number) => void = () => {},
+    answered?: () => Promise<void>,
+    readyWithinMs?: number,
+    waiting?: (words: string | null) => Promise<void>,
+  ): Promise<Started | void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
     if (!status) throw gone(vmid);
     const step = timed(timing);
-    // A hibernated VM resumes; one shut down from Windows boots.
+    const kind = this.#kindOf(guest.data?.template);
+    const os = kind.capabilities.os;
     const resumed = status.status !== "running" && status.lock === "suspended";
-    if (status.status !== "running") await step(resumed ? "resume" : "boot", () => api.start(vmid, signal));
-    const os = this.#osOf(guest.data?.template);
+    if (status.status !== "running") {
+      await step(resumed ? "resume" : "boot", () =>
+        this.#startGuest(
+          api,
+          vmid,
+          { priority: "acquire", kind: kind.id, os, waiting, ...(memoryWaitSeconds !== undefined ? { memoryWaitSeconds } : {}) },
+          signal,
+        ),
+      );
+    }
     const readyWithin = this.#options.readyTimeoutMs ?? readyWithinMs ?? READY_TIMEOUT_MS;
     await this.#waitReady(vmid, readyWithin, signal, step, os);
     const desktop = os === "windows" ? await step("password", () => this.#repairExpiredPasswordAfterBoot(vmid, readyWithin, signal)) : null;
-    const kind = this.#kindOf(guest.data?.template);
     if (isLinuxVmKind(kind.id)) {
       const name = (await api.config(vmid, signal)).name;
       if (typeof name === "string" && name) await step("name", () => this.#nameLinux(vmid, name, signal));
@@ -1325,7 +1424,7 @@ export class ProxmoxQemuBackend implements Backend {
     const api = await this.client();
     const disk = bootDisk(config);
     const storage = disk ? String(config[disk] ?? "").split(":")[0] || null : null;
-    const room = await this.#resizeRoom(api, storage, from, to, pending, signal);
+    const room = await this.#resizeRoom(api, storage, from, to, parts.some((part) => part.way === "restart"), pending, signal);
     const downSeconds = parts.some((part) => part.way === "restart") ? (this.#osOf(guest.data?.template) === "windows" ? 40 : 20) : null;
     return { parts, room, downSeconds };
   }
@@ -1359,10 +1458,13 @@ export class ProxmoxQemuBackend implements Backend {
       if (grows) grew = await this.#grow(api, vmid, config, to.diskGiB, untimed, signal);
       await this.start(guest, signal);
     } catch (error) {
-      // Back to the cores and memory it had, and up again; a disk that grew stays.
-      await api.stop(vmid).catch(() => undefined);
-      await api.configure(vmid, { cores: from.cores, memory: from.memoryMiB }).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
-      await this.start(guest).catch((cause) => this.#context.logError("resize: start at the old size", cause));
+      if (signal?.aborted) {
+        await api.configure(vmid, { cores: from.cores, memory: from.memoryMiB }).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+        throw error;
+      }
+      await api.stop(vmid, signal).catch(() => undefined);
+      await api.configure(vmid, { cores: from.cores, memory: from.memoryMiB }, signal).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+      await this.#startWithWait(guest, 0, signal).catch((cause) => this.#context.logError("resize: start at the old size", cause));
       throw error;
     }
     if (grew && os === "windows") await this.#extend(vmid, signal);
@@ -1400,23 +1502,38 @@ export class ProxmoxQemuBackend implements Backend {
   }
 
   /** Room on the node for a VM to grow from `from` to `to`: the memory and disk it adds, within the reserves, and cores within the node's (061). */
-  async #resizeRoom(api: Proxmox, storage: string | null, from: MachineSize, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+  async #resizeRoom(api: Proxmox, storage: string | null, from: MachineSize, to: MachineSize, restart: boolean, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     const [node, disk] = await Promise.all([api.nodeStatus(signal), storage ? api.storageStatus(storage, signal) : Promise.resolve(null)]);
     const reserve = this.#config.reserve;
     const memoryTotal = Math.floor(node.memoryTotal / MiB);
     const memoryUsed = memoryTotal - Math.floor(node.memoryAvailable / MiB) + pending.reduce((sum, other) => sum + other.size.memoryMiB, 0);
     const memoryFree = memoryTotal - memoryUsed;
-    const limits: Limit[] = [{ resource: "memory", used: memoryUsed, total: memoryTotal, reserve: reserve.memoryMiB, unit: "MiB" }];
+    const effectiveMargin = effectiveStartMemoryMarginMiB(this.#config.startGate.memoryMarginMiB, node.memoryTotal);
+    const keepMemoryMiB = restart ? Math.max(reserve.memoryMiB, effectiveMargin) : reserve.memoryMiB;
+    const limits: Limit[] = [{ resource: "memory", used: memoryUsed, total: memoryTotal, reserve: keepMemoryMiB, unit: "MiB" }];
     const problems: string[] = [];
     if (node.cpus !== null && to.cores > node.cpus) problems.push(`${api.node} has ${node.cpus} CPU threads, fewer than the ${to.cores} cores asked for. Ask for at most ${node.cpus} cores.`);
-    const memory = to.memoryMiB - from.memoryMiB;
-    if (memory > 0 && memoryFree - memory < reserve.memoryMiB) {
+    if (restart && memoryTotal > 0 && to.memoryMiB + effectiveMargin > memoryTotal) {
       problems.push(
-        memory > memoryFree
-          ? `${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(memory)} more the box needs. Release a box or ask for less memory.`
-          : `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so the ${formatMiB(memory)} more the box needs does not fit. ` +
-              `Release a box, ask for less memory, or lower the memory kept free in ${PRODUCT}'s settings.`,
+        `${api.node} has ${formatMiB(memoryTotal)} of memory and keeps a ${formatMiB(effectiveMargin)} start memory margin, ` +
+          `so a box with ${formatMiB(to.memoryMiB)} memory cannot fit. Ask for less memory, or lower the start memory margin in ${PRODUCT}'s settings.`,
       );
+    }
+    const memory = to.memoryMiB - from.memoryMiB;
+    if (problems.length === 0 && memory > 0 && memoryFree - memory < keepMemoryMiB) {
+      if (memory > memoryFree) {
+        problems.push(`${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(memory)} more the box needs. Release a box or ask for less memory.`);
+      } else if (restart && effectiveMargin > reserve.memoryMiB) {
+        problems.push(
+          `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps a ${formatMiB(effectiveMargin)} start memory margin, ` +
+            `so the ${formatMiB(memory)} more the box needs does not fit. Release a box, ask for less memory, or lower the start memory margin in ${PRODUCT}'s settings.`,
+        );
+      } else {
+        problems.push(
+          `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so the ${formatMiB(memory)} more the box needs does not fit. ` +
+            `Release a box, ask for less memory, or lower the memory kept free in ${PRODUCT}'s settings.`,
+        );
+      }
     }
     const grow = to.diskGiB !== null ? Math.max(0, to.diskGiB - (from.diskGiB ?? to.diskGiB)) : 0;
     if (disk) {
@@ -1643,15 +1760,37 @@ export class ProxmoxQemuBackend implements Backend {
       const audit = (error: unknown, fix: string) => (error instanceof ProxmoxError && error.forbidden ? fix : `${fix} (${message(error)})`);
       try {
         const status = await api.nodeStatus(signal);
-        pass(MEMORY, `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(status.memoryTotal / MiB)} available.`);
-        const { reserve } = this.#config;
-        const largest = { cores: status.cpus ?? Infinity, memoryMiB: Math.floor(status.memoryTotal / MiB) - reserve.memoryMiB, diskGiB: null };
+        const totalMiB = Math.floor(status.memoryTotal / MiB);
+        const effectiveMargin = effectiveStartMemoryMarginMiB(this.#config.startGate.memoryMarginMiB, status.memoryTotal);
+        const capped = effectiveMargin < this.#config.startGate.memoryMarginMiB
+          ? ` (capped at a quarter of the node's memory from ${formatMiB(this.#config.startGate.memoryMarginMiB)})`
+          : "";
+        const smallest = this.kinds()
+          .map(({ id }) => ({
+            kind: id,
+            memoryMiB: Math.min(...Object.values(this.#context.kind(id).presets).map((preset) => preset.memoryMiB)),
+          }))
+          .sort((a, b) => a.memoryMiB - b.memoryMiB)[0] ?? null;
+        if (smallest !== null && totalMiB - effectiveMargin < smallest.memoryMiB) {
+          fail(
+            MEMORY,
+            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. The ${formatMiB(effectiveMargin)} effective start memory margin${capped} leaves ${formatMiB(Math.max(0, totalMiB - effectiveMargin))}, which cannot fit the smallest ${smallest.kind} size (${formatMiB(smallest.memoryMiB)}).`,
+            `Lower the start memory margin or the smallest box size in ${PRODUCT}'s settings, or use a node with more memory.`,
+          );
+        } else {
+          pass(
+            MEMORY,
+            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. Each guest start leaves a ${formatMiB(effectiveMargin)} effective start memory margin free${capped}.`,
+          );
+        }
+        const keepMemoryMiB = Math.max(this.#config.reserve.memoryMiB, effectiveMargin);
+        const largest = { cores: status.cpus ?? Infinity, memoryMiB: totalMiB - keepMemoryMiB, diskGiB: null };
         const sizes = sizesCheck({
           id: "proxmox.sizes",
           name: "Box sizes",
           host: node,
-          has: `${status.cpus === null ? "" : `${status.cpus} CPU threads and `}${formatMiB(status.memoryTotal / MiB)} memory`,
-          keepsMiB: reserve.memoryMiB,
+          has: `${status.cpus === null ? "" : `${status.cpus} CPU threads and `}${formatMiB(totalMiB)} memory`,
+          keepsMiB: keepMemoryMiB,
           kinds: this.kinds().map(({ id }) => ({ kind: id, settings: this.#context.kind(id), largest })),
         });
         if (sizes) checks.push(sizes);
@@ -1875,6 +2014,38 @@ export class ProxmoxQemuBackend implements Backend {
       });
     }
     return this.#api;
+  }
+
+  #startGate(api: Proxmox): ProxmoxStartGate {
+    return sharedStartGate(this.#context, this.#config.proxmox.apiUrl, api.node, this.#startGates);
+  }
+
+  #startGuest(
+    api: Proxmox,
+    vmid: number,
+    request: {
+      readonly priority: StartPriority;
+      readonly kind?: string;
+      readonly os?: GuestOs;
+      readonly memoryMiB?: number;
+      readonly memoryWaitSeconds?: number;
+      readonly waiting?: (words: string | null) => Promise<void>;
+      readonly onAdmitted?: () => void;
+    },
+    signal?: AbortSignal,
+  ): Promise<number> {
+    const { memoryWaitSeconds, ...rest } = request;
+    return this.#startGate(api).start(api, {
+      vmid,
+      ...rest,
+      config: {
+        ...this.#config.startGate,
+        ...(memoryWaitSeconds !== undefined ? { memoryWaitSeconds } : {}),
+      },
+      now: () => this.#now(),
+      sleep: this.#options.sleep ?? pause,
+      signal,
+    });
   }
 
   #proxmox(node: string): Proxmox {
@@ -2379,7 +2550,28 @@ export class ProxmoxQemuBackend implements Backend {
         this.#context.warmShortfalls([{ kinds: [KIND.id], count: target, have: target - missing, reason: room.message ?? "No host has room for a warm box." }]);
         return;
       }
-      await this.#fill(api, size, signal);
+      const admitted = await this.#startGate(api).canStartNow(api, {
+        memoryMiB: size.memoryMiB,
+        kind: KIND.id,
+        os: KIND.capabilities.os,
+        priority: "refill",
+        config: { ...this.#config.startGate, memoryWaitSeconds: 0 },
+        signal,
+        now: () => this.#now(),
+      });
+      if (!admitted.ok) {
+        this.#context.warmShortfalls([{ kinds: [KIND.id], count: target, have: target - missing, reason: admitted.reason }]);
+        return;
+      }
+      try {
+        await this.#fill(api, size, signal);
+      } catch (error) {
+        if (error instanceof BackendError && error.code === "no_capacity") {
+          this.#context.warmShortfalls([{ kinds: [KIND.id], count: target, have: target - missing, reason: error.message }]);
+          return;
+        }
+        throw error;
+      }
     }
     this.#context.warmShortfalls([]);
   }
@@ -2413,7 +2605,7 @@ export class ProxmoxQemuBackend implements Backend {
       await api.configure(id, { ...this.#settings(size, id, config), onboot: false, ...(low ? LOW : {}) }, signal);
       await api.configure(id, { tags: withStartTag(tags(FILLING), low) }, signal);
       const grew = await this.#grow(api, id, config, size.diskGiB, untimed, signal);
-      await api.start(id, signal);
+      await this.#startGuest(api, id, { priority: "refill", kind: KIND.id, os: KIND.capabilities.os, memoryMiB: size.memoryMiB, memoryWaitSeconds: 0 }, signal);
       const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
       await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal);
       if (grew) await this.#extend(id, signal);
@@ -2485,18 +2677,23 @@ export class ProxmoxQemuBackend implements Backend {
         await api.configure(id, this.#settings(this.#context.kind(kind.id).defaultSize, id, await api.config(id, signal)), signal);
         await api.configure(id, { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
       });
-      await step("start", () => api.start(id, signal));
+      let admittedAt = this.#now();
+      await this.#startGuest(
+        api,
+        id,
+        { priority: "acquire", kind: kind.id, os, onAdmitted: () => (admittedAt = this.#now()) },
+        signal,
+      );
+      steps.push({ name: "start", ms: Math.max(0, this.#now() - admittedAt) });
       const timeoutMs = this.#options.readyTimeoutMs ?? kind.readyTimeoutMs;
       await this.#waitReady(id, timeoutMs, signal, step, os);
       if (os === "windows") {
         await step("clock", () => this.#setClock(id, signal));
-        // The kind's check runs in the desktop session, which comes up soon after SSH.
         await step("desktop", () => this.#desktopUp(id, timeoutMs, signal));
       } else if (kind.capabilities.displays.length) {
-        // As does a Linux desktop's check, once its display service is up.
         await step("display", () => this.#linuxDisplay(id, timeoutMs, signal));
       }
-      return { ref: String(id), command: await this.#command(id, os), steps };
+      return { ref: String(id), command: await this.#command(id, os), steps, bootMs: Math.max(0, this.#now() - admittedAt) };
     } catch (error) {
       if (vmid !== null) {
         await this.#forget(vmid);

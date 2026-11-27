@@ -625,6 +625,8 @@ fields against the host; Save and turn on saves them. From a terminal,
 | `ssh-user` | `box` |  |
 | `reserve-memory-mib` | `4096` | a new box is refused if the node would have less memory free |
 | `reserve-disk-gib` | `50` | a new box is refused if the template's storage has less free |
+| `start-memory-margin-mib` | `16384` | free host memory that must remain after a guest starts, capped at a quarter of node RAM |
+| `start-memory-wait-seconds` | `600` | seconds a start waits for free memory before failing, checked every 10 s; 0 refuses at once |
 
 - Linux templates serve `linux`, GPU desktop templates `linux-desktop`, CPU
   desktop templates `linux-desktop-cpu`, and Wayland desktop templates
@@ -652,6 +654,26 @@ fields against the host; Save and turn on saves them. From a terminal,
   its CPUs, up to 10 s later. A box with other cores is a new clone. If the
   configuration's `kinds` part gives a kind's default size other cores, its
   warm boxes serve only boxes with the template's cores.
+- Every guest start on a Proxmox node, including warm and spare refills, image
+  trial boxes, restores, forks, resumes and resizes, passes through one start
+  gate shared by Proxmox LXC and Proxmox QEMU on that node (decision 106). Right
+  before starting a guest, BB Box reads the node's available memory and
+  subtracts untouched RAM from any running heavy VM on the node (Windows,
+  Android, or a non-ballooning VM over 4 GiB) whose uptime is under 10 minutes
+  and that the backend's token can see: the VMs in its pool, whoever started
+  them. Memory that other VMs have already touched still shows in the node's
+  available memory, but their untouched memory and their boot settle do not.
+  Guests the gate admitted that are still starting count in full. Containers and
+  ballooned VMs do not count as held. The remaining memory must cover the
+  guest's memory plus the effective `start-memory-margin-mib` (16 GiB by
+  default, capped at a quarter of the node's total memory and checked before
+  cloning as well). When memory is short, the start waits and checks every 10 s
+  for up to `start-memory-wait-seconds` (600 s by default), showing the
+  shortfall on the box's progress, then fails rather than starting anyway.
+  Among a thread's starts, the gate starts the first that fits, in arrival
+  order, so a large waiting VM does not block smaller containers that fit. A
+  refill never starts while a thread's start is waiting. Warm and spare refills check the gate before cloning
+  and give up at once with a wait of 0 s until the next top-up.
 
 ## Check it worked
 

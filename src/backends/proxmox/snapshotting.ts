@@ -1,5 +1,6 @@
 import { PRODUCT } from "../../brand.ts";
 import {
+  BackendError,
   RestoreChanged,
   SnapshotFailed,
   SnapshotIncomplete,
@@ -25,6 +26,7 @@ import {
 } from "../types.ts";
 import { ProxmoxError, type GuestType, type Proxmox, type ProxmoxSnapshot, type StorageConfig } from "./api.ts";
 import { SNAPSHOT_PRIVILEGES, storageSnapshots, type SnapshotRestore } from "./snapshots.ts";
+import type { StartPermit } from "./start-gate.ts";
 
 const GiB = 1024 ** 3;
 const PRIVILEGES_FRESH_MS = 60_000;
@@ -124,6 +126,15 @@ export interface SnapshotGuests {
   guests(api: Proxmox, signal?: AbortSignal): Promise<readonly { readonly guest: Guest; readonly owner: BoxOwner | null }[]>;
   copies?(api: Proxmox, signal?: AbortSignal): Promise<readonly KeptGuest[]>;
   freeVmids?(api: Proxmox, signal?: AbortSignal): Promise<{ readonly free: number; readonly range: string }>;
+  gateStart?(
+    api: Proxmox,
+    guest: Guest,
+    vmid: number,
+    config: Record<string, unknown>,
+    waiting: ((words: string | null) => Promise<void>) | undefined,
+    signal: AbortSignal | undefined,
+    run: (permit: StartPermit) => Promise<void>,
+  ): Promise<void>;
 }
 
 const MiB = 1024 * 1024;
@@ -192,9 +203,9 @@ function refusedBeforeItBegan(error: ProxmoxError): boolean {
   return (error.status >= 400 && error.status < 500) || error.locked;
 }
 
-async function askToRollBack(api: Proxmox, vmid: number, name: string, signal?: AbortSignal): Promise<string> {
+async function askToRollBack(api: Proxmox, vmid: number, name: string, listed: { readonly vmstate: boolean }, signal?: AbortSignal, permit?: StartPermit): Promise<string> {
   try {
-    return await api.startRollback(vmid, name, signal);
+    return permit ? await api.startRollbackWithMemory(vmid, name, permit, signal) : await api.startRollback(vmid, name, signal, listed);
   } catch (error) {
     if (!(error instanceof ProxmoxError) || refusedBeforeItBegan(error)) throw error;
     throw new Error(`Proxmox gave no clear answer to the rollback, so ${PRODUCT} cannot tell whether it began: ${taskWords(error)}`, { cause: error });
@@ -612,6 +623,7 @@ export class ProxmoxSnapshotting {
     const vmid = this.#guests.vmid(guest);
     const name = snapshotName(ref.id);
     let upid: string;
+    const rolledWithMemory: { outcome: { readonly failure: string | null } | { readonly error: unknown } | null } = { outcome: null };
     try {
       if (!(await this.#guests.still(api, guest, signal))) throw new SnapshotFailed(`Guest ${vmid} is no longer the box's.`);
       const listed = await this.#listed(api, vmid, name, signal);
@@ -627,14 +639,39 @@ export class ProxmoxSnapshotting {
         const remake = words.fix && lock === ROLLBACK_LOCK ? await this.#remakeAfterACutRollback(api, config, name, signal) : null;
         throw new SnapshotFailed(words.running ?? `Proxmox has guest ${vmid} locked (${lock}), so it cannot restore the snapshot.${remake ? ` ${remake}` : ""}${words.fix ? ` ${words.fix}` : ""}`);
       }
-      await hooks.submitting();
-      upid = await askToRollBack(api, vmid, name, signal);
+      if (this.#guests.type === "qemu" && listed.vmstate) {
+        if (!this.#guests.gateStart) throw new SnapshotFailed("Restoring a VM snapshot with memory requires the node start gate.");
+        const snapConfig = await api.snapshotConfig(vmid, name, signal).catch(() => config);
+        const startConfig = Object.keys(snapConfig).length ? snapConfig : config;
+        await this.#guests.gateStart(api, guest, vmid, startConfig, hooks.waiting, signal, async (permit) => {
+          await hooks.submitting();
+          const rolled = await askToRollBack(api, vmid, name, listed, signal, permit);
+          try {
+            await hooks.task({ ref: rolled, host: api.node });
+            rolledWithMemory.outcome = { failure: await this.#waited(api, rolled, signal) };
+          } catch (error) {
+            rolledWithMemory.outcome = { error };
+          }
+        });
+        upid = "";
+      } else {
+        await hooks.submitting();
+        upid = await askToRollBack(api, vmid, name, listed, signal);
+      }
     } catch (error) {
+      if (error instanceof BackendError && error.code === "no_capacity") throw new SnapshotFailed(error.message);
       if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(taskWords(error));
       throw error;
     }
-    await hooks.task({ ref: upid, host: api.node });
-    const failure = await this.#waited(api, upid, signal);
+    let failure: string | null;
+    const outcome = rolledWithMemory.outcome;
+    if (outcome) {
+      if ("error" in outcome) throw outcome.error;
+      failure = outcome.failure;
+    } else {
+      await hooks.task({ ref: upid, host: api.node });
+      failure = await this.#waited(api, upid, signal);
+    }
     if (failure) throw new RestoreChanged(`Proxmox's rollback task failed: ${failure.replace(/\.$/, "")}.`);
   }
 

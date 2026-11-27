@@ -54,6 +54,8 @@ export interface ProxmoxKeys {
   readonly sshUser: string;
   readonly reserveMemoryMiB: string;
   readonly reserveDiskGiB: string;
+  readonly startMemoryMarginMiB: string;
+  readonly startMemoryWaitSeconds: string;
 }
 
 export interface ProxmoxDefaults {
@@ -67,6 +69,8 @@ export interface ProxmoxDefaults {
   readonly sshUser: string;
   readonly reserveMemoryMiB: number;
   readonly reserveDiskGiB: number;
+  readonly startMemoryMarginMiB: number;
+  readonly startMemoryWaitSeconds: number;
 }
 
 type Values = Readonly<Record<string, unknown>>;
@@ -223,6 +227,23 @@ export function checkReserve(values: Values, keys: ProxmoxKeys, defaults: Proxmo
   if (!wholeInRange(memoryMiB, 0, 16_777_216)) problem(keys.reserveMemoryMiB, "Keep 0 MiB or more of memory free.");
   if (!wholeInRange(diskGiB, 0, 1_048_576)) problem(keys.reserveDiskGiB, "Keep 0 GiB or more of disk free.");
   return { memoryMiB, diskGiB };
+}
+
+export function checkStartMemoryGate(
+  values: Values,
+  keys: Pick<ProxmoxKeys, "startMemoryMarginMiB" | "startMemoryWaitSeconds">,
+  defaults: Pick<ProxmoxDefaults, "startMemoryMarginMiB" | "startMemoryWaitSeconds">,
+  problem: Problem,
+): { memoryMarginMiB: number; memoryWaitSeconds: number } {
+  const memoryMarginMiB = number(values, keys.startMemoryMarginMiB, defaults.startMemoryMarginMiB);
+  const memoryWaitSeconds = number(values, keys.startMemoryWaitSeconds, defaults.startMemoryWaitSeconds);
+  if (!wholeInRange(memoryMarginMiB, 0, 16_777_216)) {
+    problem(keys.startMemoryMarginMiB, "Use a whole number of MiB from 0 to 16777216 for the start memory margin.");
+  }
+  if (!wholeInRange(memoryWaitSeconds, 0, 86_400)) {
+    problem(keys.startMemoryWaitSeconds, "Use a whole number of seconds from 0 to 86400 for the start memory wait.");
+  }
+  return { memoryMarginMiB, memoryWaitSeconds };
 }
 
 /** The address fixed to `vmid`, or null outside the range. */

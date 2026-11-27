@@ -5,6 +5,7 @@
 
 import type { MachineSize } from "../types.ts";
 import { PRODUCT } from "../../brand.ts";
+import { assertStartPermit, type StartPermit } from "./start-gate.ts";
 
 export interface FetchResponse {
   readonly ok: boolean;
@@ -147,6 +148,19 @@ export interface GuestStatus {
   /** The guest's lock, such as "suspended" for a VM hibernated to disk. */
   readonly lock?: string;
   readonly diskUsed?: number;
+  readonly memoryUsed?: number;
+}
+
+export interface NodeGuest {
+  readonly vmid: number;
+  readonly name: string;
+  readonly type: GuestType;
+  readonly status: string;
+  readonly template: boolean;
+  readonly uptime: number;
+  readonly memoryMaxBytes: number;
+  readonly memoryUsedBytes: number;
+  readonly tags: readonly string[];
 }
 
 export interface NodeStatus {
@@ -426,7 +440,8 @@ export class Proxmox {
     await this.#change("PUT", this.#guest(vmid, "/resize"), { disk, size: `${sizeGiB}G`, digest }, signal);
   }
 
-  async start(vmid: number, signal?: AbortSignal): Promise<void> {
+  async start(vmid: number, permit: StartPermit, signal?: AbortSignal): Promise<void> {
+    assertStartPermit(permit);
     await this.#change("POST", this.#guest(vmid, "/status/start"), {}, signal);
   }
 
@@ -452,12 +467,11 @@ export class Proxmox {
     await this.#change("POST", this.#guest(vmid, "/status/suspend"), { todisk: 1 }, signal);
   }
 
-  /** Null when the guest does not exist. */
-  async status(vmid: number, signal?: AbortSignal): Promise<GuestStatus | null> {
+  async guestStatus(type: GuestType, vmid: number, signal?: AbortSignal): Promise<GuestStatus | null> {
     try {
       const data = await this.#request<Record<string, unknown>>(
         "GET",
-        this.#guest(vmid, "/status/current"),
+        `/nodes/${enc(this.node)}/${type}/${vmid}/status/current`,
         undefined,
         signal,
       );
@@ -468,11 +482,48 @@ export class Proxmox {
         uptime: typeof data?.uptime === "number" ? data.uptime : undefined,
         lock: typeof data?.lock === "string" ? data.lock : undefined,
         diskUsed: typeof data?.disk === "number" && data.disk > 0 ? data.disk : undefined,
+        memoryUsed: typeof data?.mem === "number" && data.mem >= 0 ? data.mem : undefined,
       };
     } catch (error) {
       if (error instanceof ProxmoxError && error.gone) return null;
       throw error;
     }
+  }
+
+  async guestConfig(
+    type: GuestType,
+    vmid: number,
+    signal?: AbortSignal,
+  ): Promise<{ readonly ok: true; readonly config: Record<string, unknown> } | { readonly ok: false; readonly reason: "not_found" | "forbidden" }> {
+    try {
+      const config = await this.#request<Record<string, unknown>>("GET", `/nodes/${enc(this.node)}/${type}/${vmid}/config`, undefined, signal);
+      return { ok: true, config: config ?? {} };
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.notFound) return { ok: false, reason: "not_found" };
+      if (error instanceof ProxmoxError && error.forbidden) return { ok: false, reason: "forbidden" };
+      throw error;
+    }
+  }
+
+  async nodeGuests(type: GuestType, signal?: AbortSignal): Promise<NodeGuest[]> {
+    const data = await this.#request<Record<string, unknown>[]>("GET", `/nodes/${enc(this.node)}/${type}`, undefined, signal);
+    return (data ?? [])
+      .map((entry): NodeGuest => ({
+        vmid: Number(entry.vmid),
+        name: String(entry.name ?? ""),
+        type,
+        status: String(entry.status ?? "unknown"),
+        template: entry.template === 1 || entry.template === true,
+        uptime: typeof entry.uptime === "number" && Number.isFinite(entry.uptime) && entry.uptime >= 0 ? entry.uptime : 0,
+        memoryMaxBytes: typeof entry.maxmem === "number" && Number.isFinite(entry.maxmem) && entry.maxmem > 0 ? entry.maxmem : 0,
+        memoryUsedBytes: typeof entry.mem === "number" && Number.isFinite(entry.mem) && entry.mem >= 0 ? entry.mem : 0,
+        tags: parseTags(entry.tags),
+      }))
+      .filter((entry) => Number.isInteger(entry.vmid));
+  }
+
+  status(vmid: number, signal?: AbortSignal): Promise<GuestStatus | null> {
+    return this.guestStatus(this.type, vmid, signal);
   }
 
   /**
@@ -538,7 +589,16 @@ export class Proxmox {
     return this.#begin("DELETE", this.#guest(vmid, `/snapshot/${enc(name)}`), force ? { force: 1 } : {}, signal);
   }
 
-  startRollback(vmid: number, name: string, signal?: AbortSignal): Promise<string> {
+  async startRollback(vmid: number, name: string, signal?: AbortSignal, listed?: { readonly vmstate: boolean }): Promise<string> {
+    const vmstate = listed ? listed.vmstate : this.type === "qemu" ? (await this.snapshots(vmid, signal)).find((snapshot) => snapshot.name === name)?.vmstate : false;
+    if (this.type === "qemu" && vmstate !== false) {
+      throw new Error(`Rolling back VM ${vmid} to ${name}, which holds memory or could not be read, starts the VM, so it must go through the node start gate.`);
+    }
+    return this.#begin("POST", this.#guest(vmid, `/snapshot/${enc(name)}/rollback`), {}, signal);
+  }
+
+  startRollbackWithMemory(vmid: number, name: string, permit: StartPermit, signal?: AbortSignal): Promise<string> {
+    assertStartPermit(permit);
     return this.#begin("POST", this.#guest(vmid, `/snapshot/${enc(name)}/rollback`), {}, signal);
   }
 

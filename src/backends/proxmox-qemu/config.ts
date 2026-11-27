@@ -13,8 +13,10 @@ import {
   checkConnection,
   checkNetwork,
   checkReserve,
+  checkStartMemoryGate,
   checkSsh,
   checkVmids,
+  number,
   text,
   wholeInRange,
   type Problem,
@@ -22,6 +24,11 @@ import {
   type ProxmoxNetwork,
   type VmidRange,
 } from "../proxmox/settings.ts";
+import {
+  HEAVY_START_SETTLE_DEFAULT_S,
+  START_MEMORY_MARGIN_DEFAULT_MIB,
+  START_MEMORY_WAIT_DEFAULT_S,
+} from "../proxmox/start-gate.ts";
 import type { BackendDriver, BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 import { PRODUCT } from "../../brand.ts";
 
@@ -41,6 +48,11 @@ export interface QemuConfig {
   /** A null key means bb-box generates one and shows its public key. */
   readonly ssh: { readonly privateKey: string | null; readonly user: string };
   readonly reserve: { readonly memoryMiB: number; readonly diskGiB: number };
+  readonly startGate: {
+    readonly memoryMarginMiB: number;
+    readonly memoryWaitSeconds: number;
+    readonly heavySettleSeconds: number;
+  };
   /** Windows boxes join BB as machines, unless set off (#539). */
   readonly enrol: boolean;
   /** Linux VM boxes have KVM, where the host allows nested virtualization (057). Off by default. */
@@ -59,6 +71,9 @@ export const QEMU_DEFAULTS = {
   sshUser: "box",
   reserveMemoryMiB: 4096,
   reserveDiskGiB: 50,
+  startMemoryMarginMiB: START_MEMORY_MARGIN_DEFAULT_MIB,
+  startMemoryWaitSeconds: START_MEMORY_WAIT_DEFAULT_S,
+  heavyStartSettleSeconds: HEAVY_START_SETTLE_DEFAULT_S,
 } as const;
 
 /** Field keys in bb-box's configuration (029). The backend had no BB settings before it. */
@@ -84,6 +99,9 @@ export const QEMU_KEYS = {
   sshUser: "ssh-user",
   reserveMemoryMiB: "reserve-memory-mib",
   reserveDiskGiB: "reserve-disk-gib",
+  startMemoryMarginMiB: "start-memory-margin-mib",
+  startMemoryWaitSeconds: "start-memory-wait-seconds",
+  heavyStartSettleSeconds: "heavy-start-settle-seconds",
   enrol: "windows-enrol",
   kvm: "linux-kvm",
 } as const;
@@ -248,6 +266,30 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     group: "advanced",
     default: QEMU_DEFAULTS.reserveDiskGiB,
   },
+  [QEMU_KEYS.startMemoryMarginMiB]: {
+    type: "number",
+    label: "Start memory margin (MiB)",
+    description:
+      "Free host memory, in MiB, that must stay free after a guest starts, capped at a quarter of node RAM. Untouched RAM of recent heavy VMs counts against it.",
+    group: "advanced",
+    default: QEMU_DEFAULTS.startMemoryMarginMiB,
+  },
+  [QEMU_KEYS.startMemoryWaitSeconds]: {
+    type: "number",
+    label: "Start memory wait (seconds)",
+    description:
+      "Seconds a guest start waits for free host memory on the node before failing, checked about every 10 seconds. 0 refuses at once when memory is short.",
+    group: "advanced",
+    default: QEMU_DEFAULTS.startMemoryWaitSeconds,
+  },
+  [QEMU_KEYS.heavyStartSettleSeconds]: {
+    type: "number",
+    label: "Heavy VM start settle (seconds)",
+    description:
+      "Seconds between heavy VM starts on one node. Holds Windows, Android and large non-ballooning VMs so each settles first; containers do not wait for this delay.",
+    group: "advanced",
+    default: QEMU_DEFAULTS.heavyStartSettleSeconds,
+  },
 };
 
 /**
@@ -291,7 +333,28 @@ export function parseQemuPart(part: BackendPart): ParsedBackend<QemuConfig> {
   const network = checkNetwork(values, QEMU_KEYS, QEMU_DEFAULTS, vmids, problem);
   const ssh = checkSsh(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
   const reserve = checkReserve(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
+  const startMemory = checkStartMemoryGate(values, QEMU_KEYS, QEMU_DEFAULTS, problem);
+  const heavySettleSeconds = number(values, QEMU_KEYS.heavyStartSettleSeconds, QEMU_DEFAULTS.heavyStartSettleSeconds);
+  if (!wholeInRange(heavySettleSeconds, 0, 86_400)) {
+    problem(QEMU_KEYS.heavyStartSettleSeconds, "Use a whole number of seconds from 0 to 86400 for the heavy VM start settle delay.");
+  }
 
   if (problems.length) return { ok: false, problems };
-  return { ok: true, config: { proxmox, templates, linuxTemplates, linuxDesktopTemplates, androidTemplates, vmids, network, ssh, reserve, enrol: values[QEMU_KEYS.enrol] !== false, kvm: values[QEMU_KEYS.kvm] === true } };
+  return {
+    ok: true,
+    config: {
+      proxmox,
+      templates,
+      linuxTemplates,
+      linuxDesktopTemplates,
+      androidTemplates,
+      vmids,
+      network,
+      ssh,
+      reserve,
+      startGate: { ...startMemory, heavySettleSeconds },
+      enrol: values[QEMU_KEYS.enrol] !== false,
+      kvm: values[QEMU_KEYS.kvm] === true,
+    },
+  };
 }

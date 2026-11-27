@@ -780,7 +780,14 @@ export interface Backend {
    * change the guest's facts. Throws BackendError("gone") when the guest no
    * longer exists.
    */
-  start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>, readyWithinMs?: number): Promise<Started | void>;
+  start?(
+    guest: Guest,
+    signal?: AbortSignal,
+    timing?: (step: string, ms: number) => void,
+    answered?: () => Promise<void>,
+    readyWithinMs?: number,
+    waiting?: (words: string | null) => Promise<void>,
+  ): Promise<Started | void>;
   /** Only where the provider can. Throws BackendError("gone") when the guest no longer exists. */
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
 
@@ -1130,6 +1137,7 @@ export type RestoreWay = "rollback" | "rollback-newest-only" | "new-guest" | "no
 export interface SnapshotHooks {
   submitting(): Promise<void>;
   task(task: TaskRef): Promise<void>;
+  waiting?: (words: string | null) => Promise<void>;
 }
 
 export interface CopyHooks extends SnapshotHooks {
@@ -1309,6 +1317,7 @@ export interface ImageBox {
   readonly command: CommandTransport;
   /** How long each step of making it took, in order, where the backend times them: for a build's answer check. */
   readonly steps?: readonly { readonly name: string; readonly ms: number }[];
+  readonly bootMs?: number;
 }
 
 /** A build of an image that a backend keeps: on Proxmox LXC, a template. */
@@ -1400,6 +1409,7 @@ export interface BackendContext {
   /** Scoped to this backend. */
   readonly storage: BackendStorage;
   readonly sharedStorage?: BackendStorage;
+  shared?<T>(key: string, create: () => T): T;
   dockerDaemonsReached?(signal?: AbortSignal): Promise<readonly DockerDaemonReached[] | null>;
   /**
    * This bb-box install's ID (018). A backend records it on every guest from

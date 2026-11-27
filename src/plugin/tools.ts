@@ -213,19 +213,70 @@ function bytes(content: string, encoding: "base64" | "utf8"): Uint8Array {
   return encoding === "base64" ? Buffer.from(content, "base64") : new TextEncoder().encode(content);
 }
 
-/** Waits for an acquire to finish, up to the kind's ready timeout. Null when it has not finished. */
-export async function ready(app: BbBox, box: BoxRecord, signal: AbortSignal): Promise<BoxRecord | null> {
+const READY_WAIT_POLL_MS = 250;
+
+export async function ready(
+  app: BbBox,
+  box: BoxRecord,
+  signal: AbortSignal,
+  options: { readonly pollMs?: number; readonly maxWaitMs?: number; readonly now?: () => number } = {},
+): Promise<BoxRecord | null> {
   const timeoutMs = app.boxes.kinds().find((kind) => kind.id === box.kind)?.readyTimeoutMs ?? 5 * 60_000;
+  const maxWaitMs = options.maxWaitMs ?? Math.max(timeoutMs, RUN_WAIT_MS);
+  const pollMs = options.pollMs ?? READY_WAIT_POLL_MS;
+  const now = options.now ?? Date.now;
+  let done = false;
+  let settledValue: BoxRecord | null = null;
   let timer: NodeJS.Timeout | undefined;
-  const waited = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), timeoutMs);
-    signal.addEventListener("abort", () => resolve(null), { once: true });
-  });
-  try {
-    return await Promise.race([app.boxes.settled(box), waited]);
-  } finally {
+  let wakeAbort: (() => void) | null = null;
+
+  const settled = app.boxes.settled(box).then((value) => {
+    settledValue = value;
+    done = true;
     clearTimeout(timer);
-  }
+    wakeAbort?.();
+    return value;
+  });
+
+  const watched = (async (): Promise<BoxRecord | null> => {
+    const startedAt = now();
+    let lastAt = startedAt;
+    let nonWaitingMs = 0;
+
+    while (!done && !signal.aborted) {
+      const latest = await app.boxes.find(box.id).catch(() => null);
+      if (done) return settledValue;
+      if (signal.aborted) break;
+      const currentAt = now();
+      const delta = Math.max(0, currentAt - lastAt);
+      lastAt = currentAt;
+      if (!latest?.waitingOn) nonWaitingMs += delta;
+
+      const totalElapsed = currentAt - startedAt;
+      if (nonWaitingMs >= timeoutMs || totalElapsed >= maxWaitMs) return done ? settledValue : null;
+
+      const remainingTotal = maxWaitMs - totalElapsed;
+      const stepMs = latest?.waitingOn
+        ? Math.min(pollMs, remainingTotal)
+        : Math.min(pollMs, Math.max(1, timeoutMs - nonWaitingMs), remainingTotal);
+      if (stepMs <= 0) return done ? settledValue : null;
+
+      await new Promise<void>((resolve) => {
+        const finish = () => {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", finish);
+          wakeAbort = null;
+          resolve();
+        };
+        wakeAbort = finish;
+        signal.addEventListener("abort", finish, { once: true });
+        timer = setTimeout(finish, stepMs);
+      });
+    }
+    return done ? settledValue : null;
+  })();
+
+  return await Promise.race([settled, watched]);
 }
 
 /** A kind's presets and largest size in words, for box_list. */
@@ -651,9 +702,9 @@ export function registerTools(bb: BbPluginApi, app: BbBox, options: { drainMs?: 
           return `Acquiring box ${box.name} (${box.kind}${asked ? `, ${describeSize(asked)}` : ""}).${next(`Call box_status with box "${box.name}" to see when it is ready.`)}`;
         }
         const settled = await ready(app, box, signal);
-        // Not ready when the kind's wait ran out, or bb-box restarted first.
         if (!settled || isAcquiring(settled)) {
-          return `${startingWords(settled ?? box, !!settled && boxes.stopping)}${next(`Call box_status with box "${box.name}" to see when it is ready.`)}`;
+          const latest = settled ?? (await boxes.find(box.id)) ?? box;
+          return `${startingWords(latest, !!settled && boxes.stopping)}${next(`Call box_status with box "${box.name}" to see when it is ready.`)}`;
         }
         if (settled.state === "failed") {
           const said = `Box ${settled.name} failed: ${errorForAgent(settled) ?? "no reason given"}`;

@@ -460,7 +460,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
       const at = now();
       try {
         const box = await images.box(build, label, signal);
-        return { box, ms: now() - at };
+        return { box, ms: box.bootMs ?? now() - at };
       } catch (error) {
         if (!(error instanceof BackendError && error.code === "no_capacity") || Date.now() >= until) throw error;
         if (Date.now() >= told) {

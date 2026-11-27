@@ -255,6 +255,7 @@ export class Backends {
   readonly #changed: () => void;
   readonly #kindsChanged: () => void;
   readonly #entries = new Map<string, Entry>();
+  readonly #shared = new Map<string, unknown>();
   /** Each backend's warm pools that are short for want of room, by ID, kept while it is built again. */
   readonly #short = new Map<string, WarmShortfalls>();
   #installId: string;
@@ -335,6 +336,10 @@ export class Backends {
       id,
       storage,
       sharedStorage,
+      shared: <T>(key: string, create: () => T): T => {
+        if (!this.#shared.has(key)) this.#shared.set(key, create());
+        return this.#shared.get(key) as T;
+      },
       dockerDaemonsReached: (signal) => this.#dockerDaemonsReached(signal),
       installId: this.#installId,
       logError: this.#logError,
@@ -551,5 +556,6 @@ export class Backends {
 
   async dispose(): Promise<void> {
     for (const entry of [...this.#entries.values()].reverse()) await this.#dispose(entry);
+    this.#shared.clear();
   }
 }

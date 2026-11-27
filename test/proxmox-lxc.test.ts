@@ -163,7 +163,7 @@ test("the node is found when there is only one", async () => {
 });
 
 test("capacity keeps the memory and disk reserves", async () => {
-  const { backend, proxmox } = setup();
+  const { backend, proxmox } = setup({ "proxmox-lxc-start-memory-margin-mib": 0 });
   const ok = await backend.capacity("linux", sized("linux"), waiting(), signal());
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.warm, { ready: 0, target: 0 });
@@ -211,7 +211,7 @@ test("capacity refuses when the VMID range is full", async () => {
 });
 
 test("capacity refuses more cores than the node has, more memory than is free and a disk the storage cannot grow to (028)", async () => {
-  const { backend, proxmox } = setup();
+  const { backend, proxmox } = setup({ "proxmox-lxc-start-memory-margin-mib": 0 });
   const cores = await backend.capacity("linux", { cores: 32, memoryMiB: 4096, diskGiB: null }, waiting(), signal());
   assert.equal(cores.ok, false);
   assert.equal(cores.message, "pve has 16 CPU threads, fewer than the 32 cores asked for. Ask for at most 16 cores.");
@@ -231,7 +231,7 @@ test("capacity refuses more cores than the node has, more memory than is free an
 });
 
 test("pending boxes count with the memory of their own size (028)", async () => {
-  const { backend, proxmox } = setup();
+  const { backend, proxmox } = setup({ "proxmox-lxc-start-memory-margin-mib": 0 });
   proxmox.memory = { total: 64 * GiB, available: 20 * GiB };
   const large = { kind: "linux", size: { cores: 8, memoryMiB: 13 * 1024, diskGiB: null } };
   assert.equal((await backend.capacity("linux", sized("linux"), waiting("linux"), signal())).ok, true, "4 GiB pending leaves room");
@@ -1681,7 +1681,7 @@ test("a warm guest waits at its template's size, and serves a box with its cores
 });
 
 test("a warm guest needs only the memory a claim adds (028)", async () => {
-  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 1 });
+  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 1, "proxmox-lxc-start-memory-margin-mib": 0 });
   await backend.maintain();
   // The warm guest has the template's 4 GiB, and 4 GiB is kept free.
   proxmox.memory = { total: 64 * GiB, available: 9 * GiB };
@@ -1708,7 +1708,7 @@ test("a warm guest needs only the memory a claim adds (028)", async () => {
 });
 
 test("an acquire that holds a warm guest needs no other, and counts only the memory it adds (#122)", async () => {
-  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 2 });
+  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 2, "proxmox-lxc-start-memory-margin-mib": 0 });
   await backend.maintain();
   // Too little memory for a new guest, so no warm guest is made meanwhile.
   proxmox.memory = { total: 64 * GiB, available: 1 * GiB };
@@ -1813,7 +1813,7 @@ test("a warm guest stays ready while a backup locks its template", async () => {
 });
 
 test("the warm pool stops at the capacity guard", async () => {
-  const { backend, proxmox, context } = setup({ "proxmox-lxc-linux-warm": 3 });
+  const { backend, proxmox, context } = setup({ "proxmox-lxc-linux-warm": 3, "proxmox-lxc-start-memory-margin-mib": 0 });
   proxmox.memory = { total: 16 * GiB, available: 9 * GiB };
   proxmox.intercept = (call) => {
     if (call.path.endsWith("/clone")) proxmox.memory = { ...proxmox.memory, available: proxmox.memory.available - 2 * GiB };
@@ -2046,7 +2046,7 @@ test("image operations replace a template on storage other than LVM-thin with a 
 });
 
 test("doctor warns about a kind the node cannot hold at any preset (#74)", async () => {
-  const { backend, proxmox } = setup();
+  const { backend, proxmox } = setup({ "proxmox-lxc-start-memory-margin-mib": 0 });
   proxmox.cpus = 2;
   const report = await backend.doctor();
   const sizes = report.checks.find((check) => check.id === "proxmox.sizes")!;

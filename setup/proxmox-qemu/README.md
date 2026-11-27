@@ -100,6 +100,33 @@ The [configuration reference](../../docs/reference/configuration.md#proxmox-qemu
 lists every field. Check tests the fields against the host; Save and turn on
 saves them.
 
+#### Memory admission and heavy VM starts
+
+Proxmox QEMU shares one start gate per node with Proxmox LXC (decision 106).
+Every start on that node, including warm and spare refills, image trial boxes,
+restores (including snapshots with memory), forks, resumes and resizes, reads
+the node's available memory and subtracts untouched RAM from any running heavy
+VM whose uptime is under 10 minutes and that the backend's token can see (the
+VMs in its pool, whoever started them; VMs outside it count only through the
+memory they have already touched). Guests the gate admitted that are still
+starting count in full. Containers and ballooned Linux VMs never count as held.
+The remaining memory must cover the guest's memory plus the effective
+`start-memory-margin-mib` (16384 MiB by default, capped at a quarter of the
+node's total memory and enforced at placement as well). When memory is short,
+the start waits and checks every 10 seconds for up to
+`start-memory-wait-seconds` (600 seconds by default), showing the shortfall on
+the box's progress, then fails rather than starting anyway.
+
+Heavy VMs boot one at a time on each node: the next heavy start waits until no
+running heavy VM on the node has an uptime under `heavy-start-settle-seconds`
+(120 seconds by default). A VM is heavy when it is a Windows or Android VM, or
+when it has `balloon` off and more than 4 GiB of memory. Containers on Proxmox
+LXC do not wait for the heavy settle delay, though they still check free
+memory. Among a thread's starts, the first that fits starts, in arrival order,
+so a smaller guest that fits can start while a larger one waits. A refill never
+starts while a thread's start is waiting. Warm and spare refills check the gate before
+cloning and use a wait of 0 seconds so they retry at the next top-up.
+
 #### Windows boxes as BB machines
 
 A box joins BB as a machine, as a Linux box does, so threads and terminals
