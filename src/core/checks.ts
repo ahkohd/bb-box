@@ -93,7 +93,11 @@ export const CHECKS = {
   // Proxmox LXC and Proxmox QEMU.
   "proxmox.api": { name: "Proxmox API", from: ["proxmox-lxc", "proxmox-qemu"], what: `The API answers at its URL, with a certificate ${PRODUCT} trusts, and the token works.` },
   "proxmox.node": { name: "Node", from: ["proxmox-lxc", "proxmox-qemu"], what: "The node exists and is online." },
-  "proxmox.memory": { name: "Node memory", from: ["proxmox-lxc", "proxmox-qemu"], what: "How much of the node's memory is free beyond the reserve." },
+  "proxmox.memory": {
+    name: "Node memory",
+    from: ["proxmox-lxc", "proxmox-qemu"],
+    what: "The node's available memory, effective start memory margin, free swap, Proxmox VE 9 RRD memory stalls and why per-bank (NUMA) free memory is not read.",
+  },
   "proxmox.pool": { name: "Resource pool", from: ["proxmox-lxc", "proxmox-qemu"], what: "The resource pool exists and the token may use it." },
   "proxmox.bridge": { name: "Network bridge", from: ["proxmox-lxc", "proxmox-qemu"], what: "The bridge exists on the node." },
   "proxmox.vmids": { name: "VMID range", from: ["proxmox-lxc", "proxmox-qemu"], what: `The VMID range is free of guests ${PRODUCT} did not make.` },
