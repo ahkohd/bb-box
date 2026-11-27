@@ -976,6 +976,7 @@ test("J: rolling back a QEMU snapshot with memory passes through the gate and re
     /must go through the node start gate/,
   );
   await assert.rejects(qemu.startRollback(vmid, `bb${snapId}`), /must go through the node start gate/);
+  await assert.rejects(qemu.startRollback(vmid, "bbnosuchsnapshot"), /must go through the node start gate/);
 
   api.memory = { total: 64 * GIB, available: 10 * GIB };
   const waitingWords: (string | null)[] = [];
@@ -1331,4 +1332,85 @@ test("a refill that fits waits while a thread's box waits for memory, and starts
   await refill;
   assert.equal(api.guests.get(7302)!.status, "running");
   assert.equal(api.guests.get(7301)!.status, "stopped");
+});
+
+test("a memory rollback of a ballooned Linux VM holds its memory and the heavy settle until it has loaded, even once listed running", async () => {
+  const clock = new FakeClock();
+  const api = new FakeProxmox();
+  api.now = clock.now;
+  api.memory = { total: 128 * GIB, available: 40 * GIB };
+  const qemu = makeClient(api, "qemu");
+  const gate = new ProxmoxStartGate();
+  let loaded!: () => void;
+
+  const rollback = gate.start(qemu, { vmid: 9703, memoryMiB: 16384, heavy: true, priority: "acquire", config: DEFAULT_GATE, now: clock.now, sleep: clock.sleep }, async () => {
+    api.guests.set(9703, { vmid: 9703, type: "qemu", name: "restoring", status: "running", template: false, config: { ostype: "l26", memory: "16384" }, startedAt: clock.now(), memoryUsed: 2 * GIB });
+    await new Promise<void>((resolve) => (loaded = resolve));
+  });
+  await clock.advance(1_000);
+  assert.equal(api.guests.get(9703)!.status, "running");
+
+  const small = await gate.canStartNow(qemu, { memoryMiB: 16384, priority: "acquire", config: DEFAULT_GATE, now: clock.now });
+  const heavy = await gate.canStartNow(qemu, { memoryMiB: 4096, heavy: true, priority: "acquire", config: DEFAULT_GATE, now: clock.now });
+  assert.equal(small.ok, false);
+  assert.equal(heavy.ok, false);
+
+  loaded();
+  await rollback;
+  assert.equal((await gate.canStartNow(qemu, { memoryMiB: 16384, priority: "acquire", config: DEFAULT_GATE, now: clock.now })).ok, true);
+});
+
+test("a read Proxmox refuses for good fails the start at once, and a read it does not answer says so while it waits", async () => {
+  const clock = new FakeClock();
+  const api = new FakeProxmox();
+  api.now = clock.now;
+  api.addTemplate(9000);
+  api.memory = { total: 64 * GIB, available: 48 * GIB };
+  const lxc = makeClient(api, "lxc");
+  await lxc.cloneLinked({ template: 9000, vmid: 7401, hostname: "refused", pool: "bbbox" });
+  const gate = new ProxmoxStartGate();
+  let answer = { ok: false, status: 403, statusText: "Permission check failed (/nodes/pve, Sys.Audit)", text: async () => JSON.stringify({ data: null }) };
+  api.intercept = (call) => (call.method === "GET" && call.path === "/nodes/pve/qemu" ? answer : undefined);
+
+  const refused = await gate.start(lxc, { vmid: 7401, memoryMiB: 4096, priority: "acquire", config: DEFAULT_GATE, now: clock.now, sleep: clock.sleep }).catch((error: unknown) => error);
+  assert.ok(refused instanceof Error);
+  assert.match(refused.message, /403/);
+  assert.equal(api.guests.get(7401)!.status, "stopped");
+
+  answer = SERVER_ERROR;
+  const words: (string | null)[] = [];
+  const waits = gate.start(lxc, { vmid: 7401, memoryMiB: 4096, priority: "acquire", config: DEFAULT_GATE, now: clock.now, sleep: clock.sleep, waiting: async (said) => void words.push(said) });
+  await clock.advance(10_000);
+  assert.match(words[0] ?? "", /Waiting to read pve's memory/);
+
+  api.intercept = undefined;
+  await clock.advance(10_000);
+  await waits;
+  assert.equal(api.guests.get(7401)!.status, "running");
+  assert.equal(words.at(-1), null);
+});
+
+test("the gate reads each recently started VM's config once, not on every poll", async () => {
+  const clock = new FakeClock();
+  const api = new FakeProxmox();
+  api.now = clock.now;
+  api.addTemplate(9000);
+  api.memory = { total: 128 * GIB, available: 8 * GIB };
+  for (let vmid = 5900; vmid < 5906; vmid++) {
+    api.guests.set(vmid, { vmid, type: "qemu", name: `linux-${vmid}`, status: "running", template: false, config: { ostype: "l26", memory: "2048" }, startedAt: clock.now() - 5_000, memoryUsed: GIB });
+  }
+  const lxc = makeClient(api, "lxc");
+  await lxc.cloneLinked({ template: 9000, vmid: 7501, hostname: "cached", pool: "bbbox" });
+  const gate = new ProxmoxStartGate();
+  const configReads = () => api.calls.filter((call) => call.method === "GET" && /^\/nodes\/pve\/qemu\/59\d\d\/config$/.test(call.path)).length;
+
+  const waiting = gate.start(lxc, { vmid: 7501, memoryMiB: 4096, priority: "acquire", config: { ...DEFAULT_GATE, memoryWaitSeconds: 60 }, now: clock.now, sleep: clock.sleep }).catch(() => undefined);
+  await clock.advance(1_000);
+  const afterFirst = configReads();
+  await clock.advance(30_000);
+
+  assert.equal(afterFirst, 6);
+  assert.equal(configReads(), 6);
+  await clock.advance(40_000);
+  await waiting;
 });

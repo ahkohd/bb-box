@@ -1,6 +1,6 @@
 import { PRODUCT } from "../../brand.ts";
 import { BackendError, type BackendContext, type GuestOs } from "../types.ts";
-import { sleep as defaultSleep, type GuestType, type NodeGuest, type NodeStatus, type Proxmox } from "./api.ts";
+import { ProxmoxError, sleep as defaultSleep, type GuestType, type NodeGuest, type NodeStatus, type Proxmox } from "./api.ts";
 
 const MIB = 2 ** 20;
 const DEFAULT_GUEST_MEMORY_MIB = 512;
@@ -285,6 +285,14 @@ function queueTimeoutError(node: string, waitSeconds: number): BackendError {
   return new BackendError("no_capacity", `The guest waited in ${node}'s start queue${waited} behind other starts. Try again in a few minutes.`);
 }
 
+function refusedForGood(error: unknown): boolean {
+  return error instanceof ProxmoxError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429;
+}
+
+function unreadWaitWords(node: string): string {
+  return `Waiting to read ${node}'s memory and recent VM starts, which Proxmox did not answer.`;
+}
+
 function unreadNodeError(node: string, error: unknown): BackendError {
   const why = error instanceof Error ? error.message : String(error);
   return new BackendError("no_capacity", `${PRODUCT} could not read ${node}'s memory and recent VM starts, so it did not start the guest: ${why}`);
@@ -380,7 +388,7 @@ export class ProxmoxStartGate {
     try {
       reading = await this.#readNodeState(api, now, Math.max(RECENT_BOOT_WINDOW_S, request.config.heavySettleSeconds), request.signal);
     } catch (error) {
-      if (request.signal?.aborted) throw error;
+      if (request.signal?.aborted || refusedForGood(error)) throw error;
       return { ok: false, reason: unreadNodeError(api.node, error).message };
     }
     const settleSeconds = settleRemainingForReading(reading, request.vmid, heavy, request.config.heavySettleSeconds);
@@ -525,8 +533,9 @@ export class ProxmoxStartGate {
     }
 
     for (const [vmid, flight] of this.#inFlight) {
-      if (flight.heavy && seenRunning.has(vmid)) continue;
+      if (flight.heavy && recent.some((entry) => entry.vmid === vmid)) continue;
       const uptimeSeconds = Math.max(0, Math.floor((now - flight.admittedAt) / 1000));
+      if (uptimeSeconds >= RECENT_BOOT_WINDOW_S) continue;
       recent.push({ vmid, heavy: flight.heavy, uptimeSeconds, untouchedBytes: flight.memoryMiB * MIB, inFlight: true });
     }
 
@@ -676,8 +685,16 @@ export class ProxmoxStartGate {
     for (const waiter of [...this.#waiters]) {
       if (waiter.aborted) continue;
       const waitedMs = Math.max(0, waiter.now() - waiter.enqueuedAt);
-      if (waitedMs >= waiter.config.memoryWaitSeconds * 1000) await this.#expire(waiter, unreadNodeError(waiter.api.node, error));
+      if (refusedForGood(error)) await this.#fail(waiter, error);
+      else if (waitedMs >= waiter.config.memoryWaitSeconds * 1000) await this.#expire(waiter, unreadNodeError(waiter.api.node, error));
+      else await this.#reportWaiting(waiter, unreadWaitWords(waiter.api.node));
     }
+  }
+
+  async #fail(waiter: StartWaiter, error: unknown): Promise<void> {
+    if (!this.#remove(waiter)) return;
+    await this.#clearWaitingQuietly(waiter);
+    waiter.reject(error);
   }
 
   async #sleepUnlessWoken(seenWakeSeq: number): Promise<void> {

@@ -203,9 +203,9 @@ function refusedBeforeItBegan(error: ProxmoxError): boolean {
   return (error.status >= 400 && error.status < 500) || error.locked;
 }
 
-async function askToRollBack(api: Proxmox, vmid: number, name: string, signal?: AbortSignal, permit?: StartPermit): Promise<string> {
+async function askToRollBack(api: Proxmox, vmid: number, name: string, listed: { readonly vmstate: boolean }, signal?: AbortSignal, permit?: StartPermit): Promise<string> {
   try {
-    return permit ? await api.startRollbackWithMemory(vmid, name, permit, signal) : await api.startRollback(vmid, name, signal);
+    return permit ? await api.startRollbackWithMemory(vmid, name, permit, signal) : await api.startRollback(vmid, name, signal, listed);
   } catch (error) {
     if (!(error instanceof ProxmoxError) || refusedBeforeItBegan(error)) throw error;
     throw new Error(`Proxmox gave no clear answer to the rollback, so ${PRODUCT} cannot tell whether it began: ${taskWords(error)}`, { cause: error });
@@ -645,7 +645,7 @@ export class ProxmoxSnapshotting {
         const startConfig = Object.keys(snapConfig).length ? snapConfig : config;
         await this.#guests.gateStart(api, guest, vmid, startConfig, hooks.waiting, signal, async (permit) => {
           await hooks.submitting();
-          const rolled = await askToRollBack(api, vmid, name, signal, permit);
+          const rolled = await askToRollBack(api, vmid, name, listed, signal, permit);
           try {
             await hooks.task({ ref: rolled, host: api.node });
             rolledWithMemory.outcome = { failure: await this.#waited(api, rolled, signal) };
@@ -656,7 +656,7 @@ export class ProxmoxSnapshotting {
         upid = "";
       } else {
         await hooks.submitting();
-        upid = await askToRollBack(api, vmid, name, signal);
+        upid = await askToRollBack(api, vmid, name, listed, signal);
       }
     } catch (error) {
       if (error instanceof BackendError && error.code === "no_capacity") throw new SnapshotFailed(error.message);

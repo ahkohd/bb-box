@@ -911,8 +911,8 @@ the API client, ownership tags, TLS pin and settings. Set up by
   ballooned VMs never count as held. The remaining available memory must cover
   the guest's memory plus the effective `start-memory-margin-mib` (16 GiB by
   default, capped at a quarter of the node's total memory and enforced at
-  placement too). Waiters start in priority (thread acquires ahead of refills)
-  then arrival order without head-of-line blocking, polling every 10 s up to
+  placement too). A thread's starts start in arrival order without
+  head-of-line blocking, and no refill starts while one waits, polling every 10 s up to
   `start-memory-wait-seconds` (600 s). Heavy VMs boot one at a time per node
   until no running heavy VM has an uptime under `heavy-start-settle-seconds`
   (120 s); containers skip the heavy delay. Warm and spare refills check the

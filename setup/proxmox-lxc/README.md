@@ -670,9 +670,9 @@ fields against the host; Save and turn on saves them. From a terminal,
   cloning as well). When memory is short, the start waits and checks every 10 s
   for up to `start-memory-wait-seconds` (600 s by default), showing the
   shortfall on the box's progress, then fails rather than starting anyway.
-  The gate starts the first fitting waiter in priority (thread acquires ahead
-  of refills) then arrival order so a large waiting VM does not block smaller
-  containers that fit. Warm and spare refills check the gate before cloning
+  Among a thread's starts, the gate starts the first that fits, in arrival
+  order, so a large waiting VM does not block smaller containers that fit. A
+  refill never starts while a thread's start is waiting. Warm and spare refills check the gate before cloning
   and give up at once with a wait of 0 s until the next top-up.
 
 ## Check it worked
