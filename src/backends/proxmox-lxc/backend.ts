@@ -38,6 +38,7 @@ import { LOW, START_CPUUNITS, START_TAG, startsLow, withStartTag } from "../prox
 import {
   ProxmoxStartGate,
   effectiveStartMemoryMarginMiB,
+  nodeMemoryGateDoctorReport,
   placementMemoryProblem,
   sharedStartGate,
   type StartGuestRequest,
@@ -46,7 +47,17 @@ import {
 import type { CheckId } from "../../core/checks.ts";
 import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
-import { Proxmox, ProxmoxError, parseTags, rootDiskGiB, type FetchLike, type GuestSettings, type PoolGuest, type StorageStatus } from "../proxmox/api.ts";
+import {
+  Proxmox,
+  ProxmoxError,
+  parseTags,
+  rootDiskGiB,
+  type FetchLike,
+  type GuestSettings,
+  type NodeMemoryPressure,
+  type PoolGuest,
+  type StorageStatus,
+} from "../proxmox/api.ts";
 import { poolPrivileges, snapshotsCheck, type GuestDiskStorage } from "../proxmox/snapshots.ts";
 import { withDesktopForkSafety } from "../../core/identity.ts";
 import { forkCapacityWords, forkRefusalWords } from "../../core/snapshot-refusals.ts";
@@ -3323,6 +3334,22 @@ export class ProxmoxLxcBackend implements Backend {
       const audit = (error: unknown, fix: string) => (error instanceof ProxmoxError && error.forbidden ? fix : `${fix} (${message(error)})`);
       try {
         const status = await api.nodeStatus(signal);
+        let pressure: NodeMemoryPressure | null = null;
+        let pressureError: string | null = null;
+        try {
+          pressure = await api.nodeMemoryPressure(signal);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          pressureError = message(error);
+        }
+        const gateReport = nodeMemoryGateDoctorReport({
+          node,
+          status,
+          pressure,
+          pressureError,
+          now: this.#now(),
+          config: this.#config.startGate,
+        });
         const totalMiB = Math.floor(status.memoryTotal / MiB);
         const effectiveMargin = effectiveStartMemoryMarginMiB(this.#config.startGate.memoryMarginMiB, status.memoryTotal);
         const capped = effectiveMargin < this.#config.startGate.memoryMarginMiB
@@ -3337,13 +3364,19 @@ export class ProxmoxLxcBackend implements Backend {
         if (smallest !== null && totalMiB - effectiveMargin < smallest.memoryMiB) {
           fail(
             MEMORY,
-            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. The ${formatMiB(effectiveMargin)} effective start memory margin${capped} leaves ${formatMiB(Math.max(0, totalMiB - effectiveMargin))}, which cannot fit the smallest ${smallest.kind} size (${formatMiB(smallest.memoryMiB)}).`,
+            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. The ${formatMiB(effectiveMargin)} effective start memory margin${capped} leaves ${formatMiB(Math.max(0, totalMiB - effectiveMargin))}, which cannot fit the smallest ${smallest.kind} size (${formatMiB(smallest.memoryMiB)}). ${gateReport.notes}`,
             `Lower the start memory margin or the smallest box size in ${PRODUCT}'s settings, or use a node with more memory.`,
+          );
+        } else if (gateReport.warningFix) {
+          warn(
+            MEMORY,
+            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. Each guest start leaves a ${formatMiB(effectiveMargin)} effective start memory margin free${capped}. ${gateReport.notes}`,
+            gateReport.warningFix,
           );
         } else {
           pass(
             MEMORY,
-            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. Each guest start leaves a ${formatMiB(effectiveMargin)} effective start memory margin free${capped}.`,
+            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. Each guest start leaves a ${formatMiB(effectiveMargin)} effective start memory margin free${capped}. ${gateReport.notes}`,
           );
         }
         const keepMemoryMiB = Math.max(this.#config.reserve.memoryMiB, effectiveMargin);

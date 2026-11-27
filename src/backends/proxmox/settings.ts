@@ -56,6 +56,8 @@ export interface ProxmoxKeys {
   readonly reserveDiskGiB: string;
   readonly startMemoryMarginMiB: string;
   readonly startMemoryWaitSeconds: string;
+  readonly startMemoryPressurePercent: string;
+  readonly startSwapFreeMiB: string;
 }
 
 export interface ProxmoxDefaults {
@@ -71,6 +73,8 @@ export interface ProxmoxDefaults {
   readonly reserveDiskGiB: number;
   readonly startMemoryMarginMiB: number;
   readonly startMemoryWaitSeconds: number;
+  readonly startMemoryPressurePercent: number;
+  readonly startSwapFreeMiB: number;
 }
 
 type Values = Readonly<Record<string, unknown>>;
@@ -231,19 +235,40 @@ export function checkReserve(values: Values, keys: ProxmoxKeys, defaults: Proxmo
 
 export function checkStartMemoryGate(
   values: Values,
-  keys: Pick<ProxmoxKeys, "startMemoryMarginMiB" | "startMemoryWaitSeconds">,
-  defaults: Pick<ProxmoxDefaults, "startMemoryMarginMiB" | "startMemoryWaitSeconds">,
+  keys: Pick<
+    ProxmoxKeys,
+    "startMemoryMarginMiB" | "startMemoryWaitSeconds" | "startMemoryPressurePercent" | "startSwapFreeMiB"
+  >,
+  defaults: Pick<
+    ProxmoxDefaults,
+    "startMemoryMarginMiB" | "startMemoryWaitSeconds" | "startMemoryPressurePercent" | "startSwapFreeMiB"
+  >,
   problem: Problem,
-): { memoryMarginMiB: number; memoryWaitSeconds: number } {
+): {
+  memoryMarginMiB: number;
+  memoryWaitSeconds: number;
+  memoryPressurePercent: number;
+  swapFreeMiB: number;
+} {
   const memoryMarginMiB = number(values, keys.startMemoryMarginMiB, defaults.startMemoryMarginMiB);
   const memoryWaitSeconds = number(values, keys.startMemoryWaitSeconds, defaults.startMemoryWaitSeconds);
+  const memoryPressurePercent = number(values, keys.startMemoryPressurePercent, defaults.startMemoryPressurePercent);
+  const swapFreeMiB = number(values, keys.startSwapFreeMiB, defaults.startSwapFreeMiB);
+
   if (!wholeInRange(memoryMarginMiB, 0, 16_777_216)) {
     problem(keys.startMemoryMarginMiB, "Use a whole number of MiB from 0 to 16777216 for the start memory margin.");
   }
   if (!wholeInRange(memoryWaitSeconds, 0, 86_400)) {
     problem(keys.startMemoryWaitSeconds, "Use a whole number of seconds from 0 to 86400 for the start memory wait.");
   }
-  return { memoryMarginMiB, memoryWaitSeconds };
+  if (!Number.isFinite(memoryPressurePercent) || memoryPressurePercent < 0 || memoryPressurePercent > 99) {
+    problem(keys.startMemoryPressurePercent, "Use a percentage from 0 to 99 for the start memory stall limit, 0 to turn it off.");
+  }
+  if (!wholeInRange(swapFreeMiB, 0, 16_777_216)) {
+    problem(keys.startSwapFreeMiB, "Use a whole number of MiB from 0 to 16777216 for the free swap limit, 0 to turn it off.");
+  }
+
+  return { memoryMarginMiB, memoryWaitSeconds, memoryPressurePercent, swapFreeMiB };
 }
 
 /** The address fixed to `vmid`, or null outside the range. */

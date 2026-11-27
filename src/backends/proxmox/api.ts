@@ -37,12 +37,14 @@ export interface ProxmoxOptions {
   readonly taskPollMs?: number;
   readonly taskTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
+  readonly rrdTimeoutMs?: number;
   /** How long a change to a guest keeps trying while another task holds the guest's lock. */
   readonly lockWaitMs?: number;
 }
 
 /** Between tries at a guest whose lock another task holds. Proxmox itself waits 10 s for the lock on each. */
 const LOCK_RETRY_MS = 1_000;
+export const RRDDATA_TIMEOUT_MS = 5_000;
 
 const PROXMOX_VE_9_NO_SUCH_TASK = { status: 400, field: "upid", words: "no such task" } as const;
 
@@ -54,6 +56,26 @@ function isNoSuchTask(error: ProxmoxError): boolean {
 
 function wholeSecondsSinceBoot(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
+function finiteNonNegative(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function newestPressureMemorySome(rows: unknown): { readonly percent: number; readonly time: number | null } | null {
+  if (!Array.isArray(rows)) return null;
+  let chosen: { readonly percent: number; readonly time: number | null } | null = null;
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const percent = finiteNonNegative(record.pressurememorysome);
+    if (percent === null) continue;
+    const time = finiteNonNegative(record.time);
+    const newer = !chosen || (time !== null && (chosen.time === null || time >= chosen.time)) || (time === null && chosen.time === null);
+    if (newer) chosen = { percent, time };
+  }
+  return chosen;
 }
 
 export class ProxmoxError extends Error {
@@ -170,6 +192,13 @@ export interface NodeStatus {
   readonly memoryAvailable: number;
   /** The node's CPU threads, or null when Proxmox does not say. */
   readonly cpus: number | null;
+  readonly swapTotal: number | null;
+  readonly swapFree: number | null;
+}
+
+export interface NodeMemoryPressure {
+  readonly percent: number | null;
+  readonly sampledAtSeconds: number | null;
 }
 
 /** A VNC proxy to a VM's console, for one WebSocket within about 10 s. */
@@ -276,6 +305,7 @@ export class Proxmox {
   readonly #taskPollMs: number;
   readonly #taskTimeoutMs: number;
   readonly #requestTimeoutMs: number;
+  readonly #rrdTimeoutMs: number;
   readonly #lockWaitMs: number;
 
   constructor(options: ProxmoxOptions) {
@@ -288,6 +318,7 @@ export class Proxmox {
     this.#taskPollMs = options.taskPollMs ?? 50;
     this.#taskTimeoutMs = options.taskTimeoutMs ?? 180_000;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+    this.#rrdTimeoutMs = options.rrdTimeoutMs ?? RRDDATA_TIMEOUT_MS;
     this.#lockWaitMs = options.lockWaitMs ?? 120_000;
   }
 
@@ -304,7 +335,7 @@ export class Proxmox {
   }
 
   async nodeStatus(signal?: AbortSignal): Promise<NodeStatus> {
-    const data = await this.#request<{ memory?: Record<string, unknown>; cpuinfo?: Record<string, unknown> }>(
+    const data = await this.#request<{ memory?: Record<string, unknown>; swap?: Record<string, unknown>; cpuinfo?: Record<string, unknown> }>(
       "GET",
       `/nodes/${enc(this.node)}/status`,
       undefined,
@@ -314,7 +345,30 @@ export class Proxmox {
     const total = Number(memory.total ?? 0);
     const available = Number(memory.available ?? memory.free ?? Math.max(0, total - Number(memory.used ?? total)));
     const cpus = Number(data?.cpuinfo?.cpus);
-    return { memoryTotal: total, memoryAvailable: available, cpus: Number.isInteger(cpus) && cpus > 0 ? cpus : null };
+    const swap = data?.swap;
+    const swapTotal = finiteNonNegative(swap?.total);
+    const swapUsed = finiteNonNegative(swap?.used);
+    const swapFree = swapTotal === null
+      ? null
+      : (finiteNonNegative(swap?.free) ?? (swapUsed !== null ? Math.max(0, swapTotal - swapUsed) : null));
+    return {
+      memoryTotal: total,
+      memoryAvailable: available,
+      cpus: Number.isInteger(cpus) && cpus > 0 ? cpus : null,
+      swapTotal,
+      swapFree,
+    };
+  }
+
+  async nodeMemoryPressure(signal?: AbortSignal): Promise<NodeMemoryPressure> {
+    const path = `/nodes/${enc(this.node)}/rrddata`;
+    const timeoutMs = Math.min(this.#requestTimeoutMs, this.#rrdTimeoutMs);
+    const rows = await this.#request<unknown>("GET", path, { timeframe: "hour", cf: "AVERAGE" }, signal, timeoutMs);
+    const reading = newestPressureMemorySome(rows);
+    return {
+      percent: reading?.percent ?? null,
+      sampledAtSeconds: reading?.time ?? null,
+    };
   }
 
   async uptimeSeconds(node: string, signal?: AbortSignal): Promise<number | null> {
@@ -850,7 +904,13 @@ export class Proxmox {
     return `/nodes/${enc(this.node)}/${this.type}/${vmid}${rest}`;
   }
 
-  async #request<T>(method: string, path: string, params: Params | undefined, signal?: AbortSignal): Promise<T> {
+  async #request<T>(
+    method: string,
+    path: string,
+    params: Params | undefined,
+    signal?: AbortSignal,
+    timeoutMs: number = this.#requestTimeoutMs,
+  ): Promise<T> {
     const form = new URLSearchParams();
     for (const [key, value] of Object.entries(params ?? {})) {
       if (value === undefined) continue;
@@ -864,7 +924,7 @@ export class Proxmox {
       headers["Content-Type"] = "application/x-www-form-urlencoded";
       body = form.toString();
     }
-    const timeout = AbortSignal.timeout(this.#requestTimeoutMs);
+    const timeout = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response: FetchResponse;
     try {
