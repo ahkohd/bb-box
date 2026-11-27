@@ -1,13 +1,15 @@
 import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { Backends, DRIVERS, boxForm, overlapChecks } from "../src/backends/index.ts";
 import { parseImageRecord, recordInDescription } from "../src/backends/images.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { buildFromTags, installFromDescription, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox/owner.ts";
 import { proxmoxFootprint } from "../src/backends/proxmox/settings.ts";
+import { isHeavyGuest } from "../src/backends/proxmox/start-gate.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { ProxmoxQemuBackend, ROOT_FACT, bootDisk, net0On, smbios1For, type QemuBackendOptions } from "../src/backends/proxmox-qemu/backend.ts";
 import { vmNameScript } from "../src/backends/proxmox-lxc/backend.ts";
@@ -1861,4 +1863,111 @@ test("proxmox.image-storage reports VM templates, Android build room and non-box
   assert.equal(androidDisk.status, "warn");
   assert.equal(androidStorage.status, "warn");
   assert.match(androidStorage.detail, /below about 40 GiB a build needs/);
+});
+
+test("Windows boxes set balloon equal to memory on acquire, resize and warm fill", async () => {
+  const { backend, proxmox } = setup();
+  proxmox.guests.get(9104)!.config.balloon = "0";
+
+  const custom = await backend.acquire(identity(sized({ cores: 8, memoryMiB: 16384 })), null, hooks().value, signal());
+  const customVm = proxmox.guests.get(Number(custom.ref))!;
+  assert.equal(customVm.config.memory, "16384");
+  assert.equal(customVm.config.balloon, "16384");
+
+  const grown = { cores: 8, memoryMiB: 24576, diskGiB: custom.size!.diskGiB };
+  await backend.resize(custom, KIND, grown, { restart: true }, signal());
+  assert.equal(customVm.config.memory, "24576");
+  assert.equal(customVm.config.balloon, "24576");
+
+  const shrunk = { cores: 4, memoryMiB: 8192, diskGiB: custom.size!.diskGiB };
+  await backend.resize(custom, KIND, shrunk, { restart: true }, signal());
+  assert.equal(customVm.config.memory, "8192");
+  assert.equal(customVm.config.balloon, "8192");
+
+  proxmox.nextTaskExit.set("qmstart", "start failed: not enough memory");
+  await assert.rejects(
+    backend.resize(custom, KIND, { ...shrunk, memoryMiB: 16384 }, { restart: true }, signal()),
+    /not enough memory/,
+  );
+  assert.equal(customVm.config.memory, "8192");
+  assert.equal(customVm.config.balloon, "8192");
+
+  const warm = warmSetup(1);
+  warm.proxmox.guests.get(9104)!.config.balloon = "0";
+  await warm.backend.maintain(signal());
+  const warmVm = warm.proxmox.guests.get(9700)!;
+  assert.equal(warmVm.config.memory, "8192");
+  assert.equal(warmVm.config.balloon, "8192");
+});
+
+test("Windows image boxes and captures set balloon equal to memory", async () => {
+  const record = {
+    contract: 1,
+    image: "standard",
+    kind: KIND,
+    arch: "x86_64",
+    build: "build.20261127-030000-12ab",
+    built: "2026-11-27T03:00:00Z",
+    os: "Windows 11 Pro",
+    pins: "p".repeat(64),
+    tools: { node: "24.21.0" },
+  };
+  const { backend, proxmox } = imageSetup(record);
+  const template = proxmox.guests.get(9104)!;
+  template.config.memory = "4096";
+  template.config.balloon = "0";
+  const standard = (await backend.images.list()).builds.find((build) => build.ref === "9104")!;
+
+  const box = await backend.images.box(standard, "refresh of 9104", signal());
+  const boxVm = proxmox.guests.get(Number(box.ref))!;
+  assert.equal(boxVm.config.memory, "8192");
+  assert.equal(boxVm.config.balloon, "8192");
+
+  await backend.images.capture(box, standard, "standard", signal());
+  assert.equal(boxVm.config.memory, "4096");
+  assert.equal(boxVm.config.balloon, "4096");
+});
+
+test("Linux VMs leave balloon unchanged on acquire and resize", async () => {
+  const { backend, proxmox, ssh } = setup({
+    "linux-templates": "9120",
+    "linux-desktop-templates": "9121",
+  });
+  proxmox.addVmTemplate(9120, { ostype: "l26", memory: "4096", balloon: "0" });
+  proxmox.addVmTemplate(9121, { ostype: "l26", memory: "8192", balloon: "0" });
+  for (const last of [150, 151]) rmSync(join(ssh.dir, "windows", `192.0.2.${last}`));
+
+  const linuxGuest = await backend.acquire(identity(sized({ cores: 2, memoryMiB: 4096 }), "linux"), null, hooks().value, signal());
+  const linuxVm = proxmox.guests.get(Number(linuxGuest.ref))!;
+  assert.equal(linuxVm.config.memory, "4096");
+  assert.equal(linuxVm.config.balloon, "0");
+
+  await backend.resize(linuxGuest, "linux", { cores: 4, memoryMiB: 8192, diskGiB: linuxGuest.size!.diskGiB }, { restart: true }, signal());
+  assert.equal(linuxVm.config.memory, "8192");
+  assert.equal(linuxVm.config.balloon, "0");
+
+  const desktopGuest = await backend.acquire(identity(sized({ cores: 4, memoryMiB: 8192 }), "linux-desktop-cpu"), null, hooks().value, signal());
+  const desktopVm = proxmox.guests.get(Number(desktopGuest.ref))!;
+  assert.equal(desktopVm.config.memory, "8192");
+  assert.equal(desktopVm.config.balloon, "0");
+});
+
+test("setup/proxmox-qemu/build.sh creates Windows templates with balloon equal to memory", () => {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const script = readFileSync(join(repoRoot, "setup", "proxmox-qemu", "build.sh"), "utf8");
+  const createMatch = /qm create "\$vm"[\s\S]*?\n\s*created=1/.exec(script);
+  assert.ok(createMatch, "qm create block in build.sh");
+  const memoryMatch = /--memory\s+(\d+)/.exec(createMatch[0]);
+  const balloonMatch = /--balloon\s+(\d+)/.exec(createMatch[0]);
+  assert.ok(memoryMatch, "--memory flag on qm create");
+  assert.ok(balloonMatch, "--balloon flag on qm create");
+  assert.equal(balloonMatch[1], memoryMatch[1]);
+  assert.notEqual(balloonMatch[1], "0");
+});
+
+test("start gate still classifies Windows VMs with balloon equal to memory as heavy", () => {
+  assert.equal(isHeavyGuest("qemu", { ostype: "win11", balloon: "8192", memory: "8192" }, 8192, KIND, "windows"), true);
+  assert.equal(isHeavyGuest("qemu", { ostype: "win11", balloon: "8192", memory: "8192" }, 8192), true);
+  assert.equal(isHeavyGuest("qemu", { ostype: "l26", balloon: "8192", memory: "8192" }, 8192, "linux", "linux"), false);
+  assert.equal(isHeavyGuest("qemu", { ostype: "l26", balloon: "0", memory: "8192" }, 8192, "linux", "linux"), true);
 });

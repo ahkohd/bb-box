@@ -237,7 +237,7 @@ fi
 # Windows guest the host's local time, and every box would start that far off.
 log "creating build VM $vm ($BBBOX_WINDOWS_EDITION from $(basename "$windows_iso"), disk on $bus)"
 qm create "$vm" --name "bb-box-windows-$vm" --pool "$BBBOX_POOL" --ostype win11 --machine q35 --bios ovmf \
-  --cpu host --cores 4 --memory 8192 --balloon 0 --localtime 0 \
+  --cpu host --cores 4 --memory 8192 --balloon 8192 --localtime 0 \
   --efidisk0 "$BBBOX_STORAGE:1,efitype=4m,pre-enrolled-keys=1" --tpmstate0 "$BBBOX_STORAGE:1,version=v2.0" \
   "${disk[@]}" --net0 "virtio,bridge=$BBBOX_BRIDGE" --vga virtio --agent enabled=1 \
   --ide2 "$BBBOX_WINDOWS_ISO,media=cdrom" --ide0 "$BBBOX_VIRTIO_ISO,media=cdrom" --ide3 "$iso_store:iso/$answer_name,media=cdrom" \

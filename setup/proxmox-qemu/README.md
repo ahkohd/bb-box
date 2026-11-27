@@ -127,6 +127,22 @@ so a smaller guest that fits can start while a larger one waits. A refill never
 starts while a thread's start is waiting. Warm and spare refills check the gate before
 cloning and use a wait of 0 seconds so they retry at the next top-up.
 
+#### Windows memory and the virtio balloon device
+
+BB Box configures every Windows box with `balloon` equal to its `memory` (decision
+107), including on resize, and `build.sh` creates new Windows templates the same
+way. Setting `balloon` equal to `memory` attaches QEMU's `virtio-balloon-pci`
+device with `free-page-reporting=on` (enabled by default in Proxmox VE 7.2 and
+later for Q35 machines) while keeping `balloon_min` equal to `maxmem` so Proxmox
+never auto-balloons the guest down. Existing Windows templates already install
+the VirtIO Balloon driver (`balloon.sys`) and `BalloonService` (`blnsvr.exe`)
+from `virtio-win-gt-x64.msi`, so Windows binds the driver at boot with no
+template rebuild. Windows VMs still count as heavy in the start gate because
+Windows touches all configured RAM during boot. While `BalloonService` reports
+guest memory usage to Proxmox immediately, host reclamation of idle Windows RAM
+via free page reporting requires a `virtio-win` balloon driver that implements
+`VIRTIO_BALLOON_F_REPORTING`.
+
 #### Windows boxes as BB machines
 
 A box joins BB as a machine, as a Linux box does, so threads and terminals

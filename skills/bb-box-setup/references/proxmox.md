@@ -125,8 +125,12 @@ bb box backend add proxmox-qemu --field windows-templates=9104 \
 
 Set `linux-templates`, `linux-desktop-templates` and `android-templates`
 for the others, and `linux-kvm=true` when the build said KVM works in a
-clone. A Windows box holds its memory while it runs, and a spare or warm
-one waits hibernated, so keep their counts small on a small host. When the
+clone. BB Box sets `balloon` equal to `memory` on every Windows box (and on
+resize) so QEMU attaches the virtio balloon device with free page reporting
+while preventing auto-ballooning; existing Windows templates already have the
+VirtIO Balloon driver and service installed and need no rebuild (decision 107).
+A Windows box still counts as heavy at boot, and a spare or warm one waits
+hibernated, so keep their counts small on a small host. When the
 doctor warns that a Windows template's box user's password can expire,
 refresh it with `bb box images build proxmox-qemu/<vmid>`, or rebuild it:
 its boxes otherwise need a repair and one more restart as they start.

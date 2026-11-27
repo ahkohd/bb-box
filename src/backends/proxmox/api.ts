@@ -123,6 +123,7 @@ export interface GuestSettings {
   readonly cpuunits?: number;
   /** MiB */
   readonly memory?: number;
+  readonly balloon?: number;
   /** MiB */
   readonly swap?: number;
   readonly net0?: string;
@@ -380,6 +381,7 @@ export class Proxmox {
       cores: settings.cores,
       cpuunits: settings.cpuunits,
       memory: settings.memory,
+      balloon: settings.balloon,
       swap: settings.swap,
       net0: settings.net0,
       smbios1: settings.smbios1,

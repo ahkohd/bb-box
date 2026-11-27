@@ -531,6 +531,13 @@ export class FakeProxmox {
         if (match[1] === "qemu" && guest.config.lock && !params.delete?.split(",").includes("vmstate")) {
           return respond(500, `VM is locked (${guest.config.lock})`, { data: null });
         }
+        if (match[1] === "qemu" && (params.memory !== undefined || params.balloon !== undefined)) {
+          const nextMemory = Number(params.memory ?? guest.config.memory ?? 512);
+          const nextBalloon = Number(params.balloon ?? guest.config.balloon ?? 0);
+          if (nextBalloon > 0 && nextBalloon > nextMemory) {
+            return respond(500, "balloon value too large (must be smaller than assigned memory)", { data: null });
+          }
+        }
         // A disk given as <storage>:<GiB> is a new volume, as Proxmox allocates one.
         for (const [key, value] of Object.entries(params)) {
           if (key === "delete" || key === "digest") continue;

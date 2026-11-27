@@ -354,6 +354,14 @@ function sizeOf(config: Record<string, unknown>): MachineSize | null {
   return { cores, memoryMiB, diskGiB: disk ? rootDiskGiB(config, disk) : null };
 }
 
+function vmSizeSettings(size: Pick<MachineSize, "cores" | "memoryMiB">, os: GuestOs): GuestSettings {
+  return {
+    cores: size.cores,
+    memory: size.memoryMiB,
+    ...(os === "windows" ? { balloon: size.memoryMiB } : {}),
+  };
+}
+
 /** How long a resize's clean shutdown waits for the guest before Proxmox stops it (061). */
 const SHUTDOWN_WAIT_S = 120;
 
@@ -1272,7 +1280,7 @@ export class ProxmoxQemuBackend implements Backend {
       const config = await step("configure", async () => {
         const current = await api.config(id, signal);
         low = startsLow(current);
-        await api.configure(id, { ...this.#settings(box.size, id, current), ...(low ? LOW : {}) }, signal);
+        await api.configure(id, { ...this.#settings(box.size, id, current, os), ...(low ? LOW : {}) }, signal);
         return current;
       });
       await step("tags", () => api.configure(id, { tags: withStartTag(boxTags(box, installId, template), low) }, signal));
@@ -1452,18 +1460,18 @@ export class ProxmoxQemuBackend implements Backend {
     }
     await this.#forget(vmid);
     await api.shutdown(vmid, SHUTDOWN_WAIT_S, signal);
-    await api.configure(vmid, { cores: to.cores, memory: to.memoryMiB }, signal);
+    await api.configure(vmid, vmSizeSettings(to, os), signal);
     let grew = false;
     try {
       if (grows) grew = await this.#grow(api, vmid, config, to.diskGiB, untimed, signal);
       await this.start(guest, signal);
     } catch (error) {
       if (signal?.aborted) {
-        await api.configure(vmid, { cores: from.cores, memory: from.memoryMiB }).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+        await api.configure(vmid, vmSizeSettings(from, os)).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
         throw error;
       }
       await api.stop(vmid, signal).catch(() => undefined);
-      await api.configure(vmid, { cores: from.cores, memory: from.memoryMiB }, signal).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+      await api.configure(vmid, vmSizeSettings(from, os), signal).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
       await this.#startWithWait(guest, 0, signal).catch((cause) => this.#context.logError("resize: start at the old size", cause));
       throw error;
     }
@@ -2179,13 +2187,12 @@ export class ProxmoxQemuBackend implements Backend {
     await settle(api, vmid, signal).catch((error: unknown) => this.#context.logError("put a new box's CPU weight back", error instanceof Error ? error : new Error(String(error))));
   }
 
-  #settings(size: MachineSize, vmid: number, current: Record<string, unknown>): GuestSettings {
+  #settings(size: MachineSize, vmid: number, current: Record<string, unknown>, os: GuestOs): GuestSettings {
     const address = addressFor(this.#config, vmid);
     if (!address) throw new Error(`VMID ${vmid} is outside the box range.`);
     const { bridge, prefix, gateway } = this.#config.network;
     return {
-      cores: size.cores,
-      memory: size.memoryMiB,
+      ...vmSizeSettings(size, os),
       net0: net0On(current.net0, bridge),
       smbios1: smbios1For(address, prefix, gateway),
       onboot: true,
@@ -2602,7 +2609,7 @@ export class ProxmoxQemuBackend implements Backend {
       const config = await api.config(id, signal);
       // Off at the node's boot, as a warm VM that runs is deleted. A low CPU weight until a box takes it and it is ready (#888).
       const low = startsLow(config);
-      await api.configure(id, { ...this.#settings(size, id, config), onboot: false, ...(low ? LOW : {}) }, signal);
+      await api.configure(id, { ...this.#settings(size, id, config, KIND.capabilities.os), onboot: false, ...(low ? LOW : {}) }, signal);
       await api.configure(id, { tags: withStartTag(tags(FILLING), low) }, signal);
       const grew = await this.#grow(api, id, config, size.diskGiB, untimed, signal);
       await this.#startGuest(api, id, { priority: "refill", kind: KIND.id, os: KIND.capabilities.os, memoryMiB: size.memoryMiB, memoryWaitSeconds: 0 }, signal);
@@ -2674,7 +2681,7 @@ export class ProxmoxQemuBackend implements Backend {
       vmid = await step("clone", () => this.#clone(api, guests, template, IMAGE_HOSTNAME, description, async (id) => void this.#imageBoxes.add(id), signal, () => {}));
       const id = vmid;
       await step("configure", async () => {
-        await api.configure(id, this.#settings(this.#context.kind(kind.id).defaultSize, id, await api.config(id, signal)), signal);
+        await api.configure(id, this.#settings(this.#context.kind(kind.id).defaultSize, id, await api.config(id, signal), os), signal);
         await api.configure(id, { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
       });
       let admittedAt = this.#now();
@@ -2732,6 +2739,7 @@ export class ProxmoxQemuBackend implements Backend {
         name: typeof source.name === "string" ? source.name : IMAGE_HOSTNAME,
         ...(Number(source.cores) > 0 ? { cores: Number(source.cores) } : {}),
         ...(Number(source.memory) > 0 ? { memory: Number(source.memory) } : {}),
+        ...(!linux && Number(source.memory) > 0 ? { balloon: Number(source.memory) } : {}),
         ...(typeof source.net0 === "string" ? { net0: source.net0 } : {}),
         smbios1: `uuid=${randomUUID()}`,
         onboot: false,
