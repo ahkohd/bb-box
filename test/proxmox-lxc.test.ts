@@ -1813,7 +1813,7 @@ test("a warm guest stays ready while a backup locks its template", async () => {
 });
 
 test("the warm pool stops at the capacity guard", async () => {
-  const { backend, proxmox, context } = setup({ "proxmox-lxc-linux-warm": 3 });
+  const { backend, proxmox, context } = setup({ "proxmox-lxc-linux-warm": 3, "proxmox-lxc-start-memory-margin-mib": 0 });
   proxmox.memory = { total: 16 * GiB, available: 9 * GiB };
   proxmox.intercept = (call) => {
     if (call.path.endsWith("/clone")) proxmox.memory = { ...proxmox.memory, available: proxmox.memory.available - 2 * GiB };

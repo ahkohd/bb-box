@@ -900,6 +900,15 @@ the API client, ownership tags, TLS pin and settings. Set up by
   with `xrandr --fb`, which `x0vncserver` cannot.
 - Each change to a guest tries again for up to 2 minutes while another
   Proxmox task holds the guest's lock.
+- Every guest start on one Proxmox node passes through one start gate shared by
+  Proxmox LXC and Proxmox QEMU (`src/backends/proxmox/start-gate.ts`). Right
+  before starting, it checks the node's available memory minus untouched memory
+  from guests started in the last 10 minutes against the guest's memory plus
+  `start-memory-margin-mib` (16 GiB by default), waiting up to
+  `start-memory-wait-seconds` (600 s) with thread acquires ahead of warm and
+  spare refills. Heavy VMs (Windows, Android, or non-ballooning VMs over 4 GiB)
+  boot one at a time per node with `heavy-start-settle-seconds` (120 s) between
+  starts; containers skip the heavy delay.
 - A warm box serves only a box with its cores, as a running container
   takes new cores only when Proxmox next rebalances CPUs.
 

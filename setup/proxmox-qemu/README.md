@@ -100,6 +100,26 @@ The [configuration reference](../../docs/reference/configuration.md#proxmox-qemu
 lists every field. Check tests the fields against the host; Save and turn on
 saves them.
 
+#### Memory admission and heavy VM starts
+
+Proxmox QEMU shares one start gate per node with Proxmox LXC. Every start on
+that node, including warm and spare refills, image trial boxes, restores,
+forks, resumes and resizes, checks the node's available memory minus any
+configured memory that guests started through the gate in the last 10 minutes
+have not touched yet. The remaining memory must cover the guest's memory plus
+`start-memory-margin-mib` (16384 MiB by default). When memory is short, the
+start waits and checks again about every 10 seconds for up to
+`start-memory-wait-seconds` (600 seconds by default), showing the shortfall on
+the box's progress, then fails rather than starting anyway.
+
+Heavy VMs boot one at a time on each node, with `heavy-start-settle-seconds`
+(120 seconds by default) between starts so each VM can touch its memory before
+the next boots. A VM is heavy when it is a Windows or Android VM, or when it
+has `balloon` off and more than 4 GiB of memory. Containers on Proxmox LXC do
+not wait for the heavy settle delay, though they still wait for free memory.
+When both a thread acquire and a warm or spare refill wait, the thread acquire
+goes first.
+
 #### Windows boxes as BB machines
 
 A box joins BB as a machine, as a Linux box does, so threads and terminals

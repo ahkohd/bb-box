@@ -2647,7 +2647,7 @@ export class Boxes {
     const booting = this.#now();
     let started: Started | void = undefined;
     if (backend.startForForkCheck) await backend.startForForkCheck(made, signal, hooks.timing);
-    else started = await backend.start(made, signal, hooks.timing, undefined, FORK_START_WAIT_MS);
+    else started = await backend.start(made, signal, hooks.timing, undefined, FORK_START_WAIT_MS, hooks.waiting);
     timings.start = this.#now() - booting;
     const running = startedGuest(made, started);
     await this.#chain(fork.source.id, async () => {
@@ -3276,10 +3276,20 @@ export class Boxes {
     const began = this.#now();
     let changed: Started | void;
     try {
-      changed = await start(current.guest!, signal, (step, ms) => {
-        timings[`start.${step}`] = ms;
-      });
+      changed = await start(
+        current.guest!,
+        signal,
+        (step, ms) => {
+          timings[`start.${step}`] = ms;
+        },
+        undefined,
+        undefined,
+        async (words) => {
+          await this.update(current, (latest) => (latest.state === "starting" ? { waitingOn: words } : {}));
+        },
+      );
     } catch (error) {
+      await this.update(current, (latest) => (latest.waitingOn ? { waitingOn: null } : {}));
       const observation = await this.#observedAfterFailure(current, signal, true);
       this.#event(current, "start-failed", who, { words: describeError(error, "Starting the box"), observed: observation });
       throw error;
@@ -4001,15 +4011,15 @@ export class Boxes {
     const moving = state === "stopping" || state === "starting";
     return this.update(box, (current) => {
       if (current.state === "releasing") return {};
-      if (state === "stopping") return { state, error: null, unrequestedStop: null };
-      if (state === "starting") return { state, error: null, timings: withoutStartSteps(current.timings) };
-      if (moving) return { state, error: null };
-      if (state === "stopped") return { state, stoppedAt: this.#now(), ...stoppedWith };
-      if (!started) return { state };
+      if (state === "stopping") return { state, error: null, unrequestedStop: null, waitingOn: null };
+      if (state === "starting") return { state, error: null, timings: withoutStartSteps(current.timings), waitingOn: null };
+      if (moving) return { state, error: null, waitingOn: null };
+      if (state === "stopped") return { state, stoppedAt: this.#now(), waitingOn: null, ...stoppedWith };
+      if (!started) return { state, waitingOn: null };
       const guest = changed && current.guest ? { guest: startedGuest(current.guest, changed) } : {};
       const gpu = startedGpu(changed);
       const size = gpu && current.size ? { size: { ...current.size, gpu } } : {};
-      return { state, timings: { ...withoutStartSteps(current.timings), ...started }, ...guest, ...size };
+      return { state, timings: { ...withoutStartSteps(current.timings), ...started }, waitingOn: null, ...guest, ...size };
     });
   }
 

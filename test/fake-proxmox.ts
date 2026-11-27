@@ -19,6 +19,7 @@ export interface FakeGuest {
   config: Record<string, string>;
   /** A started container's root filesystem size in bytes, as df gave it then. */
   filesystem?: number;
+  memoryUsed?: number;
   snapshots?: FakeSnapshot[];
   pending?: { key: string; value?: string; pending?: string; delete?: number }[];
 }
@@ -583,7 +584,8 @@ export class FakeProxmox {
       if (!guest) return this.#missing(vmid, type);
       const prefix = type === "qemu" ? "qm" : "vz";
       if (action === "current" && method === "GET") {
-        return ok({ vmid, name: guest.name, status: guest.status, uptime: guest.status === "running" ? 5 : 0, ...(guest.config.lock ? { lock: guest.config.lock } : {}) });
+        const mem = guest.status === "running" ? (guest.memoryUsed ?? 0) : 0;
+        return ok({ vmid, name: guest.name, status: guest.status, uptime: guest.status === "running" ? 5 : 0, mem, ...(guest.config.lock ? { lock: guest.config.lock } : {}) });
       }
       if (method === "POST" && action === "start") {
         if (!this.nextTaskExit.has(`${prefix}start`)) {

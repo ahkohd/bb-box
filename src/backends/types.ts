@@ -780,7 +780,14 @@ export interface Backend {
    * change the guest's facts. Throws BackendError("gone") when the guest no
    * longer exists.
    */
-  start?(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>, readyWithinMs?: number): Promise<Started | void>;
+  start?(
+    guest: Guest,
+    signal?: AbortSignal,
+    timing?: (step: string, ms: number) => void,
+    answered?: () => Promise<void>,
+    readyWithinMs?: number,
+    waiting?: (words: string | null) => Promise<void>,
+  ): Promise<Started | void>;
   /** Only where the provider can. Throws BackendError("gone") when the guest no longer exists. */
   stop?(guest: Guest, signal?: AbortSignal): Promise<void>;
 
@@ -1400,6 +1407,7 @@ export interface BackendContext {
   /** Scoped to this backend. */
   readonly storage: BackendStorage;
   readonly sharedStorage?: BackendStorage;
+  shared?<T>(key: string, create: () => T): T;
   dockerDaemonsReached?(signal?: AbortSignal): Promise<readonly DockerDaemonReached[] | null>;
   /**
    * This bb-box install's ID (018). A backend records it on every guest from

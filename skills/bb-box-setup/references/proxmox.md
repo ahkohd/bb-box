@@ -84,6 +84,15 @@ checks give its public key; the templates must then be built with it.
 | `gpu-memory-mib` | The memory a card must have free for a new server, 1024 unless set |
 | `bridge`, `subnet`, `gateway`, `addresses` | Must match `/etc/bb-box/bb-box.env` when it changed them |
 | `vmid-first`, `vmid-last` | The VMIDs boxes take. Keep other guests out of the range |
+| `start-memory-margin-mib` | Free host memory, in MiB, that must remain on the node after a guest starts, counting untouched memory from starts in the last 10 minutes. 16384 (16 GiB) unless set. On both Proxmox LXC and Proxmox QEMU |
+| `start-memory-wait-seconds` | Seconds a guest start waits for free host memory before failing, polled about every 10 s. 600 unless set; 0 refuses at once. On both Proxmox LXC and Proxmox QEMU |
+| `heavy-start-settle-seconds` | Seconds between heavy VM starts (Windows, Android, or VMs with balloon off and memory over 4 GiB) on one node. 120 unless set. Containers do not wait for this delay. On Proxmox QEMU |
+
+Both Proxmox backends on one node share a single start gate: every start checks
+host available memory minus untouched memory from recent starts just before
+booting, thread acquires go ahead of warm and spare refills, and heavy VMs boot
+one at a time with the settle delay between them. Lower
+`start-memory-margin-mib` on a small host where 16 GiB leaves no room to boot.
 
 ## GPU boxes
 

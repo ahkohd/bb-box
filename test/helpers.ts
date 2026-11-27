@@ -198,14 +198,19 @@ export function shippedKind(id: string): KindSettings {
 export function testContext(
   storage: BackendStorage = new MemoryStorage(),
   installId = "test",
-  options: { id?: string; warm?: Readonly<Record<string, number>> } = {},
+  options: { id?: string; warm?: Readonly<Record<string, number>>; shared?: Map<string, unknown> } = {},
 ): BackendContext & { errors: string[]; logs: string[]; short: (readonly WarmShortfall[])[] } {
   const errors: string[] = [];
   const logs: string[] = [];
   const short: (readonly WarmShortfall[])[] = [];
+  const sharedStore = options.shared ?? new Map<string, unknown>();
   return {
     id: options.id ?? "test",
     storage,
+    shared: <T>(key: string, create: () => T): T => {
+      if (!sharedStore.has(key)) sharedStore.set(key, create());
+      return sharedStore.get(key) as T;
+    },
     installId,
     warm: (kind) => options.warm?.[kind] ?? 0,
     hostOn: () => true,

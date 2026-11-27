@@ -5,6 +5,7 @@
 
 import type { MachineSize } from "../types.ts";
 import { PRODUCT } from "../../brand.ts";
+import { assertStartPermit, type StartPermit } from "./start-gate.ts";
 
 export interface FetchResponse {
   readonly ok: boolean;
@@ -147,6 +148,7 @@ export interface GuestStatus {
   /** The guest's lock, such as "suspended" for a VM hibernated to disk. */
   readonly lock?: string;
   readonly diskUsed?: number;
+  readonly memoryUsed?: number;
 }
 
 export interface NodeStatus {
@@ -426,7 +428,8 @@ export class Proxmox {
     await this.#change("PUT", this.#guest(vmid, "/resize"), { disk, size: `${sizeGiB}G`, digest }, signal);
   }
 
-  async start(vmid: number, signal?: AbortSignal): Promise<void> {
+  async start(vmid: number, permit: StartPermit, signal?: AbortSignal): Promise<void> {
+    assertStartPermit(permit);
     await this.#change("POST", this.#guest(vmid, "/status/start"), {}, signal);
   }
 
@@ -452,12 +455,11 @@ export class Proxmox {
     await this.#change("POST", this.#guest(vmid, "/status/suspend"), { todisk: 1 }, signal);
   }
 
-  /** Null when the guest does not exist. */
-  async status(vmid: number, signal?: AbortSignal): Promise<GuestStatus | null> {
+  async guestStatus(type: GuestType, vmid: number, signal?: AbortSignal): Promise<GuestStatus | null> {
     try {
       const data = await this.#request<Record<string, unknown>>(
         "GET",
-        this.#guest(vmid, "/status/current"),
+        `/nodes/${enc(this.node)}/${type}/${vmid}/status/current`,
         undefined,
         signal,
       );
@@ -468,11 +470,16 @@ export class Proxmox {
         uptime: typeof data?.uptime === "number" ? data.uptime : undefined,
         lock: typeof data?.lock === "string" ? data.lock : undefined,
         diskUsed: typeof data?.disk === "number" && data.disk > 0 ? data.disk : undefined,
+        memoryUsed: typeof data?.mem === "number" && data.mem >= 0 ? data.mem : undefined,
       };
     } catch (error) {
       if (error instanceof ProxmoxError && error.gone) return null;
       throw error;
     }
+  }
+
+  status(vmid: number, signal?: AbortSignal): Promise<GuestStatus | null> {
+    return this.guestStatus(this.type, vmid, signal);
   }
 
   /**

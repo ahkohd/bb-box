@@ -1,4 +1,5 @@
 import { ProxmoxError, parseTags, rootDiskGiB, type GuestSettings, type Proxmox } from "../proxmox/api.ts";
+import type { ProxmoxStartGate, StartGuestRequest } from "../proxmox/start-gate.ts";
 import { copyTags, isEarlierGuest, isHeldCopy } from "../proxmox/copies.ts";
 import { TAG, installFromDescription, installFromTags, installTag, namesOf, ownerFromDescription, ownerFromTags } from "../proxmox/owner.ts";
 import { PRODUCT } from "../../brand.ts";
@@ -249,8 +250,17 @@ export class OwnedGuests {
     }
   }
 
-  async start(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {
-    await this.#act(vmid, owner, "start", () => this.#api.start(vmid, signal), signal, "start");
+  async start(
+    vmid: number,
+    owner: GuestOwner,
+    gate: ProxmoxStartGate,
+    request: Omit<StartGuestRequest, "vmid" | "signal">,
+    signal?: AbortSignal,
+  ): Promise<number> {
+    await this.read(vmid, owner, signal);
+    return gate.start(this.#api, { ...request, vmid, signal }, (permit) =>
+      this.#act(vmid, owner, "start", () => this.#api.start(vmid, permit, signal), signal, "start"),
+    );
   }
 
   async stop(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {

@@ -176,6 +176,8 @@ Setup: [setup/proxmox-lxc/README.md](../../setup/proxmox-lxc/README.md).
 | `ssh-user` | SSH user | string | advanced | `box` | The user in the templates that BB Box and BB work as. |
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `4096` | Memory the node keeps for itself. A new box is refused if the node would have less than this left. |
 | `reserve-disk-gib` | Disk kept free (GiB) | number | advanced | `50` | Disk the node keeps free. A new box is refused if the template's storage has less free space than this. |
+| `start-memory-margin-mib` | Start memory margin (MiB) | number | advanced | `16384` | Free host memory, in MiB, that must stay free on the node after a guest starts. Untouched memory of starts from the last 10 minutes counts against it, and a start waits up to the start memory wait. |
+| `start-memory-wait-seconds` | Start memory wait (seconds) | number | advanced | `600` | Seconds a guest start waits for free host memory on the node before failing, checked about every 10 seconds. 0 refuses at once when memory is short. |
 
 ### proxmox-qemu
 
@@ -210,6 +212,9 @@ Fields left empty take proxmox-lxc's, a set at a time: `url`, `token-id`, `token
 | `ssh-user` | SSH user | string | advanced | `box` | The user in the template that BB Box and BB work as. |
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `4096` | Memory the node keeps for itself. A new box is refused if the node would have less than this left. |
 | `reserve-disk-gib` | Disk kept free (GiB) | number | advanced | `50` | Disk the node keeps free. A new box is refused if the template's storage has less free space than this. |
+| `start-memory-margin-mib` | Start memory margin (MiB) | number | advanced | `16384` | Free host memory, in MiB, that must stay free on the node after a guest starts. Untouched memory of starts from the last 10 minutes counts against it, and a start waits up to the start memory wait. |
+| `start-memory-wait-seconds` | Start memory wait (seconds) | number | advanced | `600` | Seconds a guest start waits for free host memory on the node before failing, checked about every 10 seconds. 0 refuses at once when memory is short. |
+| `heavy-start-settle-seconds` | Heavy VM start settle (seconds) | number | advanced | `120` | Seconds between heavy VM starts on one node. Holds Windows, Android and large non-ballooning VMs so each settles first; containers do not wait for this delay. |
 
 ### ssh-pool
 

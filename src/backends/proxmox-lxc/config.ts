@@ -34,6 +34,7 @@ import {
   checkConnection,
   checkNetwork,
   checkReserve,
+  checkStartMemoryGate,
   checkSsh,
   checkVmids,
   number,
@@ -44,6 +45,7 @@ import {
   type ProxmoxNetwork,
   type VmidRange,
 } from "../proxmox/settings.ts";
+import { START_MEMORY_MARGIN_DEFAULT_MIB, START_MEMORY_WAIT_DEFAULT_S } from "../proxmox/start-gate.ts";
 import { BOXES_PER_CARD, DESKTOP_GPU_MIB, MOST_GPU_MEMORY_MIB, SERVER_GPU_MIB } from "../card-check.ts";
 import {
   fieldLabel,
@@ -98,6 +100,7 @@ export interface LxcConfig {
   /** A null key means bb-box generates one and shows its public key. */
   readonly ssh: { readonly privateKey: string | null; readonly user: string };
   readonly reserve: { readonly memoryMiB: number; readonly diskGiB: number };
+  readonly startGate: { readonly memoryMarginMiB: number; readonly memoryWaitSeconds: number };
 }
 
 export const LXC_DEFAULTS = {
@@ -112,6 +115,8 @@ export const LXC_DEFAULTS = {
   sshUser: "box",
   reserveMemoryMiB: 4096,
   reserveDiskGiB: 50,
+  startMemoryMarginMiB: START_MEMORY_MARGIN_DEFAULT_MIB,
+  startMemoryWaitSeconds: START_MEMORY_WAIT_DEFAULT_S,
   boxesPerCard: BOXES_PER_CARD,
   gpuMemoryMiB: SERVER_GPU_MIB,
 } as const;
@@ -142,6 +147,8 @@ export const LXC_KEYS = {
   gpuMemoryMiB: "proxmox-lxc-gpu-memory-mib",
   reserveMemoryMiB: "proxmox-lxc-reserve-memory-mib",
   reserveDiskGiB: "proxmox-lxc-reserve-disk-gib",
+  startMemoryMarginMiB: "proxmox-lxc-start-memory-margin-mib",
+  startMemoryWaitSeconds: "proxmox-lxc-start-memory-wait-seconds",
 } as const;
 
 /** The cores, memory and disk keys are those replaced by box sizes (028). */
@@ -387,6 +394,20 @@ const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = {
     description: `The memory, in MiB, a card must have free when last read for a new server box to be placed on it. A start-up check, not a limit on what the box uses. A desktop needs at least ${DESKTOP_GPU_MIB} MiB.`,
     default: SERVER_GPU_MIB,
   },
+  [LXC_KEYS.startMemoryMarginMiB]: {
+    type: "number",
+    label: "Proxmox LXC: start memory margin (MiB)",
+    description:
+      "Free host memory, in MiB, that must stay free on the node after a guest starts. Untouched memory of starts from the last 10 minutes counts against it, and a start waits up to the start memory wait.",
+    default: LXC_DEFAULTS.startMemoryMarginMiB,
+  },
+  [LXC_KEYS.startMemoryWaitSeconds]: {
+    type: "number",
+    label: "Proxmox LXC: start memory wait (seconds)",
+    description:
+      "Seconds a guest start waits for free host memory on the node before failing, checked about every 10 seconds. 0 refuses at once when memory is short.",
+    default: LXC_DEFAULTS.startMemoryWaitSeconds,
+  },
 };
 
 const REPLACED: Readonly<Record<string, string>> = { [LXC_KEYS.perGpu]: LXC_KEYS.boxesPerCard };
@@ -421,6 +442,8 @@ const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
   [LXC_KEYS.sshUser, "advanced"],
   [LXC_KEYS.reserveMemoryMiB, "advanced"],
   [LXC_KEYS.reserveDiskGiB, "advanced"],
+  [LXC_KEYS.startMemoryMarginMiB, "advanced"],
+  [LXC_KEYS.startMemoryWaitSeconds, "advanced"],
 ];
 
 export const LXC_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(
@@ -593,6 +616,7 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
   if (isSet(values[LXC_KEYS.wholeCards]) && typeof values[LXC_KEYS.wholeCards] !== "boolean") problem(LXC_KEYS.wholeCards, "Whole cards is true or false.");
 
   const reserve = checkReserve(values, LXC_KEYS, LXC_DEFAULTS, problem);
+  const startGate = checkStartMemoryGate(values, LXC_KEYS, LXC_DEFAULTS, problem);
 
   if (problems.length) return { config: null, problems };
   return {
@@ -606,6 +630,7 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
       network,
       ssh,
       reserve,
+      startGate,
     },
   };
 }

@@ -3,7 +3,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { errors } from "undici";
 import { Proxmox, ProxmoxError, parseSizeGiB, parseTags, type ProxmoxOptions } from "../src/backends/proxmox/api.ts";
+import { ProxmoxStartGate, type StartPermit } from "../src/backends/proxmox/start-gate.ts";
 import { FAKE_TOKEN, FakeProxmox } from "./fake-proxmox.ts";
+
+const UNGATED_TEST_CONFIG = { memoryMarginMiB: 0, memoryWaitSeconds: 0, heavySettleSeconds: 0 } as const;
+
+function startThroughGate(proxmox: Proxmox, vmid: number, gate = new ProxmoxStartGate()): Promise<number> {
+  return gate.start(proxmox, { vmid, priority: "acquire", config: UNGATED_TEST_CONFIG, sleep: async () => {} });
+}
 
 function setup(options: Partial<ProxmoxOptions> = {}) {
   const api = new FakeProxmox();
@@ -81,7 +88,7 @@ test("the root disk only grows", async () => {
 test("start, status, stop and destroy with purge; a missing CT counts as deleted", async () => {
   const { api, proxmox } = setup();
   await proxmox.cloneLinked({ template: 9000, vmid: 7005, hostname: "kind-lark", pool: "bbbox" });
-  await proxmox.start(7005);
+  await startThroughGate(proxmox, 7005);
   assert.equal((await proxmox.status(7005))?.status, "running");
   await proxmox.destroy(7005);
   assert.equal(api.guests.has(7005), false);
@@ -99,7 +106,7 @@ test("task warnings are success, task errors are not", async () => {
   const { api, proxmox } = setup();
   await proxmox.cloneLinked({ template: 9000, vmid: 7006, hostname: "neat-fern" });
   api.nextTaskExit.set("vzstart", "WARNINGS: 2");
-  await proxmox.start(7006);
+  await startThroughGate(proxmox, 7006);
   api.nextTaskExit.set("vzstop", "command 'lxc-stop' failed: exit code 1");
   const error = await proxmox.stop(7006).catch((e) => e);
   assert.ok(error instanceof ProxmoxError);
@@ -111,7 +118,7 @@ test("destroy tries again while another task holds the guest's lock, until lockW
   const locked = (vmid: number) => `can't lock file '/run/lock/lxc/pve-config-${vmid}.lock' - got timeout`;
   const stops = () => api.calls.filter((call) => call.path.endsWith("/status/stop")).length;
   await proxmox.cloneLinked({ template: 9000, vmid: 7009, hostname: "slow-owl" });
-  await proxmox.start(7009);
+  await startThroughGate(proxmox, 7009);
   api.nextTaskExit.set("vzstop", locked(7009));
   await proxmox.destroy(7009);
   assert.equal(api.guests.has(7009), false);
@@ -167,12 +174,12 @@ test("every change to a VM tries again while another task holds its lock, as qme
   assert.match(api.guests.get(7102)!.config.scsi0!, /size=80G/);
 
   api.nextTaskExit.set("qmstart", locked);
-  await proxmox.start(7102);
+  await startThroughGate(proxmox, 7102);
   api.nextTaskExit.set("qmsuspend", locked);
   await proxmox.hibernate(7102);
   assert.equal(api.guests.get(7102)!.config.lock, "suspended");
   api.nextTaskExit.set("qmstart", locked);
-  await proxmox.start(7102);
+  await startThroughGate(proxmox, 7102);
   api.nextTaskExit.set("qmstop", locked);
   await proxmox.stop(7102);
   assert.equal(api.guests.get(7102)!.status, "stopped");
@@ -199,7 +206,7 @@ test("listPool returns only the pool's guests with their tags", async () => {
 test("listPool reads a guest's name, status and size from its node, as the cluster's list lags, and from that list when the node does not answer", async () => {
   const { api, proxmox } = setup();
   await proxmox.cloneLinked({ template: 9000, vmid: 7007, hostname: "wise-moss", pool: "bbbox" });
-  await proxmox.start(7007);
+  await startThroughGate(proxmox, 7007);
   const shown = (guest: { name: string; status: string; size: unknown } | undefined) => [guest?.name, guest?.status, guest?.size];
   const [fresh] = await proxmox.listPool("bbbox");
   assert.deepEqual(shown(fresh), ["wise-moss", "running", { cores: 2, memoryMiB: 4096, diskGiB: 7.8 }]);
@@ -236,7 +243,7 @@ test("a VM client clones, names, configures, runs and deletes VMs, and leaves co
   assert.equal(put.path, "/nodes/pve/qemu/7101/config");
   assert.deepEqual(put.params, { name: "bold-heron", cores: "8", memory: "16384", smbios1: "serial=MTkyLjAuMi41LzI0IDE5Mi4wLjIuMQ==,base64=1", delete: "protection" });
   assert.equal((await proxmox.config(7101)).name, "bold-heron");
-  await proxmox.start(7101);
+  await startThroughGate(proxmox, 7101);
   assert.equal((await proxmox.status(7101))?.status, "running");
   const [guest] = await proxmox.listPool("bbbox");
   assert.deepEqual([guest?.vmid, guest?.type, guest?.name], [7101, "qemu", "bold-heron"]);
@@ -284,6 +291,14 @@ test("a request after the HTTP client is destroyed says the backend stopped, not
     assert.match(String(failed), /stopped this Proxmox backend, or rebuilt it, as when Settings are saved/);
     assert.doesNotMatch(String(failed), /cannot reach the Proxmox API/);
   }
+});
+
+test("start refuses a forged permit that did not come from the start gate", async () => {
+  const { api, proxmox } = setup();
+  await proxmox.cloneLinked({ template: 9000, vmid: 7012, hostname: "forged-fox", pool: "bbbox" });
+
+  await assert.rejects(proxmox.start(7012, {} as StartPermit), /node start gate/);
+  assert.equal(api.guests.get(7012)!.status, "stopped");
 });
 
 test("parsers", () => {

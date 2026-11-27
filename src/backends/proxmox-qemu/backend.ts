@@ -41,6 +41,7 @@ import { linuxVmSnapshotPlan } from "./linux-snapshots.ts";
 import { WINDOWS_DESKTOP_NO_FORK, WINDOWS_DESKTOP_SNAPSHOTS, windowsDesktopSnapshotPlan } from "./windows-snapshots.ts";
 import { EARLIER_GUEST, copyName, copyTags, heldCopyDescription, heldCopyTags, isEarlierGuest, isHeldCopy, macOf, netKeys, netWith, randomMac, untilTemplate, withKeptTag } from "../proxmox/copies.ts";
 import { LOW, START_TAG, settle, startsLow, withStartTag } from "../proxmox/start-weight.ts";
+import { ProxmoxStartGate, sharedStartGate, type StartPriority } from "../proxmox/start-gate.ts";
 import {
   BUILD,
   TAG,
@@ -481,6 +482,7 @@ export class ProxmoxQemuBackend implements Backend {
   readonly #imageBoxes = new Set<number>();
   #androidDevices: { readonly offer: DeviceOffer | null; readonly at: number; readonly why: string | null } | null = null;
   #androidReading: Promise<void> | null = null;
+  readonly #startGates = new Map<string, ProxmoxStartGate>();
   readonly #snapshots: ProxmoxSnapshotting;
 
   /**
@@ -1132,7 +1134,7 @@ export class ProxmoxQemuBackend implements Backend {
     this.#offer(box.kind);
     const linux = this.#linuxKind(box.kind);
     const os: GuestOs = linux ? "linux" : "windows";
-    const deadline = Date.now() + (this.#options.readyTimeoutMs ?? KIND.readyTimeoutMs);
+    let deadline = Date.now() + (this.#options.readyTimeoutMs ?? KIND.readyTimeoutMs);
     const api = await this.client();
     const installId = this.#context.installId;
     const step = timed((name, ms) => hooks.timing(name, ms));
@@ -1178,7 +1180,14 @@ export class ProxmoxQemuBackend implements Backend {
       if (warm !== null) {
         const id = warm;
         await hooks.starting();
-        await step("resume", () => api.start(id, signal));
+        await step("resume", async () => {
+          deadline += await this.#startGuest(
+            api,
+            id,
+            { priority: box.threadId === SPARES ? "refill" : "acquire", kind: box.kind, os, memoryMiB: box.size.memoryMiB, waiting: hooks.waiting },
+            signal,
+          );
+        });
         // The tags first, as a running VM tagged warm is deleted. onboot was off while it was warm.
         await step("relabel", async () => {
           // A warm VM keeps its low CPU weight, and the tag, until it is ready (#888).
@@ -1222,7 +1231,14 @@ export class ProxmoxQemuBackend implements Backend {
       const grew = await this.#grow(api, id, config, box.size.diskGiB, step, signal);
       await hooks.starting();
       await step("start", async () => {
-        if ((await api.status(id, signal))?.status !== "running") await api.start(id, signal);
+        if ((await api.status(id, signal))?.status !== "running") {
+          deadline += await this.#startGuest(
+            api,
+            id,
+            { priority: box.threadId === SPARES ? "refill" : "acquire", kind: box.kind, os, memoryMiB: box.size.memoryMiB, waiting: hooks.waiting },
+            signal,
+          );
+        }
       });
       // Read while the box comes up: the size it has, as Proxmox gives it.
       const size = api.config(id, signal).then(sizeOf, () => null);
@@ -1280,20 +1296,30 @@ export class ProxmoxQemuBackend implements Backend {
    * Resumes a hibernated VM, or boots a stopped one, and waits for SSH. Then
    * sets Windows' clock, which a resume leaves at the time it stopped (039).
    */
-  async start(guest: Guest, signal?: AbortSignal, timing: (step: string, ms: number) => void = () => {}, answered?: () => Promise<void>, readyWithinMs?: number): Promise<Started | void> {
+  async start(
+    guest: Guest,
+    signal?: AbortSignal,
+    timing: (step: string, ms: number) => void = () => {},
+    answered?: () => Promise<void>,
+    readyWithinMs?: number,
+    waiting?: (words: string | null) => Promise<void>,
+  ): Promise<Started | void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
     if (!status) throw gone(vmid);
     const step = timed(timing);
-    // A hibernated VM resumes; one shut down from Windows boots.
+    const kind = this.#kindOf(guest.data?.template);
+    const os = kind.capabilities.os;
     const resumed = status.status !== "running" && status.lock === "suspended";
-    if (status.status !== "running") await step(resumed ? "resume" : "boot", () => api.start(vmid, signal));
-    const os = this.#osOf(guest.data?.template);
+    if (status.status !== "running") {
+      await step(resumed ? "resume" : "boot", () =>
+        this.#startGuest(api, vmid, { priority: "acquire", kind: kind.id, os, waiting }, signal),
+      );
+    }
     const readyWithin = this.#options.readyTimeoutMs ?? readyWithinMs ?? READY_TIMEOUT_MS;
     await this.#waitReady(vmid, readyWithin, signal, step, os);
     const desktop = os === "windows" ? await step("password", () => this.#repairExpiredPasswordAfterBoot(vmid, readyWithin, signal)) : null;
-    const kind = this.#kindOf(guest.data?.template);
     if (isLinuxVmKind(kind.id)) {
       const name = (await api.config(vmid, signal)).name;
       if (typeof name === "string" && name) await step("name", () => this.#nameLinux(vmid, name, signal));
@@ -1643,7 +1669,10 @@ export class ProxmoxQemuBackend implements Backend {
       const audit = (error: unknown, fix: string) => (error instanceof ProxmoxError && error.forbidden ? fix : `${fix} (${message(error)})`);
       try {
         const status = await api.nodeStatus(signal);
-        pass(MEMORY, `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(status.memoryTotal / MiB)} available.`);
+        pass(
+          MEMORY,
+          `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(status.memoryTotal / MiB)} available. Each guest start leaves a ${formatMiB(this.#config.startGate.memoryMarginMiB)} margin free.`,
+        );
         const { reserve } = this.#config;
         const largest = { cores: status.cpus ?? Infinity, memoryMiB: Math.floor(status.memoryTotal / MiB) - reserve.memoryMiB, diskGiB: null };
         const sizes = sizesCheck({
@@ -1875,6 +1904,32 @@ export class ProxmoxQemuBackend implements Backend {
       });
     }
     return this.#api;
+  }
+
+  #startGate(api: Proxmox): ProxmoxStartGate {
+    return sharedStartGate(this.#context, this.#config.proxmox.apiUrl, api.node, this.#startGates);
+  }
+
+  #startGuest(
+    api: Proxmox,
+    vmid: number,
+    request: {
+      readonly priority: StartPriority;
+      readonly kind?: string;
+      readonly os?: GuestOs;
+      readonly memoryMiB?: number;
+      readonly waiting?: (words: string | null) => Promise<void>;
+    },
+    signal?: AbortSignal,
+  ): Promise<number> {
+    return this.#startGate(api).start(api, {
+      vmid,
+      ...request,
+      config: this.#config.startGate,
+      now: () => this.#now(),
+      sleep: this.#options.sleep ?? pause,
+      signal,
+    });
   }
 
   #proxmox(node: string): Proxmox {
@@ -2379,7 +2434,15 @@ export class ProxmoxQemuBackend implements Backend {
         this.#context.warmShortfalls([{ kinds: [KIND.id], count: target, have: target - missing, reason: room.message ?? "No host has room for a warm box." }]);
         return;
       }
-      await this.#fill(api, size, signal);
+      try {
+        await this.#fill(api, size, signal);
+      } catch (error) {
+        if (error instanceof BackendError && error.code === "no_capacity") {
+          this.#context.warmShortfalls([{ kinds: [KIND.id], count: target, have: target - missing, reason: error.message }]);
+          return;
+        }
+        throw error;
+      }
     }
     this.#context.warmShortfalls([]);
   }
@@ -2413,7 +2476,7 @@ export class ProxmoxQemuBackend implements Backend {
       await api.configure(id, { ...this.#settings(size, id, config), onboot: false, ...(low ? LOW : {}) }, signal);
       await api.configure(id, { tags: withStartTag(tags(FILLING), low) }, signal);
       const grew = await this.#grow(api, id, config, size.diskGiB, untimed, signal);
-      await api.start(id, signal);
+      await this.#startGuest(api, id, { priority: "refill", kind: KIND.id, os: KIND.capabilities.os, memoryMiB: size.memoryMiB }, signal);
       const deadline = Date.now() + (this.#options.readyTimeoutMs ?? READY_TIMEOUT_MS);
       await this.#waitReady(id, Math.max(1_000, deadline - Date.now()), signal);
       if (grew) await this.#extend(id, signal);
@@ -2485,7 +2548,7 @@ export class ProxmoxQemuBackend implements Backend {
         await api.configure(id, this.#settings(this.#context.kind(kind.id).defaultSize, id, await api.config(id, signal)), signal);
         await api.configure(id, { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
       });
-      await step("start", () => api.start(id, signal));
+      await step("start", () => this.#startGuest(api, id, { priority: "acquire", kind: kind.id, os }, signal));
       const timeoutMs = this.#options.readyTimeoutMs ?? kind.readyTimeoutMs;
       await this.#waitReady(id, timeoutMs, signal, step, os);
       if (os === "windows") {

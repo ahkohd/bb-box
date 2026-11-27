@@ -625,6 +625,8 @@ fields against the host; Save and turn on saves them. From a terminal,
 | `ssh-user` | `box` |  |
 | `reserve-memory-mib` | `4096` | a new box is refused if the node would have less memory free |
 | `reserve-disk-gib` | `50` | a new box is refused if the template's storage has less free |
+| `start-memory-margin-mib` | `16384` | free host memory that must remain on the node after a guest starts, counting untouched memory from recent starts |
+| `start-memory-wait-seconds` | `600` | seconds a start waits for free memory before failing, checked about every 10 s; 0 refuses at once |
 
 - Linux templates serve `linux`, GPU desktop templates `linux-desktop`, CPU
   desktop templates `linux-desktop-cpu`, and Wayland desktop templates
@@ -652,6 +654,18 @@ fields against the host; Save and turn on saves them. From a terminal,
   its CPUs, up to 10 s later. A box with other cores is a new clone. If the
   configuration's `kinds` part gives a kind's default size other cores, its
   warm boxes serve only boxes with the template's cores.
+- Every guest start on a Proxmox node, including warm and spare refills, image
+  trial boxes, restores, forks, resumes and resizes, passes through one start
+  gate shared by Proxmox LXC and Proxmox QEMU on that node. Right before
+  starting a guest, BB Box reads the node's available memory and subtracts any
+  configured memory that guests started through the gate in the last 10 minutes
+  have not touched yet. The remaining memory must cover the guest's memory plus
+  `start-memory-margin-mib` (16 GiB by default). When memory is short, the
+  start waits and checks again about every 10 s for up to
+  `start-memory-wait-seconds` (600 s by default), showing the shortfall on the
+  box's progress, then fails rather than starting anyway. Thread acquires go
+  ahead of warm and spare refills when both wait, and a refill that times out
+  gives up quietly until its next top-up.
 
 ## Check it worked
 
