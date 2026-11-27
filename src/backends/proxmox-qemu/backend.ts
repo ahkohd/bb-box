@@ -544,6 +544,7 @@ export class ProxmoxQemuBackend implements Backend {
               kind: kind.id,
               os: kind.capabilities.os,
               memoryMiB: configuredMemoryMiB(guestConfig),
+              heavy: true,
               priority: "acquire",
               config: this.#config.startGate,
               waiting,
@@ -1185,6 +1186,18 @@ export class ProxmoxQemuBackend implements Backend {
         build = typeof previous.data?.build === "string" ? previous.data.build : null;
         resumed = true;
       }
+      if (vmid === null && box.threadId === SPARES) {
+        const admitted = await this.#startGate(api).canStartNow(api, {
+          memoryMiB: box.size.memoryMiB,
+          kind: box.kind,
+          os,
+          priority: "refill",
+          config: { ...this.#config.startGate, memoryWaitSeconds: 0 },
+          signal,
+          now: () => this.#now(),
+        });
+        if (!admitted.ok) throw new BackendError("no_capacity", admitted.reason);
+      }
       // Linux boxes have no warm pool here: their spares wait hibernated (#612).
       if (vmid === null && !linux) {
         const member = await step("warm", () =>
@@ -1238,18 +1251,6 @@ export class ProxmoxQemuBackend implements Backend {
         return this.#guest(api.node, id, template, box.boxId, await size, build);
       }
       if (vmid === null) {
-        if (box.threadId === SPARES) {
-          const admitted = await this.#startGate(api).canStartNow(api, {
-            memoryMiB: box.size.memoryMiB,
-            kind: box.kind,
-            os,
-            priority: "refill",
-            config: { ...this.#config.startGate, memoryWaitSeconds: 0 },
-            signal,
-            now: () => this.#now(),
-          });
-          if (!admitted.ok) throw new BackendError("no_capacity", admitted.reason);
-        }
         // Time spent waiting for a template that is being replaced shows apart from the clone.
         let away: number | null = null;
         const cloning = performance.now();

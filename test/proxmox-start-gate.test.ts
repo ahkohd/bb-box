@@ -975,6 +975,7 @@ test("J: rolling back a QEMU snapshot with memory passes through the gate and re
     () => qemu.startRollbackWithMemory(vmid, `bb${snapId}`, {} as never),
     /must go through the node start gate/,
   );
+  await assert.rejects(qemu.startRollback(vmid, `bb${snapId}`), /must go through the node start gate/);
 
   api.memory = { total: 64 * GIB, available: 10 * GIB };
   const waitingWords: (string | null)[] = [];
@@ -1210,4 +1211,124 @@ test("abort ends a memory wait or heavy settle wait at once", async () => {
   heavyController.abort(reason);
   await assert.rejects(heavyWait, (error) => error === reason);
   assert.equal(api.guests.get(9741)!.status, "stopped");
+});
+
+const SERVER_ERROR = { ok: false, status: 500, statusText: "proxy error", text: async () => JSON.stringify({ data: null }) };
+
+test("a failed read of the node's VMs admits nothing, keeps waiting, and fails at the end of the wait", async () => {
+  const clock = new FakeClock();
+  const api = new FakeProxmox();
+  api.now = clock.now;
+  api.addTemplate(9000);
+  api.memory = { total: 64 * GIB, available: 48 * GIB };
+  const lxc = makeClient(api, "lxc");
+  await lxc.cloneLinked({ template: 9000, vmid: 7101, hostname: "unread-1", pool: "bbbox" });
+  await lxc.cloneLinked({ template: 9000, vmid: 7102, hostname: "unread-2", pool: "bbbox" });
+  let failing = true;
+  api.intercept = (call) => (failing && call.method === "GET" && call.path === "/nodes/pve/qemu" ? SERVER_ERROR : undefined);
+  const gate = new ProxmoxStartGate();
+
+  const recovers = gate.start(lxc, { vmid: 7101, memoryMiB: 4096, priority: "acquire", config: { ...DEFAULT_GATE, memoryWaitSeconds: 60 }, now: clock.now, sleep: clock.sleep });
+  await clock.advance(10_000);
+  assert.equal(api.guests.get(7101)!.status, "stopped");
+
+  failing = false;
+  await clock.advance(10_000);
+  await recovers;
+  assert.equal(api.guests.get(7101)!.status, "running");
+
+  failing = true;
+  const gives = gate.start(lxc, { vmid: 7102, memoryMiB: 4096, priority: "acquire", config: { ...DEFAULT_GATE, memoryWaitSeconds: 20 }, now: clock.now, sleep: clock.sleep }).catch((error: unknown) => error);
+  await clock.advance(30_000);
+  const error = await gives;
+
+  assert.ok(error instanceof BackendError);
+  assert.equal(error.code, "no_capacity");
+  assert.match(error.message, /could not read pve's memory/);
+  assert.equal(api.guests.get(7102)!.status, "stopped");
+  api.intercept = undefined;
+});
+
+test("a heavy settle obeys the wait: a start that may not wait fails at once, and one that may fails at the end of its wait", async () => {
+  const clock = new FakeClock();
+  const api = new FakeProxmox();
+  api.now = clock.now;
+  api.addVmTemplate(9104);
+  api.memory = { total: 128 * GIB, available: 96 * GIB };
+  api.guests.set(5800, { vmid: 5800, type: "qemu", name: "booting-win", status: "running", template: false, config: { ostype: "win11", balloon: "0", memory: "8192" }, startedAt: clock.now() - 30_000, memoryUsed: 8 * GIB });
+  const qemu = makeClient(api, "qemu");
+  await qemu.cloneLinked({ template: 9104, vmid: 9702, hostname: "win-settle", pool: "bbbox" });
+  const gate = new ProxmoxStartGate();
+  const request = { vmid: 9702, kind: "windows-desktop", os: "windows" as const, memoryMiB: 8192, priority: "refill" as const, now: clock.now, sleep: clock.sleep };
+
+  const now = await gate.start(qemu, { ...request, config: { ...DEFAULT_GATE, memoryWaitSeconds: 0 } }).catch((error: unknown) => error);
+  assert.ok(now instanceof BackendError);
+  assert.match(now.message, /started too recently/);
+
+  const later = gate.start(qemu, { ...request, priority: "acquire", config: { ...DEFAULT_GATE, memoryWaitSeconds: 30 } }).catch((error: unknown) => error);
+  await clock.advance(40_000);
+  const error = await later;
+
+  assert.ok(error instanceof BackendError);
+  assert.match(error.message, /started too recently within 30 s/);
+  assert.equal(api.guests.get(9702)!.status, "stopped");
+});
+
+test("a guest already starting is never admitted twice, and starts in flight hold their memory until they finish", async () => {
+  const clock = new FakeClock();
+  const api = new FakeProxmox();
+  api.now = clock.now;
+  api.memory = { total: 128 * GIB, available: 36 * GIB };
+  const lxc = makeClient(api, "lxc");
+  const gate = new ProxmoxStartGate();
+  const config = { ...DEFAULT_GATE, memoryWaitSeconds: 120 };
+  const ran: number[] = [];
+  const finishes = new Map<number, () => void>();
+  const slowStart = (vmid: number) => () => {
+    ran.push(vmid);
+    return new Promise<void>((resolve) => finishes.set(vmid, resolve));
+  };
+
+  const first = gate.start(lxc, { vmid: 7201, memoryMiB: 16384, priority: "acquire", config, now: clock.now, sleep: clock.sleep }, slowStart(7201));
+  const again = gate.start(lxc, { vmid: 7201, memoryMiB: 16384, priority: "acquire", config, now: clock.now, sleep: clock.sleep }, slowStart(7201));
+  const other = gate.start(lxc, { vmid: 7202, memoryMiB: 16384, priority: "acquire", config, now: clock.now, sleep: clock.sleep }, slowStart(7202));
+  await clock.advance(20_000);
+  assert.deepEqual(ran, [7201]);
+
+  finishes.get(7201)!();
+  await first;
+  await clock.advance(10_000);
+  assert.equal(ran.length, 2);
+  assert.equal(ran.filter((vmid) => vmid === 7201).length + ran.filter((vmid) => vmid === 7202).length, 2);
+
+  for (const finish of finishes.values()) finish();
+  await clock.advance(10_000);
+  for (const finish of finishes.values()) finish();
+  await Promise.all([again, other]);
+  assert.deepEqual([...ran].sort(), [7201, 7201, 7202]);
+});
+
+test("a refill that fits waits while a thread's box waits for memory, and starts once that box gives up", async () => {
+  const clock = new FakeClock();
+  const api = new FakeProxmox();
+  api.now = clock.now;
+  api.addTemplate(9000);
+  api.memory = { total: 128 * GIB, available: 30 * GIB };
+  const lxc = makeClient(api, "lxc");
+  await lxc.cloneLinked({ template: 9000, vmid: 7301, hostname: "big-acquire", pool: "bbbox" });
+  await lxc.cloneLinked({ template: 9000, vmid: 7302, hostname: "small-refill", pool: "bbbox" });
+  const gate = new ProxmoxStartGate();
+  const stop = new AbortController();
+
+  const acquire = gate.start(lxc, { vmid: 7301, memoryMiB: 16384, priority: "acquire", config: DEFAULT_GATE, now: clock.now, sleep: clock.sleep, signal: stop.signal }).catch((error: unknown) => error);
+  const refill = gate.start(lxc, { vmid: 7302, memoryMiB: 4096, priority: "refill", config: DEFAULT_GATE, now: clock.now, sleep: clock.sleep });
+  await clock.advance(30_000);
+  assert.equal(api.guests.get(7302)!.status, "stopped");
+
+  stop.abort(new Error("released"));
+  await acquire;
+  await clock.advance(10_000);
+  await refill;
+  assert.equal(api.guests.get(7302)!.status, "running");
+  assert.equal(api.guests.get(7301)!.status, "stopped");
 });

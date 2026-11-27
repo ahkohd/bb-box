@@ -589,7 +589,10 @@ export class Proxmox {
     return this.#begin("DELETE", this.#guest(vmid, `/snapshot/${enc(name)}`), force ? { force: 1 } : {}, signal);
   }
 
-  startRollback(vmid: number, name: string, signal?: AbortSignal): Promise<string> {
+  async startRollback(vmid: number, name: string, signal?: AbortSignal): Promise<string> {
+    if (this.type === "qemu" && (await this.snapshots(vmid, signal)).find((snapshot) => snapshot.name === name)?.vmstate !== false) {
+      throw new Error(`Rolling back VM ${vmid} to ${name}, which holds memory or could not be read, starts the VM, so it must go through the node start gate.`);
+    }
     return this.#begin("POST", this.#guest(vmid, `/snapshot/${enc(name)}/rollback`), {}, signal);
   }
 

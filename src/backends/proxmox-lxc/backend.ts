@@ -2535,7 +2535,7 @@ export class ProxmoxLxcBackend implements Backend {
     if (to.memoryMiB !== from.memoryMiB) parts.push({ part: "memory", from: from.memoryMiB, to: to.memoryMiB, way: "live" });
     if (to.diskGiB !== null && to.diskGiB !== from.diskGiB) parts.push({ part: "disk", from: from.diskGiB, to: to.diskGiB, way: "live" });
     const storage = String(config.rootfs ?? "").split(":")[0] || null;
-    const room = await this.#resizeRoom(api, storage, from, to, pending, signal);
+    const room = await this.#resizeRoom(api, storage, from, to, false, pending, signal);
     if (to.gpu === undefined || !this.#resizesGpu(offer)) return { parts, room, downSeconds: null };
     const facts = await this.#gpuFacts(api, guest, offer, config, signal);
     const userspace = await this.#userspaceFor(api, facts, to.gpu, signal);
@@ -2545,7 +2545,8 @@ export class ProxmoxLxcBackend implements Backend {
     const decided = await this.#decideGpu(api, facts, offer, to.gpu, view, guests, userspace, signal);
     const gpu = await this.#gpuChange(api, facts, offer, to.gpu, decided, view, guests, agreed);
     if (gpu.way !== "restart" || gpu.refusal) return { parts, room, downSeconds: null, gpu };
-    return { parts: parts.map((part) => (part.part === "disk" ? part : { ...part, way: "restart" as const })), room, downSeconds: GPU_RESTART_SECONDS, gpu };
+    const restartRoom = await this.#resizeRoom(api, storage, from, to, true, pending, signal);
+    return { parts: parts.map((part) => (part.part === "disk" ? part : { ...part, way: "restart" as const })), room: restartRoom, downSeconds: GPU_RESTART_SECONDS, gpu };
   }
 
   /**
@@ -3096,7 +3097,7 @@ export class ProxmoxLxcBackend implements Backend {
    * the memory and disk it adds, kept within the node's reserves, and cores
    * within the node's CPU threads. A shrink always fits.
    */
-  async #resizeRoom(api: Proxmox, storage: string | null, from: MachineSize, to: MachineSize, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
+  async #resizeRoom(api: Proxmox, storage: string | null, from: MachineSize, to: MachineSize, restart: boolean, pending: readonly Pending[], signal?: AbortSignal): Promise<Capacity> {
     const [node, disk] = await Promise.all([api.nodeStatus(signal), storage ? api.storageStatus(storage, signal) : Promise.resolve(null)]);
     const reserve = this.#config.reserve;
     const heldMiB = [...this.#acquiring.values()].reduce((sum, acquire) => sum + (acquire.held ?? 0), 0);
@@ -3104,19 +3105,34 @@ export class ProxmoxLxcBackend implements Backend {
     const memoryTotal = Math.floor(node.memoryTotal / MiB);
     const memoryUsed = memoryTotal - Math.floor(node.memoryAvailable / MiB) + pendingMiB;
     const memoryFree = memoryTotal - memoryUsed;
-    const limits: Limit[] = [{ resource: "memory", used: memoryUsed, total: memoryTotal, reserve: reserve.memoryMiB, unit: "MiB" }];
+    const effectiveMargin = effectiveStartMemoryMarginMiB(this.#config.startGate.memoryMarginMiB, node.memoryTotal);
+    const keepMemoryMiB = restart ? Math.max(reserve.memoryMiB, effectiveMargin) : reserve.memoryMiB;
+    const limits: Limit[] = [{ resource: "memory", used: memoryUsed, total: memoryTotal, reserve: keepMemoryMiB, unit: "MiB" }];
     const problems: string[] = [];
     if (node.cpus !== null && to.cores > node.cpus) {
       problems.push(`${api.node} has ${node.cpus} CPU threads, fewer than the ${to.cores} cores asked for. Ask for at most ${node.cpus} cores.`);
     }
-    const memory = to.memoryMiB - from.memoryMiB;
-    if (memory > 0 && memoryFree - memory < reserve.memoryMiB) {
+    if (restart && memoryTotal > 0 && to.memoryMiB + effectiveMargin > memoryTotal) {
       problems.push(
-        memory > memoryFree
-          ? `${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(memory)} more the box needs. Release a box or ask for less memory.`
-          : `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so the ${formatMiB(memory)} more the box needs does not fit. ` +
-              `Release a box, ask for less memory, or lower the memory kept free in ${PRODUCT}'s settings.`,
+        `${api.node} has ${formatMiB(memoryTotal)} of memory and keeps a ${formatMiB(effectiveMargin)} start memory margin, ` +
+          `so a box with ${formatMiB(to.memoryMiB)} memory cannot fit. Ask for less memory, or lower the start memory margin in ${PRODUCT}'s settings.`,
       );
+    }
+    const memory = to.memoryMiB - from.memoryMiB;
+    if (problems.length === 0 && memory > 0 && memoryFree - memory < keepMemoryMiB) {
+      if (memory > memoryFree) {
+        problems.push(`${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than the ${formatMiB(memory)} more the box needs. Release a box or ask for less memory.`);
+      } else if (restart && effectiveMargin > reserve.memoryMiB) {
+        problems.push(
+          `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps a ${formatMiB(effectiveMargin)} start memory margin, ` +
+            `so the ${formatMiB(memory)} more the box needs does not fit. Release a box, ask for less memory, or lower the start memory margin in ${PRODUCT}'s settings.`,
+        );
+      } else {
+        problems.push(
+          `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, so the ${formatMiB(memory)} more the box needs does not fit. ` +
+            `Release a box, ask for less memory, or lower the memory kept free in ${PRODUCT}'s settings.`,
+        );
+      }
     }
     const grow = to.diskGiB !== null ? Math.max(0, to.diskGiB - (from.diskGiB ?? to.diskGiB)) : 0;
     if (disk) {

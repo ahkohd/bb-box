@@ -659,8 +659,11 @@ fields against the host; Save and turn on saves them. From a terminal,
   gate shared by Proxmox LXC and Proxmox QEMU on that node (decision 106). Right
   before starting a guest, BB Box reads the node's available memory and
   subtracts untouched RAM from any running heavy VM on the node (Windows,
-  Android, or a non-ballooning VM over 4 GiB, whether started by this install,
-  another install or by hand) whose uptime is under 10 minutes. Containers and
+  Android, or a non-ballooning VM over 4 GiB) whose uptime is under 10 minutes
+  and that the backend's token can see: the VMs in its pool, whoever started
+  them. Memory that other VMs have already touched still shows in the node's
+  available memory, but their untouched memory and their boot settle do not.
+  Guests the gate admitted that are still starting count in full. Containers and
   ballooned VMs do not count as held. The remaining memory must cover the
   guest's memory plus the effective `start-memory-margin-mib` (16 GiB by
   default, capped at a quarter of the node's total memory and checked before

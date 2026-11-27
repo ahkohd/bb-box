@@ -623,6 +623,7 @@ export class ProxmoxSnapshotting {
     const vmid = this.#guests.vmid(guest);
     const name = snapshotName(ref.id);
     let upid: string;
+    const rolledWithMemory: { outcome: { readonly failure: string | null } | { readonly error: unknown } | null } = { outcome: null };
     try {
       if (!(await this.#guests.still(api, guest, signal))) throw new SnapshotFailed(`Guest ${vmid} is no longer the box's.`);
       const listed = await this.#listed(api, vmid, name, signal);
@@ -642,12 +643,17 @@ export class ProxmoxSnapshotting {
         if (!this.#guests.gateStart) throw new SnapshotFailed("Restoring a VM snapshot with memory requires the node start gate.");
         const snapConfig = await api.snapshotConfig(vmid, name, signal).catch(() => config);
         const startConfig = Object.keys(snapConfig).length ? snapConfig : config;
-        let rolledUpid = "";
         await this.#guests.gateStart(api, guest, vmid, startConfig, hooks.waiting, signal, async (permit) => {
           await hooks.submitting();
-          rolledUpid = await askToRollBack(api, vmid, name, signal, permit);
+          const rolled = await askToRollBack(api, vmid, name, signal, permit);
+          try {
+            await hooks.task({ ref: rolled, host: api.node });
+            rolledWithMemory.outcome = { failure: await this.#waited(api, rolled, signal) };
+          } catch (error) {
+            rolledWithMemory.outcome = { error };
+          }
         });
-        upid = rolledUpid;
+        upid = "";
       } else {
         await hooks.submitting();
         upid = await askToRollBack(api, vmid, name, signal);
@@ -657,8 +663,15 @@ export class ProxmoxSnapshotting {
       if (error instanceof ProxmoxError && error.status >= 400) throw new SnapshotFailed(taskWords(error));
       throw error;
     }
-    await hooks.task({ ref: upid, host: api.node });
-    const failure = await this.#waited(api, upid, signal);
+    let failure: string | null;
+    const outcome = rolledWithMemory.outcome;
+    if (outcome) {
+      if ("error" in outcome) throw outcome.error;
+      failure = outcome.failure;
+    } else {
+      await hooks.task({ ref: upid, host: api.node });
+      failure = await this.#waited(api, upid, signal);
+    }
     if (failure) throw new RestoreChanged(`Proxmox's rollback task failed: ${failure.replace(/\.$/, "")}.`);
   }
 

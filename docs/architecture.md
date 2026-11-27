@@ -905,7 +905,9 @@ the API client, ownership tags, TLS pin and settings. Set up by
   106), including QEMU snapshot rollbacks that include memory (`vmstate`). Right
   before starting, it reads running QEMU VMs from the node and subtracts
   untouched memory from any running heavy VM (Windows, Android, or a
-  non-ballooning VM over 4 GiB) whose uptime is under 10 minutes; containers and
+  non-ballooning VM over 4 GiB) whose uptime is under 10 minutes and that the
+  token can see (its pool), plus the full memory of guests it admitted that are
+  still starting; a failed read admits nothing; containers and
   ballooned VMs never count as held. The remaining available memory must cover
   the guest's memory plus the effective `start-memory-margin-mib` (16 GiB by
   default, capped at a quarter of the node's total memory and enforced at

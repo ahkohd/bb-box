@@ -73,8 +73,9 @@ interface InFlightStart {
   readonly admittedAt: number;
 }
 
-interface RunningHeavy {
+interface RecentStart {
   readonly vmid: number;
+  readonly heavy: boolean;
   readonly uptimeSeconds: number;
   readonly untouchedBytes: number;
   readonly inFlight: boolean;
@@ -82,8 +83,16 @@ interface RunningHeavy {
 
 interface NodeReading {
   readonly nodeStatus: NodeStatus;
-  readonly runningHeavy: readonly RunningHeavy[];
+  readonly recent: readonly RecentStart[];
 }
+
+interface HeavyVerdict {
+  readonly heavy: boolean;
+  readonly memoryMaxBytes: number;
+  readonly uptimeSeconds: number;
+}
+
+const CONFIG_READS_AT_ONCE = 4;
 
 interface Admission {
   readonly ok: boolean;
@@ -262,6 +271,25 @@ function heavyWaitWords(node: string, remainingSeconds: number): string {
   return `Waiting ${remainingSeconds} s for a recent heavy VM start on ${node} to settle.`;
 }
 
+function settleTimeoutError(node: string, waitSeconds: number): BackendError {
+  const waited = waitSeconds > 0 ? ` within ${waitSeconds} s` : "";
+  return new BackendError(
+    "no_capacity",
+    `A heavy VM on ${node} started too recently${waited}, and ${PRODUCT} boots one heavy VM at a time. ` +
+      `Try again in a few minutes, or lower the heavy start settle time in ${PRODUCT}'s settings.`,
+  );
+}
+
+function queueTimeoutError(node: string, waitSeconds: number): BackendError {
+  const waited = waitSeconds > 0 ? ` for ${waitSeconds} s` : "";
+  return new BackendError("no_capacity", `The guest waited in ${node}'s start queue${waited} behind other starts. Try again in a few minutes.`);
+}
+
+function unreadNodeError(node: string, error: unknown): BackendError {
+  const why = error instanceof Error ? error.message : String(error);
+  return new BackendError("no_capacity", `${PRODUCT} could not read ${node}'s memory and recent VM starts, so it did not start the guest: ${why}`);
+}
+
 function noCapacityError(node: string, admission: Admission, waitSeconds: number): BackendError {
   const shortfall = formatGiBFromBytes(admission.shortfallBytes, true);
   const need = formatGiBFromBytes(admission.needBytes);
@@ -283,7 +311,7 @@ function kindFromTags(tags: readonly string[]): string | undefined {
   return tags.find((tag) => tag.startsWith("kind."))?.slice("kind.".length);
 }
 
-async function isNodeGuestHeavy(api: Proxmox, guest: NodeGuest, signal?: AbortSignal): Promise<boolean> {
+async function readNodeGuestHeavy(api: Proxmox, guest: NodeGuest, signal?: AbortSignal): Promise<boolean> {
   const kind = kindFromTags(guest.tags);
   if (kind === "windows-desktop" || kind === "android") return true;
 
@@ -304,7 +332,7 @@ function settleRemainingForReading(
   heavySettleSeconds: number,
 ): number {
   if (!heavy) return 0;
-  const others = reading.runningHeavy.filter((entry) => entry.vmid !== startingVmid);
+  const others = reading.recent.filter((entry) => entry.heavy && entry.vmid !== startingVmid);
   if (others.length === 0) return 0;
   if (others.some((entry) => entry.inFlight)) return Math.max(1, heavySettleSeconds);
   if (heavySettleSeconds <= 0) return 0;
@@ -318,7 +346,7 @@ function settleRemainingForReading(
 
 function heldBytesForReading(reading: NodeReading, startingVmid: number | undefined): number {
   let sum = 0;
-  for (const entry of reading.runningHeavy) {
+  for (const entry of reading.recent) {
     if (entry.vmid !== startingVmid) sum += entry.untouchedBytes;
   }
   return sum;
@@ -331,6 +359,7 @@ export class ProxmoxStartGate {
   #wakeController: AbortController | null = null;
   readonly #inFlight = new Map<number, InFlightStart>();
   readonly #waiters: StartWaiter[] = [];
+  readonly #heavyVerdicts = new Map<number, HeavyVerdict>();
 
   async canStartNow(api: Proxmox, request: CanStartRequest): Promise<CanStartResult> {
     if (request.signal?.aborted) throw request.signal.reason;
@@ -338,12 +367,22 @@ export class ProxmoxStartGate {
       return { ok: false, reason: `Another start is waiting on ${api.node}.` };
     }
 
+    if (request.vmid !== undefined && this.#inFlight.has(request.vmid)) {
+      return { ok: false, reason: `Guest ${request.vmid} is already starting on ${api.node}.` };
+    }
+
     const now = (request.now ?? Date.now)();
     const heavy = request.heavy !== undefined
       ? (api.type === "qemu" && request.heavy)
       : isHeavyGuest(api.type, {}, request.memoryMiB, request.kind, request.os);
 
-    const reading = await this.#readNodeState(api, now, Math.max(RECENT_BOOT_WINDOW_S, request.config.heavySettleSeconds), request.signal);
+    let reading: NodeReading;
+    try {
+      reading = await this.#readNodeState(api, now, Math.max(RECENT_BOOT_WINDOW_S, request.config.heavySettleSeconds), request.signal);
+    } catch (error) {
+      if (request.signal?.aborted) throw error;
+      return { ok: false, reason: unreadNodeError(api.node, error).message };
+    }
     const settleSeconds = settleRemainingForReading(reading, request.vmid, heavy, request.config.heavySettleSeconds);
     if (settleSeconds > 0) {
       return { ok: false, reason: heavyWaitWords(api.node, settleSeconds) };
@@ -469,41 +508,49 @@ export class ProxmoxStartGate {
   }
 
   async #readNodeState(api: Proxmox, now: number, maxWindowSeconds: number, signal?: AbortSignal): Promise<NodeReading> {
-    const [nodeStatus, qemuGuests] = await Promise.all([
-      api.nodeStatus(signal),
-      api.nodeGuests("qemu", signal).catch((error: unknown) => {
-        if (signal?.aborted) throw error;
-        return [] as NodeGuest[];
-      }),
-    ]);
+    const [nodeStatus, qemuGuests] = await Promise.all([api.nodeStatus(signal), api.nodeGuests("qemu", signal)]);
 
-    const runningHeavy: RunningHeavy[] = [];
-    const seenRunning = new Set<number>();
+    const running = qemuGuests.filter((guest) => guest.status === "running" && !guest.template);
+    const seenRunning = new Set(running.map((guest) => guest.vmid));
+    for (const vmid of [...this.#heavyVerdicts.keys()]) if (!seenRunning.has(vmid)) this.#heavyVerdicts.delete(vmid);
 
-    for (const guest of qemuGuests) {
-      if (guest.status !== "running" || guest.template) continue;
-      seenRunning.add(guest.vmid);
-      if (guest.uptime >= maxWindowSeconds) continue;
-      if (!(await isNodeGuestHeavy(api, guest, signal))) continue;
-      const untouchedBytes = guest.uptime < RECENT_BOOT_WINDOW_S
-        ? Math.max(0, guest.memoryMaxBytes - guest.memoryUsedBytes)
-        : 0;
-      runningHeavy.push({
-        vmid: guest.vmid,
-        uptimeSeconds: guest.uptime,
-        untouchedBytes,
-        inFlight: this.#inFlight.has(guest.vmid),
-      });
+    const young = running.filter((guest) => guest.uptime < maxWindowSeconds);
+    const verdicts = await this.#heavyOf(api, young, signal);
+
+    const recent: RecentStart[] = [];
+    for (const guest of young) {
+      if (!verdicts.get(guest.vmid)) continue;
+      const untouchedBytes = guest.uptime < RECENT_BOOT_WINDOW_S ? Math.max(0, guest.memoryMaxBytes - guest.memoryUsedBytes) : 0;
+      recent.push({ vmid: guest.vmid, heavy: true, uptimeSeconds: guest.uptime, untouchedBytes, inFlight: this.#inFlight.has(guest.vmid) });
     }
 
     for (const [vmid, flight] of this.#inFlight) {
-      if (!flight.heavy || seenRunning.has(vmid)) continue;
+      if (flight.heavy && seenRunning.has(vmid)) continue;
       const uptimeSeconds = Math.max(0, Math.floor((now - flight.admittedAt) / 1000));
-      const untouchedBytes = uptimeSeconds < RECENT_BOOT_WINDOW_S ? flight.memoryMiB * MIB : 0;
-      runningHeavy.push({ vmid, uptimeSeconds, untouchedBytes, inFlight: true });
+      recent.push({ vmid, heavy: flight.heavy, uptimeSeconds, untouchedBytes: flight.memoryMiB * MIB, inFlight: true });
     }
 
-    return { nodeStatus, runningHeavy };
+    return { nodeStatus, recent };
+  }
+
+  async #heavyOf(api: Proxmox, guests: readonly NodeGuest[], signal?: AbortSignal): Promise<Map<number, boolean>> {
+    const verdicts = new Map<number, boolean>();
+    const unknown: NodeGuest[] = [];
+    for (const guest of guests) {
+      const known = this.#heavyVerdicts.get(guest.vmid);
+      if (known && known.memoryMaxBytes === guest.memoryMaxBytes && guest.uptime >= known.uptimeSeconds) verdicts.set(guest.vmid, known.heavy);
+      else unknown.push(guest);
+    }
+
+    for (let at = 0; at < unknown.length; at += CONFIG_READS_AT_ONCE) {
+      const batch = unknown.slice(at, at + CONFIG_READS_AT_ONCE);
+      const heavy = await Promise.all(batch.map((guest) => readNodeGuestHeavy(api, guest, signal)));
+      batch.forEach((guest, index) => {
+        verdicts.set(guest.vmid, heavy[index]!);
+        this.#heavyVerdicts.set(guest.vmid, { heavy: heavy[index]!, memoryMaxBytes: guest.memoryMaxBytes, uptimeSeconds: guest.uptime });
+      });
+    }
+    return verdicts;
   }
 
   async #runAdmitted(waiter: StartWaiter, permit: StartPermit, flight: InFlightStart): Promise<void> {
@@ -539,14 +586,22 @@ export class ProxmoxStartGate {
         ...this.#waiters.map((waiter) => waiter.config.heavySettleSeconds),
       );
 
-      let reading: NodeReading;
+      let reading: NodeReading | null = null;
+      let unread: unknown = null;
       try {
         reading = await this.#readNodeState(reader.api, reader.now(), maxWindowSeconds, reader.signal);
       } catch (error) {
-        if (this.#remove(reader)) {
-          await this.#clearWaitingQuietly(reader);
-          reader.reject(reader.signal?.aborted ? reader.signal.reason : error);
+        if (reader.signal?.aborted) {
+          this.#dropAborted();
+          continue;
         }
+        unread = error;
+      }
+
+      if (!reading) {
+        await this.#expireUnread(unread);
+        if (this.#waiters.length === 0) break;
+        await this.#sleepUnlessWoken(seenWakeSeq);
         continue;
       }
 
@@ -557,8 +612,11 @@ export class ProxmoxStartGate {
       this.#waiters.sort((a, b) => a.priority - b.priority || a.seq - b.seq);
 
       let admittedAny = false;
+      const acquireWaiting = this.#waiters.some((waiter) => !waiter.aborted && waiter.priority === 0);
       for (const candidate of [...this.#waiters]) {
         if (candidate.aborted) continue;
+        if (candidate.priority > 0 && acquireWaiting) break;
+        if (this.#inFlight.has(candidate.vmid)) continue;
         const settleSeconds = settleRemainingForReading(reading, candidate.vmid, candidate.heavy, candidate.config.heavySettleSeconds);
         if (settleSeconds > 0) continue;
 
@@ -584,45 +642,55 @@ export class ProxmoxStartGate {
 
       if (admittedAny) continue;
 
-      let expiredAny = false;
       for (const waiter of [...this.#waiters]) {
         if (waiter.aborted) continue;
+        const waitedMs = Math.max(0, waiter.now() - waiter.enqueuedAt);
+        const timedOut = waitedMs >= waiter.config.memoryWaitSeconds * 1000;
         const settleSeconds = settleRemainingForReading(reading, waiter.vmid, waiter.heavy, waiter.config.heavySettleSeconds);
         if (settleSeconds > 0) {
-          await this.#reportWaiting(waiter, heavyWaitWords(waiter.api.node, settleSeconds));
+          if (timedOut) await this.#expire(waiter, settleTimeoutError(waiter.api.node, waiter.config.memoryWaitSeconds));
+          else await this.#reportWaiting(waiter, heavyWaitWords(waiter.api.node, settleSeconds));
           continue;
         }
 
         const effectiveMarginMiB = effectiveStartMemoryMarginMiB(waiter.config.memoryMarginMiB, reading.nodeStatus.memoryTotal);
         const recentHeldBytes = heldBytesForReading(reading, waiter.vmid);
         const admission = evaluateAdmission(reading.nodeStatus.memoryAvailable, recentHeldBytes, waiter.memoryMiB, effectiveMarginMiB);
-        const waitedMs = Math.max(0, waiter.now() - waiter.enqueuedAt);
-        const maxWaitMs = waiter.config.memoryWaitSeconds * 1000;
-
-        if (!admission.ok && waitedMs >= maxWaitMs) {
-          if (this.#remove(waiter)) {
-            await this.#clearWaitingQuietly(waiter);
-            waiter.reject(noCapacityError(waiter.api.node, admission, waiter.config.memoryWaitSeconds));
-            expiredAny = true;
-          }
-        } else if (!admission.ok) {
-          await this.#reportWaiting(waiter, memoryWaitWords(waiter.api.node, admission));
-        }
+        if (admission.ok && !timedOut) continue;
+        if (timedOut) await this.#expire(waiter, admission.ok ? queueTimeoutError(waiter.api.node, waiter.config.memoryWaitSeconds) : noCapacityError(waiter.api.node, admission, waiter.config.memoryWaitSeconds));
+        else await this.#reportWaiting(waiter, memoryWaitWords(waiter.api.node, admission));
       }
 
       if (this.#waiters.length === 0) break;
-      if (this.#wakeSeq !== seenWakeSeq) continue;
+      await this.#sleepUnlessWoken(seenWakeSeq);
+    }
+  }
 
-      const sleeper = this.#waiters[0]!;
-      const wake = new AbortController();
-      this.#wakeController = wake;
-      try {
-        await sleeper.sleep(START_GATE_POLL_MS, wake.signal);
-      } catch {
-        undefined;
-      } finally {
-        if (this.#wakeController === wake) this.#wakeController = null;
-      }
+  async #expire(waiter: StartWaiter, error: BackendError): Promise<void> {
+    if (!this.#remove(waiter)) return;
+    await this.#clearWaitingQuietly(waiter);
+    waiter.reject(error);
+  }
+
+  async #expireUnread(error: unknown): Promise<void> {
+    for (const waiter of [...this.#waiters]) {
+      if (waiter.aborted) continue;
+      const waitedMs = Math.max(0, waiter.now() - waiter.enqueuedAt);
+      if (waitedMs >= waiter.config.memoryWaitSeconds * 1000) await this.#expire(waiter, unreadNodeError(waiter.api.node, error));
+    }
+  }
+
+  async #sleepUnlessWoken(seenWakeSeq: number): Promise<void> {
+    if (this.#wakeSeq !== seenWakeSeq || this.#waiters.length === 0) return;
+    const sleeper = this.#waiters[0]!;
+    const wake = new AbortController();
+    this.#wakeController = wake;
+    try {
+      await sleeper.sleep(START_GATE_POLL_MS, wake.signal);
+    } catch {
+      undefined;
+    } finally {
+      if (this.#wakeController === wake) this.#wakeController = null;
     }
   }
 

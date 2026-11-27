@@ -106,8 +106,10 @@ Proxmox QEMU shares one start gate per node with Proxmox LXC (decision 106).
 Every start on that node, including warm and spare refills, image trial boxes,
 restores (including snapshots with memory), forks, resumes and resizes, reads
 the node's available memory and subtracts untouched RAM from any running heavy
-VM on the node whose uptime is under 10 minutes, regardless of which install
-or person started it. Containers and ballooned Linux VMs never count as held.
+VM whose uptime is under 10 minutes and that the backend's token can see (the
+VMs in its pool, whoever started them; VMs outside it count only through the
+memory they have already touched). Guests the gate admitted that are still
+starting count in full. Containers and ballooned Linux VMs never count as held.
 The remaining memory must cover the guest's memory plus the effective
 `start-memory-margin-mib` (16384 MiB by default, capped at a quarter of the
 node's total memory and enforced at placement as well). When memory is short,
