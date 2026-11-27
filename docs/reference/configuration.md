@@ -177,7 +177,10 @@ Setup: [setup/proxmox-lxc/README.md](../../setup/proxmox-lxc/README.md).
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `4096` | Memory the node keeps for itself. A new box is refused if the node would have less than this left. |
 | `reserve-disk-gib` | Disk kept free (GiB) | number | advanced | `50` | Disk the node keeps free. A new box is refused if the template's storage has less free space than this. |
 | `start-memory-margin-mib` | Start memory margin (MiB) | number | advanced | `16384` | Free host memory, in MiB, that must stay free after a guest starts, capped at a quarter of node RAM. Untouched RAM of recent heavy VMs counts against it. |
-| `start-memory-wait-seconds` | Start memory wait (seconds) | number | advanced | `600` | Seconds a guest start waits for free host memory on the node before failing, checked about every 10 seconds. 0 refuses at once when memory is short. |
+| `start-memory-wait-seconds` | Start memory wait (seconds) | number | advanced | `600` | Seconds a guest start waits on the node for memory, low stalls and free swap before failing. Polled about every 10 seconds. 0 refuses at once. |
+| `start-memory-pressure-avg10` | Start memory stall limit, 10 s (%) | number | advanced | `10` | Highest peak memory stall percentage allowed before a guest starts. Read from the newest completed minute's peak (cf=MAX) of Proxmox VE 9's 10-second average in RRD data, up to two minutes old. Skipped on Proxmox VE 8 or when missing. 0 turns the rule off. |
+| `start-memory-pressure-avg60` | Start memory stall limit, 60 s (%) | number | advanced | `5` | Highest sustained memory stall percentage allowed before a guest starts. Read from the newest completed minute's mean (cf=AVERAGE) of Proxmox VE 9's 10-second average in RRD data, up to two minutes old. Skipped on Proxmox VE 8 or when missing. 0 turns the rule off. |
+| `start-swap-free-mib` | Free swap required to start (MiB) | number | advanced | `2048` | Free swap, in MiB, that must be available on the node before a guest starts, when the node has swap. 0 turns the rule off. |
 
 ### proxmox-qemu
 
@@ -213,7 +216,10 @@ Fields left empty take proxmox-lxc's, a set at a time: `url`, `token-id`, `token
 | `reserve-memory-mib` | Memory kept free (MiB) | number | advanced | `4096` | Memory the node keeps for itself. A new box is refused if the node would have less than this left. |
 | `reserve-disk-gib` | Disk kept free (GiB) | number | advanced | `50` | Disk the node keeps free. A new box is refused if the template's storage has less free space than this. |
 | `start-memory-margin-mib` | Start memory margin (MiB) | number | advanced | `16384` | Free host memory, in MiB, that must stay free after a guest starts, capped at a quarter of node RAM. Untouched RAM of recent heavy VMs counts against it. |
-| `start-memory-wait-seconds` | Start memory wait (seconds) | number | advanced | `600` | Seconds a guest start waits for free host memory on the node before failing, checked about every 10 seconds. 0 refuses at once when memory is short. |
+| `start-memory-wait-seconds` | Start memory wait (seconds) | number | advanced | `600` | Seconds a guest start waits on the node for memory, low stalls and free swap before failing. Polled about every 10 seconds. 0 refuses at once. |
+| `start-memory-pressure-avg10` | Start memory stall limit, 10 s (%) | number | advanced | `10` | Highest peak memory stall percentage allowed before a guest starts. Read from the newest completed minute's peak (cf=MAX) of Proxmox VE 9's 10-second average in RRD data, up to two minutes old. Skipped on Proxmox VE 8 or when missing. 0 turns the rule off. |
+| `start-memory-pressure-avg60` | Start memory stall limit, 60 s (%) | number | advanced | `5` | Highest sustained memory stall percentage allowed before a guest starts. Read from the newest completed minute's mean (cf=AVERAGE) of Proxmox VE 9's 10-second average in RRD data, up to two minutes old. Skipped on Proxmox VE 8 or when missing. 0 turns the rule off. |
+| `start-swap-free-mib` | Free swap required to start (MiB) | number | advanced | `2048` | Free swap, in MiB, that must be available on the node before a guest starts, when the node has swap. 0 turns the rule off. |
 | `heavy-start-settle-seconds` | Heavy VM start settle (seconds) | number | advanced | `120` | Seconds between heavy VM starts on one node. Holds Windows, Android and large non-ballooning VMs so each settles first; containers do not wait for this delay. |
 
 ### ssh-pool

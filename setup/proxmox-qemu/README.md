@@ -112,10 +112,19 @@ memory they have already touched). Guests the gate admitted that are still
 starting count in full. Containers and ballooned Linux VMs never count as held.
 The remaining memory must cover the guest's memory plus the effective
 `start-memory-margin-mib` (16384 MiB by default, capped at a quarter of the
-node's total memory and enforced at placement as well). When memory is short,
-the start waits and checks every 10 seconds for up to
-`start-memory-wait-seconds` (600 seconds by default), showing the shortfall on
-the box's progress, then fails rather than starting anyway.
+node's total memory and enforced at placement as well). When the node has swap,
+free swap must also be at least `start-swap-free-mib` (2048 MiB by default,
+0 off). On Proxmox VE 9, the gate also checks memory stalls
+(`pressurememorysome`) from RRD data, cached for 60 seconds per node: the
+newest completed minute's peak (`cf=MAX`) of the 10-second average at most
+`start-memory-pressure-avg10` (10%, 0 off) and its mean (`cf=AVERAGE`) at most
+`start-memory-pressure-avg60` (5%, 0 off), both up to two minutes old. On
+Proxmox VE 8 or when fields are missing, the stall rules are skipped; `bb box
+doctor` reports each reading with its limit, notes any skipped rule and notes
+that per-bank (NUMA) free memory is not read from Proxmox's API. When memory is
+short, stalls are high or swap is low, the start waits and checks every 10
+seconds for up to `start-memory-wait-seconds` (600 seconds by default), showing
+why on the box's progress, then fails rather than starting anyway.
 
 Heavy VMs boot one at a time on each node: the next heavy start waits until no
 running heavy VM on the node has an uptime under `heavy-start-settle-seconds`

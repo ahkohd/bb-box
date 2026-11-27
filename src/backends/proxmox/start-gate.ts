@@ -1,6 +1,15 @@
 import { PRODUCT } from "../../brand.ts";
+import { formatMiB } from "../../core/sizes.ts";
 import { BackendError, type BackendContext, type GuestOs } from "../types.ts";
-import { ProxmoxError, sleep as defaultSleep, type GuestType, type NodeGuest, type NodeStatus, type Proxmox } from "./api.ts";
+import {
+  ProxmoxError,
+  sleep as defaultSleep,
+  type GuestType,
+  type NodeGuest,
+  type NodeMemoryPressure,
+  type NodeStatus,
+  type Proxmox,
+} from "./api.ts";
 
 const MIB = 2 ** 20;
 const DEFAULT_GUEST_MEMORY_MIB = 512;
@@ -8,10 +17,16 @@ const DEFAULT_GUEST_MEMORY_MIB = 512;
 export const START_MEMORY_MARGIN_DEFAULT_MIB = 16_384;
 export const START_MEMORY_WAIT_DEFAULT_S = 600;
 export const HEAVY_START_SETTLE_DEFAULT_S = 120;
+export const START_MEMORY_PRESSURE_AVG10_DEFAULT = 10;
+export const START_MEMORY_PRESSURE_AVG60_DEFAULT = 5;
+export const START_SWAP_FREE_DEFAULT_MIB = 2_048;
 export const START_GATE_POLL_MS = 10_000;
+export const PRESSURE_CACHE_MS = 60_000;
 export const RECENT_BOOT_WINDOW_S = 10 * 60;
 export const RECENT_BOOT_WINDOW_MS = RECENT_BOOT_WINDOW_S * 1000;
 export const HEAVY_BALLOON_OFF_MEMORY_MIB = 4_096;
+
+const EMPTY_PRESSURE: NodeMemoryPressure = { peakAvg10: null, meanAvg10: null, sampledAtSeconds: null };
 
 declare const START_PERMIT: unique symbol;
 
@@ -33,6 +48,9 @@ export interface StartGateConfig {
   readonly memoryMarginMiB: number;
   readonly memoryWaitSeconds: number;
   readonly heavySettleSeconds: number;
+  readonly memoryPressureAvg10?: number;
+  readonly memoryPressureAvg60?: number;
+  readonly swapFreeMiB?: number;
 }
 
 export interface StartGuestRequest {
@@ -83,7 +101,20 @@ interface RecentStart {
 
 interface NodeReading {
   readonly nodeStatus: NodeStatus;
+  readonly pressure: NodeMemoryPressure;
   readonly recent: readonly RecentStart[];
+}
+
+interface StressBlock {
+  readonly pressureReason: string | null;
+  readonly swapFreeBytes: number | null;
+  readonly swapTotalBytes: number | null;
+  readonly swapLimitMiB: number | null;
+}
+
+interface CachedPressure {
+  readonly fetchedAt: number;
+  readonly reading: NodeMemoryPressure;
 }
 
 interface HeavyVerdict {
@@ -187,6 +218,127 @@ function formatGiBFromBytes(bytes: number, floorNonZero = false): string {
 
 function formatMiBLabel(mib: number): string {
   return formatGiBFromBytes(mib * MIB);
+}
+
+function formatPercent(value: number): string {
+  const rounded = Math.round(Math.max(0, value) * 10) / 10;
+  return `${rounded.toFixed(1).replace(/\.0$/, "")}%`;
+}
+
+function formatSwapBytes(bytes: number): string {
+  return formatMiB(Math.max(0, bytes) / MIB);
+}
+
+function needsPressureReading(config: StartGateConfig): boolean {
+  const avg10Limit = config.memoryPressureAvg10 ?? START_MEMORY_PRESSURE_AVG10_DEFAULT;
+  const avg60Limit = config.memoryPressureAvg60 ?? START_MEMORY_PRESSURE_AVG60_DEFAULT;
+  return avg10Limit > 0 || avg60Limit > 0;
+}
+
+function evaluateStress(nodeStatus: NodeStatus, pressure: NodeMemoryPressure, config: StartGateConfig): StressBlock | null {
+  const avg10Limit = config.memoryPressureAvg10 ?? START_MEMORY_PRESSURE_AVG10_DEFAULT;
+  const avg60Limit = config.memoryPressureAvg60 ?? START_MEMORY_PRESSURE_AVG60_DEFAULT;
+  const swapLimitMiB = config.swapFreeMiB ?? START_SWAP_FREE_DEFAULT_MIB;
+
+  const avg10Over = avg10Limit > 0 && pressure.peakAvg10 !== null && pressure.peakAvg10 > avg10Limit;
+  const avg60Over = avg60Limit > 0 && pressure.meanAvg10 !== null && pressure.meanAvg10 > avg60Limit;
+
+  let pressureReason: string | null = null;
+  if (avg10Over && avg60Over) {
+    pressureReason =
+      `memory stalls ${formatPercent(pressure.peakAvg10!)} over 10 s (at most ${formatPercent(avg10Limit)}) ` +
+      `and ${formatPercent(pressure.meanAvg10!)} over 60 s (at most ${formatPercent(avg60Limit)})`;
+  } else if (avg10Over) {
+    pressureReason = `memory stalls ${formatPercent(pressure.peakAvg10!)} over 10 s, at most ${formatPercent(avg10Limit)}`;
+  } else if (avg60Over) {
+    pressureReason = `memory stalls ${formatPercent(pressure.meanAvg10!)} over 60 s, at most ${formatPercent(avg60Limit)}`;
+  }
+
+  const swapLow =
+    swapLimitMiB > 0 &&
+    nodeStatus.swapTotal !== null &&
+    nodeStatus.swapTotal > 0 &&
+    nodeStatus.swapFree !== null &&
+    nodeStatus.swapFree < swapLimitMiB * MIB;
+
+  if (!pressureReason && !swapLow) return null;
+
+  return {
+    pressureReason,
+    swapFreeBytes: swapLow ? nodeStatus.swapFree : null,
+    swapTotalBytes: swapLow ? nodeStatus.swapTotal : null,
+    swapLimitMiB: swapLow ? swapLimitMiB : null,
+  };
+}
+
+function stressWaitWords(node: string, block: StressBlock): string {
+  const parts: string[] = [];
+  if (block.pressureReason) parts.push(block.pressureReason);
+  if (block.swapFreeBytes !== null && block.swapLimitMiB !== null) {
+    parts.push(`free swap ${formatSwapBytes(block.swapFreeBytes)}, needs at least ${formatMiB(block.swapLimitMiB)}`);
+  }
+  return `Waiting for memory on ${node}: ${parts.join("; ")}.`;
+}
+
+function stressTimeoutError(node: string, block: StressBlock, waitSeconds: number): BackendError {
+  const waited = waitSeconds > 0 ? ` after waiting ${waitSeconds} s` : "";
+  const parts: string[] = [];
+  if (block.pressureReason) parts.push(`${block.pressureReason} (from Proxmox VE 9 RRD)`);
+  if (block.swapFreeBytes !== null && block.swapTotalBytes !== null && block.swapLimitMiB !== null) {
+    parts.push(
+      `free swap ${formatSwapBytes(block.swapFreeBytes)} of ${formatSwapBytes(block.swapTotalBytes)}, needs at least ${formatMiB(block.swapLimitMiB)}`,
+    );
+  }
+
+  const fix = block.pressureReason && block.swapFreeBytes !== null
+    ? `Wait for host load to fall, stop or release a box on ${node}, or adjust the start memory stall and swap limits in ${PRODUCT}'s settings.`
+    : block.pressureReason
+      ? `Wait for host load to fall, stop or release a box on ${node}, or raise the start memory stall limit in ${PRODUCT}'s settings.`
+      : `Stop or release a box on ${node}, or lower the free swap limit in ${PRODUCT}'s settings.`;
+
+  return new BackendError("no_capacity", `${node} could not start the guest${waited}: ${parts.join("; ")}. ${fix}`);
+}
+
+export function nodeMemoryGateDoctorNotes(input: {
+  readonly status: NodeStatus;
+  readonly pressure: NodeMemoryPressure | null;
+  readonly pressureError: string | null;
+  readonly config: Pick<StartGateConfig, "memoryPressureAvg10" | "memoryPressureAvg60" | "swapFreeMiB">;
+}): string {
+  const { status, pressure, pressureError, config } = input;
+  const swapLimitMiB = config.swapFreeMiB ?? START_SWAP_FREE_DEFAULT_MIB;
+  const avg10Limit = config.memoryPressureAvg10 ?? START_MEMORY_PRESSURE_AVG10_DEFAULT;
+  const avg60Limit = config.memoryPressureAvg60 ?? START_MEMORY_PRESSURE_AVG60_DEFAULT;
+
+  const swapNote = status.swapTotal === null || status.swapFree === null
+    ? "Swap was not reported by Proxmox, so the swap rule is skipped."
+    : status.swapTotal === 0
+      ? "Swap: none configured (swap rule skipped)."
+      : swapLimitMiB <= 0
+        ? `Swap: ${formatSwapBytes(status.swapFree)} of ${formatSwapBytes(status.swapTotal)} free (swap rule off).`
+        : `Swap: ${formatSwapBytes(status.swapFree)} of ${formatSwapBytes(status.swapTotal)} free (needs at least ${formatMiB(swapLimitMiB)}).`;
+
+  let pressureNote: string;
+  if (pressureError !== null) {
+    pressureNote = `Memory stalls could not be read from RRD (${pressureError}), so the stall rules are skipped.`;
+  } else if (!pressure || (pressure.peakAvg10 === null && pressure.meanAvg10 === null)) {
+    pressureNote = "Memory stalls were not reported in RRD (requires Proxmox VE 9), so the stall rules are skipped.";
+  } else {
+    const peakPart = pressure.peakAvg10 === null
+      ? "10 s peak missing (skipped)"
+      : avg10Limit <= 0
+        ? `10 s peak ${formatPercent(pressure.peakAvg10)} (rule off)`
+        : `10 s peak ${formatPercent(pressure.peakAvg10)} (at most ${formatPercent(avg10Limit)})`;
+    const meanPart = pressure.meanAvg10 === null
+      ? "60 s mean missing (skipped)"
+      : avg60Limit <= 0
+        ? `60 s mean ${formatPercent(pressure.meanAvg10)} (rule off)`
+        : `60 s mean ${formatPercent(pressure.meanAvg10)} (at most ${formatPercent(avg60Limit)})`;
+    pressureNote = `Memory stalls (last completed minute in RRD, up to 2 minutes old): ${peakPart}, ${meanPart}.`;
+  }
+
+  const numaNote = "Per-bank (NUMA) free memory is not read because Proxmox's API does not report it.";
+  return `${swapNote} ${pressureNote} ${numaNote}`;
 }
 
 export function placementMemoryProblem(input: {
@@ -368,6 +520,7 @@ export class ProxmoxStartGate {
   readonly #inFlight = new Map<number, InFlightStart>();
   readonly #waiters: StartWaiter[] = [];
   readonly #heavyVerdicts = new Map<number, HeavyVerdict>();
+  #pressureCache: CachedPressure | null = null;
 
   async canStartNow(api: Proxmox, request: CanStartRequest): Promise<CanStartResult> {
     if (request.signal?.aborted) throw request.signal.reason;
@@ -386,7 +539,13 @@ export class ProxmoxStartGate {
 
     let reading: NodeReading;
     try {
-      reading = await this.#readNodeState(api, now, Math.max(RECENT_BOOT_WINDOW_S, request.config.heavySettleSeconds), request.signal);
+      reading = await this.#readNodeState(
+        api,
+        now,
+        Math.max(RECENT_BOOT_WINDOW_S, request.config.heavySettleSeconds),
+        needsPressureReading(request.config),
+        request.signal,
+      );
     } catch (error) {
       if (request.signal?.aborted || refusedForGood(error)) throw error;
       return { ok: false, reason: unreadNodeError(api.node, error).message };
@@ -401,6 +560,11 @@ export class ProxmoxStartGate {
     const admission = evaluateAdmission(reading.nodeStatus.memoryAvailable, recentHeldBytes, request.memoryMiB, effectiveMarginMiB);
     if (!admission.ok) {
       return { ok: false, reason: noCapacityError(api.node, admission, 0).message };
+    }
+
+    const stress = evaluateStress(reading.nodeStatus, reading.pressure, request.config);
+    if (stress) {
+      return { ok: false, reason: stressTimeoutError(api.node, stress, 0).message };
     }
 
     return { ok: true };
@@ -515,8 +679,38 @@ export class ProxmoxStartGate {
     }
   }
 
-  async #readNodeState(api: Proxmox, now: number, maxWindowSeconds: number, signal?: AbortSignal): Promise<NodeReading> {
-    const [nodeStatus, qemuGuests] = await Promise.all([api.nodeStatus(signal), api.nodeGuests("qemu", signal)]);
+  async #readMemoryPressure(api: Proxmox, now: number, needed: boolean, signal?: AbortSignal): Promise<NodeMemoryPressure> {
+    if (!needed) return EMPTY_PRESSURE;
+
+    const cached = this.#pressureCache;
+    if (cached && now >= cached.fetchedAt && now - cached.fetchedAt < PRESSURE_CACHE_MS) {
+      return cached.reading;
+    }
+
+    let reading: NodeMemoryPressure;
+    try {
+      reading = await api.nodeMemoryPressure(signal);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      reading = EMPTY_PRESSURE;
+    }
+
+    this.#pressureCache = { fetchedAt: now, reading };
+    return reading;
+  }
+
+  async #readNodeState(
+    api: Proxmox,
+    now: number,
+    maxWindowSeconds: number,
+    needPressure: boolean,
+    signal?: AbortSignal,
+  ): Promise<NodeReading> {
+    const [nodeStatus, qemuGuests, pressure] = await Promise.all([
+      api.nodeStatus(signal),
+      api.nodeGuests("qemu", signal),
+      this.#readMemoryPressure(api, now, needPressure, signal),
+    ]);
 
     const running = qemuGuests.filter((guest) => guest.status === "running" && !guest.template);
     const seenRunning = new Set(running.map((guest) => guest.vmid));
@@ -539,7 +733,7 @@ export class ProxmoxStartGate {
       recent.push({ vmid, heavy: flight.heavy, uptimeSeconds, untouchedBytes: flight.memoryMiB * MIB, inFlight: true });
     }
 
-    return { nodeStatus, recent };
+    return { nodeStatus, pressure, recent };
   }
 
   async #heavyOf(api: Proxmox, guests: readonly NodeGuest[], signal?: AbortSignal): Promise<Map<number, boolean>> {
@@ -594,11 +788,12 @@ export class ProxmoxStartGate {
         RECENT_BOOT_WINDOW_S,
         ...this.#waiters.map((waiter) => waiter.config.heavySettleSeconds),
       );
+      const needPressure = this.#waiters.some((waiter) => !waiter.aborted && needsPressureReading(waiter.config));
 
       let reading: NodeReading | null = null;
       let unread: unknown = null;
       try {
-        reading = await this.#readNodeState(reader.api, reader.now(), maxWindowSeconds, reader.signal);
+        reading = await this.#readNodeState(reader.api, reader.now(), maxWindowSeconds, needPressure, reader.signal);
       } catch (error) {
         if (reader.signal?.aborted) {
           this.#dropAborted();
@@ -634,6 +829,8 @@ export class ProxmoxStartGate {
         const admission = evaluateAdmission(reading.nodeStatus.memoryAvailable, recentHeldBytes, candidate.memoryMiB, effectiveMarginMiB);
         if (!admission.ok) continue;
 
+        if (evaluateStress(reading.nodeStatus, reading.pressure, candidate.config)) continue;
+
         if (!this.#remove(candidate)) continue;
         const permit = {} as StartPermit;
         issuedPermits.add(permit);
@@ -665,9 +862,20 @@ export class ProxmoxStartGate {
         const effectiveMarginMiB = effectiveStartMemoryMarginMiB(waiter.config.memoryMarginMiB, reading.nodeStatus.memoryTotal);
         const recentHeldBytes = heldBytesForReading(reading, waiter.vmid);
         const admission = evaluateAdmission(reading.nodeStatus.memoryAvailable, recentHeldBytes, waiter.memoryMiB, effectiveMarginMiB);
-        if (admission.ok && !timedOut) continue;
-        if (timedOut) await this.#expire(waiter, admission.ok ? queueTimeoutError(waiter.api.node, waiter.config.memoryWaitSeconds) : noCapacityError(waiter.api.node, admission, waiter.config.memoryWaitSeconds));
-        else await this.#reportWaiting(waiter, memoryWaitWords(waiter.api.node, admission));
+        if (!admission.ok) {
+          if (timedOut) await this.#expire(waiter, noCapacityError(waiter.api.node, admission, waiter.config.memoryWaitSeconds));
+          else await this.#reportWaiting(waiter, memoryWaitWords(waiter.api.node, admission));
+          continue;
+        }
+
+        const stress = evaluateStress(reading.nodeStatus, reading.pressure, waiter.config);
+        if (stress) {
+          if (timedOut) await this.#expire(waiter, stressTimeoutError(waiter.api.node, stress, waiter.config.memoryWaitSeconds));
+          else await this.#reportWaiting(waiter, stressWaitWords(waiter.api.node, stress));
+          continue;
+        }
+
+        if (timedOut) await this.#expire(waiter, queueTimeoutError(waiter.api.node, waiter.config.memoryWaitSeconds));
       }
 
       if (this.#waiters.length === 0) break;

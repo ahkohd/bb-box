@@ -911,7 +911,16 @@ the API client, ownership tags, TLS pin and settings. Set up by
   ballooned VMs never count as held. The remaining available memory must cover
   the guest's memory plus the effective `start-memory-margin-mib` (16 GiB by
   default, capped at a quarter of the node's total memory and enforced at
-  placement too). A thread's starts start in arrival order without
+  placement too). The gate also requires free swap of at least
+  `start-swap-free-mib` (2048 MiB by default, 0 off, skipped when the node has
+  no swap) from `/nodes/{node}/status`, and on Proxmox VE 9 checks memory
+  stalls (`pressurememorysome`) from `/nodes/{node}/rrddata?timeframe=hour`,
+  cached for 60 s per node: the newest completed minute's `cf=MAX` (peak of the
+  10-second average, up to two minutes old) at most
+  `start-memory-pressure-avg10` (10%, 0 off) and `cf=AVERAGE` (mean of the
+  10-second average, up to two minutes old) at most
+  `start-memory-pressure-avg60` (5%, 0 off); Proxmox VE 8 or missing fields
+  skip the stall rules. A thread's starts start in arrival order without
   head-of-line blocking, and no refill starts while one waits, polling every 10 s up to
   `start-memory-wait-seconds` (600 s). Heavy VMs boot one at a time per node
   until no running heavy VM has an uptime under `heavy-start-settle-seconds`

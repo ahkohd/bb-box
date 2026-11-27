@@ -56,6 +56,26 @@ function wholeSecondsSinceBoot(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
+function finiteNonNegative(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function newestPressureMemorySome(rows: unknown): { readonly percent: number; readonly time: number | null } | null {
+  if (!Array.isArray(rows)) return null;
+  let chosen: { readonly percent: number; readonly time: number | null } | null = null;
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const record = row as Record<string, unknown>;
+    const percent = finiteNonNegative(record.pressurememorysome);
+    if (percent === null) continue;
+    const time = finiteNonNegative(record.time);
+    const newer = !chosen || (time !== null && (chosen.time === null || time >= chosen.time)) || (time === null && chosen.time === null);
+    if (newer) chosen = { percent, time };
+  }
+  return chosen;
+}
+
 export class ProxmoxError extends Error {
   readonly status: number;
   readonly method: string;
@@ -170,6 +190,14 @@ export interface NodeStatus {
   readonly memoryAvailable: number;
   /** The node's CPU threads, or null when Proxmox does not say. */
   readonly cpus: number | null;
+  readonly swapTotal: number | null;
+  readonly swapFree: number | null;
+}
+
+export interface NodeMemoryPressure {
+  readonly peakAvg10: number | null;
+  readonly meanAvg10: number | null;
+  readonly sampledAtSeconds: number | null;
 }
 
 /** A VNC proxy to a VM's console, for one WebSocket within about 10 s. */
@@ -304,7 +332,7 @@ export class Proxmox {
   }
 
   async nodeStatus(signal?: AbortSignal): Promise<NodeStatus> {
-    const data = await this.#request<{ memory?: Record<string, unknown>; cpuinfo?: Record<string, unknown> }>(
+    const data = await this.#request<{ memory?: Record<string, unknown>; swap?: Record<string, unknown>; cpuinfo?: Record<string, unknown> }>(
       "GET",
       `/nodes/${enc(this.node)}/status`,
       undefined,
@@ -314,7 +342,35 @@ export class Proxmox {
     const total = Number(memory.total ?? 0);
     const available = Number(memory.available ?? memory.free ?? Math.max(0, total - Number(memory.used ?? total)));
     const cpus = Number(data?.cpuinfo?.cpus);
-    return { memoryTotal: total, memoryAvailable: available, cpus: Number.isInteger(cpus) && cpus > 0 ? cpus : null };
+    const swap = data?.swap;
+    const swapTotal = finiteNonNegative(swap?.total);
+    const swapUsed = finiteNonNegative(swap?.used);
+    const swapFree = swapTotal === null
+      ? null
+      : (finiteNonNegative(swap?.free) ?? (swapUsed !== null ? Math.max(0, swapTotal - swapUsed) : null));
+    return {
+      memoryTotal: total,
+      memoryAvailable: available,
+      cpus: Number.isInteger(cpus) && cpus > 0 ? cpus : null,
+      swapTotal,
+      swapFree,
+    };
+  }
+
+  async nodeMemoryPressure(signal?: AbortSignal): Promise<NodeMemoryPressure> {
+    const path = `/nodes/${enc(this.node)}/rrddata`;
+    const [maxRows, avgRows] = await Promise.all([
+      this.#request<unknown>("GET", path, { timeframe: "hour", cf: "MAX" }, signal),
+      this.#request<unknown>("GET", path, { timeframe: "hour", cf: "AVERAGE" }, signal),
+    ]);
+    const peak = newestPressureMemorySome(maxRows);
+    const mean = newestPressureMemorySome(avgRows);
+    const sampledAtSeconds = peak?.time ?? mean?.time ?? null;
+    return {
+      peakAvg10: peak?.percent ?? null,
+      meanAvg10: mean?.percent ?? null,
+      sampledAtSeconds,
+    };
   }
 
   async uptimeSeconds(node: string, signal?: AbortSignal): Promise<number | null> {

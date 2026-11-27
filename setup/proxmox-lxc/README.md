@@ -626,7 +626,10 @@ fields against the host; Save and turn on saves them. From a terminal,
 | `reserve-memory-mib` | `4096` | a new box is refused if the node would have less memory free |
 | `reserve-disk-gib` | `50` | a new box is refused if the template's storage has less free |
 | `start-memory-margin-mib` | `16384` | free host memory that must remain after a guest starts, capped at a quarter of node RAM |
-| `start-memory-wait-seconds` | `600` | seconds a start waits for free memory before failing, checked every 10 s; 0 refuses at once |
+| `start-memory-wait-seconds` | `600` | seconds a start waits for free memory, low memory stalls and free swap before failing, checked every 10 s; 0 refuses at once |
+| `start-memory-pressure-avg10` | `10` | highest PSI memory 'some' stall percentage allowed before a start, from the newest completed minute's peak (`cf=MAX`) of Proxmox VE 9's 10-second average in RRD data (up to two minutes old); skipped on Proxmox VE 8 or when missing; 0 turns the rule off |
+| `start-memory-pressure-avg60` | `5` | highest sustained PSI memory 'some' stall percentage allowed before a start, from the newest completed minute's mean (`cf=AVERAGE`) of Proxmox VE 9's 10-second average in RRD data (up to two minutes old); skipped on Proxmox VE 8 or when missing; 0 turns the rule off |
+| `start-swap-free-mib` | `2048` | free swap, in MiB, required on the node before a start when the node has swap; 0 turns the rule off |
 
 - Linux templates serve `linux`, GPU desktop templates `linux-desktop`, CPU
   desktop templates `linux-desktop-cpu`, and Wayland desktop templates
@@ -667,9 +670,18 @@ fields against the host; Save and turn on saves them. From a terminal,
   ballooned VMs do not count as held. The remaining memory must cover the
   guest's memory plus the effective `start-memory-margin-mib` (16 GiB by
   default, capped at a quarter of the node's total memory and checked before
-  cloning as well). When memory is short, the start waits and checks every 10 s
-  for up to `start-memory-wait-seconds` (600 s by default), showing the
-  shortfall on the box's progress, then fails rather than starting anyway.
+  cloning as well). When the node has swap, free swap must also be at least
+  `start-swap-free-mib` (2048 MiB by default, 0 off). On Proxmox VE 9, the gate
+  also checks memory stalls (`pressurememorysome`) from RRD data, read at most
+  once a minute per node: the newest completed minute's peak (`cf=MAX`) of the
+  10-second average at most `start-memory-pressure-avg10` (10%, 0 off) and its
+  mean (`cf=AVERAGE`) at most `start-memory-pressure-avg60` (5%, 0 off), both
+  up to two minutes old; Proxmox VE 8 or missing fields skip the stall rules,
+  and `bb box doctor` reports each reading, its limit, any skipped rule and
+  that per-bank (NUMA) free memory is not read from Proxmox's API. When memory
+  is short, stalls are high or swap is low, the start waits and checks every
+  10 s for up to `start-memory-wait-seconds` (600 s by default), showing why on
+  the box's progress, then fails rather than starting anyway.
   Among a thread's starts, the gate starts the first that fits, in arrival
   order, so a large waiting VM does not block smaller containers that fit. A
   refill never starts while a thread's start is waiting. Warm and spare refills check the gate before cloning

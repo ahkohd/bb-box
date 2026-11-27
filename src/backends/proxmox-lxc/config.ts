@@ -45,7 +45,13 @@ import {
   type ProxmoxNetwork,
   type VmidRange,
 } from "../proxmox/settings.ts";
-import { START_MEMORY_MARGIN_DEFAULT_MIB, START_MEMORY_WAIT_DEFAULT_S } from "../proxmox/start-gate.ts";
+import {
+  START_MEMORY_MARGIN_DEFAULT_MIB,
+  START_MEMORY_PRESSURE_AVG10_DEFAULT,
+  START_MEMORY_PRESSURE_AVG60_DEFAULT,
+  START_MEMORY_WAIT_DEFAULT_S,
+  START_SWAP_FREE_DEFAULT_MIB,
+} from "../proxmox/start-gate.ts";
 import { BOXES_PER_CARD, DESKTOP_GPU_MIB, MOST_GPU_MEMORY_MIB, SERVER_GPU_MIB } from "../card-check.ts";
 import {
   fieldLabel,
@@ -100,7 +106,13 @@ export interface LxcConfig {
   /** A null key means bb-box generates one and shows its public key. */
   readonly ssh: { readonly privateKey: string | null; readonly user: string };
   readonly reserve: { readonly memoryMiB: number; readonly diskGiB: number };
-  readonly startGate: { readonly memoryMarginMiB: number; readonly memoryWaitSeconds: number };
+  readonly startGate: {
+    readonly memoryMarginMiB: number;
+    readonly memoryWaitSeconds: number;
+    readonly memoryPressureAvg10: number;
+    readonly memoryPressureAvg60: number;
+    readonly swapFreeMiB: number;
+  };
 }
 
 export const LXC_DEFAULTS = {
@@ -117,6 +129,9 @@ export const LXC_DEFAULTS = {
   reserveDiskGiB: 50,
   startMemoryMarginMiB: START_MEMORY_MARGIN_DEFAULT_MIB,
   startMemoryWaitSeconds: START_MEMORY_WAIT_DEFAULT_S,
+  startMemoryPressureAvg10: START_MEMORY_PRESSURE_AVG10_DEFAULT,
+  startMemoryPressureAvg60: START_MEMORY_PRESSURE_AVG60_DEFAULT,
+  startSwapFreeMiB: START_SWAP_FREE_DEFAULT_MIB,
   boxesPerCard: BOXES_PER_CARD,
   gpuMemoryMiB: SERVER_GPU_MIB,
 } as const;
@@ -149,6 +164,9 @@ export const LXC_KEYS = {
   reserveDiskGiB: "proxmox-lxc-reserve-disk-gib",
   startMemoryMarginMiB: "proxmox-lxc-start-memory-margin-mib",
   startMemoryWaitSeconds: "proxmox-lxc-start-memory-wait-seconds",
+  startMemoryPressureAvg10: "proxmox-lxc-start-memory-pressure-avg10",
+  startMemoryPressureAvg60: "proxmox-lxc-start-memory-pressure-avg60",
+  startSwapFreeMiB: "proxmox-lxc-start-swap-free-mib",
 } as const;
 
 /** The cores, memory and disk keys are those replaced by box sizes (028). */
@@ -405,8 +423,29 @@ const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = {
     type: "number",
     label: "Proxmox LXC: start memory wait (seconds)",
     description:
-      "Seconds a guest start waits for free host memory on the node before failing, checked about every 10 seconds. 0 refuses at once when memory is short.",
+      "Seconds a guest start waits on the node for memory, low stalls and free swap before failing. Polled about every 10 seconds. 0 refuses at once.",
     default: LXC_DEFAULTS.startMemoryWaitSeconds,
+  },
+  [LXC_KEYS.startMemoryPressureAvg10]: {
+    type: "number",
+    label: "Proxmox LXC: start memory stall limit, 10 s (%)",
+    description:
+      "Highest peak memory stall percentage allowed before a guest starts. Read from the newest completed minute's peak (cf=MAX) of Proxmox VE 9's 10-second average in RRD data, up to two minutes old. Skipped on Proxmox VE 8 or when missing. 0 turns the rule off.",
+    default: LXC_DEFAULTS.startMemoryPressureAvg10,
+  },
+  [LXC_KEYS.startMemoryPressureAvg60]: {
+    type: "number",
+    label: "Proxmox LXC: start memory stall limit, 60 s (%)",
+    description:
+      "Highest sustained memory stall percentage allowed before a guest starts. Read from the newest completed minute's mean (cf=AVERAGE) of Proxmox VE 9's 10-second average in RRD data, up to two minutes old. Skipped on Proxmox VE 8 or when missing. 0 turns the rule off.",
+    default: LXC_DEFAULTS.startMemoryPressureAvg60,
+  },
+  [LXC_KEYS.startSwapFreeMiB]: {
+    type: "number",
+    label: "Proxmox LXC: free swap required to start (MiB)",
+    description:
+      "Free swap, in MiB, that must be available on the node before a guest starts, when the node has swap. 0 turns the rule off.",
+    default: LXC_DEFAULTS.startSwapFreeMiB,
   },
 };
 
@@ -444,6 +483,9 @@ const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
   [LXC_KEYS.reserveDiskGiB, "advanced"],
   [LXC_KEYS.startMemoryMarginMiB, "advanced"],
   [LXC_KEYS.startMemoryWaitSeconds, "advanced"],
+  [LXC_KEYS.startMemoryPressureAvg10, "advanced"],
+  [LXC_KEYS.startMemoryPressureAvg60, "advanced"],
+  [LXC_KEYS.startSwapFreeMiB, "advanced"],
 ];
 
 export const LXC_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(

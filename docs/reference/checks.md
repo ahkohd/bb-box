@@ -106,7 +106,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | --- | --- | --- |
 | `proxmox.api` | Proxmox API | The API answers at its URL, with a certificate BB Box trusts, and the token works. |
 | `proxmox.node` | Node | The node exists and is online. |
-| `proxmox.memory` | Node memory | How much of the node's memory is free beyond the reserve. |
+| `proxmox.memory` | Node memory | The node's available memory, effective start memory margin, free swap, Proxmox VE 9 RRD memory stalls and why per-bank (NUMA) free memory is not read. |
 | `proxmox.pool` | Resource pool | The resource pool exists and the token may use it. |
 | `proxmox.bridge` | Network bridge | The bridge exists on the node. |
 | `proxmox.vmids` | VMID range | The VMID range is free of guests BB Box did not make. |
@@ -129,7 +129,7 @@ What `bb box doctor`, and each backend's check on the settings page, can report,
 | --- | --- | --- |
 | `proxmox.api` | Proxmox API | The API answers at its URL, with a certificate BB Box trusts, and the token works. |
 | `proxmox.node` | Node | The node exists and is online. |
-| `proxmox.memory` | Node memory | How much of the node's memory is free beyond the reserve. |
+| `proxmox.memory` | Node memory | The node's available memory, effective start memory margin, free swap, Proxmox VE 9 RRD memory stalls and why per-bank (NUMA) free memory is not read. |
 | `proxmox.pool` | Resource pool | The resource pool exists and the token may use it. |
 | `proxmox.bridge` | Network bridge | The bridge exists on the node. |
 | `proxmox.vmids` | VMID range | The VMID range is free of guests BB Box did not make. |

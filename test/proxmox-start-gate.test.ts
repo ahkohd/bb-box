@@ -5,10 +5,14 @@ import { Backends } from "../src/backends/index.ts";
 import { Proxmox } from "../src/backends/proxmox/api.ts";
 import {
   HEAVY_START_SETTLE_DEFAULT_S,
+  PRESSURE_CACHE_MS,
   ProxmoxStartGate,
   START_GATE_POLL_MS,
   START_MEMORY_MARGIN_DEFAULT_MIB,
+  START_MEMORY_PRESSURE_AVG10_DEFAULT,
+  START_MEMORY_PRESSURE_AVG60_DEFAULT,
   START_MEMORY_WAIT_DEFAULT_S,
+  START_SWAP_FREE_DEFAULT_MIB,
   effectiveStartMemoryMarginMiB,
   isHeavyGuest,
   startGateKey,
@@ -1413,4 +1417,314 @@ test("the gate reads each recently started VM's config once, not on every poll",
   assert.equal(configReads(), 6);
   await clock.advance(40_000);
   await waiting;
+});
+
+test("memory stalls: high 10 s peak waits, caches rrddata for a minute, and proceeds when it falls; high 60 s mean waits and fails on timeout", async () => {
+  const clock = new FakeClock();
+  const api = new FakeProxmox();
+  api.now = clock.now;
+  api.addTemplate(9000);
+  api.memory = { total: 64 * GIB, available: 48 * GIB };
+  api.memoryPressure = { peakAvg10: 12, meanAvg10: 2 };
+  const lxc = makeClient(api, "lxc");
+  await lxc.cloneLinked({ template: 9000, vmid: 7601, hostname: "psi-peak", pool: "bbbox" });
+  await lxc.cloneLinked({ template: 9000, vmid: 7602, hostname: "psi-mean", pool: "bbbox" });
+
+  const gate = new ProxmoxStartGate();
+  const rrdReads = () => api.calls.filter((call) => call.method === "GET" && call.path === "/nodes/pve/rrddata").length;
+  const progress: (string | null)[] = [];
+
+  const pending = gate.start(lxc, {
+    vmid: 7601,
+    memoryMiB: 4096,
+    priority: "acquire",
+    config: DEFAULT_GATE,
+    now: clock.now,
+    sleep: clock.sleep,
+    waiting: async (words) => void progress.push(words),
+  });
+
+  await flushMicrotasks();
+  assert.equal(api.guests.get(7601)!.status, "stopped");
+  assert.equal(progress[0], "Waiting for memory on pve: memory stalls 12% over 10 s, at most 10%.");
+  assert.equal(rrdReads(), 2);
+
+  await clock.advance(40_000);
+  assert.equal(api.guests.get(7601)!.status, "stopped");
+  assert.equal(rrdReads(), 2);
+
+  api.memoryPressure = { peakAvg10: 4, meanAvg10: 2 };
+  await clock.advance(10_000);
+  assert.equal(api.guests.get(7601)!.status, "stopped");
+  assert.equal(rrdReads(), 2);
+
+  await clock.advance(10_000);
+  const waitedMs = await pending;
+  assert.equal(waitedMs, PRESSURE_CACHE_MS);
+  assert.equal(rrdReads(), 4);
+  assert.equal(api.guests.get(7601)!.status, "running");
+  assert.equal(progress.at(-1), null);
+
+  await clock.advance(PRESSURE_CACHE_MS);
+  api.memoryPressure = { peakAvg10: 8, meanAvg10: 7 };
+  const meanProgress: (string | null)[] = [];
+  const blocked = gate.start(lxc, {
+    vmid: 7602,
+    memoryMiB: 4096,
+    priority: "acquire",
+    config: { ...DEFAULT_GATE, memoryWaitSeconds: 20 },
+    now: clock.now,
+    sleep: clock.sleep,
+    waiting: async (words) => void meanProgress.push(words),
+  }).catch((error: unknown) => error);
+
+  await flushMicrotasks();
+  assert.equal(meanProgress[0], "Waiting for memory on pve: memory stalls 7% over 60 s, at most 5%.");
+  assert.equal((await gate.canStartNow(lxc, { memoryMiB: 4096, priority: "refill", config: DEFAULT_GATE, now: clock.now })).ok, false);
+
+  await clock.advance(20_000);
+  const error = await blocked;
+  assert.ok(error instanceof BackendError);
+  assert.equal(error.code, "no_capacity");
+  assert.match(error.message, /memory stalls 7% over 60 s, at most 5%/);
+  assert.match(error.message, /after waiting 20 s/);
+  assert.equal(api.guests.get(7602)!.status, "stopped");
+});
+
+test("swap: low free swap waits and fails naming swap at timeout, proceeds when swap recovers, and skips when node has no swap", async () => {
+  const mib = 2 ** 20;
+  const clock = new FakeClock();
+  const api = new FakeProxmox();
+  api.now = clock.now;
+  api.addTemplate(9000);
+  api.memory = { total: 64 * GIB, available: 48 * GIB };
+  api.swap = { total: 8 * GIB, free: 67 * mib };
+  const lxc = makeClient(api, "lxc");
+  await lxc.cloneLinked({ template: 9000, vmid: 7611, hostname: "swap-timeout", pool: "bbbox" });
+  await lxc.cloneLinked({ template: 9000, vmid: 7612, hostname: "swap-recovers", pool: "bbbox" });
+  await lxc.cloneLinked({ template: 9000, vmid: 7613, hostname: "no-swap", pool: "bbbox" });
+
+  const gate = new ProxmoxStartGate();
+  const progress: (string | null)[] = [];
+  const fails = gate.start(lxc, {
+    vmid: 7611,
+    memoryMiB: 4096,
+    priority: "acquire",
+    config: { ...DEFAULT_GATE, memoryWaitSeconds: 20 },
+    now: clock.now,
+    sleep: clock.sleep,
+    waiting: async (words) => void progress.push(words),
+  }).catch((error: unknown) => error);
+
+  await flushMicrotasks();
+  assert.equal(progress[0], "Waiting for memory on pve: free swap 67 MiB, needs at least 2 GiB.");
+  assert.equal(api.guests.get(7611)!.status, "stopped");
+
+  await clock.advance(20_000);
+  const error = await fails;
+  assert.ok(error instanceof BackendError);
+  assert.equal(error.code, "no_capacity");
+  assert.match(error.message, /free swap 67 MiB of 8 GiB, needs at least 2 GiB/);
+  assert.match(error.message, /after waiting 20 s/);
+  assert.equal(api.guests.get(7611)!.status, "stopped");
+
+  const recovers = gate.start(lxc, {
+    vmid: 7612,
+    memoryMiB: 4096,
+    priority: "acquire",
+    config: DEFAULT_GATE,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  await clock.advance(10_000);
+  assert.equal(api.guests.get(7612)!.status, "stopped");
+
+  api.swap = { total: 8 * GIB, free: 3 * GIB };
+  await clock.advance(10_000);
+  await recovers;
+  assert.equal(api.guests.get(7612)!.status, "running");
+
+  api.swap = { total: 0, free: 0 };
+  await gate.start(lxc, {
+    vmid: 7613,
+    memoryMiB: 4096,
+    priority: "acquire",
+    config: DEFAULT_GATE,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  assert.equal(api.guests.get(7613)!.status, "running");
+});
+
+test("pressure and swap rules set to 0 admit, and missing readings are skipped", async () => {
+  const mib = 2 ** 20;
+  const clock = new FakeClock();
+  const api = new FakeProxmox();
+  api.now = clock.now;
+  api.addTemplate(9000);
+  api.memory = { total: 64 * GIB, available: 48 * GIB };
+  api.swap = { total: 8 * GIB, free: 32 * mib };
+  api.memoryPressure = { peakAvg10: 40, meanAvg10: 25 };
+  const lxc = makeClient(api, "lxc");
+  for (const vmid of [7621, 7622, 7623, 7624, 7625]) {
+    await lxc.cloneLinked({ template: 9000, vmid, hostname: `off-${vmid}`, pool: "bbbox" });
+  }
+
+  const gateOff = new ProxmoxStartGate();
+  await gateOff.start(lxc, {
+    vmid: 7621,
+    memoryMiB: 4096,
+    priority: "acquire",
+    config: { ...DEFAULT_GATE, memoryPressureAvg10: 0, memoryPressureAvg60: 0, swapFreeMiB: 0 },
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  assert.equal(api.guests.get(7621)!.status, "running");
+  assert.equal(api.calls.some((call) => call.path === "/nodes/pve/rrddata"), false);
+
+  api.swap = { total: 8 * GIB, free: 4 * GIB };
+  api.memoryPressure = { peakAvg10: 25, meanAvg10: 2 };
+  const gateAvg10Off = new ProxmoxStartGate();
+  await gateAvg10Off.start(lxc, {
+    vmid: 7622,
+    memoryMiB: 4096,
+    priority: "acquire",
+    config: { ...DEFAULT_GATE, memoryPressureAvg10: 0, memoryPressureAvg60: 5 },
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  assert.equal(api.guests.get(7622)!.status, "running");
+
+  api.memoryPressure = { peakAvg10: 2, meanAvg10: 25 };
+  const gateAvg60Off = new ProxmoxStartGate();
+  await gateAvg60Off.start(lxc, {
+    vmid: 7623,
+    memoryMiB: 4096,
+    priority: "acquire",
+    config: { ...DEFAULT_GATE, memoryPressureAvg10: 10, memoryPressureAvg60: 0 },
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  assert.equal(api.guests.get(7623)!.status, "running");
+
+  api.swap = null;
+  api.memoryPressure = null;
+  const gateMissing = new ProxmoxStartGate();
+  await gateMissing.start(lxc, {
+    vmid: 7624,
+    memoryMiB: 4096,
+    priority: "acquire",
+    config: DEFAULT_GATE,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  assert.equal(api.guests.get(7624)!.status, "running");
+
+  api.intercept = (call) => (call.path === "/nodes/pve/rrddata" ? SERVER_ERROR : undefined);
+  const gateRrdError = new ProxmoxStartGate();
+  await gateRrdError.start(lxc, {
+    vmid: 7625,
+    memoryMiB: 4096,
+    priority: "acquire",
+    config: DEFAULT_GATE,
+    now: clock.now,
+    sleep: clock.sleep,
+  });
+  assert.equal(api.guests.get(7625)!.status, "running");
+  api.intercept = undefined;
+});
+
+test("pressure and swap settings validate on both Proxmox backends and doctor reports readings, missing fields and NUMA note", async () => {
+  assert.equal("proxmox-lxc-start-memory-pressure-avg10" in LXC_SETTINGS, false);
+  assert.equal("proxmox-lxc-start-memory-pressure-avg60" in LXC_SETTINGS, false);
+  assert.equal("proxmox-lxc-start-swap-free-mib" in LXC_SETTINGS, false);
+
+  for (const fields of [LXC_FIELDS, QEMU_FIELDS]) {
+    assert.equal(fields["start-memory-pressure-avg10"]?.group, "advanced");
+    assert.equal(fields["start-memory-pressure-avg10"]?.default, START_MEMORY_PRESSURE_AVG10_DEFAULT);
+    assert.match(fields["start-memory-pressure-avg10"]?.description ?? "", /cf=MAX/);
+    assert.match(fields["start-memory-pressure-avg10"]?.description ?? "", /two minutes old/);
+
+    assert.equal(fields["start-memory-pressure-avg60"]?.group, "advanced");
+    assert.equal(fields["start-memory-pressure-avg60"]?.default, START_MEMORY_PRESSURE_AVG60_DEFAULT);
+    assert.match(fields["start-memory-pressure-avg60"]?.description ?? "", /cf=AVERAGE/);
+    assert.match(fields["start-memory-pressure-avg60"]?.description ?? "", /two minutes old/);
+
+    assert.equal(fields["start-swap-free-mib"]?.group, "advanced");
+    assert.equal(fields["start-swap-free-mib"]?.default, START_SWAP_FREE_DEFAULT_MIB);
+  }
+
+  const badLxc = parseLxcPart({
+    id: "proxmox-lxc",
+    fields: {
+      url: "https://pve.example.com:8006",
+      "token-id": FAKE_TOKEN.tokenId,
+      "token-secret": FAKE_TOKEN.tokenSecret,
+      "linux-templates": "9000",
+      "start-memory-pressure-avg10": 101,
+      "start-memory-pressure-avg60": -1,
+      "start-swap-free-mib": -5,
+    },
+    hosts: [],
+  });
+  assert.equal(badLxc.ok, false);
+  assert.deepEqual(
+    badLxc.problems.map((problem) => problem.path).sort(),
+    ["start-memory-pressure-avg10", "start-memory-pressure-avg60", "start-swap-free-mib"],
+  );
+
+  const badQemu = parseQemuPart({
+    id: "proxmox-qemu",
+    fields: {
+      url: "https://pve.example.com:8006",
+      "token-id": FAKE_TOKEN.tokenId,
+      "token-secret": FAKE_TOKEN.tokenSecret,
+      "windows-templates": "9104",
+      "start-memory-pressure-avg10": -2,
+      "start-memory-pressure-avg60": 120,
+      "start-swap-free-mib": -1,
+    },
+    hosts: [],
+  });
+  assert.equal(badQemu.ok, false);
+  assert.deepEqual(
+    badQemu.problems.map((problem) => problem.path).sort(),
+    ["start-memory-pressure-avg10", "start-memory-pressure-avg60", "start-swap-free-mib"],
+  );
+
+  const api = new FakeProxmox();
+  api.addTemplate(9000);
+  api.addVmTemplate(9104);
+  api.memory = { total: 64 * GIB, available: 48 * GIB };
+  api.swap = { total: 8 * GIB, free: 6 * GIB };
+  api.memoryPressure = { peakAvg10: 3.5, meanAvg10: 1.2 };
+
+  const lxc = new ProxmoxLxcBackend(
+    lxcConfig({ "proxmox-lxc-token-id": FAKE_TOKEN.tokenId, "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret }),
+    testContext(new MemoryStorage(), "test", { id: "proxmox-lxc" }),
+    { fetch: api.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 },
+  );
+  const qemu = new ProxmoxQemuBackend(
+    qemuConfig({ "linux-templates": "" }),
+    testContext(new MemoryStorage(), "test", { id: "proxmox-qemu" }),
+    { fetch: api.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 },
+  );
+  madeBackends.push(lxc, qemu);
+
+  for (const backend of [lxc, qemu]) {
+    const check = (await backend.doctor()).checks.find((entry) => entry.id === "proxmox.memory");
+    assert.equal(check?.status, "ok");
+    assert.match(check?.detail ?? "", /Swap: 6 GiB of 8 GiB free \(needs at least 2 GiB\)/);
+    assert.match(check?.detail ?? "", /10 s peak 3\.5% \(at most 10%\)/);
+    assert.match(check?.detail ?? "", /60 s mean 1\.2% \(at most 5%\)/);
+    assert.match(check?.detail ?? "", /Per-bank \(NUMA\) free memory is not read because Proxmox's API does not report it/);
+  }
+
+  api.memoryPressure = null;
+  api.swap = null;
+  const missingCheck = (await lxc.doctor()).checks.find((entry) => entry.id === "proxmox.memory");
+  assert.equal(missingCheck?.status, "ok");
+  assert.match(missingCheck?.detail ?? "", /Swap was not reported by Proxmox, so the swap rule is skipped/);
+  assert.match(missingCheck?.detail ?? "", /Memory stalls were not reported in RRD \(requires Proxmox VE 9\), so the stall rules are skipped/);
+  assert.match(missingCheck?.detail ?? "", /Per-bank \(NUMA\) free memory is not read/);
 });

@@ -27,7 +27,10 @@ import {
 import {
   HEAVY_START_SETTLE_DEFAULT_S,
   START_MEMORY_MARGIN_DEFAULT_MIB,
+  START_MEMORY_PRESSURE_AVG10_DEFAULT,
+  START_MEMORY_PRESSURE_AVG60_DEFAULT,
   START_MEMORY_WAIT_DEFAULT_S,
+  START_SWAP_FREE_DEFAULT_MIB,
 } from "../proxmox/start-gate.ts";
 import type { BackendDriver, BackendPart, FieldDescriptor, FieldProblem, ParsedBackend } from "../types.ts";
 import { PRODUCT } from "../../brand.ts";
@@ -52,6 +55,9 @@ export interface QemuConfig {
     readonly memoryMarginMiB: number;
     readonly memoryWaitSeconds: number;
     readonly heavySettleSeconds: number;
+    readonly memoryPressureAvg10: number;
+    readonly memoryPressureAvg60: number;
+    readonly swapFreeMiB: number;
   };
   /** Windows boxes join BB as machines, unless set off (#539). */
   readonly enrol: boolean;
@@ -73,6 +79,9 @@ export const QEMU_DEFAULTS = {
   reserveDiskGiB: 50,
   startMemoryMarginMiB: START_MEMORY_MARGIN_DEFAULT_MIB,
   startMemoryWaitSeconds: START_MEMORY_WAIT_DEFAULT_S,
+  startMemoryPressureAvg10: START_MEMORY_PRESSURE_AVG10_DEFAULT,
+  startMemoryPressureAvg60: START_MEMORY_PRESSURE_AVG60_DEFAULT,
+  startSwapFreeMiB: START_SWAP_FREE_DEFAULT_MIB,
   heavyStartSettleSeconds: HEAVY_START_SETTLE_DEFAULT_S,
 } as const;
 
@@ -101,6 +110,9 @@ export const QEMU_KEYS = {
   reserveDiskGiB: "reserve-disk-gib",
   startMemoryMarginMiB: "start-memory-margin-mib",
   startMemoryWaitSeconds: "start-memory-wait-seconds",
+  startMemoryPressureAvg10: "start-memory-pressure-avg10",
+  startMemoryPressureAvg60: "start-memory-pressure-avg60",
+  startSwapFreeMiB: "start-swap-free-mib",
   heavyStartSettleSeconds: "heavy-start-settle-seconds",
   enrol: "windows-enrol",
   kvm: "linux-kvm",
@@ -278,9 +290,33 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "number",
     label: "Start memory wait (seconds)",
     description:
-      "Seconds a guest start waits for free host memory on the node before failing, checked about every 10 seconds. 0 refuses at once when memory is short.",
+      "Seconds a guest start waits on the node for memory, low stalls and free swap before failing. Polled about every 10 seconds. 0 refuses at once.",
     group: "advanced",
     default: QEMU_DEFAULTS.startMemoryWaitSeconds,
+  },
+  [QEMU_KEYS.startMemoryPressureAvg10]: {
+    type: "number",
+    label: "Start memory stall limit, 10 s (%)",
+    description:
+      "Highest peak memory stall percentage allowed before a guest starts. Read from the newest completed minute's peak (cf=MAX) of Proxmox VE 9's 10-second average in RRD data, up to two minutes old. Skipped on Proxmox VE 8 or when missing. 0 turns the rule off.",
+    group: "advanced",
+    default: QEMU_DEFAULTS.startMemoryPressureAvg10,
+  },
+  [QEMU_KEYS.startMemoryPressureAvg60]: {
+    type: "number",
+    label: "Start memory stall limit, 60 s (%)",
+    description:
+      "Highest sustained memory stall percentage allowed before a guest starts. Read from the newest completed minute's mean (cf=AVERAGE) of Proxmox VE 9's 10-second average in RRD data, up to two minutes old. Skipped on Proxmox VE 8 or when missing. 0 turns the rule off.",
+    group: "advanced",
+    default: QEMU_DEFAULTS.startMemoryPressureAvg60,
+  },
+  [QEMU_KEYS.startSwapFreeMiB]: {
+    type: "number",
+    label: "Free swap required to start (MiB)",
+    description:
+      "Free swap, in MiB, that must be available on the node before a guest starts, when the node has swap. 0 turns the rule off.",
+    group: "advanced",
+    default: QEMU_DEFAULTS.startSwapFreeMiB,
   },
   [QEMU_KEYS.heavyStartSettleSeconds]: {
     type: "number",

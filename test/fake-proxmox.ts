@@ -94,6 +94,8 @@ export class FakeProxmox {
   taskPolls = 1;
   /** Node memory in bytes, as /nodes/{node}/status reports it. */
   memory = { total: 64 * 2 ** 30, available: 48 * 2 ** 30 };
+  swap: { total: number; free: number } | null = { total: 8 * 2 ** 30, free: 8 * 2 ** 30 };
+  memoryPressure: { peakAvg10: number | null; meanAvg10: number | null } | null = { peakAvg10: 0, meanAvg10: 0 };
   /** CPU threads, as /nodes/{node}/status reports them. */
   cpus = 16;
   /** Storage in bytes by storage ID. */
@@ -287,9 +289,22 @@ export class FakeProxmox {
       const used = this.memory.total - this.memory.available;
       return ok({
         memory: { total: this.memory.total, used, free: this.memory.available / 2, available: this.memory.available },
+        ...(this.swap ? { swap: { total: this.swap.total, free: this.swap.free, used: Math.max(0, this.swap.total - this.swap.free) } } : {}),
         cpuinfo: { cpus: this.cpus, cores: this.cpus / 2, sockets: 1 },
         uptime: this.uptimeAnswerInsteadOfOwn ? this.uptimeAnswerInsteadOfOwn.value : this.#uptime(),
       });
+    }
+
+    if (method === "GET" && (match = /^\/nodes\/([^/]+)\/rrddata$/.exec(path))) {
+      if (match[1] !== this.node) return respond(500, `hostname lookup '${match[1]}' failed`, { data: null });
+      const nowSeconds = Math.floor(this.now() / 1000);
+      const completedMinute = Math.floor(nowSeconds / 60) * 60 - 60;
+      const value = this.memoryPressure === null
+        ? null
+        : (params.cf === "MAX" ? this.memoryPressure.peakAvg10 : this.memoryPressure.meanAvg10);
+      const row: Record<string, unknown> = { time: completedMinute, memtotal: this.memory.total, memavailable: this.memory.available };
+      if (value !== null && value !== undefined) row.pressurememorysome = value;
+      return ok([row]);
     }
 
     if (method === "GET" && (match = /^\/nodes\/([^/]+)\/time$/.exec(path))) return ok({ time: this.#nodeNow(), timezone: "UTC" });

@@ -56,6 +56,9 @@ export interface ProxmoxKeys {
   readonly reserveDiskGiB: string;
   readonly startMemoryMarginMiB: string;
   readonly startMemoryWaitSeconds: string;
+  readonly startMemoryPressureAvg10: string;
+  readonly startMemoryPressureAvg60: string;
+  readonly startSwapFreeMiB: string;
 }
 
 export interface ProxmoxDefaults {
@@ -71,6 +74,9 @@ export interface ProxmoxDefaults {
   readonly reserveDiskGiB: number;
   readonly startMemoryMarginMiB: number;
   readonly startMemoryWaitSeconds: number;
+  readonly startMemoryPressureAvg10: number;
+  readonly startMemoryPressureAvg60: number;
+  readonly startSwapFreeMiB: number;
 }
 
 type Values = Readonly<Record<string, unknown>>;
@@ -231,19 +237,45 @@ export function checkReserve(values: Values, keys: ProxmoxKeys, defaults: Proxmo
 
 export function checkStartMemoryGate(
   values: Values,
-  keys: Pick<ProxmoxKeys, "startMemoryMarginMiB" | "startMemoryWaitSeconds">,
-  defaults: Pick<ProxmoxDefaults, "startMemoryMarginMiB" | "startMemoryWaitSeconds">,
+  keys: Pick<
+    ProxmoxKeys,
+    "startMemoryMarginMiB" | "startMemoryWaitSeconds" | "startMemoryPressureAvg10" | "startMemoryPressureAvg60" | "startSwapFreeMiB"
+  >,
+  defaults: Pick<
+    ProxmoxDefaults,
+    "startMemoryMarginMiB" | "startMemoryWaitSeconds" | "startMemoryPressureAvg10" | "startMemoryPressureAvg60" | "startSwapFreeMiB"
+  >,
   problem: Problem,
-): { memoryMarginMiB: number; memoryWaitSeconds: number } {
+): {
+  memoryMarginMiB: number;
+  memoryWaitSeconds: number;
+  memoryPressureAvg10: number;
+  memoryPressureAvg60: number;
+  swapFreeMiB: number;
+} {
   const memoryMarginMiB = number(values, keys.startMemoryMarginMiB, defaults.startMemoryMarginMiB);
   const memoryWaitSeconds = number(values, keys.startMemoryWaitSeconds, defaults.startMemoryWaitSeconds);
+  const memoryPressureAvg10 = number(values, keys.startMemoryPressureAvg10, defaults.startMemoryPressureAvg10);
+  const memoryPressureAvg60 = number(values, keys.startMemoryPressureAvg60, defaults.startMemoryPressureAvg60);
+  const swapFreeMiB = number(values, keys.startSwapFreeMiB, defaults.startSwapFreeMiB);
+
   if (!wholeInRange(memoryMarginMiB, 0, 16_777_216)) {
     problem(keys.startMemoryMarginMiB, "Use a whole number of MiB from 0 to 16777216 for the start memory margin.");
   }
   if (!wholeInRange(memoryWaitSeconds, 0, 86_400)) {
     problem(keys.startMemoryWaitSeconds, "Use a whole number of seconds from 0 to 86400 for the start memory wait.");
   }
-  return { memoryMarginMiB, memoryWaitSeconds };
+  if (!Number.isFinite(memoryPressureAvg10) || memoryPressureAvg10 < 0 || memoryPressureAvg10 > 100) {
+    problem(keys.startMemoryPressureAvg10, "Use a percentage from 0 to 100 for the 10-second memory stall limit, 0 to turn it off.");
+  }
+  if (!Number.isFinite(memoryPressureAvg60) || memoryPressureAvg60 < 0 || memoryPressureAvg60 > 100) {
+    problem(keys.startMemoryPressureAvg60, "Use a percentage from 0 to 100 for the 60-second memory stall limit, 0 to turn it off.");
+  }
+  if (!wholeInRange(swapFreeMiB, 0, 16_777_216)) {
+    problem(keys.startSwapFreeMiB, "Use a whole number of MiB from 0 to 16777216 for the free swap limit, 0 to turn it off.");
+  }
+
+  return { memoryMarginMiB, memoryWaitSeconds, memoryPressureAvg10, memoryPressureAvg60, swapFreeMiB };
 }
 
 /** The address fixed to `vmid`, or null outside the range. */
