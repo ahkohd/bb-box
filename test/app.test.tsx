@@ -11054,6 +11054,7 @@ function restorePreviewOf(overrides: Partial<RestorePreview> = {}): RestorePrevi
 }
 
 test("070 unit 6: the Snapshots card sits after Activity and before the facts, with its count, its rows and its words, and Take snapshot… is in the header's menu beside Resize…", async () => {
+  clockAtLocalNoon();
   const { handlers } = server([box({ resizing: { cores: "live", memory: "live", disk: "live", shrinks: true } })], { snapshots: snapshotsView({ counted: 2, undos: 1, records: [snapshotRow({ id: "snundo", name: "before the restore at 09:00", by: { is: "person" }, undoOf: { at: Date.now() - 60_000, to: "Thu 09:15" } }), snapshotRow({ id: "snkept", name: "Thu 09:15", keptUntil: Date.UTC(2026, 10, 29), note: "Signed in to the staging site." })] }) });
   const slot = boxPageAt(handlers, "box/box_1");
   const card = await slot.findByRole("region", { name: "Snapshots" });
@@ -11772,6 +11773,7 @@ function keepPreviewOf(until: number, overrides: Partial<NonNullable<KeepPreview
 }
 
 test("070 unit 8: Keep… opens on the date BB Box plans, says what keeping costs, keeps until the date chosen, and returns focus to the menu's button", async () => {
+  clockAtLocalNoon();
   const until = Date.UTC(2026, 10, 29, 23, 59, 59, 999);
   const asked: { days?: number; until?: string }[] = [];
   const { handlers, changes } = server([box()], {
@@ -11803,6 +11805,7 @@ test("070 unit 8: Keep… opens on the date BB Box plans, says what keeping cost
 });
 
 test("Enter in Keep waits for the check of the date in the field", async () => {
+  clockAtLocalNoon();
   const until = Date.UTC(2026, 10, 29, 23, 59, 59, 999);
   let release: (preview: KeepPreview) => void = () => {};
   const { handlers, changes } = server([box()], {
@@ -11833,6 +11836,7 @@ test("Enter in Keep waits for the check of the date in the field", async () => {
 });
 
 test("Keep on a snapshot already kept opens on its renewal date", async () => {
+  clockAtLocalNoon();
   const keptUntil = Date.UTC(2027, 0, 15, 23, 59, 59, 999);
   const { handlers } = server([box()], {
     snapshots: snapshotsView({ records: [snapshotRow({ keptUntil })] }),
