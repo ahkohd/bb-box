@@ -102,23 +102,28 @@ saves them.
 
 #### Memory admission and heavy VM starts
 
-Proxmox QEMU shares one start gate per node with Proxmox LXC. Every start on
-that node, including warm and spare refills, image trial boxes, restores,
-forks, resumes and resizes, checks the node's available memory minus any
-configured memory that guests started through the gate in the last 10 minutes
-have not touched yet. The remaining memory must cover the guest's memory plus
-`start-memory-margin-mib` (16384 MiB by default). When memory is short, the
-start waits and checks again about every 10 seconds for up to
+Proxmox QEMU shares one start gate per node with Proxmox LXC (decision 106).
+Every start on that node, including warm and spare refills, image trial boxes,
+restores (including snapshots with memory), forks, resumes and resizes, reads
+the node's available memory and subtracts untouched RAM from any running heavy
+VM on the node whose uptime is under 10 minutes, regardless of which install
+or person started it. Containers and ballooned Linux VMs never count as held.
+The remaining memory must cover the guest's memory plus the effective
+`start-memory-margin-mib` (16384 MiB by default, capped at a quarter of the
+node's total memory and enforced at placement as well). When memory is short,
+the start waits and checks every 10 seconds for up to
 `start-memory-wait-seconds` (600 seconds by default), showing the shortfall on
 the box's progress, then fails rather than starting anyway.
 
-Heavy VMs boot one at a time on each node, with `heavy-start-settle-seconds`
-(120 seconds by default) between starts so each VM can touch its memory before
-the next boots. A VM is heavy when it is a Windows or Android VM, or when it
-has `balloon` off and more than 4 GiB of memory. Containers on Proxmox LXC do
-not wait for the heavy settle delay, though they still wait for free memory.
-When both a thread acquire and a warm or spare refill wait, the thread acquire
-goes first.
+Heavy VMs boot one at a time on each node: the next heavy start waits until no
+running heavy VM on the node has an uptime under `heavy-start-settle-seconds`
+(120 seconds by default). A VM is heavy when it is a Windows or Android VM, or
+when it has `balloon` off and more than 4 GiB of memory. Containers on Proxmox
+LXC do not wait for the heavy settle delay, though they still check free
+memory. Waiters start in priority (thread acquires ahead of refills) then
+arrival order without head-of-line blocking, so a smaller guest that fits can
+start while a larger one waits. Warm and spare refills check the gate before
+cloning and use a wait of 0 seconds so they retry at the next top-up.
 
 #### Windows boxes as BB machines
 

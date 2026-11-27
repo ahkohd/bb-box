@@ -151,6 +151,18 @@ export interface GuestStatus {
   readonly memoryUsed?: number;
 }
 
+export interface NodeGuest {
+  readonly vmid: number;
+  readonly name: string;
+  readonly type: GuestType;
+  readonly status: string;
+  readonly template: boolean;
+  readonly uptime: number;
+  readonly memoryMaxBytes: number;
+  readonly memoryUsedBytes: number;
+  readonly tags: readonly string[];
+}
+
 export interface NodeStatus {
   /** Bytes. */
   readonly memoryTotal: number;
@@ -478,6 +490,38 @@ export class Proxmox {
     }
   }
 
+  async guestConfig(
+    type: GuestType,
+    vmid: number,
+    signal?: AbortSignal,
+  ): Promise<{ readonly ok: true; readonly config: Record<string, unknown> } | { readonly ok: false; readonly reason: "not_found" | "forbidden" }> {
+    try {
+      const config = await this.#request<Record<string, unknown>>("GET", `/nodes/${enc(this.node)}/${type}/${vmid}/config`, undefined, signal);
+      return { ok: true, config: config ?? {} };
+    } catch (error) {
+      if (error instanceof ProxmoxError && error.notFound) return { ok: false, reason: "not_found" };
+      if (error instanceof ProxmoxError && error.forbidden) return { ok: false, reason: "forbidden" };
+      throw error;
+    }
+  }
+
+  async nodeGuests(type: GuestType, signal?: AbortSignal): Promise<NodeGuest[]> {
+    const data = await this.#request<Record<string, unknown>[]>("GET", `/nodes/${enc(this.node)}/${type}`, undefined, signal);
+    return (data ?? [])
+      .map((entry): NodeGuest => ({
+        vmid: Number(entry.vmid),
+        name: String(entry.name ?? ""),
+        type,
+        status: String(entry.status ?? "unknown"),
+        template: entry.template === 1 || entry.template === true,
+        uptime: typeof entry.uptime === "number" && Number.isFinite(entry.uptime) && entry.uptime >= 0 ? entry.uptime : 0,
+        memoryMaxBytes: typeof entry.maxmem === "number" && Number.isFinite(entry.maxmem) && entry.maxmem > 0 ? entry.maxmem : 0,
+        memoryUsedBytes: typeof entry.mem === "number" && Number.isFinite(entry.mem) && entry.mem >= 0 ? entry.mem : 0,
+        tags: parseTags(entry.tags),
+      }))
+      .filter((entry) => Number.isInteger(entry.vmid));
+  }
+
   status(vmid: number, signal?: AbortSignal): Promise<GuestStatus | null> {
     return this.guestStatus(this.type, vmid, signal);
   }
@@ -546,6 +590,11 @@ export class Proxmox {
   }
 
   startRollback(vmid: number, name: string, signal?: AbortSignal): Promise<string> {
+    return this.#begin("POST", this.#guest(vmid, `/snapshot/${enc(name)}/rollback`), {}, signal);
+  }
+
+  startRollbackWithMemory(vmid: number, name: string, permit: StartPermit, signal?: AbortSignal): Promise<string> {
+    assertStartPermit(permit);
     return this.#begin("POST", this.#guest(vmid, `/snapshot/${enc(name)}/rollback`), {}, signal);
   }
 

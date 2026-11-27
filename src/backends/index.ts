@@ -556,5 +556,6 @@ export class Backends {
 
   async dispose(): Promise<void> {
     for (const entry of [...this.#entries.values()].reverse()) await this.#dispose(entry);
+    this.#shared.clear();
   }
 }

@@ -901,14 +901,20 @@ the API client, ownership tags, TLS pin and settings. Set up by
 - Each change to a guest tries again for up to 2 minutes while another
   Proxmox task holds the guest's lock.
 - Every guest start on one Proxmox node passes through one start gate shared by
-  Proxmox LXC and Proxmox QEMU (`src/backends/proxmox/start-gate.ts`). Right
-  before starting, it checks the node's available memory minus untouched memory
-  from guests started in the last 10 minutes against the guest's memory plus
-  `start-memory-margin-mib` (16 GiB by default), waiting up to
-  `start-memory-wait-seconds` (600 s) with thread acquires ahead of warm and
-  spare refills. Heavy VMs (Windows, Android, or non-ballooning VMs over 4 GiB)
-  boot one at a time per node with `heavy-start-settle-seconds` (120 s) between
-  starts; containers skip the heavy delay.
+  Proxmox LXC and Proxmox QEMU (`src/backends/proxmox/start-gate.ts`, decision
+  106), including QEMU snapshot rollbacks that include memory (`vmstate`). Right
+  before starting, it reads running QEMU VMs from the node and subtracts
+  untouched memory from any running heavy VM (Windows, Android, or a
+  non-ballooning VM over 4 GiB) whose uptime is under 10 minutes; containers and
+  ballooned VMs never count as held. The remaining available memory must cover
+  the guest's memory plus the effective `start-memory-margin-mib` (16 GiB by
+  default, capped at a quarter of the node's total memory and enforced at
+  placement too). Waiters start in priority (thread acquires ahead of refills)
+  then arrival order without head-of-line blocking, polling every 10 s up to
+  `start-memory-wait-seconds` (600 s). Heavy VMs boot one at a time per node
+  until no running heavy VM has an uptime under `heavy-start-settle-seconds`
+  (120 s); containers skip the heavy delay. Warm and spare refills check the
+  gate before cloning and use a wait of 0 s.
 - A warm box serves only a box with its cores, as a running container
   takes new cores only when Proxmox next rebalances CPUs.
 

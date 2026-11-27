@@ -398,7 +398,7 @@ const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = {
     type: "number",
     label: "Proxmox LXC: start memory margin (MiB)",
     description:
-      "Free host memory, in MiB, that must stay free on the node after a guest starts. Untouched memory of starts from the last 10 minutes counts against it, and a start waits up to the start memory wait.",
+      "Free host memory, in MiB, that must stay free after a guest starts, capped at a quarter of node RAM. Untouched RAM of recent heavy VMs counts against it.",
     default: LXC_DEFAULTS.startMemoryMarginMiB,
   },
   [LXC_KEYS.startMemoryWaitSeconds]: {

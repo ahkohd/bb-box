@@ -1137,6 +1137,7 @@ export type RestoreWay = "rollback" | "rollback-newest-only" | "new-guest" | "no
 export interface SnapshotHooks {
   submitting(): Promise<void>;
   task(task: TaskRef): Promise<void>;
+  waiting?: (words: string | null) => Promise<void>;
 }
 
 export interface CopyHooks extends SnapshotHooks {
@@ -1316,6 +1317,7 @@ export interface ImageBox {
   readonly command: CommandTransport;
   /** How long each step of making it took, in order, where the backend times them: for a build's answer check. */
   readonly steps?: readonly { readonly name: string; readonly ms: number }[];
+  readonly bootMs?: number;
 }
 
 /** A build of an image that a backend keeps: on Proxmox LXC, a template. */

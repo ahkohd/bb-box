@@ -270,7 +270,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "number",
     label: "Start memory margin (MiB)",
     description:
-      "Free host memory, in MiB, that must stay free on the node after a guest starts. Untouched memory of starts from the last 10 minutes counts against it, and a start waits up to the start memory wait.",
+      "Free host memory, in MiB, that must stay free after a guest starts, capped at a quarter of node RAM. Untouched RAM of recent heavy VMs counts against it.",
     group: "advanced",
     default: QEMU_DEFAULTS.startMemoryMarginMiB,
   },

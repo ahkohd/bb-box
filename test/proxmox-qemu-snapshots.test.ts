@@ -48,7 +48,16 @@ function world(android = false) {
   });
   assert.ok(parsed.ok, JSON.stringify(parsed));
   const context = testContext(new MemoryStorage(), "test", { id: "proxmox-qemu" });
-  const options: QemuBackendOptions = { fetch: proxmox.fetch, sleep: async () => {}, sshBinary: FAKE_SSH_BINARY, portCheck: async () => true, readyTimeoutMs: 0 };
+  const options: QemuBackendOptions = {
+    fetch: proxmox.fetch,
+    now: () => proxmox.now(),
+    sleep: async (ms) => {
+      if (ms >= 1_000) proxmox.passOnNodeClockAndUptime(Math.ceil(ms / 1000));
+    },
+    sshBinary: FAKE_SSH_BINARY,
+    portCheck: async () => true,
+    readyTimeoutMs: 0,
+  };
   const backend = new ProxmoxQemuBackend(parsed.config, context, options);
   made.push(backend);
   return { ssh, proxmox, backend, context };

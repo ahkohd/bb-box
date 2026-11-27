@@ -110,3 +110,4 @@ which records still stand as written. The current design as a whole is in
 | [103](103-a-mac-measurement-that-does-not-finish-says-not-known-and-never-replaces-one-that-did.md) | A Mac measurement that does not finish says not known, and never replaces one that did | Accepted; extends 065; [results](103-results.md) |
 | [104](104-a-card-nvidia-smi-did-not-read-is-not-known-yet-and-blocks-only-itself.md) | A card nvidia-smi did not read is not known yet, and blocks only itself | Accepted; supersedes 071's rule for incomplete readings |
 | [105](105-the-live-agent-pointer-changes-shape-by-the-rules-recordings-use.md) | The live agent pointer changes shape by the rules recordings use | Accepted; extends 073 and 102 |
+| [106](106-proxmox-guests-wait-for-free-host-memory-and-heavy-vms-boot-one-at-a-time.md) | Proxmox guests wait for free host memory, and heavy VMs boot one at a time | Accepted |

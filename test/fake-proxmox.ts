@@ -20,6 +20,8 @@ export interface FakeGuest {
   /** A started container's root filesystem size in bytes, as df gave it then. */
   filesystem?: number;
   memoryUsed?: number;
+  startedAt?: number;
+  uptime?: number;
   snapshots?: FakeSnapshot[];
   pending?: { key: string; value?: string; pending?: string; delete?: number }[];
 }
@@ -105,6 +107,7 @@ export class FakeProxmox {
   templateLag = 0;
   readonly #templating = new Map<number, number>();
   snapshotSeconds: () => number = () => Math.floor(Date.now() / 1000);
+  now: () => number = () => this.#monotonicSeconds() * 1000;
   snapshotTaskFailsWhole = false;
   readonly storageConfigs = new Map<string, Record<string, unknown>>([["local-lvm", { storage: "local-lvm", type: "lvmthin", vgname: "pve", thinpool: "data", content: "rootdir,images" }]]);
   readonly thinPools: { lv: string; vg: string; metadata_size: number; metadata_used: number }[] = [{ lv: "data", vg: "pve", metadata_size: 1024 ** 3, metadata_used: 100 * 1024 ** 2 }];
@@ -122,6 +125,13 @@ export class FakeProxmox {
     for (const guest of this.guests.values()) this.#listed.set(guest.vmid, this.#current(guest));
   }
 
+  #guestUptime(guest: FakeGuest): number {
+    if (guest.status !== "running") return 0;
+    if (guest.uptime !== undefined) return guest.uptime;
+    if (guest.startedAt !== undefined) return Math.max(0, Math.floor((this.now() - guest.startedAt) / 1000));
+    return 3600;
+  }
+
   /** A guest as its node reads it now, for /nodes/{node}/lxc and /nodes/{node}/qemu. */
   #current(guest: FakeGuest): Record<string, unknown> {
     return {
@@ -129,6 +139,8 @@ export class FakeProxmox {
       type: guest.type ?? "lxc",
       name: guest.name,
       status: guest.status,
+      uptime: this.#guestUptime(guest),
+      mem: guest.status === "running" ? (guest.memoryUsed ?? 0) : 0,
       ...(guest.template ? { template: 1 } : {}),
       // As Proxmox gives them: unset cores are the node's, and memory and disk are in bytes.
       cpus: Number(guest.config.cores) || this.cpus,
@@ -366,7 +378,15 @@ export class FakeProxmox {
           return ok(this.#task(`${prefix}rollback`, vmid));
         }
         guest.config = { ...(snapshot.config ?? guest.config), parent: name };
-        guest.status = "stopped";
+        if (type === "qemu" && snapshot.vmstate) {
+          guest.status = "running";
+          guest.startedAt = this.now();
+          delete guest.uptime;
+        } else {
+          guest.status = "stopped";
+          delete guest.startedAt;
+          delete guest.uptime;
+        }
         return ok(this.#task(`${prefix}rollback`, vmid));
       }
     }
@@ -574,6 +594,8 @@ export class FakeProxmox {
       const guest = this.#of(type, Number(id));
       if (!guest) return this.#missing(Number(id), type);
       guest.status = "stopped";
+      delete guest.startedAt;
+      delete guest.uptime;
       return ok(this.#task(type === "qemu" ? "qmshutdown" : "vzshutdown", Number(id)));
     }
 
@@ -585,11 +607,13 @@ export class FakeProxmox {
       const prefix = type === "qemu" ? "qm" : "vz";
       if (action === "current" && method === "GET") {
         const mem = guest.status === "running" ? (guest.memoryUsed ?? 0) : 0;
-        return ok({ vmid, name: guest.name, status: guest.status, uptime: guest.status === "running" ? 5 : 0, mem, ...(guest.config.lock ? { lock: guest.config.lock } : {}) });
+        return ok({ vmid, name: guest.name, status: guest.status, uptime: this.#guestUptime(guest), mem, ...(guest.config.lock ? { lock: guest.config.lock } : {}) });
       }
       if (method === "POST" && action === "start") {
         if (!this.nextTaskExit.has(`${prefix}start`)) {
           guest.status = "running";
+          guest.startedAt = this.now();
+          delete guest.uptime;
           // A suspended VM resumes.
           delete guest.config.lock;
           delete guest.config.vmstate;
@@ -599,7 +623,11 @@ export class FakeProxmox {
         return ok(this.#task(`${prefix}start`, vmid));
       }
       if (method === "POST" && action === "stop") {
-        if (!this.nextTaskExit.has(`${prefix}stop`)) guest.status = "stopped";
+        if (!this.nextTaskExit.has(`${prefix}stop`)) {
+          guest.status = "stopped";
+          delete guest.startedAt;
+          delete guest.uptime;
+        }
         return ok(this.#task(`${prefix}stop`, vmid));
       }
       if (method === "POST" && action === "suspend" && type === "qemu") {
@@ -607,6 +635,8 @@ export class FakeProxmox {
         if (params.todisk !== "1") return respond(501, "the fake suspends only to disk", { data: null });
         if (!this.nextTaskExit.has("qmsuspend")) {
           guest.status = "stopped";
+          delete guest.startedAt;
+          delete guest.uptime;
           guest.config.lock = "suspended";
           guest.config.vmstate = `local-lvm:vm-${vmid}-state-suspend-2026-10-01`;
         }

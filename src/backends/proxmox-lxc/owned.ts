@@ -256,11 +256,13 @@ export class OwnedGuests {
     gate: ProxmoxStartGate,
     request: Omit<StartGuestRequest, "vmid" | "signal">,
     signal?: AbortSignal,
+    beforeStart?: () => Promise<void>,
   ): Promise<number> {
     await this.read(vmid, owner, signal);
-    return gate.start(this.#api, { ...request, vmid, signal }, (permit) =>
-      this.#act(vmid, owner, "start", () => this.#api.start(vmid, permit, signal), signal, "start"),
-    );
+    return gate.start(this.#api, { ...request, vmid, signal }, async (permit) => {
+      if (beforeStart) await beforeStart();
+      await this.#act(vmid, owner, "start", () => this.#api.start(vmid, permit, signal), signal, "start");
+    });
   }
 
   async stop(vmid: number, owner: GuestOwner, signal?: AbortSignal): Promise<void> {

@@ -35,7 +35,14 @@
 import { randomBytes } from "node:crypto";
 import { SPARES } from "../../core/boxes.ts";
 import { LOW, START_CPUUNITS, START_TAG, startsLow, withStartTag } from "../proxmox/start-weight.ts";
-import { ProxmoxStartGate, sharedStartGate, type StartGuestRequest, type StartPriority } from "../proxmox/start-gate.ts";
+import {
+  ProxmoxStartGate,
+  effectiveStartMemoryMarginMiB,
+  placementMemoryProblem,
+  sharedStartGate,
+  type StartGuestRequest,
+  type StartPriority,
+} from "../proxmox/start-gate.ts";
 import type { CheckId } from "../../core/checks.ts";
 import { ReadyPool, type PoolStore } from "../pool.ts";
 import { Upkeep } from "../warm.ts";
@@ -1837,28 +1844,27 @@ export class ProxmoxLxcBackend implements Backend {
     const { first, last } = this.#config.vmids;
     const used = new Set([...this.#reserved, ...this.#filling.keys(), ...guests.map((guest) => guest.vmid).filter((vmid) => this.#inRange(vmid))]);
 
+    const effectiveMargin = effectiveStartMemoryMarginMiB(this.#config.startGate.memoryMarginMiB, node.memoryTotal);
+    const keepMemoryMiB = Math.max(reserve.memoryMiB, effectiveMargin);
     const limits: Limit[] = [
-      { resource: "memory", used: memoryUsed, total: memoryTotal, reserve: reserve.memoryMiB, unit: "MiB" },
+      { resource: "memory", used: memoryUsed, total: memoryTotal, reserve: keepMemoryMiB, unit: "MiB" },
       { resource: "disk", used: diskUsed, total: diskTotal, reserve: reserve.diskGiB * 1024, unit: "MiB" },
       { resource: "guests", used: used.size, total: last - first + 1, reserve: 0, unit: "count" },
     ];
     const memoryMiB = size?.memoryMiB ?? template.memoryMiB;
-    // The memory a box needs: all of it for a new guest, what it grows by for a warm one. A refusal
-    // leads with what binds: the box when it needs more than is free, otherwise the memory kept free.
     const memory = (need: number, grown: boolean): string[] => {
-      if (need <= 0 || memoryFree - need >= reserve.memoryMiB) return [];
       const box = grown ? `a warm ${kind} box given ${formatMiB(memoryMiB)}` : `a ${kind} box with ${formatMiB(memoryMiB)} memory`;
-      if (need > memoryFree) {
-        const needs = grown ? `the ${formatMiB(need)} more ${box} needs` : `${box} needs`;
-        return [`${api.node} has ${formatMiB(Math.max(0, memoryFree))} of memory free, less than ${needs}. Release a box or ask for less memory.`];
-      }
-      return [
-        `${api.node} has ${formatMiB(memoryFree)} of memory free and keeps ${formatMiB(reserve.memoryMiB)} free, ` +
-          `so ${box}${grown ? `, which needs ${formatMiB(need)} more,` : ""} does not fit. ` +
-          (grown || memoryFree > reserve.memoryMiB
-            ? `Release a box, ask for less memory, or lower the memory kept free in ${PRODUCT}'s settings.`
-            : `Release a box, or lower the memory kept free in ${PRODUCT}'s settings.`),
-      ];
+      const problem = placementMemoryProblem({
+        node: api.node,
+        memoryTotalMiB: memoryTotal,
+        memoryFreeMiB: memoryFree,
+        needMiB: need,
+        boxWords: box,
+        grown,
+        reserveMiB: reserve.memoryMiB,
+        effectiveMarginMiB: effectiveMargin,
+      });
+      return problem ? [problem] : [];
     };
     // What any box of the size needs, new or warm.
     const sized: string[] = [];
@@ -2066,6 +2072,17 @@ export class ProxmoxLxcBackend implements Backend {
       let started = false;
       for (;;) {
         if (vmid === null) {
+          if (box.threadId === SPARES) {
+            const admitted = await this.#startGate(api).canStartNow(api, {
+              memoryMiB: box.size.memoryMiB,
+              heavy: false,
+              priority: "refill",
+              config: { ...this.#config.startGate, memoryWaitSeconds: 0, heavySettleSeconds: 0 },
+              signal,
+              now: () => this.#now(),
+            });
+            if (!admitted.ok) throw new BackendError("no_capacity", admitted.reason);
+          }
           // Time spent waiting for a template that is being replaced shows apart from the clone.
           let away: number | null = null;
           const cloning = performance.now();
@@ -2186,25 +2203,33 @@ export class ProxmoxLxcBackend implements Backend {
             cardClaim = claimOf(asked, "granted");
           }
         }
-        if (!placed && withCard) {
-          if ((await api.status(id, signal))?.status === "running") cardClaim = await step("gpu", () => this.#markedClaim(api, id, signal));
-          else {
-            const gate = await step("gpu", () => this.#gateStart(api, id, ours, signal, (why) => `${PRODUCT} did not start the guest it had made for box ${box.name}, and releases it: ${why}`));
-            gated = gate.reservation;
-            cardClaim = gate.claim;
-            heldGpu = gate.gpu;
-          }
+        const alreadyRunning = (await api.status(id, signal))?.status === "running";
+        if (!placed && withCard && alreadyRunning) {
+          cardClaim = await step("gpu", () => this.#markedClaim(api, id, signal));
         }
         if (!started) await hooks.starting();
         started = true;
         await step("start", async () => {
-          if ((await api.status(id, signal))?.status === "running") return;
+          if (alreadyRunning || (await api.status(id, signal))?.status === "running") return;
+          const isSpare = box.threadId === SPARES;
           const waitedMs = await this.#owned(api).start(
             id,
             ours,
             this.#startGate(api),
-            this.#startOptions(box.threadId === SPARES ? "refill" : "acquire", { memoryMiB: box.size.memoryMiB, waiting: hooks.waiting }),
+            this.#startOptions(isSpare ? "refill" : "acquire", {
+              memoryMiB: box.size.memoryMiB,
+              waiting: hooks.waiting,
+              ...(isSpare ? { memoryWaitSeconds: 0 } : {}),
+            }),
             signal,
+            !placed && withCard
+              ? async () => {
+                  const gate = await step("gpu", () => this.#gateStart(api, id, ours, signal, (why) => `${PRODUCT} did not start the guest it had made for box ${box.name}, and releases it: ${why}`));
+                  gated = gate.reservation;
+                  cardClaim = gate.claim;
+                  heldGpu = gate.gpu;
+                }
+              : undefined,
           );
           deadline += waitedMs;
         });
@@ -2334,11 +2359,23 @@ export class ProxmoxLxcBackend implements Backend {
     if (status.status === "running") {
       if (marked) gate = { ...UNGATED, gpu: await this.#grantedGpu(api, vmid, signal) };
     } else {
-      if (pin) gate = await step("gpu", () => this.#gateOnPin(api, vmid, owner, guest, pin, signal));
-      else if (marked) gate = await step("gpu", () => this.#gateStart(api, vmid, owner, signal));
       const reservations = reservationsOn(this.#cardKey(api));
       try {
-        await step("boot", () => this.#owned(api).start(vmid, owner, this.#startGate(api), this.#startOptions("acquire", { waiting }), signal));
+        await step("boot", () =>
+          this.#owned(api).start(
+            vmid,
+            owner,
+            this.#startGate(api),
+            this.#startOptions("acquire", { waiting }),
+            signal,
+            pin || marked
+              ? async () => {
+                  if (pin) gate = await step("gpu", () => this.#gateOnPin(api, vmid, owner, guest, pin, signal));
+                  else if (marked) gate = await step("gpu", () => this.#gateStart(api, vmid, owner, signal));
+                }
+              : undefined,
+          ),
+        );
       } catch (error) {
         reservations.drop(gate.reservation);
         throw error;
@@ -2405,15 +2442,26 @@ export class ProxmoxLxcBackend implements Backend {
       reservations.drop(gate.reservation);
       reservations.dropStopped(vmid);
     });
-    const moved = await step("gpu", () => this.#gateStart(api, vmid, owner, signal, (refused) => refused, new Set([card]))).catch((error: unknown) => {
-      throw left(`${PRODUCT} could not place it on another card: ${message(error)}`, `${PRODUCT} could not place it on another card: ${agentMessageOf(error) ?? message(error)}`);
-    });
-    if (!moved.claim?.card || moved.claim.card === card) {
-      reservations.drop(moved.reservation);
-      throw left("No other card has room for it.");
-    }
+    let moved: StartGate = UNGATED;
     try {
-      await step("boot", () => this.#owned(api).start(vmid, owner, this.#startGate(api), this.#startOptions("acquire", { waiting }), signal));
+      await step("boot", () =>
+        this.#owned(api).start(
+          vmid,
+          owner,
+          this.#startGate(api),
+          this.#startOptions("acquire", { waiting }),
+          signal,
+          async () => {
+            moved = await step("gpu", () => this.#gateStart(api, vmid, owner, signal, (refused) => refused, new Set([card]))).catch((error: unknown) => {
+              throw left(`${PRODUCT} could not place it on another card: ${message(error)}`, `${PRODUCT} could not place it on another card: ${agentMessageOf(error) ?? message(error)}`);
+            });
+            if (!moved.claim?.card || moved.claim.card === card) {
+              reservations.drop(moved.reservation);
+              throw left("No other card has room for it.");
+            }
+          },
+        ),
+      );
     } catch (error) {
       reservations.drop(moved.reservation);
       throw error;
@@ -3259,18 +3307,37 @@ export class ProxmoxLxcBackend implements Backend {
       const audit = (error: unknown, fix: string) => (error instanceof ProxmoxError && error.forbidden ? fix : `${fix} (${message(error)})`);
       try {
         const status = await api.nodeStatus(signal);
-        pass(
-          MEMORY,
-          `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(status.memoryTotal / MiB)} available. Each guest start leaves a ${formatMiB(this.#config.startGate.memoryMarginMiB)} margin free.`,
-        );
-        const { reserve } = this.#config;
-        const largest = { cores: status.cpus ?? Infinity, memoryMiB: Math.floor(status.memoryTotal / MiB) - reserve.memoryMiB, diskGiB: null };
+        const totalMiB = Math.floor(status.memoryTotal / MiB);
+        const effectiveMargin = effectiveStartMemoryMarginMiB(this.#config.startGate.memoryMarginMiB, status.memoryTotal);
+        const capped = effectiveMargin < this.#config.startGate.memoryMarginMiB
+          ? ` (capped at a quarter of the node's memory from ${formatMiB(this.#config.startGate.memoryMarginMiB)})`
+          : "";
+        const smallest = this.kinds()
+          .map(({ id }) => ({
+            kind: id,
+            memoryMiB: Math.min(...Object.values(this.#context.kind(id).presets).map((preset) => preset.memoryMiB)),
+          }))
+          .sort((a, b) => a.memoryMiB - b.memoryMiB)[0] ?? null;
+        if (smallest !== null && totalMiB - effectiveMargin < smallest.memoryMiB) {
+          fail(
+            MEMORY,
+            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. The ${formatMiB(effectiveMargin)} effective start memory margin${capped} leaves ${formatMiB(Math.max(0, totalMiB - effectiveMargin))}, which cannot fit the smallest ${smallest.kind} size (${formatMiB(smallest.memoryMiB)}).`,
+            `Lower the start memory margin or the smallest box size in ${PRODUCT}'s settings, or use a node with more memory.`,
+          );
+        } else {
+          pass(
+            MEMORY,
+            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. Each guest start leaves a ${formatMiB(effectiveMargin)} effective start memory margin free${capped}.`,
+          );
+        }
+        const keepMemoryMiB = Math.max(this.#config.reserve.memoryMiB, effectiveMargin);
+        const largest = { cores: status.cpus ?? Infinity, memoryMiB: totalMiB - keepMemoryMiB, diskGiB: null };
         const sizes = sizesCheck({
           id: "proxmox.sizes",
           name: "Box sizes",
           host: node,
-          has: `${status.cpus === null ? "" : `${status.cpus} CPU threads and `}${formatMiB(status.memoryTotal / MiB)} memory`,
-          keepsMiB: reserve.memoryMiB,
+          has: `${status.cpus === null ? "" : `${status.cpus} CPU threads and `}${formatMiB(totalMiB)} memory`,
+          keepsMiB: keepMemoryMiB,
           kinds: this.kinds().map(({ id }) => ({ kind: id, settings: this.#context.kind(id), largest })),
         });
         if (sizes) checks.push(sizes);
@@ -3965,15 +4032,25 @@ export class ProxmoxLxcBackend implements Backend {
 
   #startOptions(
     priority: StartPriority,
-    extra: { readonly memoryMiB?: number; readonly waiting?: (words: string | null) => Promise<void> } = {},
+    extra: {
+      readonly memoryMiB?: number;
+      readonly memoryWaitSeconds?: number;
+      readonly waiting?: (words: string | null) => Promise<void>;
+      readonly onAdmitted?: () => void;
+    } = {},
   ): Omit<StartGuestRequest, "vmid" | "signal"> {
+    const { memoryWaitSeconds, ...rest } = extra;
     return {
       priority,
       heavy: false,
-      config: { ...this.#config.startGate, heavySettleSeconds: 0 },
+      config: {
+        ...this.#config.startGate,
+        ...(memoryWaitSeconds !== undefined ? { memoryWaitSeconds } : {}),
+        heavySettleSeconds: 0,
+      },
       now: () => this.#now(),
       sleep: this.#options.sleep ?? pause,
-      ...extra,
+      ...rest,
     };
   }
 
@@ -4390,9 +4467,16 @@ export class ProxmoxLxcBackend implements Backend {
       vmid = await this.#clone(api, guests, template, IMAGE_HOSTNAME, description, async (id) => void this.#imageBoxes.add(id), signal);
       await this.#owned(api).configure(vmid, this.#image(), this.#settings(null, vmid), signal);
       await this.#owned(api).configure(vmid, this.#image(), { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
-      await this.#owned(api).start(vmid, this.#image(), this.#startGate(api), this.#startOptions("acquire"), signal);
+      let admittedAt = this.#now();
+      await this.#owned(api).start(
+        vmid,
+        this.#image(),
+        this.#startGate(api),
+        this.#startOptions("acquire", { onAdmitted: () => (admittedAt = this.#now()) }),
+        signal,
+      );
       await this.#waitReady(vmid, build.kind, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
-      return { ref: String(vmid), command: await this.#command(vmid) };
+      return { ref: String(vmid), command: await this.#command(vmid), bootMs: Math.max(0, this.#now() - admittedAt) };
     } catch (error) {
       if (vmid !== null) {
         await this.#forget(vmid);
@@ -5712,10 +5796,26 @@ export class ProxmoxLxcBackend implements Backend {
       }
       for (let missing = target - ready - filling; missing > 0; missing--) {
         signal.throwIfAborted();
-        const room = await this.#room(api, offer, null, await api.listPool(pool, signal), [], { ready, target }, null, signal);
+        const currentGuests = await api.listPool(pool, signal);
+        const room = await this.#room(api, offer, null, currentGuests, [], { ready, target }, null, signal);
         if (!room.ok) {
           const kinds = FLAVOUR_KINDS[flavour].filter((kind) => this.#context.warm(kind) > 0);
           short.push({ kinds, count: target, have: target - missing, reason: room.message ?? "No host has room for a warm box." });
+          break;
+        }
+        const chosen = this.#choose(offer, currentGuests, [], api.node, await this.#placing(offer));
+        const template = await this.#templateOf(api, chosen.template.vmid, signal);
+        const admitted = await this.#startGate(api).canStartNow(api, {
+          memoryMiB: template.memoryMiB,
+          heavy: false,
+          priority: "refill",
+          config: { ...this.#config.startGate, memoryWaitSeconds: 0, heavySettleSeconds: 0 },
+          signal,
+          now: () => this.#now(),
+        });
+        if (!admitted.ok) {
+          const kinds = FLAVOUR_KINDS[flavour].filter((kind) => this.#context.warm(kind) > 0);
+          short.push({ kinds, count: target, have: target - missing, reason: admitted.reason });
           break;
         }
         try {
@@ -5778,7 +5878,7 @@ export class ProxmoxLxcBackend implements Backend {
         if (answer.is === "refused") throw new Error(`The host's GPU helper on ${api.node} refused ${cardName(placed.card)} for a warm linux-desktop box, as ${answer.why}, so ${PRODUCT} released it.`);
         if (answer.is !== "granted") throw new Error(notAnsweredWords(api.node, answer));
       }
-      await this.#owned(api).start(vmid, warmGuest, this.#startGate(api), this.#startOptions("refill"), signal);
+      await this.#owned(api).start(vmid, warmGuest, this.#startGate(api), this.#startOptions("refill", { memoryWaitSeconds: 0 }), signal);
       await this.#waitReady(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
       if (offer.kind.capabilities.gpu) {
         const display = await this.#displayMode(vmid, offer.kind.id, this.#options.readyTimeoutMs ?? offer.kind.readyTimeoutMs, signal);
