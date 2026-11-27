@@ -17,16 +17,16 @@ const DEFAULT_GUEST_MEMORY_MIB = 512;
 export const START_MEMORY_MARGIN_DEFAULT_MIB = 16_384;
 export const START_MEMORY_WAIT_DEFAULT_S = 600;
 export const HEAVY_START_SETTLE_DEFAULT_S = 120;
-export const START_MEMORY_PRESSURE_AVG10_DEFAULT = 10;
-export const START_MEMORY_PRESSURE_AVG60_DEFAULT = 5;
+export const START_MEMORY_PRESSURE_PERCENT_DEFAULT = 5;
 export const START_SWAP_FREE_DEFAULT_MIB = 2_048;
 export const START_GATE_POLL_MS = 10_000;
 export const PRESSURE_CACHE_MS = 60_000;
+export const PRESSURE_MAX_AGE_MS = 3 * 60_000;
 export const RECENT_BOOT_WINDOW_S = 10 * 60;
 export const RECENT_BOOT_WINDOW_MS = RECENT_BOOT_WINDOW_S * 1000;
 export const HEAVY_BALLOON_OFF_MEMORY_MIB = 4_096;
 
-const EMPTY_PRESSURE: NodeMemoryPressure = { peakAvg10: null, meanAvg10: null, sampledAtSeconds: null };
+const EMPTY_PRESSURE: NodeMemoryPressure = { percent: null, sampledAtSeconds: null };
 
 declare const START_PERMIT: unique symbol;
 
@@ -48,8 +48,7 @@ export interface StartGateConfig {
   readonly memoryMarginMiB: number;
   readonly memoryWaitSeconds: number;
   readonly heavySettleSeconds: number;
-  readonly memoryPressureAvg10?: number;
-  readonly memoryPressureAvg60?: number;
+  readonly memoryPressurePercent?: number;
   readonly swapFreeMiB?: number;
 }
 
@@ -185,6 +184,14 @@ export function effectiveStartMemoryMarginMiB(configuredMarginMiB: number, nodeT
   return Math.min(configured, Math.floor(nodeTotalMiB / 4));
 }
 
+export function effectiveStartSwapFreeMiB(configuredFloorMiB: number, swapTotalBytes: number): number {
+  const configured = Math.max(0, configuredFloorMiB);
+  if (configured === 0) return 0;
+  const swapTotalMiB = Math.floor(swapTotalBytes / MIB);
+  if (swapTotalMiB <= 0) return 0;
+  return Math.min(configured, Math.floor(swapTotalMiB / 20));
+}
+
 export function configuredMemoryMiB(config: Readonly<Record<string, unknown>>): number {
   const match = /(?:^|current=)(\d+)/.exec(String(config.memory ?? ""));
   const parsed = match ? Number(match[1]) : NaN;
@@ -229,37 +236,51 @@ function formatSwapBytes(bytes: number): string {
   return formatMiB(Math.max(0, bytes) / MIB);
 }
 
+function formatStaleAge(ageMs: number): string {
+  const seconds = Math.max(0, Math.round(ageMs / 1000));
+  if (seconds < 120) return `${seconds} s`;
+  return `${Math.round(seconds / 60)} minutes`;
+}
+
+function pressureSampleAgeMs(reading: NodeMemoryPressure, now: number): number | null {
+  if (reading.sampledAtSeconds === null) return null;
+  return Math.max(0, now - reading.sampledAtSeconds * 1000);
+}
+
+function freshPressure(reading: NodeMemoryPressure, now: number): NodeMemoryPressure {
+  if (reading.percent === null) return EMPTY_PRESSURE;
+  const ageMs = pressureSampleAgeMs(reading, now);
+  if (ageMs !== null && ageMs > PRESSURE_MAX_AGE_MS) return EMPTY_PRESSURE;
+  return reading;
+}
+
+function cachedReadingReusableOnError(cached: CachedPressure, now: number): boolean {
+  if (now < cached.fetchedAt) return false;
+  const ageMs = pressureSampleAgeMs(cached.reading, now) ?? (now - cached.fetchedAt);
+  return ageMs < PRESSURE_MAX_AGE_MS;
+}
+
 function needsPressureReading(config: StartGateConfig): boolean {
-  const avg10Limit = config.memoryPressureAvg10 ?? START_MEMORY_PRESSURE_AVG10_DEFAULT;
-  const avg60Limit = config.memoryPressureAvg60 ?? START_MEMORY_PRESSURE_AVG60_DEFAULT;
-  return avg10Limit > 0 || avg60Limit > 0;
+  const limit = config.memoryPressurePercent ?? START_MEMORY_PRESSURE_PERCENT_DEFAULT;
+  return limit > 0;
 }
 
 function evaluateStress(nodeStatus: NodeStatus, pressure: NodeMemoryPressure, config: StartGateConfig): StressBlock | null {
-  const avg10Limit = config.memoryPressureAvg10 ?? START_MEMORY_PRESSURE_AVG10_DEFAULT;
-  const avg60Limit = config.memoryPressureAvg60 ?? START_MEMORY_PRESSURE_AVG60_DEFAULT;
-  const swapLimitMiB = config.swapFreeMiB ?? START_SWAP_FREE_DEFAULT_MIB;
+  const pressureLimit = config.memoryPressurePercent ?? START_MEMORY_PRESSURE_PERCENT_DEFAULT;
+  const swapConfiguredMiB = config.swapFreeMiB ?? START_SWAP_FREE_DEFAULT_MIB;
 
-  const avg10Over = avg10Limit > 0 && pressure.peakAvg10 !== null && pressure.peakAvg10 > avg10Limit;
-  const avg60Over = avg60Limit > 0 && pressure.meanAvg10 !== null && pressure.meanAvg10 > avg60Limit;
+  const pressureOver = pressureLimit > 0 && pressure.percent !== null && pressure.percent > pressureLimit;
+  const pressureReason = pressureOver
+    ? `memory stalls ${formatPercent(pressure.percent!)}, at most ${formatPercent(pressureLimit)}`
+    : null;
 
-  let pressureReason: string | null = null;
-  if (avg10Over && avg60Over) {
-    pressureReason =
-      `memory stalls ${formatPercent(pressure.peakAvg10!)} over 10 s (at most ${formatPercent(avg10Limit)}) ` +
-      `and ${formatPercent(pressure.meanAvg10!)} over 60 s (at most ${formatPercent(avg60Limit)})`;
-  } else if (avg10Over) {
-    pressureReason = `memory stalls ${formatPercent(pressure.peakAvg10!)} over 10 s, at most ${formatPercent(avg10Limit)}`;
-  } else if (avg60Over) {
-    pressureReason = `memory stalls ${formatPercent(pressure.meanAvg10!)} over 60 s, at most ${formatPercent(avg60Limit)}`;
-  }
-
+  const effectiveSwapMiB = nodeStatus.swapTotal !== null
+    ? effectiveStartSwapFreeMiB(swapConfiguredMiB, nodeStatus.swapTotal)
+    : 0;
   const swapLow =
-    swapLimitMiB > 0 &&
-    nodeStatus.swapTotal !== null &&
-    nodeStatus.swapTotal > 0 &&
+    effectiveSwapMiB > 0 &&
     nodeStatus.swapFree !== null &&
-    nodeStatus.swapFree < swapLimitMiB * MIB;
+    nodeStatus.swapFree < effectiveSwapMiB * MIB;
 
   if (!pressureReason && !swapLow) return null;
 
@@ -267,7 +288,7 @@ function evaluateStress(nodeStatus: NodeStatus, pressure: NodeMemoryPressure, co
     pressureReason,
     swapFreeBytes: swapLow ? nodeStatus.swapFree : null,
     swapTotalBytes: swapLow ? nodeStatus.swapTotal : null,
-    swapLimitMiB: swapLow ? swapLimitMiB : null,
+    swapLimitMiB: swapLow ? effectiveSwapMiB : null,
   };
 }
 
@@ -283,7 +304,7 @@ function stressWaitWords(node: string, block: StressBlock): string {
 function stressTimeoutError(node: string, block: StressBlock, waitSeconds: number): BackendError {
   const waited = waitSeconds > 0 ? ` after waiting ${waitSeconds} s` : "";
   const parts: string[] = [];
-  if (block.pressureReason) parts.push(`${block.pressureReason} (from Proxmox VE 9 RRD)`);
+  if (block.pressureReason) parts.push(`${block.pressureReason} (minute's mean of Proxmox VE 9's 10-second samples)`);
   if (block.swapFreeBytes !== null && block.swapTotalBytes !== null && block.swapLimitMiB !== null) {
     parts.push(
       `free swap ${formatSwapBytes(block.swapFreeBytes)} of ${formatSwapBytes(block.swapTotalBytes)}, needs at least ${formatMiB(block.swapLimitMiB)}`,
@@ -299,46 +320,68 @@ function stressTimeoutError(node: string, block: StressBlock, waitSeconds: numbe
   return new BackendError("no_capacity", `${node} could not start the guest${waited}: ${parts.join("; ")}. ${fix}`);
 }
 
-export function nodeMemoryGateDoctorNotes(input: {
+export function nodeMemoryGateDoctorReport(input: {
+  readonly node: string;
   readonly status: NodeStatus;
   readonly pressure: NodeMemoryPressure | null;
   readonly pressureError: string | null;
-  readonly config: Pick<StartGateConfig, "memoryPressureAvg10" | "memoryPressureAvg60" | "swapFreeMiB">;
-}): string {
-  const { status, pressure, pressureError, config } = input;
-  const swapLimitMiB = config.swapFreeMiB ?? START_SWAP_FREE_DEFAULT_MIB;
-  const avg10Limit = config.memoryPressureAvg10 ?? START_MEMORY_PRESSURE_AVG10_DEFAULT;
-  const avg60Limit = config.memoryPressureAvg60 ?? START_MEMORY_PRESSURE_AVG60_DEFAULT;
+  readonly now: number;
+  readonly config: Pick<StartGateConfig, "memoryPressurePercent" | "swapFreeMiB">;
+}): { readonly notes: string; readonly warningFix: string | null } {
+  const { node, status, pressure, pressureError, now, config } = input;
+  const swapConfiguredMiB = config.swapFreeMiB ?? START_SWAP_FREE_DEFAULT_MIB;
+  const pressureLimit = config.memoryPressurePercent ?? START_MEMORY_PRESSURE_PERCENT_DEFAULT;
 
-  const swapNote = status.swapTotal === null || status.swapFree === null
-    ? "Swap was not reported by Proxmox, so the swap rule is skipped."
-    : status.swapTotal === 0
-      ? "Swap: none configured (swap rule skipped)."
-      : swapLimitMiB <= 0
-        ? `Swap: ${formatSwapBytes(status.swapFree)} of ${formatSwapBytes(status.swapTotal)} free (swap rule off).`
-        : `Swap: ${formatSwapBytes(status.swapFree)} of ${formatSwapBytes(status.swapTotal)} free (needs at least ${formatMiB(swapLimitMiB)}).`;
+  let swapWarning = false;
+  let swapNote: string;
+  if (status.swapTotal === null || status.swapFree === null) {
+    swapNote = "Swap was not reported by Proxmox, so the swap rule is skipped.";
+  } else if (status.swapTotal === 0) {
+    swapNote = "Swap: none configured (swap rule skipped).";
+  } else if (swapConfiguredMiB <= 0) {
+    swapNote = `Swap: ${formatSwapBytes(status.swapFree)} of ${formatSwapBytes(status.swapTotal)} free (swap rule off).`;
+  } else {
+    const effectiveSwapMiB = effectiveStartSwapFreeMiB(swapConfiguredMiB, status.swapTotal);
+    const capped = effectiveSwapMiB < swapConfiguredMiB
+      ? `, capped at 5% of total swap from ${formatMiB(swapConfiguredMiB)}`
+      : "";
+    if (effectiveSwapMiB === 0) {
+      swapNote = `Swap: ${formatSwapBytes(status.swapFree)} of ${formatSwapBytes(status.swapTotal)} free (effective floor 0 MiB${capped}, swap rule skipped).`;
+    } else {
+      swapNote = `Swap: ${formatSwapBytes(status.swapFree)} of ${formatSwapBytes(status.swapTotal)} free (needs at least ${formatMiB(effectiveSwapMiB)}${capped}).`;
+      if (status.swapFree < effectiveSwapMiB * MIB) swapWarning = true;
+    }
+  }
 
+  let pressureWarning = false;
   let pressureNote: string;
   if (pressureError !== null) {
-    pressureNote = `Memory stalls could not be read from RRD (${pressureError}), so the stall rules are skipped.`;
-  } else if (!pressure || (pressure.peakAvg10 === null && pressure.meanAvg10 === null)) {
-    pressureNote = "Memory stalls were not reported in RRD (requires Proxmox VE 9), so the stall rules are skipped.";
+    pressureNote = `Memory stalls could not be read from RRD (${pressureError}), so the stall rule is skipped.`;
+  } else if (!pressure || pressure.percent === null) {
+    pressureNote = "Memory stalls were not reported in RRD (requires Proxmox VE 9), so the stall rule is skipped.";
   } else {
-    const peakPart = pressure.peakAvg10 === null
-      ? "10 s peak missing (skipped)"
-      : avg10Limit <= 0
-        ? `10 s peak ${formatPercent(pressure.peakAvg10)} (rule off)`
-        : `10 s peak ${formatPercent(pressure.peakAvg10)} (at most ${formatPercent(avg10Limit)})`;
-    const meanPart = pressure.meanAvg10 === null
-      ? "60 s mean missing (skipped)"
-      : avg60Limit <= 0
-        ? `60 s mean ${formatPercent(pressure.meanAvg10)} (rule off)`
-        : `60 s mean ${formatPercent(pressure.meanAvg10)} (at most ${formatPercent(avg60Limit)})`;
-    pressureNote = `Memory stalls (last completed minute in RRD, up to 2 minutes old): ${peakPart}, ${meanPart}.`;
+    const ageMs = pressureSampleAgeMs(pressure, now);
+    if (ageMs !== null && ageMs > PRESSURE_MAX_AGE_MS) {
+      pressureNote = `Memory stalls reading in RRD is stale (${formatStaleAge(ageMs)} old, limit 3 minutes), so the stall rule is skipped.`;
+    } else if (pressureLimit <= 0) {
+      pressureNote = `Memory stalls: ${formatPercent(pressure.percent)} (minute's mean of 10-second samples in RRD, rule off).`;
+    } else {
+      pressureNote = `Memory stalls: ${formatPercent(pressure.percent)} (minute's mean of 10-second samples in RRD, up to 2 minutes old, at most ${formatPercent(pressureLimit)}).`;
+      if (pressure.percent > pressureLimit) pressureWarning = true;
+    }
+  }
+
+  let warningFix: string | null = null;
+  if (swapWarning && pressureWarning) {
+    warningFix = `Free swap is below the effective floor and memory stalls are above the limit, so new starts will wait. Wait for host load to fall, stop or release a box on ${node}, or adjust the start memory stall and swap limits in ${PRODUCT}'s settings.`;
+  } else if (swapWarning) {
+    warningFix = `Free swap is below the effective floor, so new starts will wait. Stop or release a box on ${node}, or lower the free swap limit in ${PRODUCT}'s settings.`;
+  } else if (pressureWarning) {
+    warningFix = `Memory stalls are above the limit, so new starts will wait. Wait for host load to fall, stop or release a box on ${node}, or raise the start memory stall limit in ${PRODUCT}'s settings.`;
   }
 
   const numaNote = "Per-bank (NUMA) free memory is not read because Proxmox's API does not report it.";
-  return `${swapNote} ${pressureNote} ${numaNote}`;
+  return { notes: `${swapNote} ${pressureNote} ${numaNote}`, warningFix };
 }
 
 export function placementMemoryProblem(input: {
@@ -684,19 +727,21 @@ export class ProxmoxStartGate {
 
     const cached = this.#pressureCache;
     if (cached && now >= cached.fetchedAt && now - cached.fetchedAt < PRESSURE_CACHE_MS) {
-      return cached.reading;
+      return freshPressure(cached.reading, now);
     }
 
-    let reading: NodeMemoryPressure;
     try {
-      reading = await api.nodeMemoryPressure(signal);
+      const reading = await api.nodeMemoryPressure(signal);
+      this.#pressureCache = { fetchedAt: now, reading };
+      return freshPressure(reading, now);
     } catch (error) {
       if (signal?.aborted) throw error;
-      reading = EMPTY_PRESSURE;
+      if (cached && cachedReadingReusableOnError(cached, now)) {
+        return freshPressure(cached.reading, now);
+      }
+      this.#pressureCache = null;
+      return EMPTY_PRESSURE;
     }
-
-    this.#pressureCache = { fetchedAt: now, reading };
-    return reading;
   }
 
   async #readNodeState(

@@ -95,7 +95,8 @@ export class FakeProxmox {
   /** Node memory in bytes, as /nodes/{node}/status reports it. */
   memory = { total: 64 * 2 ** 30, available: 48 * 2 ** 30 };
   swap: { total: number; free: number } | null = { total: 8 * 2 ** 30, free: 8 * 2 ** 30 };
-  memoryPressure: { peakAvg10: number | null; meanAvg10: number | null } | null = { peakAvg10: 0, meanAvg10: 0 };
+  memoryPressure: number | null = 0;
+  memoryPressureAgeSeconds = 60;
   /** CPU threads, as /nodes/{node}/status reports them. */
   cpus = 16;
   /** Storage in bytes by storage ID. */
@@ -298,12 +299,9 @@ export class FakeProxmox {
     if (method === "GET" && (match = /^\/nodes\/([^/]+)\/rrddata$/.exec(path))) {
       if (match[1] !== this.node) return respond(500, `hostname lookup '${match[1]}' failed`, { data: null });
       const nowSeconds = Math.floor(this.now() / 1000);
-      const completedMinute = Math.floor(nowSeconds / 60) * 60 - 60;
-      const value = this.memoryPressure === null
-        ? null
-        : (params.cf === "MAX" ? this.memoryPressure.peakAvg10 : this.memoryPressure.meanAvg10);
-      const row: Record<string, unknown> = { time: completedMinute, memtotal: this.memory.total, memavailable: this.memory.available };
-      if (value !== null && value !== undefined) row.pressurememorysome = value;
+      const sampledAt = nowSeconds - this.memoryPressureAgeSeconds;
+      const row: Record<string, unknown> = { time: sampledAt, memtotal: this.memory.total, memavailable: this.memory.available };
+      if (this.memoryPressure !== null) row.pressurememorysome = this.memoryPressure;
       return ok([row]);
     }
 

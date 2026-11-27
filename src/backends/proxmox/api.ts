@@ -37,12 +37,14 @@ export interface ProxmoxOptions {
   readonly taskPollMs?: number;
   readonly taskTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
+  readonly rrdTimeoutMs?: number;
   /** How long a change to a guest keeps trying while another task holds the guest's lock. */
   readonly lockWaitMs?: number;
 }
 
 /** Between tries at a guest whose lock another task holds. Proxmox itself waits 10 s for the lock on each. */
 const LOCK_RETRY_MS = 1_000;
+export const RRDDATA_TIMEOUT_MS = 5_000;
 
 const PROXMOX_VE_9_NO_SUCH_TASK = { status: 400, field: "upid", words: "no such task" } as const;
 
@@ -195,8 +197,7 @@ export interface NodeStatus {
 }
 
 export interface NodeMemoryPressure {
-  readonly peakAvg10: number | null;
-  readonly meanAvg10: number | null;
+  readonly percent: number | null;
   readonly sampledAtSeconds: number | null;
 }
 
@@ -304,6 +305,7 @@ export class Proxmox {
   readonly #taskPollMs: number;
   readonly #taskTimeoutMs: number;
   readonly #requestTimeoutMs: number;
+  readonly #rrdTimeoutMs: number;
   readonly #lockWaitMs: number;
 
   constructor(options: ProxmoxOptions) {
@@ -316,6 +318,7 @@ export class Proxmox {
     this.#taskPollMs = options.taskPollMs ?? 50;
     this.#taskTimeoutMs = options.taskTimeoutMs ?? 180_000;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+    this.#rrdTimeoutMs = options.rrdTimeoutMs ?? RRDDATA_TIMEOUT_MS;
     this.#lockWaitMs = options.lockWaitMs ?? 120_000;
   }
 
@@ -359,17 +362,12 @@ export class Proxmox {
 
   async nodeMemoryPressure(signal?: AbortSignal): Promise<NodeMemoryPressure> {
     const path = `/nodes/${enc(this.node)}/rrddata`;
-    const [maxRows, avgRows] = await Promise.all([
-      this.#request<unknown>("GET", path, { timeframe: "hour", cf: "MAX" }, signal),
-      this.#request<unknown>("GET", path, { timeframe: "hour", cf: "AVERAGE" }, signal),
-    ]);
-    const peak = newestPressureMemorySome(maxRows);
-    const mean = newestPressureMemorySome(avgRows);
-    const sampledAtSeconds = peak?.time ?? mean?.time ?? null;
+    const timeoutMs = Math.min(this.#requestTimeoutMs, this.#rrdTimeoutMs);
+    const rows = await this.#request<unknown>("GET", path, { timeframe: "hour", cf: "AVERAGE" }, signal, timeoutMs);
+    const reading = newestPressureMemorySome(rows);
     return {
-      peakAvg10: peak?.percent ?? null,
-      meanAvg10: mean?.percent ?? null,
-      sampledAtSeconds,
+      percent: reading?.percent ?? null,
+      sampledAtSeconds: reading?.time ?? null,
     };
   }
 
@@ -906,7 +904,13 @@ export class Proxmox {
     return `/nodes/${enc(this.node)}/${this.type}/${vmid}${rest}`;
   }
 
-  async #request<T>(method: string, path: string, params: Params | undefined, signal?: AbortSignal): Promise<T> {
+  async #request<T>(
+    method: string,
+    path: string,
+    params: Params | undefined,
+    signal?: AbortSignal,
+    timeoutMs: number = this.#requestTimeoutMs,
+  ): Promise<T> {
     const form = new URLSearchParams();
     for (const [key, value] of Object.entries(params ?? {})) {
       if (value === undefined) continue;
@@ -920,7 +924,7 @@ export class Proxmox {
       headers["Content-Type"] = "application/x-www-form-urlencoded";
       body = form.toString();
     }
-    const timeout = AbortSignal.timeout(this.#requestTimeoutMs);
+    const timeout = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     let response: FetchResponse;
     try {

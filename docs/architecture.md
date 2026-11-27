@@ -912,15 +912,16 @@ the API client, ownership tags, TLS pin and settings. Set up by
   the guest's memory plus the effective `start-memory-margin-mib` (16 GiB by
   default, capped at a quarter of the node's total memory and enforced at
   placement too). The gate also requires free swap of at least
-  `start-swap-free-mib` (2048 MiB by default, 0 off, skipped when the node has
-  no swap) from `/nodes/{node}/status`, and on Proxmox VE 9 checks memory
-  stalls (`pressurememorysome`) from `/nodes/{node}/rrddata?timeframe=hour`,
-  cached for 60 s per node: the newest completed minute's `cf=MAX` (peak of the
-  10-second average, up to two minutes old) at most
-  `start-memory-pressure-avg10` (10%, 0 off) and `cf=AVERAGE` (mean of the
-  10-second average, up to two minutes old) at most
-  `start-memory-pressure-avg60` (5%, 0 off); Proxmox VE 8 or missing fields
-  skip the stall rules. A thread's starts start in arrival order without
+  `start-swap-free-mib` (2048 MiB by default, capped at 5% of total swap, 0
+  off, skipped when the node has no swap) from `/nodes/{node}/status`, and on
+  Proxmox VE 9 checks memory stalls (`pressurememorysome`) from
+  `/nodes/{node}/rrddata?timeframe=hour&cf=AVERAGE` (with a 5 s timeout),
+  cached for 60 s per node: the newest completed minute's mean of Proxmox's
+  10-second samples (up to two minutes old, or up to three minutes old with the
+  cache) at most `start-memory-pressure-percent` (5%, 0 off, up to 99%).
+  Readings over 3 minutes old are ignored; on an `rrddata` error the gate keeps
+  the last good reading while under 3 minutes old and otherwise retries on the
+  next poll without caching; Proxmox VE 8 or missing fields skip the stall rule. A thread's starts start in arrival order without
   head-of-line blocking, and no refill starts while one waits, polling every 10 s up to
   `start-memory-wait-seconds` (600 s). Heavy VMs boot one at a time per node
   until no running heavy VM has an uptime under `heavy-start-settle-seconds`

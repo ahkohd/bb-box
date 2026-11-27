@@ -38,7 +38,7 @@ import { LOW, START_CPUUNITS, START_TAG, startsLow, withStartTag } from "../prox
 import {
   ProxmoxStartGate,
   effectiveStartMemoryMarginMiB,
-  nodeMemoryGateDoctorNotes,
+  nodeMemoryGateDoctorReport,
   placementMemoryProblem,
   sharedStartGate,
   type StartGuestRequest,
@@ -3342,10 +3342,12 @@ export class ProxmoxLxcBackend implements Backend {
           if (signal?.aborted) throw error;
           pressureError = message(error);
         }
-        const gateNotes = nodeMemoryGateDoctorNotes({
+        const gateReport = nodeMemoryGateDoctorReport({
+          node,
           status,
           pressure,
           pressureError,
+          now: this.#now(),
           config: this.#config.startGate,
         });
         const totalMiB = Math.floor(status.memoryTotal / MiB);
@@ -3362,13 +3364,19 @@ export class ProxmoxLxcBackend implements Backend {
         if (smallest !== null && totalMiB - effectiveMargin < smallest.memoryMiB) {
           fail(
             MEMORY,
-            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. The ${formatMiB(effectiveMargin)} effective start memory margin${capped} leaves ${formatMiB(Math.max(0, totalMiB - effectiveMargin))}, which cannot fit the smallest ${smallest.kind} size (${formatMiB(smallest.memoryMiB)}). ${gateNotes}`,
+            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. The ${formatMiB(effectiveMargin)} effective start memory margin${capped} leaves ${formatMiB(Math.max(0, totalMiB - effectiveMargin))}, which cannot fit the smallest ${smallest.kind} size (${formatMiB(smallest.memoryMiB)}). ${gateReport.notes}`,
             `Lower the start memory margin or the smallest box size in ${PRODUCT}'s settings, or use a node with more memory.`,
+          );
+        } else if (gateReport.warningFix) {
+          warn(
+            MEMORY,
+            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. Each guest start leaves a ${formatMiB(effectiveMargin)} effective start memory margin free${capped}. ${gateReport.notes}`,
+            gateReport.warningFix,
           );
         } else {
           pass(
             MEMORY,
-            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. Each guest start leaves a ${formatMiB(effectiveMargin)} effective start memory margin free${capped}. ${gateNotes}`,
+            `${formatMiB(status.memoryAvailable / MiB)} of ${formatMiB(totalMiB)} available. Each guest start leaves a ${formatMiB(effectiveMargin)} effective start memory margin free${capped}. ${gateReport.notes}`,
           );
         }
         const keepMemoryMiB = Math.max(this.#config.reserve.memoryMiB, effectiveMargin);
