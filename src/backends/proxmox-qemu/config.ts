@@ -36,7 +36,7 @@ import { PRODUCT } from "../../brand.ts";
 
 export const QEMU_KINDS = ["windows-desktop", "linux", "linux-desktop-cpu", "android"] as const;
 
-export const WINDOWS_BALLOON_MIN_PERCENT_DEFAULT = 50;
+export const WINDOWS_BALLOON_MIN_PERCENT_DEFAULT = 100;
 export const WINDOWS_BALLOON_MIN_PERCENT_MIN = 25;
 export const WINDOWS_BALLOON_MIN_PERCENT_MAX = 100;
 
@@ -325,7 +325,7 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     type: "number",
     label: "Windows balloon minimum (%)",
     description:
-      "Minimum memory, as a percentage of a Windows box's memory, that Proxmox's auto-ballooning leaves the guest when host memory use exceeds 80%. From 25 to 100; 100 keeps balloon equal to memory and turns auto-ballooning off.",
+      "Minimum memory, as a percentage of a Windows box's memory, for Proxmox's balloon device. 100 (the default) keeps balloon equal to memory and turns auto-ballooning off. From 25 to 99, a cold-booted box starts at that floor and Proxmox adds about 100 MiB per cycle while host memory use is under 80%; above 80% Proxmox can shrink even a busy box to its floor.",
     group: "advanced",
     default: QEMU_DEFAULTS.windowsBalloonMinPercent,
   },

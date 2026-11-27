@@ -1307,8 +1307,8 @@ test("dispose stops a warm fill", async () => {
 });
 
 /** A Windows box's PowerShell, as an image box's: its desktop up, its clock set, and the record a refresh writes (054). */
-function imageSetup(record: Record<string, unknown>) {
-  const env = setup();
+function imageSetup(record: Record<string, unknown>, values: Record<string, unknown> = {}) {
+  const env = setup(values);
   for (let last = 150; last <= 159; last++) {
     mkdirSync(env.ssh.home(`192.0.2.${last}`), { recursive: true });
     env.ssh.powershell(
@@ -1865,13 +1865,13 @@ test("proxmox.image-storage reports VM templates, Android build room and non-box
   assert.match(androidStorage.detail, /below about 40 GiB a build needs/);
 });
 
-test("windows-balloon-min-percent defaults to 50, is advanced and accepts whole numbers from 25 to 100", () => {
+test("windows-balloon-min-percent defaults to 100, is advanced and accepts whole numbers from 25 to 100", () => {
   assert.equal(QEMU_FIELDS["windows-balloon-min-percent"]?.group, "advanced");
-  assert.equal(QEMU_FIELDS["windows-balloon-min-percent"]?.default, 50);
+  assert.equal(QEMU_FIELDS["windows-balloon-min-percent"]?.default, 100);
 
-  assert.equal(qemuConfig().windowsBalloonMinPercent, 50);
+  assert.equal(qemuConfig().windowsBalloonMinPercent, 100);
   assert.equal(qemuConfig({ "windows-balloon-min-percent": 25 }).windowsBalloonMinPercent, 25);
-  assert.equal(qemuConfig({ "windows-balloon-min-percent": 100 }).windowsBalloonMinPercent, 100);
+  assert.equal(qemuConfig({ "windows-balloon-min-percent": 50 }).windowsBalloonMinPercent, 50);
 
   for (const invalid of [0, 24, 101, 50.5, -10]) {
     const parsed = parse({ "windows-balloon-min-percent": invalid });
@@ -1882,49 +1882,67 @@ test("windows-balloon-min-percent defaults to 50, is advanced and accepts whole 
   }
 });
 
-test("Windows boxes set balloon to the configured share of memory on acquire, resize and warm fill", async () => {
+test("Windows boxes cold-boot at full memory by default, and at the configured floor when lowered", async () => {
   const { backend, proxmox } = setup();
   proxmox.guests.get(9104)!.config.balloon = "0";
 
   const custom = await backend.acquire(identity(sized({ cores: 8, memoryMiB: 16384 })), null, hooks().value, signal());
   const customVm = proxmox.guests.get(Number(custom.ref))!;
   assert.equal(customVm.config.memory, "16384");
-  assert.equal(customVm.config.balloon, "8192");
+  assert.equal(customVm.config.balloon, "16384");
+  assert.equal(customVm.balloonTargetMiB, 16384);
 
-  const grown = { cores: 8, memoryMiB: 24576, diskGiB: custom.size!.diskGiB };
-  await backend.resize(custom, KIND, grown, { restart: true }, signal());
-  assert.equal(customVm.config.memory, "24576");
-  assert.equal(customVm.config.balloon, "12288");
+  const warmDefault = warmSetup(1);
+  warmDefault.proxmox.guests.get(9104)!.config.balloon = "0";
+  await warmDefault.backend.maintain(signal());
+  const warmDefaultVm = warmDefault.proxmox.guests.get(9700)!;
+  assert.equal(warmDefaultVm.config.memory, "8192");
+  assert.equal(warmDefaultVm.config.balloon, "8192");
+  assert.equal(warmDefaultVm.balloonTargetMiB, 8192);
 
-  const shrunk = { cores: 4, memoryMiB: 8192, diskGiB: custom.size!.diskGiB };
-  await backend.resize(custom, KIND, shrunk, { restart: true }, signal());
-  assert.equal(customVm.config.memory, "8192");
-  assert.equal(customVm.config.balloon, "4096");
+  const floored = setup({ "windows-balloon-min-percent": 50 });
+  floored.proxmox.guests.get(9104)!.config.balloon = "0";
+  const floorGuest = await floored.backend.acquire(identity(sized({ cores: 8, memoryMiB: 16384 })), null, hooks().value, signal());
+  const floorVm = floored.proxmox.guests.get(Number(floorGuest.ref))!;
+  assert.equal(floorVm.config.memory, "16384");
+  assert.equal(floorVm.config.balloon, "8192");
+  assert.equal(floorVm.balloonTargetMiB, 8192);
 
-  proxmox.nextTaskExit.set("qmstart", "start failed: not enough memory");
+  const grown = { cores: 8, memoryMiB: 24576, diskGiB: floorGuest.size!.diskGiB };
+  await floored.backend.resize(floorGuest, KIND, grown, { restart: true }, signal());
+  assert.equal(floorVm.config.memory, "24576");
+  assert.equal(floorVm.config.balloon, "12288");
+  assert.equal(floorVm.balloonTargetMiB, 12288);
+
+  const shrunk = { cores: 4, memoryMiB: 8192, diskGiB: floorGuest.size!.diskGiB };
+  await floored.backend.resize(floorGuest, KIND, shrunk, { restart: true }, signal());
+  assert.equal(floorVm.config.memory, "8192");
+  assert.equal(floorVm.config.balloon, "4096");
+  assert.equal(floorVm.balloonTargetMiB, 4096);
+
+  floored.proxmox.nextTaskExit.set("qmstart", "start failed: not enough memory");
   await assert.rejects(
-    backend.resize(custom, KIND, { ...shrunk, memoryMiB: 16384 }, { restart: true }, signal()),
+    floored.backend.resize(floorGuest, KIND, { ...shrunk, memoryMiB: 16384 }, { restart: true }, signal()),
     /not enough memory/,
   );
-  assert.equal(customVm.config.memory, "8192");
-  assert.equal(customVm.config.balloon, "4096");
+  assert.equal(floorVm.config.memory, "8192");
+  assert.equal(floorVm.config.balloon, "4096");
+  assert.equal(floorVm.balloonTargetMiB, 4096);
 
-  const warm = warmSetup(1);
-  warm.proxmox.guests.get(9104)!.config.balloon = "0";
-  await warm.backend.maintain(signal());
-  const warmVm = warm.proxmox.guests.get(9700)!;
-  assert.equal(warmVm.config.memory, "8192");
-  assert.equal(warmVm.config.balloon, "4096");
-
-  const full = setup({ "windows-balloon-min-percent": 100 });
-  full.proxmox.guests.get(9104)!.config.balloon = "0";
-  const fullGuest = await full.backend.acquire(identity(sized({ cores: 4, memoryMiB: 8192 })), null, hooks().value, signal());
-  assert.equal(full.proxmox.guests.get(Number(fullGuest.ref))!.config.balloon, "8192");
+  const warmFloored = warmSetup(1, { "windows-balloon-min-percent": 50 });
+  warmFloored.proxmox.guests.get(9104)!.config.balloon = "0";
+  await warmFloored.backend.maintain(signal());
+  const warmFlooredVm = warmFloored.proxmox.guests.get(9700)!;
+  assert.equal(warmFlooredVm.config.memory, "8192");
+  assert.equal(warmFlooredVm.config.balloon, "4096");
+  assert.equal(warmFlooredVm.balloonTargetMiB, 4096);
 
   const rounded = setup({ "windows-balloon-min-percent": 33 });
   rounded.proxmox.guests.get(9104)!.config.balloon = "0";
   const roundedGuest = await rounded.backend.acquire(identity(sized({ cores: 4, memoryMiB: 8192 })), null, hooks().value, signal());
-  assert.equal(rounded.proxmox.guests.get(Number(roundedGuest.ref))!.config.balloon, "2703");
+  const roundedVm = rounded.proxmox.guests.get(Number(roundedGuest.ref))!;
+  assert.equal(roundedVm.config.balloon, "2703");
+  assert.equal(roundedVm.balloonTargetMiB, 2703);
 });
 
 test("claiming a hibernated warm VM does not change its hardware or balloon before resuming", async () => {
@@ -1946,7 +1964,7 @@ test("claiming a hibernated warm VM does not change its hardware or balloon befo
   assert.equal(warmVm.config.balloon, "0");
 });
 
-test("Windows image boxes and captures set balloon to the configured share of memory", async () => {
+test("Windows image boxes use the configured floor and captured templates keep balloon equal to memory", async () => {
   const record = {
     contract: 1,
     image: "standard",
@@ -1958,7 +1976,7 @@ test("Windows image boxes and captures set balloon to the configured share of me
     pins: "p".repeat(64),
     tools: { node: "24.21.0" },
   };
-  const { backend, proxmox } = imageSetup(record);
+  const { backend, proxmox } = imageSetup(record, { "windows-balloon-min-percent": 50 });
   const template = proxmox.guests.get(9104)!;
   template.config.memory = "4096";
   template.config.balloon = "0";
@@ -1968,10 +1986,29 @@ test("Windows image boxes and captures set balloon to the configured share of me
   const boxVm = proxmox.guests.get(Number(box.ref))!;
   assert.equal(boxVm.config.memory, "8192");
   assert.equal(boxVm.config.balloon, "4096");
+  assert.equal(boxVm.balloonTargetMiB, 4096);
 
   await backend.images.capture(box, standard, "standard", signal());
   assert.equal(boxVm.config.memory, "4096");
-  assert.equal(boxVm.config.balloon, "2048");
+  assert.equal(boxVm.config.balloon, "4096");
+});
+
+test("resizing a Linux VM uses the kind argument even when its template is no longer listed", async () => {
+  const { backend, proxmox, ssh } = setup({
+    "linux-templates": "9120",
+    "windows-balloon-min-percent": 50,
+  });
+  proxmox.addVmTemplate(9120, { ostype: "l26", memory: "4096", balloon: "0" });
+  rmSync(join(ssh.dir, "windows", "192.0.2.150"));
+
+  const linuxGuest = await backend.acquire(identity(sized({ cores: 2, memoryMiB: 4096 }), "linux"), null, hooks().value, signal());
+  const detachedGuest: Guest = { ...linuxGuest, data: { ...linuxGuest.data, template: 9999 } };
+
+  await backend.resize(detachedGuest, "linux", { cores: 4, memoryMiB: 8192, diskGiB: linuxGuest.size!.diskGiB }, { restart: true }, signal());
+  const linuxVm = proxmox.guests.get(Number(linuxGuest.ref))!;
+  assert.equal(linuxVm.config.memory, "8192");
+  assert.equal(linuxVm.config.balloon, "8192");
+  assert.equal(linuxVm.balloonTargetMiB, 8192);
 });
 
 test("Linux VMs set balloon equal to memory on acquire, resize, image box and capture, while Android stays balloon 0", async () => {

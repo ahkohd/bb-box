@@ -141,34 +141,42 @@ cloning and use a wait of 0 seconds so they retry at the next top-up.
 
 #### Virtio balloon device and memory reclamation
 
-BB Box enables QEMU's `virtio-balloon-pci` device (which Proxmox VE 7.2 and
-later configure with `free-page-reporting=on` for Q35 machines) on both Linux
-and Windows VMs (decision 107). Android VMs keep `balloon` off.
+BB Box enables QEMU's `virtio-balloon-pci` device (configured with
+`free-page-reporting=on` by Proxmox VE 7.2 and later for Q35 machines) on Linux
+VMs and Windows desktops (decision 107). Android VMs keep `balloon` off.
 
-- **Linux VMs (`linux` and `linux-desktop-cpu`):** BB Box sets `balloon` equal
-  to `memory` on acquire, resize, fork, image boxes and capture, and
-  `build-linux.sh` sets it the same way on new templates. Because `balloon`
-  equals `memory`, Proxmox never auto-balloons Linux VMs; Ubuntu 24.04's kernel
-  returns unused pages to the host through free page reporting instead.
-  Ballooned Linux VMs do not touch all of their RAM at boot and no longer count
-  as heavy in the start gate, though admission still checks each guest's full
-  `memory`.
-- **Windows VMs (`windows-desktop`):** BB Box sets `balloon` to
-  `windows-balloon-min-percent` of the box's `memory` (50% by default, whole
-  numbers from 25 to 100; 100 keeps `balloon` equal to `memory` and turns
-  auto-ballooning off), rounded to MiB, on acquire, warm fill, resize, image
-  boxes and capture. `build.sh` creates new Windows templates with `--balloon`
-  equal to `--memory`. Existing Windows templates already install `balloon.sys`
-  and `BalloonService` (`blnsvr.exe`) from `virtio-win-gt-x64.msi`, so Windows
-  binds the driver at boot with no rebuild. Because upstream `virtio-win` does
-  not yet ship free page reporting for Windows (PR 1657 is still open), the
-  lower floor lets Proxmox's `pvestatd` auto-ballooning reclaim memory from
-  idle Windows boxes when host memory use exceeds 80%. While the balloon is
-  inflated, Windows locks those pages in the balloon driver, so Task Manager
-  shows less available RAM until the balloon deflates. Windows VMs remain heavy
-  in the start gate and admission checks their full `memory`.
-- **Existing guests:** boxes and hibernated warm VMs created before this change
-  keep `balloon: 0` until they are created again. BB Box never changes a
+- **Linux VMs:** BB Box sets `balloon` equal to `memory` on acquire, resize,
+  fork, image boxes and capture, and `build-linux.sh` sets it the same way on
+  templates. Because `balloon` equals `memory`, Proxmox never auto-balloons
+  Linux VMs; Ubuntu 24.04's kernel returns large free page blocks to the host
+  through free page reporting (page cache stays until reclaimed). Ballooned
+  Linux VMs allocate memory lazily and do not count as heavy in the start gate,
+  though admission still checks each guest's full `memory`.
+- **Windows desktops:** BB Box sets `balloon` to `windows-balloon-min-percent`
+  of the box's `memory` (100% by default, whole numbers from 25 to 100), rounded
+  to MiB, on acquire, warm fill, resize and image boxes. `build.sh` and template
+  capture write templates with `balloon` equal to `memory`. Templates install
+  `balloon.sys` and `BalloonService` (`blnsvr.exe`) from
+  `virtio-win-gt-x64.msi`, so Windows binds the driver at boot and reports real
+  guest memory usage to Proxmox. Windows does not return unused memory on its
+  own today because upstream `virtio-win` does not yet implement free page
+  reporting (`virtio-win/kvm-guest-drivers-windows` PR 1657 is open).
+- **Trade-offs of lowering `windows-balloon-min-percent` below 100:** on every
+  cold start without a saved state, Proxmox sets the VM's balloon target to the
+  configured `balloon` value. A cold-booted Windows box therefore starts at that
+  floor, and `pvestatd` adds memory back toward full RAM only while host memory
+  use (total minus `MemAvailable`, which on ZFS hosts can stay high with ARC) is
+  under 80%, at up to 100 MiB per 10-second cycle (about 27 minutes for 16 GiB).
+  A warm VM hibernated soon after boot is claimed still near the floor. Above
+  80% host memory use, Proxmox shrinks idle VMs first and then falls through to
+  every ballooned VM, so it can shrink even a busy Windows box to its floor.
+  While inflated, `balloon.sys` locks those pages in kernel memory, so Task
+  Manager shows full installed RAM with higher in-use memory and less available
+  RAM. Resetting a cold-started VM's balloon target back to full memory through
+  Proxmox's monitor API (`balloon <MiB>`) requires `Sys.Modify` on `/`, which BB
+  Box's pool-scoped token does not hold.
+- **Start gate and hibernated warm VMs:** Windows desktops count as heavy in the
+  start gate and admission checks their full `memory`. BB Box never changes a
   hibernated warm VM's hardware before resuming it.
 
 #### Windows boxes as BB machines
