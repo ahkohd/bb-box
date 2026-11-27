@@ -6,16 +6,16 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Backends, DRIVERS, boxForm, overlapChecks } from "../src/backends/index.ts";
 import { parseImageRecord, recordInDescription } from "../src/backends/images.ts";
-import { parseTags } from "../src/backends/proxmox/api.ts";
+import { Proxmox, parseTags } from "../src/backends/proxmox/api.ts";
 import { buildFromTags, installFromDescription, ownerFromDescription, ownerFromTags } from "../src/backends/proxmox/owner.ts";
 import { proxmoxFootprint } from "../src/backends/proxmox/settings.ts";
-import { isHeavyGuest } from "../src/backends/proxmox/start-gate.ts";
+import { ProxmoxStartGate, isHeavyGuest } from "../src/backends/proxmox/start-gate.ts";
 import { proxmoxLxcDriver } from "../src/backends/proxmox-lxc/index.ts";
 import { ProxmoxQemuBackend, ROOT_FACT, bootDisk, net0On, smbios1For, type QemuBackendOptions } from "../src/backends/proxmox-qemu/backend.ts";
 import { vmNameScript } from "../src/backends/proxmox-lxc/backend.ts";
 import { spawnSync } from "node:child_process";
 import { quote } from "../src/transports/process.ts";
-import { parseQemuPart, type QemuConfig } from "../src/backends/proxmox-qemu/config.ts";
+import { QEMU_FIELDS, parseQemuPart, type QemuConfig } from "../src/backends/proxmox-qemu/config.ts";
 import { proxmoxQemuDriver } from "../src/backends/proxmox-qemu/index.ts";
 import { BackendError, DEVICE_DISPLAY, type AcquireHooks, type BoxIdentity, type MachineSize, type Guest, type ReleaseHooks } from "../src/backends/types.ts";
 import { backendPart, checkDocument, type BackendConfig, type ConfigDocument, type Secrets } from "../src/core/document.ts";
@@ -1865,24 +1865,41 @@ test("proxmox.image-storage reports VM templates, Android build room and non-box
   assert.match(androidStorage.detail, /below about 40 GiB a build needs/);
 });
 
-test("Windows boxes set balloon equal to memory on acquire, resize and warm fill", async () => {
+test("windows-balloon-min-percent defaults to 50, is advanced and accepts whole numbers from 25 to 100", () => {
+  assert.equal(QEMU_FIELDS["windows-balloon-min-percent"]?.group, "advanced");
+  assert.equal(QEMU_FIELDS["windows-balloon-min-percent"]?.default, 50);
+
+  assert.equal(qemuConfig().windowsBalloonMinPercent, 50);
+  assert.equal(qemuConfig({ "windows-balloon-min-percent": 25 }).windowsBalloonMinPercent, 25);
+  assert.equal(qemuConfig({ "windows-balloon-min-percent": 100 }).windowsBalloonMinPercent, 100);
+
+  for (const invalid of [0, 24, 101, 50.5, -10]) {
+    const parsed = parse({ "windows-balloon-min-percent": invalid });
+    assert.equal(parsed.ok, false, `value ${invalid} should fail`);
+    if (!parsed.ok) {
+      assert.deepEqual(parsed.problems.map((entry) => entry.path), ["windows-balloon-min-percent"]);
+    }
+  }
+});
+
+test("Windows boxes set balloon to the configured share of memory on acquire, resize and warm fill", async () => {
   const { backend, proxmox } = setup();
   proxmox.guests.get(9104)!.config.balloon = "0";
 
   const custom = await backend.acquire(identity(sized({ cores: 8, memoryMiB: 16384 })), null, hooks().value, signal());
   const customVm = proxmox.guests.get(Number(custom.ref))!;
   assert.equal(customVm.config.memory, "16384");
-  assert.equal(customVm.config.balloon, "16384");
+  assert.equal(customVm.config.balloon, "8192");
 
   const grown = { cores: 8, memoryMiB: 24576, diskGiB: custom.size!.diskGiB };
   await backend.resize(custom, KIND, grown, { restart: true }, signal());
   assert.equal(customVm.config.memory, "24576");
-  assert.equal(customVm.config.balloon, "24576");
+  assert.equal(customVm.config.balloon, "12288");
 
   const shrunk = { cores: 4, memoryMiB: 8192, diskGiB: custom.size!.diskGiB };
   await backend.resize(custom, KIND, shrunk, { restart: true }, signal());
   assert.equal(customVm.config.memory, "8192");
-  assert.equal(customVm.config.balloon, "8192");
+  assert.equal(customVm.config.balloon, "4096");
 
   proxmox.nextTaskExit.set("qmstart", "start failed: not enough memory");
   await assert.rejects(
@@ -1890,17 +1907,46 @@ test("Windows boxes set balloon equal to memory on acquire, resize and warm fill
     /not enough memory/,
   );
   assert.equal(customVm.config.memory, "8192");
-  assert.equal(customVm.config.balloon, "8192");
+  assert.equal(customVm.config.balloon, "4096");
 
   const warm = warmSetup(1);
   warm.proxmox.guests.get(9104)!.config.balloon = "0";
   await warm.backend.maintain(signal());
   const warmVm = warm.proxmox.guests.get(9700)!;
   assert.equal(warmVm.config.memory, "8192");
-  assert.equal(warmVm.config.balloon, "8192");
+  assert.equal(warmVm.config.balloon, "4096");
+
+  const full = setup({ "windows-balloon-min-percent": 100 });
+  full.proxmox.guests.get(9104)!.config.balloon = "0";
+  const fullGuest = await full.backend.acquire(identity(sized({ cores: 4, memoryMiB: 8192 })), null, hooks().value, signal());
+  assert.equal(full.proxmox.guests.get(Number(fullGuest.ref))!.config.balloon, "8192");
+
+  const rounded = setup({ "windows-balloon-min-percent": 33 });
+  rounded.proxmox.guests.get(9104)!.config.balloon = "0";
+  const roundedGuest = await rounded.backend.acquire(identity(sized({ cores: 4, memoryMiB: 8192 })), null, hooks().value, signal());
+  assert.equal(rounded.proxmox.guests.get(Number(roundedGuest.ref))!.config.balloon, "2703");
 });
 
-test("Windows image boxes and captures set balloon equal to memory", async () => {
+test("claiming a hibernated warm VM does not change its hardware or balloon before resuming", async () => {
+  const { backend, proxmox } = warmSetup(1, { "heavy-start-settle-seconds": 0 });
+  await backend.maintain(signal());
+  const warmVm = proxmox.guests.get(9700)!;
+  warmVm.config.balloon = "0";
+  const beforeCalls = proxmox.calls.length;
+
+  await backend.acquire(identity(), null, hooks().value, signal());
+
+  const claimCalls = proxmox.calls.slice(beforeCalls).filter((call) => call.path.startsWith("/nodes/pve/qemu/9700/"));
+  const startIndex = claimCalls.findIndex((call) => call.method === "POST" && call.path.endsWith("/status/start"));
+  assert.ok(startIndex >= 0, "warm VM resumed");
+  const configBeforeStart = claimCalls.slice(0, startIndex).filter((call) => call.method === "PUT" && call.path.endsWith("/config"));
+  assert.deepEqual(configBeforeStart, []);
+  const balloonUpdates = claimCalls.filter((call) => call.method === "PUT" && call.path.endsWith("/config") && call.params.balloon !== undefined);
+  assert.deepEqual(balloonUpdates, []);
+  assert.equal(warmVm.config.balloon, "0");
+});
+
+test("Windows image boxes and captures set balloon to the configured share of memory", async () => {
   const record = {
     contract: 1,
     image: "standard",
@@ -1921,53 +1967,166 @@ test("Windows image boxes and captures set balloon equal to memory", async () =>
   const box = await backend.images.box(standard, "refresh of 9104", signal());
   const boxVm = proxmox.guests.get(Number(box.ref))!;
   assert.equal(boxVm.config.memory, "8192");
-  assert.equal(boxVm.config.balloon, "8192");
+  assert.equal(boxVm.config.balloon, "4096");
 
   await backend.images.capture(box, standard, "standard", signal());
   assert.equal(boxVm.config.memory, "4096");
-  assert.equal(boxVm.config.balloon, "4096");
+  assert.equal(boxVm.config.balloon, "2048");
 });
 
-test("Linux VMs leave balloon unchanged on acquire and resize", async () => {
+test("Linux VMs set balloon equal to memory on acquire, resize, image box and capture, while Android stays balloon 0", async () => {
+  const runtime = {
+    platform: "android",
+    api: 35,
+    image: "google_apis",
+    revision: 9,
+    abi: "x86_64",
+    emulator: "37.2.12.0",
+    snapshot: { emulator: "37.2.12.0", cpu: "Example CPU", made: "2026-10-26T05:15:46Z" },
+  };
+  const androidRecord = {
+    contract: 1,
+    image: "standard",
+    kind: "android",
+    arch: "x86_64",
+    build: "build.20261127-030000-aa11",
+    built: "2026-11-27T03:00:00Z",
+    os: "Ubuntu 24.04",
+    pins: "p".repeat(64),
+    tools: {},
+    devices: [{ model: "Pixel 8", native: "pixel_8", runtime }],
+  };
+  const linuxRecord = {
+    contract: 1,
+    image: "standard",
+    kind: "linux",
+    arch: "x86_64",
+    build: "build.20261127-030000-bb22",
+    built: "2026-11-27T03:00:00Z",
+    os: "Ubuntu 24.04",
+    pins: "p".repeat(64),
+    tools: {},
+  };
   const { backend, proxmox, ssh } = setup({
     "linux-templates": "9120",
     "linux-desktop-templates": "9121",
+    "android-templates": "9122",
+    "linux-kvm": true,
+    "heavy-start-settle-seconds": 0,
   });
-  proxmox.addVmTemplate(9120, { ostype: "l26", memory: "4096", balloon: "0" });
+  proxmox.addVmTemplate(9120, { ostype: "l26", memory: "4096", balloon: "0", description: `bb-box linux vm template\n${JSON.stringify(linuxRecord)}` });
   proxmox.addVmTemplate(9121, { ostype: "l26", memory: "8192", balloon: "0" });
-  for (const last of [150, 151]) rmSync(join(ssh.dir, "windows", `192.0.2.${last}`));
+  proxmox.addVmTemplate(9122, { ostype: "l26", memory: "16384", balloon: "0", description: `bb-box android vm template\n${JSON.stringify(androidRecord)}` });
+  await backend.withheldKinds("android");
+  for (let last = 150; last <= 159; last++) rmSync(join(ssh.dir, "windows", `192.0.2.${last}`));
+  for (const last of [150, 151, 152, 153, 154]) {
+    const home = ssh.home(`192.0.2.${last}`);
+    mkdirSync(join(home, "bin"), { recursive: true });
+    writeFileSync(join(home, "bin", "cat"), `#!/bin/sh\nif [ "$1" = /usr/share/bb-box/image.json ]; then printf '%s\\n' '${last === 153 ? JSON.stringify(linuxRecord) : JSON.stringify(androidRecord)}'; else exec /bin/cat "$@"; fi\n`);
+    chmodSync(join(home, "bin", "cat"), 0o755);
+  }
 
   const linuxGuest = await backend.acquire(identity(sized({ cores: 2, memoryMiB: 4096 }), "linux"), null, hooks().value, signal());
   const linuxVm = proxmox.guests.get(Number(linuxGuest.ref))!;
   assert.equal(linuxVm.config.memory, "4096");
-  assert.equal(linuxVm.config.balloon, "0");
+  assert.equal(linuxVm.config.balloon, "4096");
 
   await backend.resize(linuxGuest, "linux", { cores: 4, memoryMiB: 8192, diskGiB: linuxGuest.size!.diskGiB }, { restart: true }, signal());
   assert.equal(linuxVm.config.memory, "8192");
-  assert.equal(linuxVm.config.balloon, "0");
+  assert.equal(linuxVm.config.balloon, "8192");
+
+  await backend.resize(linuxGuest, "linux", { cores: 2, memoryMiB: 4096, diskGiB: linuxGuest.size!.diskGiB }, { restart: true }, signal());
+  assert.equal(linuxVm.config.memory, "4096");
+  assert.equal(linuxVm.config.balloon, "4096");
+
+  proxmox.nextTaskExit.set("qmstart", "start failed: not enough memory");
+  await assert.rejects(
+    backend.resize(linuxGuest, "linux", { cores: 4, memoryMiB: 16384, diskGiB: linuxGuest.size!.diskGiB }, { restart: true }, signal()),
+    /not enough memory/,
+  );
+  assert.equal(linuxVm.config.memory, "4096");
+  assert.equal(linuxVm.config.balloon, "4096");
 
   const desktopGuest = await backend.acquire(identity(sized({ cores: 4, memoryMiB: 8192 }), "linux-desktop-cpu"), null, hooks().value, signal());
   const desktopVm = proxmox.guests.get(Number(desktopGuest.ref))!;
   assert.equal(desktopVm.config.memory, "8192");
-  assert.equal(desktopVm.config.balloon, "0");
+  assert.equal(desktopVm.config.balloon, "8192");
+
+  const androidGuest = await backend.acquire(identity(sized({ cores: 8, memoryMiB: 16384 }), "android"), null, hooks().value, signal());
+  const androidVm = proxmox.guests.get(Number(androidGuest.ref))!;
+  assert.equal(androidVm.config.memory, "16384");
+  assert.equal(androidVm.config.balloon, "0");
+
+  await backend.resize(androidGuest, "android", { cores: 12, memoryMiB: 24576, diskGiB: androidGuest.size!.diskGiB }, { restart: true }, signal());
+  assert.equal(androidVm.config.memory, "24576");
+  assert.equal(androidVm.config.balloon, "0");
+
+  const builds = (await backend.images.list()).builds;
+  const linuxBuild = builds.find((build) => build.ref === "9120")!;
+  const linuxImageBox = await backend.images.box(linuxBuild, "refresh of 9120", signal());
+  const linuxImageVm = proxmox.guests.get(Number(linuxImageBox.ref))!;
+  assert.equal(linuxImageVm.config.memory, "4096");
+  assert.equal(linuxImageVm.config.balloon, "4096");
+  await backend.images.capture(linuxImageBox, linuxBuild, "standard", signal());
+  assert.equal(linuxImageVm.config.memory, "4096");
+  assert.equal(linuxImageVm.config.balloon, "4096");
+
+  const androidBuild = builds.find((build) => build.ref === "9122")!;
+  const androidImageBox = await backend.images.box(androidBuild, "refresh of 9122", signal());
+  const androidImageVm = proxmox.guests.get(Number(androidImageBox.ref))!;
+  assert.equal(androidImageVm.config.memory, "16384");
+  assert.equal(androidImageVm.config.balloon, "0");
+  await backend.images.capture(androidImageBox, androidBuild, "standard", signal());
+  assert.equal(androidImageVm.config.memory, "16384");
+  assert.equal(androidImageVm.config.balloon, "0");
 });
 
-test("setup/proxmox-qemu/build.sh creates Windows templates with balloon equal to memory", () => {
+test("setup/proxmox-qemu/build.sh and build-linux.sh set balloon on qm create and Linux template finalize, leaving Android balloon 0", () => {
   const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-  const script = readFileSync(join(repoRoot, "setup", "proxmox-qemu", "build.sh"), "utf8");
-  const createMatch = /qm create "\$vm"[\s\S]*?\n\s*created=1/.exec(script);
-  assert.ok(createMatch, "qm create block in build.sh");
-  const memoryMatch = /--memory\s+(\d+)/.exec(createMatch[0]);
-  const balloonMatch = /--balloon\s+(\d+)/.exec(createMatch[0]);
-  assert.ok(memoryMatch, "--memory flag on qm create");
-  assert.ok(balloonMatch, "--balloon flag on qm create");
-  assert.equal(balloonMatch[1], memoryMatch[1]);
-  assert.notEqual(balloonMatch[1], "0");
+  const windowsScript = readFileSync(join(repoRoot, "setup", "proxmox-qemu", "build.sh"), "utf8");
+  const windowsCreate = /qm create "\$vm"[\s\S]*?\n\s*created=1/.exec(windowsScript);
+  assert.ok(windowsCreate, "qm create block in build.sh");
+  const windowsMemory = /--memory\s+(\d+)/.exec(windowsCreate[0]);
+  const windowsBalloon = /--balloon\s+(\d+)/.exec(windowsCreate[0]);
+  assert.ok(windowsMemory, "--memory flag on build.sh qm create");
+  assert.ok(windowsBalloon, "--balloon flag on build.sh qm create");
+  assert.equal(windowsBalloon[1], windowsMemory[1]);
+  assert.notEqual(windowsBalloon[1], "0");
+
+  const linuxScript = readFileSync(join(repoRoot, "setup", "proxmox-qemu", "build-linux.sh"), "utf8");
+  assert.match(linuxScript, /cores=2 memory=4096 balloon=4096 build_balloon=16384/);
+  assert.match(linuxScript, /cores=8 memory=16384 balloon=0 build_balloon=0/);
+  assert.match(linuxScript, /cores=4 memory=8192 balloon=8192 build_balloon=16384/);
+  assert.match(linuxScript, /qm create "\$vm"[\s\S]*?--memory 16384 --balloon "\$build_balloon"/);
+  assert.match(linuxScript, /qm set "\$vm"[\s\S]*?--memory "\$memory" --balloon "\$balloon"/);
 });
 
-test("start gate still classifies Windows VMs with balloon equal to memory as heavy", () => {
-  assert.equal(isHeavyGuest("qemu", { ostype: "win11", balloon: "8192", memory: "8192" }, 8192, KIND, "windows"), true);
-  assert.equal(isHeavyGuest("qemu", { ostype: "win11", balloon: "8192", memory: "8192" }, 8192), true);
+test("start gate treats ballooned Linux VMs as non-heavy, Windows as heavy, and admits on full guest memory", async () => {
+  assert.equal(isHeavyGuest("qemu", { ostype: "win11", balloon: "4096", memory: "8192" }, 8192, KIND, "windows"), true);
+  assert.equal(isHeavyGuest("qemu", { ostype: "win11", balloon: "4096", memory: "8192" }, 8192), true);
   assert.equal(isHeavyGuest("qemu", { ostype: "l26", balloon: "8192", memory: "8192" }, 8192, "linux", "linux"), false);
+  assert.equal(isHeavyGuest("qemu", { ostype: "l26", balloon: "8192", memory: "8192" }, 8192, "linux-desktop-cpu", "linux"), false);
   assert.equal(isHeavyGuest("qemu", { ostype: "l26", balloon: "0", memory: "8192" }, 8192, "linux", "linux"), true);
+  assert.equal(isHeavyGuest("qemu", { ostype: "l26", balloon: "0", memory: "16384" }, 16384, "android", "linux"), true);
+
+  const proxmox = new FakeProxmox();
+  proxmox.memory = { total: 64 * GiB, available: 10 * GiB };
+  proxmox.addVmTemplate(9104, { ostype: "win11", memory: "8192", balloon: "4096" });
+  const api = new Proxmox({
+    apiUrl: "https://pve.example.com:8006/api2/json",
+    node: "pve",
+    tokenId: FAKE_TOKEN.tokenId,
+    tokenSecret: FAKE_TOKEN.tokenSecret,
+    type: "qemu",
+    fetch: proxmox.fetch,
+  });
+  const gate = new ProxmoxStartGate();
+  const verdict = await gate.canStartNow(api, {
+    memoryMiB: 8192,
+    kind: KIND,
+    os: "windows",
+    priority: "acquire",
+    config: { memoryMarginMiB: 4096, memoryWaitSeconds: 0, heavySettleSeconds: 120, memoryPressurePercent: 0, swapFreeMiB: 0 },
+  });
+  assert.equal(verdict.ok, false, "needs full 8 GiB plus 4 GiB margin, not 4 GiB balloon floor");
 });

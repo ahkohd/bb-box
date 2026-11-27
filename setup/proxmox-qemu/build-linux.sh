@@ -63,11 +63,11 @@ IMAGE_URL=https://cloud-images.ubuntu.com/releases/noble/release-$IMAGE_RELEASE/
 # The template waits at its kind's default size (028), on the LXC
 # template's disk. Each kind's artifacts, finalize.sh's kind and check.
 if [ "$kind" = linux ]; then
-  cores=2 memory=4096 disk=16 artifacts=linux finalize=linux check=bb-box-check-headless
+  cores=2 memory=4096 balloon=4096 build_balloon=16384 disk=16 artifacts=linux finalize=linux check=bb-box-check-headless
 elif [ "$kind" = android ]; then
-  cores=8 memory=16384 disk=48 artifacts=linux finalize=android check=bb-box-check-android
+  cores=8 memory=16384 balloon=0 build_balloon=0 disk=48 artifacts=linux finalize=android check=bb-box-check-android
 else
-  cores=4 memory=8192 disk=24 artifacts=desktop-cpu finalize=desktop check=bb-box-check-desktop
+  cores=4 memory=8192 balloon=8192 build_balloon=16384 disk=24 artifacts=desktop-cpu finalize=desktop check=bb-box-check-desktop
 fi
 name=bb-box-$kind
 
@@ -199,7 +199,7 @@ serial=$(printf '%s/%s %s' "$BBBOX_BUILD_ADDRESS" "$BBBOX_PREFIX" "$BBBOX_GATEWA
 log "creating build VM $vm from the cloud image"
 created=1
 qm create "$vm" --name "$name-build" --pool "$BBBOX_POOL" --ostype l26 --machine q35 --cpu host \
-  --cores 16 --memory 16384 --balloon 0 --scsihw virtio-scsi-single --agent enabled=1 \
+  --cores 16 --memory 16384 --balloon "$build_balloon" --scsihw virtio-scsi-single --agent enabled=1 \
   --scsi0 "$BBBOX_STORAGE:0,import-from=$image,discard=on,iothread=1,ssd=1" --boot order=scsi0 \
   --ide2 "$BBBOX_STORAGE:cloudinit" --serial0 socket --net0 "virtio,bridge=$BBBOX_BRIDGE" \
   --smbios1 "base64=1,uuid=$(cat /proc/sys/kernel/random/uuid),serial=$serial" --tags "$build" \
@@ -260,7 +260,7 @@ record=$(ssh_box "sudo bash $in_vm/guest/finalize.sh $in_vm $finalize >&2 && cat
 [ -n "$record" ] || die "the template has no image record"
 qm shutdown "$vm" --timeout 120
 # Clones get their address from the backend's serial; the template has none.
-qm set "$vm" --delete ide2,ciuser,sshkeys,ipconfig0,nameserver,serial0 --cores "$cores" --memory "$memory" \
+qm set "$vm" --delete ide2,ciuser,sshkeys,ipconfig0,nameserver,serial0 --cores "$cores" --memory "$memory" --balloon "$balloon" \
   --smbios1 "uuid=$(cat /proc/sys/kernel/random/uuid)" >/dev/null
 qm template "$vm"
 log "VM $vm is a template; checking a linked clone of it"

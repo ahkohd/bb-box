@@ -89,6 +89,7 @@ checks give its public key; the templates must then be built with it.
 | `start-memory-pressure-percent` | Highest memory stall percentage allowed before a guest starts, from the newest completed minute's mean (`cf=AVERAGE`) of Proxmox VE 9's 10-second samples in RRD data (up to two minutes old, or three minutes with the 60 s cache). Skipped on Proxmox VE 8 or when stale or missing. 5 unless set; 0 off; up to 99. On both Proxmox LXC and Proxmox QEMU |
 | `start-swap-free-mib` | Free swap, in MiB, required on the node before a guest starts, capped at 5% of total swap; skipped when the node has no swap. 2048 unless set; 0 off. On both Proxmox LXC and Proxmox QEMU |
 | `heavy-start-settle-seconds` | Seconds a running heavy VM (Windows, Android, or balloon off over 4 GiB) must be up before another heavy VM starts on the same node. 120 unless set. Containers do not wait for this delay. On Proxmox QEMU |
+| `windows-balloon-min-percent` | Minimum memory, as a percentage of a Windows box's memory, left to the guest by Proxmox auto-ballooning when host memory use exceeds 80%. 50 unless set; from 25 to 100 (100 keeps balloon equal to memory and turns auto-ballooning off). On Proxmox QEMU |
 
 Both Proxmox backends on one node share a single start gate (decision 106):
 recent heavy VMs and their untouched RAM are read from the node's running QEMU
@@ -131,15 +132,18 @@ bb box backend add proxmox-qemu --field windows-templates=9104 \
 
 Set `linux-templates`, `linux-desktop-templates` and `android-templates`
 for the others, and `linux-kvm=true` when the build said KVM works in a
-clone. BB Box sets `balloon` equal to `memory` on every Windows box (and on
-resize) so QEMU attaches the virtio balloon device with free page reporting
-while preventing auto-ballooning; existing Windows templates already have the
-VirtIO Balloon driver and service installed and need no rebuild (decision 107).
-A Windows box still counts as heavy at boot, and a spare or warm one waits
-hibernated, so keep their counts small on a small host. When the
-doctor warns that a Windows template's box user's password can expire,
-refresh it with `bb box images build proxmox-qemu/<vmid>`, or rebuild it:
-its boxes otherwise need a repair and one more restart as they start.
+clone. BB Box enables the virtio balloon device on Linux VMs (`balloon` equal
+to `memory`, so free page reporting returns unused pages without
+auto-ballooning and they no longer count as heavy) and on Windows boxes
+(`balloon` set to `windows-balloon-min-percent` of `memory`, 50% by default,
+so Proxmox auto-ballooning can reclaim idle RAM when host memory exceeds 80%;
+existing templates already have the VirtIO Balloon driver and service and need
+no rebuild, decision 107). Android VMs keep `balloon` off. A Windows box still
+counts as heavy at boot, and a spare or warm one waits hibernated, so keep
+their counts small on a small host. When the doctor warns that a Windows
+template's box user's password can expire, refresh it with
+`bb box images build proxmox-qemu/<vmid>`, or rebuild it: its boxes otherwise
+need a repair and one more restart as they start.
 
 ## Check and prove
 

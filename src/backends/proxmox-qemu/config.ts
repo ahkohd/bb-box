@@ -36,6 +36,10 @@ import { PRODUCT } from "../../brand.ts";
 
 export const QEMU_KINDS = ["windows-desktop", "linux", "linux-desktop-cpu", "android"] as const;
 
+export const WINDOWS_BALLOON_MIN_PERCENT_DEFAULT = 50;
+export const WINDOWS_BALLOON_MIN_PERCENT_MIN = 25;
+export const WINDOWS_BALLOON_MIN_PERCENT_MAX = 100;
+
 export interface QemuConfig {
   readonly proxmox: ProxmoxConnection;
   /** VMIDs of the Windows templates, in the order the settings list them. */
@@ -61,6 +65,7 @@ export interface QemuConfig {
   readonly enrol: boolean;
   /** Linux VM boxes have KVM, where the host allows nested virtualization (057). Off by default. */
   readonly kvm: boolean;
+  readonly windowsBalloonMinPercent: number;
 }
 
 export const QEMU_DEFAULTS = {
@@ -80,6 +85,7 @@ export const QEMU_DEFAULTS = {
   startMemoryPressurePercent: START_MEMORY_PRESSURE_PERCENT_DEFAULT,
   startSwapFreeMiB: START_SWAP_FREE_DEFAULT_MIB,
   heavyStartSettleSeconds: HEAVY_START_SETTLE_DEFAULT_S,
+  windowsBalloonMinPercent: WINDOWS_BALLOON_MIN_PERCENT_DEFAULT,
 } as const;
 
 /** Field keys in bb-box's configuration (029). The backend had no BB settings before it. */
@@ -110,6 +116,7 @@ export const QEMU_KEYS = {
   startMemoryPressurePercent: "start-memory-pressure-percent",
   startSwapFreeMiB: "start-swap-free-mib",
   heavyStartSettleSeconds: "heavy-start-settle-seconds",
+  windowsBalloonMinPercent: "windows-balloon-min-percent",
   enrol: "windows-enrol",
   kvm: "linux-kvm",
 } as const;
@@ -314,6 +321,14 @@ export const QEMU_FIELDS: Readonly<Record<string, FieldDescriptor>> = {
     group: "advanced",
     default: QEMU_DEFAULTS.heavyStartSettleSeconds,
   },
+  [QEMU_KEYS.windowsBalloonMinPercent]: {
+    type: "number",
+    label: "Windows balloon minimum (%)",
+    description:
+      "Minimum memory, as a percentage of a Windows box's memory, that Proxmox's auto-ballooning leaves the guest when host memory use exceeds 80%. From 25 to 100; 100 keeps balloon equal to memory and turns auto-ballooning off.",
+    group: "advanced",
+    default: QEMU_DEFAULTS.windowsBalloonMinPercent,
+  },
 };
 
 /**
@@ -362,6 +377,13 @@ export function parseQemuPart(part: BackendPart): ParsedBackend<QemuConfig> {
   if (!wholeInRange(heavySettleSeconds, 0, 86_400)) {
     problem(QEMU_KEYS.heavyStartSettleSeconds, "Use a whole number of seconds from 0 to 86400 for the heavy VM start settle delay.");
   }
+  const windowsBalloonMinPercent = number(values, QEMU_KEYS.windowsBalloonMinPercent, QEMU_DEFAULTS.windowsBalloonMinPercent);
+  if (!wholeInRange(windowsBalloonMinPercent, WINDOWS_BALLOON_MIN_PERCENT_MIN, WINDOWS_BALLOON_MIN_PERCENT_MAX)) {
+    problem(
+      QEMU_KEYS.windowsBalloonMinPercent,
+      `Use a whole percentage from ${WINDOWS_BALLOON_MIN_PERCENT_MIN} to ${WINDOWS_BALLOON_MIN_PERCENT_MAX} for the Windows balloon minimum.`,
+    );
+  }
 
   if (problems.length) return { ok: false, problems };
   return {
@@ -379,6 +401,7 @@ export function parseQemuPart(part: BackendPart): ParsedBackend<QemuConfig> {
       startGate: { ...startMemory, heavySettleSeconds },
       enrol: values[QEMU_KEYS.enrol] !== false,
       kvm: values[QEMU_KEYS.kvm] === true,
+      windowsBalloonMinPercent,
     },
   };
 }
