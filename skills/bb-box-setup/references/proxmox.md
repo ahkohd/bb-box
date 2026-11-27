@@ -89,6 +89,7 @@ checks give its public key; the templates must then be built with it.
 | `start-memory-pressure-percent` | Highest memory stall percentage allowed before a guest starts, from the newest completed minute's mean (`cf=AVERAGE`) of Proxmox VE 9's 10-second samples in RRD data (up to two minutes old, or three minutes with the 60 s cache). Skipped on Proxmox VE 8 or when stale or missing. 5 unless set; 0 off; up to 99. On both Proxmox LXC and Proxmox QEMU |
 | `start-swap-free-mib` | Free swap, in MiB, required on the node before a guest starts, capped at 5% of total swap; skipped when the node has no swap. 2048 unless set; 0 off. On both Proxmox LXC and Proxmox QEMU |
 | `heavy-start-settle-seconds` | Seconds a running heavy VM (Windows, Android, or balloon off over 4 GiB) must be up before another heavy VM starts on the same node. 120 unless set. Containers do not wait for this delay. On Proxmox QEMU |
+| `windows-balloon-min-percent` | Minimum memory, as a percentage of a Windows box's memory, for Proxmox's balloon device. 100 unless set (balloon equal to memory, no auto-ballooning); from 25 to 99, a cold-booted box starts at that floor and Proxmox adds about 100 MiB per cycle while host memory use is under 80%, and above 80% can shrink even a busy box to its floor. On Proxmox QEMU |
 
 Both Proxmox backends on one node share a single start gate (decision 106):
 recent heavy VMs and their untouched RAM are read from the node's running QEMU
@@ -131,11 +132,20 @@ bb box backend add proxmox-qemu --field windows-templates=9104 \
 
 Set `linux-templates`, `linux-desktop-templates` and `android-templates`
 for the others, and `linux-kvm=true` when the build said KVM works in a
-clone. A Windows box holds its memory while it runs, and a spare or warm
+clone. BB Box enables the virtio balloon device on Linux VMs (`balloon` equal
+to `memory`, so free page reporting returns large free page blocks without
+auto-ballooning and they do not count as heavy) and on Windows boxes (`balloon`
+set to `windows-balloon-min-percent` of `memory`, 100% by default so boxes
+cold-boot at full memory with auto-ballooning off; lowering it starts cold
+boxes at the floor, ramps up by about 100 MiB per cycle while host memory use
+is under 80%, and above 80% lets Proxmox shrink even busy boxes to the floor,
+decision 107). Windows does not return unused memory on its own today because
+upstream `virtio-win` lacks free page reporting (PR 1657 open). Android VMs
+keep `balloon` off. A Windows box counts as heavy at boot, and a spare or warm
 one waits hibernated, so keep their counts small on a small host. When the
-doctor warns that a Windows template's box user's password can expire,
-refresh it with `bb box images build proxmox-qemu/<vmid>`, or rebuild it:
-its boxes otherwise need a repair and one more restart as they start.
+doctor warns that a Windows template's box user's password can expire, refresh
+it with `bb box images build proxmox-qemu/<vmid>`, or rebuild it: its boxes
+otherwise need a repair and one more restart as they start.
 
 ## Check and prove
 

@@ -217,7 +217,7 @@ const LINUX_KIND: BoxKind = {
   id: "linux",
   label: "Linux",
   description:
-    "A Linux VM with its own kernel, for kernel modules, systemd as on a machine, and work a container cannot do. It starts slower and holds its memory while it runs, so ask for it as linux-vm, or as linux-kvm for KVM inside where the host allows it; a linux box elsewhere starts sooner.",
+    "A Linux VM with its own kernel, for kernel modules, systemd as on a machine, and work a container cannot do. It starts slower than a container, so ask for it as linux-vm, or as linux-kvm for KVM inside where the host allows it; a linux box elsewhere starts sooner.",
   requires: [],
   capabilities: {
     os: "linux",
@@ -245,7 +245,7 @@ const LINUX_DESKTOP_KIND: BoxKind = {
   id: "linux-desktop-cpu",
   label: "Linux desktop",
   description:
-    "A Linux desktop VM drawn by the CPU, with its own kernel, for computer use and browsers where the box needs kernel modules or systemd as on a machine. It starts slower and holds its memory while it runs, so ask for it by its provider; a linux-desktop-cpu box elsewhere starts sooner.",
+    "A Linux desktop VM drawn by the CPU, with its own kernel, for computer use and browsers where the box needs kernel modules or systemd as on a machine. It starts slower than a container, so ask for it by its provider; a linux-desktop-cpu box elsewhere starts sooner.",
   requires: [],
   capabilities: {
     ...LINUX_KIND.capabilities,
@@ -363,6 +363,32 @@ function sizeOf(config: Record<string, unknown>): MachineSize | null {
   if (!(Number.isInteger(cores) && cores > 0 && Number.isInteger(memoryMiB) && memoryMiB > 0)) return null;
   const disk = bootDisk(config);
   return { cores, memoryMiB, diskGiB: disk ? rootDiskGiB(config, disk) : null };
+}
+
+function kindById(id: string): BoxKind | null {
+  if (id === KIND.id) return KIND;
+  return LINUX_TEMPLATE_KINDS.find((kind) => kind.id === id) ?? null;
+}
+
+function balloonForKind(memoryMiB: number, kindId: string, windowsBalloonMinPercent: number): number | undefined {
+  if (kindId === KIND.id) {
+    return Math.max(1, Math.min(memoryMiB, Math.round((memoryMiB * windowsBalloonMinPercent) / 100)));
+  }
+  if (isLinuxVmKind(kindId)) return memoryMiB;
+  return undefined;
+}
+
+function vmSizeSettings(
+  size: Pick<MachineSize, "cores" | "memoryMiB">,
+  kindId: string,
+  windowsBalloonMinPercent: number,
+): GuestSettings {
+  const balloon = balloonForKind(size.memoryMiB, kindId, windowsBalloonMinPercent);
+  return {
+    cores: size.cores,
+    memory: size.memoryMiB,
+    ...(balloon !== undefined ? { balloon } : {}),
+  };
 }
 
 /** How long a resize's clean shutdown waits for the guest before Proxmox stops it (061). */
@@ -879,7 +905,13 @@ export class ProxmoxQemuBackend implements Backend {
           await api.setNetwork(vmid, nets, signal);
           await api.configure(
             vmid,
-            { cores: forked.size.cores, memory: forked.size.memoryMiB, tags: boxTags(forked, this.#context.installId, template), onboot: false, smbios1: smbios1For(address, prefix, gateway, randomUUID()), delete: ["protection"] },
+            {
+              ...vmSizeSettings(forked.size, forked.kind, this.#config.windowsBalloonMinPercent),
+              tags: boxTags(forked, this.#context.installId, template),
+              onboot: false,
+              smbios1: smbios1For(address, prefix, gateway, randomUUID()),
+              delete: ["protection"],
+            },
             signal,
           );
         },
@@ -1283,7 +1315,7 @@ export class ProxmoxQemuBackend implements Backend {
       const config = await step("configure", async () => {
         const current = await api.config(id, signal);
         low = startsLow(current);
-        await api.configure(id, { ...this.#settings(box.size, id, current), ...(low ? LOW : {}) }, signal);
+        await api.configure(id, { ...this.#settings(box.size, id, current, box.kind), ...(low ? LOW : {}) }, signal);
         return current;
       });
       await step("tags", () => api.configure(id, { tags: withStartTag(boxTags(box, installId, template), low) }, signal));
@@ -1382,13 +1414,14 @@ export class ProxmoxQemuBackend implements Backend {
     answered?: () => Promise<void>,
     readyWithinMs?: number,
     waiting?: (words: string | null) => Promise<void>,
+    knownKind?: string,
   ): Promise<Started | void> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const status = (await this.#still(api, guest, signal)) ? await api.status(vmid, signal) : null;
     if (!status) throw gone(vmid);
     const step = timed(timing);
-    const kind = this.#kindOf(guest.data?.template);
+    const kind = (knownKind ? kindById(knownKind) : null) ?? this.#kindOf(guest.data?.template);
     const os = kind.capabilities.os;
     const resumed = status.status !== "running" && status.lock === "suspended";
     if (status.status !== "running") {
@@ -1411,7 +1444,7 @@ export class ProxmoxQemuBackend implements Backend {
     await answered?.();
     // Linux keeps its clock with its own time service.
     if (os === "windows") await step("clock", () => this.#setClock(vmid, signal));
-    else if (resumed && this.#kindOf(guest.data?.template) === ANDROID_IMAGE_KIND) await step("clock", () => this.#setLinuxClock(vmid, signal));
+    else if (resumed && kind === ANDROID_IMAGE_KIND) await step("clock", () => this.#setLinuxClock(vmid, signal));
     const started = withDesktop({ facts: guest.facts }, desktop);
     if (started.facts !== guest.facts) return { facts: started.facts ?? [] };
   }
@@ -1447,11 +1480,11 @@ export class ProxmoxQemuBackend implements Backend {
    * boot. When the VM does not come back at its new size, its old cores and
    * memory go back and it boots again.
    */
-  async resize(guest: Guest, _kind: string, to: MachineSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
+  async resize(guest: Guest, kind: string, to: MachineSize, options: { readonly restart: boolean }, signal?: AbortSignal): Promise<Guest> {
     const vmid = this.#vmid(guest);
     const api = await this.client();
     const { config, from } = await this.#resizable(guest, to, signal);
-    const os = this.#osOf(guest.data?.template);
+    const os = (kindById(kind) ?? this.#kindOf(guest.data?.template)).capabilities.os;
     const restart = to.cores !== from.cores || to.memoryMiB !== from.memoryMiB;
     if (restart && !options.restart) throw new BackendError("unsupported", "A VM's cores and memory change only with a restart.");
     const grows = to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB);
@@ -1463,19 +1496,19 @@ export class ProxmoxQemuBackend implements Backend {
     }
     await this.#forget(vmid);
     await api.shutdown(vmid, SHUTDOWN_WAIT_S, signal);
-    await api.configure(vmid, { cores: to.cores, memory: to.memoryMiB }, signal);
+    await api.configure(vmid, vmSizeSettings(to, kind, this.#config.windowsBalloonMinPercent), signal);
     let grew = false;
     try {
       if (grows) grew = await this.#grow(api, vmid, config, to.diskGiB, untimed, signal);
-      await this.start(guest, signal);
+      await this.#startWithWait(guest, undefined, signal, undefined, undefined, undefined, undefined, kind);
     } catch (error) {
       if (signal?.aborted) {
-        await api.configure(vmid, { cores: from.cores, memory: from.memoryMiB }).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+        await api.configure(vmid, vmSizeSettings(from, kind, this.#config.windowsBalloonMinPercent)).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
         throw error;
       }
       await api.stop(vmid, signal).catch(() => undefined);
-      await api.configure(vmid, { cores: from.cores, memory: from.memoryMiB }, signal).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
-      await this.#startWithWait(guest, 0, signal).catch((cause) => this.#context.logError("resize: start at the old size", cause));
+      await api.configure(vmid, vmSizeSettings(from, kind, this.#config.windowsBalloonMinPercent), signal).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+      await this.#startWithWait(guest, 0, signal, undefined, undefined, undefined, undefined, kind).catch((cause) => this.#context.logError("resize: start at the old size", cause));
       throw error;
     }
     if (grew && os === "windows") await this.#extend(vmid, signal);
@@ -2212,13 +2245,12 @@ export class ProxmoxQemuBackend implements Backend {
     await settle(api, vmid, signal).catch((error: unknown) => this.#context.logError("put a new box's CPU weight back", error instanceof Error ? error : new Error(String(error))));
   }
 
-  #settings(size: MachineSize, vmid: number, current: Record<string, unknown>): GuestSettings {
+  #settings(size: MachineSize, vmid: number, current: Record<string, unknown>, kindId: string): GuestSettings {
     const address = addressFor(this.#config, vmid);
     if (!address) throw new Error(`VMID ${vmid} is outside the box range.`);
     const { bridge, prefix, gateway } = this.#config.network;
     return {
-      cores: size.cores,
-      memory: size.memoryMiB,
+      ...vmSizeSettings(size, kindId, this.#config.windowsBalloonMinPercent),
       net0: net0On(current.net0, bridge),
       smbios1: smbios1For(address, prefix, gateway),
       onboot: true,
@@ -2635,7 +2667,7 @@ export class ProxmoxQemuBackend implements Backend {
       const config = await api.config(id, signal);
       // Off at the node's boot, as a warm VM that runs is deleted. A low CPU weight until a box takes it and it is ready (#888).
       const low = startsLow(config);
-      await api.configure(id, { ...this.#settings(size, id, config), onboot: false, ...(low ? LOW : {}) }, signal);
+      await api.configure(id, { ...this.#settings(size, id, config, KIND.id), onboot: false, ...(low ? LOW : {}) }, signal);
       await api.configure(id, { tags: withStartTag(tags(FILLING), low) }, signal);
       const grew = await this.#grow(api, id, config, size.diskGiB, untimed, signal);
       await this.#startGuest(api, id, { priority: "refill", kind: KIND.id, os: KIND.capabilities.os, memoryMiB: size.memoryMiB, memoryWaitSeconds: 0 }, signal);
@@ -2707,7 +2739,7 @@ export class ProxmoxQemuBackend implements Backend {
       vmid = await step("clone", () => this.#clone(api, guests, template, IMAGE_HOSTNAME, description, async (id) => void this.#imageBoxes.add(id), signal, () => {}));
       const id = vmid;
       await step("configure", async () => {
-        await api.configure(id, this.#settings(this.#context.kind(kind.id).defaultSize, id, await api.config(id, signal)), signal);
+        await api.configure(id, this.#settings(this.#context.kind(kind.id).defaultSize, id, await api.config(id, signal), kind.id), signal);
         await api.configure(id, { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
       });
       let admittedAt = this.#now();
@@ -2759,12 +2791,15 @@ export class ProxmoxQemuBackend implements Backend {
     await this.#forget(vmid);
     await api.shutdown(vmid, 300, signal);
     if (!linux) await this.#freshVariables(api, vmid, signal);
+    const sourceMemory = Number(source.memory);
+    const balloon = sourceMemory > 0 && (from.kind === KIND.id || isLinuxVmKind(from.kind)) ? sourceMemory : undefined;
     await api.configure(
       vmid,
       {
         name: typeof source.name === "string" ? source.name : IMAGE_HOSTNAME,
         ...(Number(source.cores) > 0 ? { cores: Number(source.cores) } : {}),
-        ...(Number(source.memory) > 0 ? { memory: Number(source.memory) } : {}),
+        ...(sourceMemory > 0 ? { memory: sourceMemory } : {}),
+        ...(balloon !== undefined ? { balloon } : {}),
         ...(typeof source.net0 === "string" ? { net0: source.net0 } : {}),
         smbios1: `uuid=${randomUUID()}`,
         onboot: false,

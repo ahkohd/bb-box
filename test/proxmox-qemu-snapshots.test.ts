@@ -251,8 +251,9 @@ test("a VM's held copy cut short before its own labels still carries its source'
 test("070 unit 7: a VM's fork is a full copy of its snapshot's disk, disarmed first, with new MAC addresses, a new SMBIOS UUID and the address of its own VMID, then armed in two late steps; a Windows VM forks none", async () => {
   const state = world();
   const { guest, vmid, box } = await linuxBox(state);
-  await state.backend.snapshot(guest, { id: SNAPSHOT, box, memory: true }, tasks().hooks);
   const source = state.proxmox.guests.get(vmid)!;
+  source.config.balloon = "0";
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box, memory: true }, tasks().hooks);
   const sourceUuid = /uuid=([^,]+)/.exec(source.config.smbios1 ?? "")?.[1];
   const sourceMac = /=([0-9A-F:]{17})/i.exec(source.config.net0 ?? "")?.[1];
   const forked = { boxId: "bxforkedvmaaaa", threadId: "thr_abc123", name: "calm-otter", kind: "linux", createdAt: 1_790_000_100_000, size: { ...defaultSize(kindSizes("linux")), gpu: "none" as const } };
@@ -275,6 +276,7 @@ test("070 unit 7: a VM's fork is a full copy of its snapshot's disk, disarmed fi
   assert.ok(uuid && uuid !== sourceUuid, "a new SMBIOS UUID");
   assert.match(config.smbios1 ?? "", new RegExp(`serial=${Buffer.from(`${made.address}/24 192.0.2.1`).toString("base64")}`), "the address of its own VMID, as the VM reads it");
   assert.equal(config.vmstate, undefined, "it starts from the disk, never the saved memory");
+  assert.equal(config.balloon, String(forked.size.memoryMiB));
   assert.match(config.tags ?? "", /box\.bxforkedvmaaaa/);
 
   const clones = () => state.proxmox.calls.filter((call) => call.method === "POST" && /\/clone$/.test(call.path)).length;

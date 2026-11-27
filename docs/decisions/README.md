@@ -111,3 +111,4 @@ which records still stand as written. The current design as a whole is in
 | [104](104-a-card-nvidia-smi-did-not-read-is-not-known-yet-and-blocks-only-itself.md) | A card nvidia-smi did not read is not known yet, and blocks only itself | Accepted; supersedes 071's rule for incomplete readings |
 | [105](105-the-live-agent-pointer-changes-shape-by-the-rules-recordings-use.md) | The live agent pointer changes shape by the rules recordings use | Accepted; extends 073 and 102 |
 | [106](106-proxmox-guests-wait-for-free-host-memory-and-heavy-vms-boot-one-at-a-time.md) | Proxmox guests wait for free host memory, and heavy VMs boot one at a time | Accepted |
+| [107](107-proxmox-qemu-boxes-enable-the-virtio-balloon-device.md) | Proxmox QEMU boxes enable the virtio balloon device | Accepted; extends 106 |

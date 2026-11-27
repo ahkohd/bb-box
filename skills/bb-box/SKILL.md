@@ -77,7 +77,7 @@ be forked there or start a child thread.
 - Ask for `linux-vm` when you need a kernel of your own: to load kernel
   modules, or for systemd as on a real machine. Ask for `linux-kvm` when
   the box must run VMs or emulators itself, through `/dev/kvm`: a VM on
-  Proxmox, which starts in about 10 s and holds its memory while it runs,
+  Proxmox, which starts in about 10 s,
   or a box on a Namespace Linux machine of its own, ready in about 25 s and
   billed by the minute. A plain `linux` box starts sooner, so ask for these
   only when you need them.

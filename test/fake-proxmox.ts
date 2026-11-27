@@ -20,6 +20,7 @@ export interface FakeGuest {
   /** A started container's root filesystem size in bytes, as df gave it then. */
   filesystem?: number;
   memoryUsed?: number;
+  balloonTargetMiB?: number;
   startedAt?: number;
   uptime?: number;
   snapshots?: FakeSnapshot[];
@@ -544,6 +545,13 @@ export class FakeProxmox {
         if (match[1] === "qemu" && guest.config.lock && !params.delete?.split(",").includes("vmstate")) {
           return respond(500, `VM is locked (${guest.config.lock})`, { data: null });
         }
+        if (match[1] === "qemu" && (params.memory !== undefined || params.balloon !== undefined)) {
+          const nextMemory = Number(params.memory ?? guest.config.memory ?? 512);
+          const nextBalloon = Number(params.balloon ?? guest.config.balloon ?? 0);
+          if (nextBalloon > 0 && nextBalloon > nextMemory) {
+            return respond(500, "balloon value too large (must be smaller than assigned memory)", { data: null });
+          }
+        }
         // A disk given as <storage>:<GiB> is a new volume, as Proxmox allocates one.
         for (const [key, value] of Object.entries(params)) {
           if (key === "delete" || key === "digest") continue;
@@ -609,6 +617,7 @@ export class FakeProxmox {
       guest.status = "stopped";
       delete guest.startedAt;
       delete guest.uptime;
+      delete guest.balloonTargetMiB;
       return ok(this.#task(type === "qemu" ? "qmshutdown" : "vzshutdown", Number(id)));
     }
 
@@ -620,13 +629,27 @@ export class FakeProxmox {
       const prefix = type === "qemu" ? "qm" : "vz";
       if (action === "current" && method === "GET") {
         const mem = guest.status === "running" ? (guest.memoryUsed ?? 0) : 0;
-        return ok({ vmid, name: guest.name, status: guest.status, uptime: this.#guestUptime(guest), mem, ...(guest.config.lock ? { lock: guest.config.lock } : {}) });
+        return ok({
+          vmid,
+          name: guest.name,
+          status: guest.status,
+          uptime: this.#guestUptime(guest),
+          mem,
+          ...(guest.status === "running" && guest.balloonTargetMiB !== undefined ? { balloon: guest.balloonTargetMiB * 2 ** 20 } : {}),
+          ...(guest.config.lock ? { lock: guest.config.lock } : {}),
+        });
       }
       if (method === "POST" && action === "start") {
         if (!this.nextTaskExit.has(`${prefix}start`)) {
+          const resuming = Boolean(guest.config.vmstate);
           guest.status = "running";
           guest.startedAt = this.now();
           delete guest.uptime;
+          if (type === "qemu" && !resuming) {
+            const memoryMiB = Number(guest.config.memory || 512);
+            const configuredBalloon = Number(guest.config.balloon || 0);
+            guest.balloonTargetMiB = configuredBalloon > 0 ? configuredBalloon : memoryMiB;
+          }
           // A suspended VM resumes.
           delete guest.config.lock;
           delete guest.config.vmstate;
@@ -640,6 +663,7 @@ export class FakeProxmox {
           guest.status = "stopped";
           delete guest.startedAt;
           delete guest.uptime;
+          delete guest.balloonTargetMiB;
         }
         return ok(this.#task(`${prefix}stop`, vmid));
       }
