@@ -496,6 +496,8 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
     "write 7000 C:\\bb-box\\build\\install-stream.ps1",
     "write 7000 C:\\bb-box\\build\\hardware-cursor.ps1",
     "write 7000 C:\\bb-box\\build\\boot.ps1",
+    "write 7000 C:\\bb-box\\build\\bb-box-address.c",
+    "write 7000 C:\\bb-box\\build\\install-address.ps1",
     "write 7000 C:\\bb-box\\build\\pins.json",
     "write 7000 C:\\bb-box\\build\\image.json",
     "write 7000 C:\\bb-box\\build\\bb-url",
@@ -772,4 +774,76 @@ test("Windows scripts install Codex's complete package and check codex-code-mode
   assert.match(refresh, /Install-Tool codex \$file 'bin\\codex\.exe'/);
   assert.match(refresh, /System32\\tar\.exe" -xzf \$file -C \$to/);
   assert.match(check, /Check 'Codex code-mode host beside codex'[\s\S]*codex-code-mode-host\.exe/);
+});
+
+test("Proxmox Windows images install the native bb-box-address service, disable IPv4 DAD and keep Tart's first-logon strip intact", async () => {
+  const armCurrent = { ...WINDOWS, kind: "windows-arm64-desktop" };
+  const armWritten = new Map<string, Uint8Array>();
+  const armCommand: CommandTransport = {
+    probe: async () => true,
+    run: async (script) => {
+      if (script.includes("Start-Detached")) {
+        return { exitCode: 0, stdout: "pid=4321 start=133000000000000000\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+      }
+      if (script.includes("@alive")) {
+        return { exitCode: 0, stdout: "@alive=False\n@status=0\n@size=0\n@log\n\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+      }
+      return { exitCode: 0, stdout: "boot 1\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+    },
+    stream: async () => ({ exitCode: 0, timedOut: false }),
+    writeFile: async (path, bytes) => {
+      armWritten.set(path, bytes);
+    },
+    readFile: async () => new Uint8Array(),
+  };
+  const armImages: BackendImages = {
+    windows: true,
+    list: async () => ({ builds: [armCurrent], boxes: [] }),
+    box: async () => ({ ref: "7100", bootMs: 5_000, steps: [], command: armCommand }),
+    capture: async () => ({ ...armCurrent, ref: "7100", current: false }),
+    replace: async (build) => ({ ...build, ref: armCurrent.ref, current: true }),
+    remove: async () => undefined,
+  };
+  await refreshImage({
+    images: armImages,
+    current: armCurrent,
+    setup: SETUP,
+    bbUrl: "https://bb.example.com",
+    bbApp: APP,
+    signal: AbortSignal.timeout(60_000),
+    restart: { timeoutMs: 1_000, pollMs: 0, steadyMs: 0 },
+  });
+
+  assert.equal(armWritten.has("C:\\bb-box\\build\\boot.ps1"), false);
+  assert.equal(armWritten.has("C:\\bb-box\\build\\bb-box-address.c"), false);
+  assert.equal(armWritten.has("C:\\bb-box\\build\\install-address.ps1"), false);
+
+  const firstLogonPath = join(SETUP, "proxmox-qemu", "answer", "bb-box", "firstlogon.ps1");
+  const firstLogon = readFileSync(firstLogonPath, "utf8");
+  const refresh = readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8");
+  const installAddress = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "install-address.ps1"), "utf8");
+  const addressSource = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "bb-box-address.c"), "utf8");
+  const bootScript = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "boot.ps1"), "utf8");
+
+  assert.match(firstLogon, /& C:\\bb-box\\install-address\.ps1 -Source C:\\bb-box\\bb-box-address\.c/);
+  assert.doesNotMatch(firstLogon, /Register-ScheduledTask -TaskName 'bb-box address'/);
+  assert.match(refresh, /& 'C:\\bb-box\\install-address\.ps1' -Source 'C:\\bb-box\\bb-box-address\.c'/);
+  assert.match(installAddress, /sc\.exe create \$serviceName binPath= \$binPath start= auto depend= nsi\/Tcpip/);
+  assert.match(installAddress, /Unregister-ScheduledTask -TaskName 'bb-box address'/);
+  assert.match(addressSource, /GetSystemFirmwareTable\(SMBIOS_FIRMWARE_PROVIDER/);
+  assert.match(addressSource, /ipInterface\.DadTransmits = 0;/);
+  assert.match(bootScript, /netsh interface ipv4 set interface \$index dadtransmits=0/);
+
+  const tartAwk = [
+    `$0 == "Step \\"Build address $($build.address)\\"" { n++; next }`,
+    `$0 == "& C:\\\\bb-box\\\\boot.ps1 -Address $build.address -Gateway $build.gateway -Dns $build.dns" { n++; next }`,
+    `$0 == "# The downloads below need the network the address has just brought up." { print "# The downloads below need the network."; n++; next }`,
+    `index($0, "Step 'The box address at each boot") == 1 { drop = 1 }`,
+    `drop { if (index($0, "Set-Content C:\\\\bb-box\\\\dns.txt") == 1) { drop = 0; n++ } next }`,
+    `{ if (sub(/OpenSSH-Win64-/, "OpenSSH-ARM64-")) n++; print }`,
+    `END { if (n != 5) exit 1 }`,
+  ].join("\n");
+  const stripped = execFileSync("awk", [tartAwk, firstLogonPath], { encoding: "utf8" });
+
+  assert.doesNotMatch(stripped, /boot\.ps1|install-address\.ps1|bb-box-address\.c|\$build\.(address|gateway|dns)|Win64/);
 });

@@ -30,6 +30,7 @@ Log "adapter $index is up"
 $config = Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "InterfaceIndex=$index"
 if (-not $config.DHCPEnabled -and $config.IPAddress -contains $ip) { Log "address $ip already set"; exit 0 }
 $mask = (0..3 | ForEach-Object { 256 - [math]::Pow(2, 8 - [math]::Max(0, [math]::Min(8, [int]$prefix - 8 * $_))) }) -join '.'
+netsh interface ipv4 set interface $index dadtransmits=0 | Out-Null
 netsh interface ipv4 set address name=$index source=static address=$ip mask=$mask gateway=$Gateway gwmetric=1 | Out-Null
 if ($LASTEXITCODE) { Log "netsh could not set $ip/$prefix"; exit 1 }
 netsh interface ipv4 set dnsservers name=$index source=static address=$($Dns[0]) register=none validate=no | Out-Null

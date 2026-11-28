@@ -251,8 +251,21 @@ try {
     & $installers[$pin.name] $pin $file
     Remove-Item $file -Force -ErrorAction SilentlyContinue
   }
-  # The script that gives each clone its address at boot, as the setup has it now: the first logon put the first one in place.
   if (Test-Path "$dir\boot.ps1") { Copy-Item "$dir\boot.ps1" 'C:\bb-box\boot.ps1' -Force; Step 'boot.ps1: as its source' }
+  if ((Test-Path "$dir\bb-box-address.c") -and (Test-Path "$dir\install-address.ps1")) {
+    Copy-Item "$dir\bb-box-address.c" 'C:\bb-box\bb-box-address.c' -Force
+    Copy-Item "$dir\install-address.ps1" 'C:\bb-box\install-address.ps1' -Force
+    $builtAddress = Get-Content 'C:\bb-box\bb-box-address.source' -ErrorAction SilentlyContinue
+    $sourceAddress = (Get-FileHash 'C:\bb-box\bb-box-address.c' -Algorithm SHA256).Hash
+    $hasAddressService = $null -ne (Get-Service -Name 'bb-box-address' -ErrorAction SilentlyContinue)
+    if ($builtAddress -ne $sourceAddress -or -not (Test-Path 'C:\bb-box\bb-box-address.exe') -or -not $hasAddressService) {
+      Step 'bb-box-address.exe: built from its source and registered as a service'
+      & 'C:\bb-box\install-address.ps1' -Source 'C:\bb-box\bb-box-address.c'
+    } else {
+      Unregister-ScheduledTask -TaskName 'bb-box address' -Confirm:$false -ErrorAction SilentlyContinue
+      Step 'bb-box-address.exe: as its source'
+    }
+  }
   # bb-box-stream.exe (060), built again when its source has changed, where the image has its encoder.
   $stream = "$tools\bb-box-stream"
   if (Test-Path "$stream\openh264.dll") {

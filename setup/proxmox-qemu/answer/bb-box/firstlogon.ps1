@@ -311,11 +311,7 @@ $env:CUA_DRIVER_RS_TELEMETRY_ENABLED = 'false'
 Register-LogonTask 'bb-box cua-driver' "`"$dir\cua-driver.exe`" serve" Highest
 
 Step 'The box address at each boot, from the SMBIOS serial'
-$action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\bb-box\boot.ps1'
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName 'bb-box address' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+& C:\bb-box\install-address.ps1 -Source C:\bb-box\bb-box-address.c
 Set-Content C:\bb-box\dns.txt ($build.dns -join ' ')
 
 # The image's record (049), which the build gives as JSON text.
