@@ -5,6 +5,8 @@ import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync 
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { ProxmoxLxcBackend, displayReason, namesGpu, parseGpuReport, warmNameScript, nameScript, type LxcBackendOptions } from "../src/backends/proxmox-lxc/backend.ts";
+import { parseLxcPart, parseLxcSettings } from "../src/backends/proxmox-lxc/config.ts";
+import { SPARES } from "../src/core/boxes.ts";
 import { parseTags } from "../src/backends/proxmox/api.ts";
 import { installFromDescription, ownerFromDescription, ownerFromTags, templateFromTags } from "../src/backends/proxmox/owner.ts";
 import { parseImageRecord, recordInDescription } from "../src/backends/images.ts";
@@ -890,6 +892,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   assert.equal(made.name, box.name);
   assert.equal(made.config.cores, "2");
   assert.equal(made.config.memory, "4096");
+  assert.equal(made.config.swap, "1024");
   assert.equal(made.config.onboot, "1");
   assert.equal(made.config.net0, "name=eth0,bridge=vmbr1,ip=192.0.2.100/24,gw=192.0.2.1,type=veth");
   assert.match(made.config.rootfs!, /size=8G/, "the template's disk is kept");
@@ -898,7 +901,7 @@ test("acquire claims the VMID before it clones, then configures and starts the b
   const puts = proxmox.calls.filter((call) => call.method === "PUT" && call.path === "/nodes/pve/lxc/7000/config");
   assert.deepEqual(
     puts.map((call) => Object.keys(call.params).sort()),
-    [["cores", "cpuunits", "delete", "digest", "memory", "net0", "onboot"], ["digest", "tags"], ["delete", "digest"], ["digest", "tags"]],
+    [["cores", "cpuunits", "delete", "digest", "memory", "net0", "onboot", "swap"], ["digest", "tags"], ["delete", "digest"], ["digest", "tags"]],
     "tags go in a PUT of their own; the low CPU weight and its tag go once it is ready (#888); each on the digest of the config BB Box checked",
   );
   assert.equal(puts[0]!.params.cpuunits, "10", "a tenth of the default weight while it starts");
@@ -2426,4 +2429,104 @@ test("proxmox.image-storage reports templates, storage room and non-box leftover
   assert.equal(checkLow.status, "warn");
   assert.match(checkLow.detail, /No leftover build containers\./);
   assert.match(checkLow.detail, /local-lvm has 25 GiB free .* below about 16 GiB a build needs/);
+});
+
+test("new containers get swap at 25% of memory with a 512 MiB floor, and swap-percent validates 0 to 100", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-start-memory-margin-mib": 0 });
+
+  const small = await backend.acquire(identity("linux", "thr_swap", { cores: 2, memoryMiB: 4096, diskGiB: null }), null, hooks().value, signal());
+  const large = await backend.acquire(identity("linux", "thr_swap", { cores: 4, memoryMiB: 16384, diskGiB: null }), null, hooks().value, signal());
+  const tiny = await backend.acquire(identity("linux", "thr_swap", { cores: 2, memoryMiB: 1024, diskGiB: null }), null, hooks().value, signal());
+
+  assert.equal(proxmox.guests.get(Number(small.ref))?.config.swap, "1024");
+  assert.equal(proxmox.guests.get(Number(large.ref))?.config.swap, "4096");
+  assert.equal(proxmox.guests.get(Number(tiny.ref))?.config.swap, "512");
+
+  const zero = setup({ "proxmox-lxc-swap-percent": 0, "proxmox-lxc-start-memory-margin-mib": 0 });
+  const capped = await zero.backend.acquire(identity("linux", "thr_swap", { cores: 4, memoryMiB: 16384, diskGiB: null }), null, hooks().value, signal());
+
+  assert.equal(zero.proxmox.guests.get(Number(capped.ref))?.config.swap, "512");
+
+  const full = setup({ "proxmox-lxc-swap-percent": 100, "proxmox-lxc-start-memory-margin-mib": 0 });
+  const matched = await full.backend.acquire(identity("linux", "thr_swap", { cores: 4, memoryMiB: 8192, diskGiB: null }), null, hooks().value, signal());
+
+  assert.equal(full.proxmox.guests.get(Number(matched.ref))?.config.swap, "8192");
+
+  for (const invalid of [-1, 101, 12.5]) {
+    const flat = parseLxcSettings({
+      "proxmox-lxc-url": "https://pve.example.com:8006",
+      "proxmox-lxc-token-id": FAKE_TOKEN.tokenId,
+      "proxmox-lxc-token-secret": FAKE_TOKEN.tokenSecret,
+      "proxmox-lxc-swap-percent": invalid,
+    });
+    assert.equal(flat.enabled && flat.ok, false);
+
+    const part = parseLxcPart({
+      id: "proxmox-lxc",
+      fields: {
+        url: "https://pve.example.com:8006",
+        "token-id": FAKE_TOKEN.tokenId,
+        "token-secret": FAKE_TOKEN.tokenSecret,
+        "swap-percent": invalid,
+      },
+      hosts: [],
+    });
+    assert.equal(part.ok, false);
+    if (!part.ok) assert.equal(part.problems.some((problem) => problem.path === "swap-percent"), true);
+  }
+});
+
+test("live resize updates swap in proportion to memory, upgrades pre-deploy boxes and rolls swap back on failure", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-start-memory-margin-mib": 0 });
+  const guest = await backend.acquire(identity("linux"), null, hooks().value, signal());
+  const vmid = Number(guest.ref);
+
+  assert.equal(proxmox.guests.get(vmid)?.config.swap, "1024");
+
+  await backend.resize(guest, "linux", { cores: 4, memoryMiB: 16384, diskGiB: 16 }, { restart: false }, signal());
+  assert.equal(proxmox.guests.get(vmid)?.config.swap, "4096");
+
+  await backend.resize(guest, "linux", { cores: 2, memoryMiB: 1024, diskGiB: 16 }, { restart: false }, signal());
+  assert.equal(proxmox.guests.get(vmid)?.config.swap, "512");
+
+  proxmox.guests.get(vmid)!.config.memory = "8192";
+  proxmox.guests.get(vmid)!.config.swap = "512";
+
+  await backend.resize(guest, "linux", { cores: 2, memoryMiB: 8192, diskGiB: 16 }, { restart: false }, signal());
+  assert.equal(proxmox.guests.get(vmid)?.config.swap, "2048");
+
+  proxmox.nextTaskExit.set("resize", "lvextend failed: insufficient free space");
+  await assert.rejects(
+    backend.resize(guest, "linux", { cores: 4, memoryMiB: 16384, diskGiB: 40 }, { restart: false }, signal()),
+    /insufficient free space/,
+  );
+
+  assert.equal(proxmox.guests.get(vmid)?.config.memory, "8192");
+  assert.equal(proxmox.guests.get(vmid)?.config.swap, "2048");
+});
+
+test("warm fills, warm claims, spare fills and image boxes configure proportional swap", async () => {
+  const { backend, proxmox } = setup({ "proxmox-lxc-linux-warm": 1, "proxmox-lxc-start-memory-margin-mib": 0 });
+
+  await backend.maintain();
+  proxmox.statusPass();
+  const warmGuest = [...proxmox.guests.values()].find((guest) => !guest.template && parseTags(guest.config.tags).includes("warm"))!;
+
+  assert.equal(warmGuest.config.memory, "4096");
+  assert.equal(warmGuest.config.swap, "1024");
+
+  const claimed = await backend.acquire(identity("linux", "thr_warm", { cores: 2, memoryMiB: 12288, diskGiB: null }), null, hooks().value, signal());
+
+  assert.equal(Number(claimed.ref), warmGuest.vmid);
+  assert.equal(proxmox.guests.get(warmGuest.vmid)?.config.memory, "12288");
+  assert.equal(proxmox.guests.get(warmGuest.vmid)?.config.swap, "3072");
+
+  const spare = await backend.acquire(identity("linux", SPARES, { cores: 4, memoryMiB: 16384, diskGiB: null }), null, hooks().value, signal());
+
+  assert.equal(proxmox.guests.get(Number(spare.ref))?.config.swap, "4096");
+
+  const imageBox = await backend.images.box({ ref: "9000", image: "standard", kind: "linux", build: null, record: null, current: true }, "test", signal());
+
+  assert.equal(proxmox.guests.get(Number(imageBox.ref))?.config.memory, "4096");
+  assert.equal(proxmox.guests.get(Number(imageBox.ref))?.config.swap, "1024");
 });

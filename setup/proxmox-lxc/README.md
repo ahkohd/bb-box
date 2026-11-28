@@ -629,6 +629,7 @@ fields against the host; Save and turn on saves them. From a terminal,
 | `start-memory-wait-seconds` | `600` | seconds a start waits for free memory, low memory stalls and free swap before failing, checked every 10 s; 0 refuses at once |
 | `start-memory-pressure-percent` | `5` | highest memory stall percentage allowed before a start, from the newest completed minute's mean (`cf=AVERAGE`) of Proxmox VE 9's 10-second samples in RRD data (up to two minutes old, or three minutes with the 60 s cache); skipped on Proxmox VE 8 or when stale or missing; 0 turns the rule off |
 | `start-swap-free-mib` | `2048` | free swap, in MiB, required on the node before a start, capped at 5% of total swap; skipped when the node has no swap; 0 turns the rule off |
+| `swap-percent` | `25` | swap given to each container as a percentage of its memory, from 0 to 100, with a floor of 512 MiB; 0 gives 512 MiB |
 
 - Linux templates serve `linux`, GPU desktop templates `linux-desktop`, CPU
   desktop templates `linux-desktop-cpu`, and Wayland desktop templates
@@ -689,6 +690,15 @@ fields against the host; Save and turn on saves them. From a terminal,
   order, so a large waiting VM does not block smaller containers that fit. A
   refill never starts while a thread's start is waiting. Warm and spare refills check the gate before cloning
   and give up at once with a wait of 0 s until the next top-up.
+- Each container's swap is set to `swap-percent` of its memory (25% by default,
+  range 0 to 100), with a floor of 512 MiB so no container gets less than the
+  template default (decision 108). Setting `swap-percent` to 0 gives every
+  container 512 MiB. BB Box sets `swap` alongside `memory` when making boxes,
+  filling or claiming warm boxes, filling spares, resizing (live, so swap
+  follows memory), forking, restoring and starting image boxes.
+  `template/build.sh` keeps `--swap 512` because clones are configured before
+  use. Existing containers are not changed automatically; they get the new swap
+  on their next resize or when made again.
 
 ## Check it worked
 

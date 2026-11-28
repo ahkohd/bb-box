@@ -180,6 +180,7 @@ Setup: [setup/proxmox-lxc/README.md](../../setup/proxmox-lxc/README.md).
 | `start-memory-wait-seconds` | Start memory wait (seconds) | number | advanced | `600` | Seconds a guest start waits on the node for memory, low stalls and free swap before failing. Polled about every 10 seconds. 0 refuses at once. |
 | `start-memory-pressure-percent` | Start memory stall limit (%) | number | advanced | `5` | Highest memory stall percentage allowed before a guest starts. Read from the newest completed minute's mean (cf=AVERAGE) of Proxmox VE 9's 10-second samples in RRD data (up to two minutes old, or up to three minutes old with the gate's 60-second cache). Skipped on Proxmox VE 8 or when stale or missing. 0 turns the rule off. |
 | `start-swap-free-mib` | Free swap required to start (MiB) | number | advanced | `2048` | Free swap, in MiB, required on the node before a guest starts, capped at 5% of total swap. Skipped when the node has no swap. 0 turns the rule off. |
+| `swap-percent` | Container swap (%) | number | advanced | `25` | Swap given to each container as a percentage of its memory, from 0 to 100, with a floor of 512 MiB. 0 gives every container 512 MiB. Existing containers pick it up on their next resize or when made again. |
 
 ### proxmox-qemu
 

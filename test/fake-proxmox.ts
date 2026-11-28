@@ -170,6 +170,7 @@ export class FakeProxmox {
         // As build.sh leaves a template.
         cores: "2",
         memory: "4096",
+        swap: "512",
         protection: "1",
         template: "1",
         ...config,

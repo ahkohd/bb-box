@@ -37,6 +37,7 @@ import { SPARES } from "../../core/boxes.ts";
 import { LOW, START_CPUUNITS, START_TAG, startsLow, withStartTag } from "../proxmox/start-weight.ts";
 import {
   ProxmoxStartGate,
+  configuredMemoryMiB,
   effectiveStartMemoryMarginMiB,
   nodeMemoryGateDoctorReport,
   placementMemoryProblem,
@@ -234,6 +235,7 @@ import {
   LXC_FLAVOURS,
   flavourOf,
   net0For,
+  swapForMemoryMiB,
   type LxcConfig,
   type LxcFlavour,
   type LxcFlavourConfig,
@@ -477,6 +479,12 @@ function sizeOf(config: Record<string, unknown>): MachineSize | null {
   const memoryMiB = Number(config.memory);
   if (!(Number.isInteger(cores) && cores > 0 && Number.isInteger(memoryMiB) && memoryMiB > 0)) return null;
   return { cores, memoryMiB, diskGiB: rootDiskGiB(config) };
+}
+
+function configuredSwapMiB(config: Readonly<Record<string, unknown>>): number | null {
+  if (config.swap === undefined || config.swap === null || config.swap === "") return null;
+  const swap = Number(config.swap);
+  return Number.isInteger(swap) && swap >= 0 ? swap : null;
 }
 
 function formatMiB(value: number): string {
@@ -1168,8 +1176,19 @@ export class ProxmoxLxcBackend implements Backend {
     return this.#snapshots.findTasks(guest, operation, since, signal);
   }
 
-  rollbackSnapshot(guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
-    return this.#snapshots.rollback(guest, ref, hooks, signal);
+  async rollbackSnapshot(guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    await this.#snapshots.rollback(guest, ref, hooks, signal);
+    const api = await this.client();
+    const vmid = this.#vmid(guest);
+    await this.#owned(api).configure(
+      vmid,
+      this.#boxOf(guest),
+      (config) => {
+        const targetSwap = this.#swapFor(configuredMemoryMiB(config));
+        return configuredSwapMiB(config) === targetSwap ? null : { swap: targetSwap };
+      },
+      signal,
+    );
   }
 
   outsideRollbacks(since: number, signal?: AbortSignal): Promise<readonly OutsideRollback[]> {
@@ -1393,7 +1412,12 @@ export class ProxmoxLxcBackend implements Backend {
       }
       const owner = madeOwner(this.#context.installId, box.boxId);
       await this.#owned(api).setNetwork(vmid, owner, nets, signal);
-      await this.#owned(api).configure(vmid, owner, { tags: boxTags(box, this.#context.installId, template), onboot: false, delete: ["protection"] }, signal);
+      await this.#owned(api).configure(
+        vmid,
+        owner,
+        { swap: this.#swapFor(configuredMemoryMiB(made)), tags: boxTags(box, this.#context.installId, template), onboot: false, delete: ["protection"] },
+        signal,
+      );
       return { ...fresh, size: sizeOf(await api.config(vmid, signal)) };
     } finally {
       this.#reserved.delete(vmid);
@@ -1724,7 +1748,12 @@ export class ProxmoxLxcBackend implements Backend {
           const onGuest = claimMarkerOf(parseTags(made.tags))?.generation ?? 0;
           const marker = plan ? await this.#nextClaim(api, vmid, plan.part, plan.card, onGuest, signal) : null;
           const tags = marker ? withMarker(boxTags(forked, this.#context.installId, template), marker) : boxTags(forked, this.#context.installId, template);
-          await this.#owned(api).configure(vmid, owner, { cores: forked.size.cores, memory: forked.size.memoryMiB, tags, onboot: false, delete: ["protection"] }, signal);
+          await this.#owned(api).configure(
+            vmid,
+            owner,
+            { cores: forked.size.cores, memory: forked.size.memoryMiB, swap: this.#swapFor(forked.size.memoryMiB), tags, onboot: false, delete: ["protection"] },
+            signal,
+          );
           if (marker) {
             await this.#askMarker(api, vmid, marker, signal);
             if (plan?.reservation) {
@@ -2570,20 +2599,24 @@ export class ProxmoxLxcBackend implements Backend {
     if (to.gpu !== undefined) return this.#resizeGpu(guest, this.#offer(kind), { cores: to.cores, memoryMiB: to.memoryMiB, diskGiB: to.diskGiB, gpu: to.gpu }, options, signal);
     const vmid = this.#vmid(guest);
     const api = await this.client();
-    const from = sizeOf(await this.#ownConfig(api, guest, signal));
+    const config = await this.#ownConfig(api, guest, signal);
+    const from = sizeOf(config);
     if (!from) throw new Error(`Container ${vmid} does not say its cores and memory, so ${PRODUCT} cannot resize it.`);
     if (to.diskGiB !== null && from.diskGiB !== null && to.diskGiB < from.diskGiB) {
       throw new BackendError("unsupported", `A container's disk only grows, and this one's is ${from.diskGiB} GiB.`);
     }
-    const changed = to.cores !== from.cores || to.memoryMiB !== from.memoryMiB;
+    const targetSwap = this.#swapFor(to.memoryMiB);
+    const previousSwap = configuredSwapMiB(config);
+    const changed = to.cores !== from.cores || to.memoryMiB !== from.memoryMiB || previousSwap !== targetSwap;
     const owner = this.#boxOf(guest);
-    if (changed) await this.#owned(api).configure(vmid, owner, { cores: to.cores, memory: to.memoryMiB }, signal);
+    if (changed) await this.#owned(api).configure(vmid, owner, { cores: to.cores, memory: to.memoryMiB, swap: targetSwap }, signal);
     if (to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB)) {
       try {
         await this.#owned(api).growRootDisk(vmid, owner, to.diskGiB, signal);
       } catch (error) {
         if (changed) {
-          await this.#owned(api).configure(vmid, owner, { cores: from.cores, memory: from.memoryMiB }).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+          const rollbackSwap = previousSwap ?? this.#swapFor(from.memoryMiB);
+          await this.#owned(api).configure(vmid, owner, { cores: from.cores, memory: from.memoryMiB, swap: rollbackSwap }).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
         }
         throw error;
       }
@@ -2823,9 +2856,10 @@ export class ProxmoxLxcBackend implements Backend {
         ? { part: "none", card: null, generation: nextGeneration(view.lines, facts.vmid, facts.marker?.generation ?? 0, this.#written.get(facts.vmid) ?? 0) }
         : { part: decided.part, card: decided.card.uuid, generation: nextGeneration(view.lines, facts.vmid, facts.marker?.generation ?? 0, this.#written.get(facts.vmid) ?? 0) };
     const standing = this.#standingClaim(view, facts.vmid);
+    const previousSwap = configuredSwapMiB(config);
     try {
-      if (change.way === "restart") return await this.#restartForGpu(api, guest, facts, marker, standing, from, to, change, options, signal);
-      return await this.#changeGpuInPlace(api, guest, facts, marker, standing, from, to, change, signal);
+      if (change.way === "restart") return await this.#restartForGpu(api, guest, facts, marker, standing, from, to, previousSwap, change, options, signal);
+      return await this.#changeGpuInPlace(api, guest, facts, marker, standing, from, to, previousSwap, change, signal);
     } finally {
       reservations.drop(reservation);
       reservation = null;
@@ -2852,11 +2886,13 @@ export class ProxmoxLxcBackend implements Backend {
     if (to.diskGiB !== null && (from.diskGiB === null || to.diskGiB > from.diskGiB)) await this.#owned(api).growRootDisk(vmid, owner, to.diskGiB, signal);
   }
 
-  async #sizeForGpu(api: Proxmox, vmid: number, owner: GuestOwner, from: MachineSize, to: MachineSize, signal?: AbortSignal): Promise<() => Promise<void>> {
-    if (to.cores === from.cores && to.memoryMiB === from.memoryMiB) return async () => {};
-    await this.#owned(api).configure(vmid, owner, { cores: to.cores, memory: to.memoryMiB }, signal);
+  async #sizeForGpu(api: Proxmox, vmid: number, owner: GuestOwner, from: MachineSize, to: MachineSize, previousSwap: number | null, signal?: AbortSignal): Promise<() => Promise<void>> {
+    const targetSwap = this.#swapFor(to.memoryMiB);
+    if (to.cores === from.cores && to.memoryMiB === from.memoryMiB && previousSwap === targetSwap) return async () => {};
+    await this.#owned(api).configure(vmid, owner, { cores: to.cores, memory: to.memoryMiB, swap: targetSwap }, signal);
     return async () => {
-      await this.#again(() => this.#owned(api).configure(vmid, owner, { cores: from.cores, memory: from.memoryMiB })).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
+      const rollbackSwap = previousSwap ?? this.#swapFor(from.memoryMiB);
+      await this.#again(() => this.#owned(api).configure(vmid, owner, { cores: from.cores, memory: from.memoryMiB, swap: rollbackSwap })).catch((cause) => this.#context.logError("resize: put cores and memory back", cause));
     };
   }
 
@@ -3011,10 +3047,10 @@ export class ProxmoxLxcBackend implements Backend {
     return card ? [{ label: "GPU", value: card }, ...others] : others;
   }
 
-  async #changeGpuInPlace(api: Proxmox, guest: Guest, facts: GpuFacts, marker: ClaimMarker, standing: LedgerClaim | null, from: MachineSize, to: MachineSize, change: GpuResize, signal?: AbortSignal): Promise<Guest> {
+  async #changeGpuInPlace(api: Proxmox, guest: Guest, facts: GpuFacts, marker: ClaimMarker, standing: LedgerClaim | null, from: MachineSize, to: MachineSize, previousSwap: number | null, change: GpuResize, signal?: AbortSignal): Promise<Guest> {
     const vmid = facts.vmid;
     const owner = this.#boxOf(guest);
-    const putBack = await this.#sizeForGpu(api, vmid, owner, from, to, signal);
+    const putBack = await this.#sizeForGpu(api, vmid, owner, from, to, previousSwap, signal);
     let answer: MarkAnswer;
     try {
       answer = await this.#askForGpu(api, vmid, owner, marker, signal);
@@ -3038,7 +3074,7 @@ export class ProxmoxLxcBackend implements Backend {
     return { ...guest, size: sizeOf(await api.config(vmid, reading).catch(() => ({}))) ?? to, claim, facts: factsNow };
   }
 
-  async #restartForGpu(api: Proxmox, guest: Guest, facts: GpuFacts, marker: ClaimMarker, standing: LedgerClaim | null, from: MachineSize, to: MachineSize, change: GpuResize, options: ResizeOptions, signal?: AbortSignal): Promise<Guest> {
+  async #restartForGpu(api: Proxmox, guest: Guest, facts: GpuFacts, marker: ClaimMarker, standing: LedgerClaim | null, from: MachineSize, to: MachineSize, previousSwap: number | null, change: GpuResize, options: ResizeOptions, signal?: AbortSignal): Promise<Guest> {
     const vmid = facts.vmid;
     const owner = this.#boxOf(guest);
     const name = facts.box.name;
@@ -3049,7 +3085,7 @@ export class ProxmoxLxcBackend implements Backend {
     let putBack: () => Promise<void> = async () => {};
     let answer: MarkAnswer;
     try {
-      putBack = await this.#sizeForGpu(api, vmid, owner, from, to, signal);
+      putBack = await this.#sizeForGpu(api, vmid, owner, from, to, previousSwap, signal);
       answer = await this.#askForGpu(api, vmid, owner, marker, signal);
     } catch (error) {
       await putBack();
@@ -3808,7 +3844,12 @@ export class ProxmoxLxcBackend implements Backend {
     const installId = this.#context.installId;
     const owner = boxOwner(installId, box.boxId);
     const warm = warmOwner(installId, String((await this.#guestConfig(api, vmid, signal))?.description ?? ""));
-    await this.#owned(api).configure(vmid, eitherOwner(warm, owner), { hostname: box.name, memory: box.size.memoryMiB, description: describe(box, installId) }, signal);
+    await this.#owned(api).configure(
+      vmid,
+      eitherOwner(warm, owner),
+      { hostname: box.name, memory: box.size.memoryMiB, swap: this.#swapFor(box.size.memoryMiB), description: describe(box, installId) },
+      signal,
+    );
     // A warm guest keeps its low CPU weight, and the tag, until the box is ready (#888).
     await this.#retag(api, vmid, owner, (tags) => withStartTag(boxTags(box, installId, template), tags.includes(START_TAG)), signal);
   }
@@ -4300,10 +4341,16 @@ export class ProxmoxLxcBackend implements Backend {
     return null;
   }
 
+  #swapFor(memoryMiB: number): number {
+    return swapForMemoryMiB(memoryMiB, this.#config.swapPercent);
+  }
+
   /** Config for a fresh clone at `vmid`. A null size keeps the template's cores and memory. */
-  #settings(size: MachineSize | null, vmid: number) {
+  #settings(size: MachineSize | null, vmid: number, swapMemoryMiB?: number) {
+    const memoryForSwap = size?.memoryMiB ?? swapMemoryMiB;
     return {
       ...(size ? { cores: size.cores, memory: size.memoryMiB } : {}),
+      ...(memoryForSwap !== undefined ? { swap: this.#swapFor(memoryForSwap) } : {}),
       net0: net0For(this.#config, vmid),
       onboot: true,
       // Templates are protected against deletion, and clones inherit it.
@@ -4513,9 +4560,10 @@ export class ProxmoxLxcBackend implements Backend {
     try {
       const guests = await api.listPool(this.#config.proxmox.pool, signal);
       const description = `bb-box image box: ${label}\ninstall ${this.#context.installId}`;
-      vmid = await this.#clone(api, guests, template, IMAGE_HOSTNAME, description, async (id) => void this.#imageBoxes.add(id), signal);
-      await this.#owned(api).configure(vmid, this.#image(), this.#settings(null, vmid), signal);
-      await this.#owned(api).configure(vmid, this.#image(), { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
+      const id = await this.#clone(api, guests, template, IMAGE_HOSTNAME, description, async (claimed) => void this.#imageBoxes.add(claimed), signal);
+      vmid = id;
+      await this.#owned(api).configure(id, this.#image(), (config) => this.#settings(null, id, configuredMemoryMiB(config)), signal);
+      await this.#owned(api).configure(id, this.#image(), { tags: [TAG, installTag(this.#context.installId), IMAGE_BOX, templateTag(template)] }, signal);
       let admittedAt = this.#now();
       await this.#owned(api).start(
         vmid,
@@ -5918,7 +5966,7 @@ export class ProxmoxLxcBackend implements Backend {
       // At the template's size: a claim sets the box's. A low CPU weight until a box takes it and it is ready (#888).
       const cloned = await this.#owned(api).read(vmid, warmGuest, signal);
       const low = startsLow(cloned);
-      await this.#owned(api).writeOn(vmid, warmGuest, cloned, { ...this.#settings(null, vmid), ...(low ? LOW : {}) }, signal);
+      await this.#owned(api).writeOn(vmid, warmGuest, cloned, { ...this.#settings(null, vmid, configuredMemoryMiB(cloned)), ...(low ? LOW : {}) }, signal);
       const asked: ClaimMarker | null = placed ? { part: "shared", card: placed.card.uuid, generation: nextGeneration(placed.lines, vmid, 0, this.#written.get(vmid) ?? 0) } : null;
       const marked = asked ? [markerTag(asked)] : [];
       await this.#owned(api).configure(vmid, warmGuest, { tags: [...withStartTag(tags(FILLING), low), ...marked] }, signal);
