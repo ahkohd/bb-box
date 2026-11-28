@@ -30,9 +30,7 @@ the full table.
 | `linux/customize-vm.sh` | Sets the Linux VM template up beyond the Proxmox LXC guest scripts |
 | `answer/autounattend.xml` | The answer file: disk, edition, user `box`, no setup screens |
 | `answer/bb-box/firstlogon.ps1` | Runs once at the first logon and sets the VM up |
-| `answer/bb-box/boot.ps1` | Sets the build VM's address during the first logon |
-| `answer/bb-box/bb-box-address.c` | Native Windows service that reads the SMBIOS serial at boot and sets each box's static IPv4 address, gateway and DNS without IPv4 DAD delay |
-| `answer/bb-box/install-address.ps1` | Compiles `bb-box-address.exe` with clang, registers the `bb-box-address` service and removes the old scheduled task |
+| `answer/bb-box/boot.ps1` | Gives each box its address at boot without WMI or IPv4 DAD delay |
 | `answer/bb-box/logon.ps1` | Turns on browsers' full accessibility tree at each logon |
 | [`../windows/check.ps1`](../windows/check.ps1) | Checks a clone of the new template over SSH, and a refresh's trial box |
 | [`../windows/refresh.ps1`](../windows/refresh.ps1) | Refreshes the image in a box: Windows' updates and the pinned tools ([054](../../docs/decisions/054-windows-images-are-refreshed-in-a-box-of-the-current-build.md)) |

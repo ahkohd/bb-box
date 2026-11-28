@@ -509,11 +509,7 @@ export async function refreshImage(options: RefreshOptions): Promise<RefreshResu
         // The pointer as the VirtIO GPU's hardware cursor, which bb-box-stream needs to leave it out of the video.
         ["hardware-cursor.ps1", await readFile(join(options.setup, "windows", "hardware-cursor.ps1"), "utf8")],
         ...(kind === "windows-desktop"
-          ? ([
-              ["boot.ps1", await readFile(join(options.setup, "proxmox-qemu", "answer", "bb-box", "boot.ps1"), "utf8")],
-              ["bb-box-address.c", await readFile(join(options.setup, "proxmox-qemu", "answer", "bb-box", "bb-box-address.c"), "utf8")],
-              ["install-address.ps1", await readFile(join(options.setup, "proxmox-qemu", "answer", "bb-box", "install-address.ps1"), "utf8")],
-            ] as [string, string][])
+          ? ([["boot.ps1", await readFile(join(options.setup, "proxmox-qemu", "answer", "bb-box", "boot.ps1"), "utf8")]] as [string, string][])
           : []),
         ["pins.json", `${JSON.stringify({ tools: pins }, null, 2)}\n`],
         ["image.json", `${JSON.stringify(windowsRecord(current, pins, buildId, now(), digest))}\n`],

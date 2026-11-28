@@ -251,20 +251,14 @@ try {
     & $installers[$pin.name] $pin $file
     Remove-Item $file -Force -ErrorAction SilentlyContinue
   }
-  if (Test-Path "$dir\boot.ps1") { Copy-Item "$dir\boot.ps1" 'C:\bb-box\boot.ps1' -Force; Step 'boot.ps1: as its source' }
-  if ((Test-Path "$dir\bb-box-address.c") -and (Test-Path "$dir\install-address.ps1")) {
-    Copy-Item "$dir\bb-box-address.c" 'C:\bb-box\bb-box-address.c' -Force
-    Copy-Item "$dir\install-address.ps1" 'C:\bb-box\install-address.ps1' -Force
-    $builtAddress = Get-Content 'C:\bb-box\bb-box-address.source' -ErrorAction SilentlyContinue
-    $sourceAddress = (Get-FileHash 'C:\bb-box\bb-box-address.c' -Algorithm SHA256).Hash
-    $hasAddressService = $null -ne (Get-Service -Name 'bb-box-address' -ErrorAction SilentlyContinue)
-    if ($builtAddress -ne $sourceAddress -or -not (Test-Path 'C:\bb-box\bb-box-address.exe') -or -not $hasAddressService) {
-      Step 'bb-box-address.exe: built from its source and registered as a service'
-      & 'C:\bb-box\install-address.ps1' -Source 'C:\bb-box\bb-box-address.c'
-    } else {
-      Unregister-ScheduledTask -TaskName 'bb-box address' -Confirm:$false -ErrorAction SilentlyContinue
-      Step 'bb-box-address.exe: as its source'
-    }
+  if (Test-Path "$dir\boot.ps1") {
+    Copy-Item "$dir\boot.ps1" 'C:\bb-box\boot.ps1' -Force
+    $addressAction = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\bb-box\boot.ps1'
+    $addressTrigger = New-ScheduledTaskTrigger -AtStartup
+    $addressPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $addressSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 4) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Priority 4
+    Register-ScheduledTask -TaskName 'bb-box address' -Action $addressAction -Trigger $addressTrigger -Principal $addressPrincipal -Settings $addressSettings -Force | Out-Null
+    Step 'boot.ps1: as its source, scheduled task at priority 4'
   }
   # bb-box-stream.exe (060), built again when its source has changed, where the image has its encoder.
   $stream = "$tools\bb-box-stream"

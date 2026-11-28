@@ -2167,3 +2167,48 @@ test("start gate treats ballooned Linux VMs as non-heavy, Windows as heavy, and 
   });
   assert.equal(verdict.ok, false, "needs full 8 GiB plus 4 GiB margin, not 4 GiB balloon floor");
 });
+
+test("Windows capture clears the static IPv4 address and boot log before templating, uses the detached shutdown once stopped, and aborts when clearing fails", async () => {
+  const record = { contract: 1, image: "standard", kind: KIND, arch: "x86_64", build: "build.20261128-040000-1234", built: "2026-11-28T04:00:00Z", os: "Windows 11 Pro", pins: "p".repeat(64), tools: { node: "24.21.0" } };
+  const detached = imageSetup(record);
+  const detachedHost = "192.0.2.150";
+  const resetFile = join(detached.ssh.home(detachedHost), "reset-script");
+  detached.ssh.powershell(
+    detachedHost,
+    `case "$1" in\n  *"Get-Process explorer"*) exit 0;;\n  *Set-Date*) exit 0;;\n  *"Get-Content C:\\\\bb-box\\\\image.json"*) echo '${JSON.stringify(record)}'; exit 0;;\n  *Start-Detached*) printf '%s' "$1" > "$HOME/reset-script"; exit 0;;\n  *) exec sh -c "$1";;\nesac\n`,
+  );
+  const standard = (await detached.backend.images.list()).builds.find((build) => build.ref === "9104")!;
+  const box = await detached.backend.images.box(standard, "refresh of 9104", signal());
+  detached.proxmox.intercept = (call) => {
+    if (call.method === "GET" && call.path === "/nodes/pve/qemu/9700/status/current" && existsSync(resetFile)) {
+      detached.proxmox.guests.get(9700)!.status = "stopped";
+    }
+    return undefined;
+  };
+  await detached.backend.images.capture(box, standard, "standard", signal());
+
+  const ranScript = readFileSync(resetFile, "utf8");
+  assert.match(ranScript, /Clear-Content C:\\bb-box\\boot\.log/);
+  assert.match(ranScript, /Remove-NetRoute -InterfaceIndex \$\(\$adapter\.ifIndex\) -DestinationPrefix 0\.0\.0\.0\/0/);
+  assert.match(ranScript, /Remove-NetIPAddress/);
+  assert.match(ranScript, /Set-NetIPInterface -InterfaceIndex \$\(\$adapter\.ifIndex\) -AddressFamily IPv4 -Dhcp Enabled/);
+  assert.match(ranScript, /Set-DnsClientServerAddress -InterfaceIndex \$\(\$adapter\.ifIndex\) -ResetServerAddresses/);
+  assert.match(ranScript, /shutdown\.exe \/s \/t 0 \/f/);
+  assert.equal(detached.proxmox.calls.filter((call) => call.path === "/nodes/pve/qemu/9700/status/shutdown").length, 0);
+  assert.equal(detached.proxmox.guests.get(9700)!.template, true);
+
+  const failing = imageSetup(record);
+  failing.ssh.powershell(
+    detachedHost,
+    `case "$1" in\n  *"Get-Process explorer"*) exit 0;;\n  *Set-Date*) exit 0;;\n  *"Get-Content C:\\\\bb-box\\\\image.json"*) echo '${JSON.stringify(record)}'; exit 0;;\n  *Start-Detached*) echo "no physical network adapter" >&2; exit 1;;\n  *) exec sh -c "$1";;\nesac\n`,
+  );
+  const failingStandard = (await failing.backend.images.list()).builds.find((build) => build.ref === "9104")!;
+  const failingBox = await failing.backend.images.box(failingStandard, "refresh of 9104", signal());
+  await assert.rejects(
+    failing.backend.images.capture(failingBox, failingStandard, "standard", signal()),
+    /Image box 9700 could not clear its static address before capture: no physical network adapter\./,
+  );
+  assert.equal(failing.proxmox.calls.filter((call) => call.path === "/nodes/pve/qemu/9700/status/shutdown").length, 0);
+  assert.equal(failing.proxmox.guests.get(9700)!.status, "running");
+  assert.equal(failing.proxmox.guests.get(9700)!.template, false);
+});

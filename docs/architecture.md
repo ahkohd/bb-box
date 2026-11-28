@@ -939,10 +939,10 @@ Proxmox LXC.
 
 - A box is a linked clone of a Windows template that is not generalized
   ([039](decisions/039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md)).
-  Its address reaches Windows in the SMBIOS serial, which the native
-  `bb-box-address` Windows service reads at each boot and applies with
-  IPv4 DAD disabled. A larger disk grows before the VM starts, and the
-  acquire extends C: over it.
+  Its address reaches Windows in the SMBIOS serial, which `boot.ps1` reads
+  without WMI at each boot from a normal-priority startup task, with IPv4
+  DAD disabled. A larger disk grows before the VM starts, and the acquire
+  extends C: over it.
 - Commands run over OpenSSH in PowerShell 7, elevated, as the template's
   administrator `box`. The QEMU guest agent is for readiness only.
 - The desktop is the VM's console through the API's VNC proxy. The VirtIO

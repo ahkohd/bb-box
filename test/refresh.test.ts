@@ -496,8 +496,6 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
     "write 7000 C:\\bb-box\\build\\install-stream.ps1",
     "write 7000 C:\\bb-box\\build\\hardware-cursor.ps1",
     "write 7000 C:\\bb-box\\build\\boot.ps1",
-    "write 7000 C:\\bb-box\\build\\bb-box-address.c",
-    "write 7000 C:\\bb-box\\build\\install-address.ps1",
     "write 7000 C:\\bb-box\\build\\pins.json",
     "write 7000 C:\\bb-box\\build\\image.json",
     "write 7000 C:\\bb-box\\build\\bb-url",
@@ -535,6 +533,7 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
   assert.equal(written.tools.pwsh, pins.tools.find((pin) => pin.name === "pwsh")!.version);
   assert.equal(written.tools["hardware-cursor"], "1", "refresh.ps1 turns on the hardware cursor, so the record lists it (060)");
   assert.equal(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\refresh.ps1")), readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8"));
+  assert.equal(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\boot.ps1")), readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "boot.ps1"), "utf8"));
 });
 
 test("a Windows refresh waits for the box to stay up after a restart, through the restart Windows makes by itself to finish its updates", async () => {
@@ -776,7 +775,7 @@ test("Windows scripts install Codex's complete package and check codex-code-mode
   assert.match(check, /Check 'Codex code-mode host beside codex'[\s\S]*codex-code-mode-host\.exe/);
 });
 
-test("Proxmox Windows images install the native bb-box-address service, disable IPv4 DAD and keep Tart's first-logon strip intact", async () => {
+test("windows-arm64-desktop refresh does not stage Proxmox boot.ps1", async () => {
   const armCurrent = { ...WINDOWS, kind: "windows-arm64-desktop" };
   const armWritten = new Map<string, Uint8Array>();
   const armCommand: CommandTransport = {
@@ -815,35 +814,46 @@ test("Proxmox Windows images install the native bb-box-address service, disable 
   });
 
   assert.equal(armWritten.has("C:\\bb-box\\build\\boot.ps1"), false);
-  assert.equal(armWritten.has("C:\\bb-box\\build\\bb-box-address.c"), false);
-  assert.equal(armWritten.has("C:\\bb-box\\build\\install-address.ps1"), false);
+});
 
-  const firstLogonPath = join(SETUP, "proxmox-qemu", "answer", "bb-box", "firstlogon.ps1");
-  const firstLogon = readFileSync(firstLogonPath, "utf8");
-  const refresh = readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8");
-  const installAddress = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "install-address.ps1"), "utf8");
-  const addressSource = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "bb-box-address.c"), "utf8");
-  const bootScript = readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "boot.ps1"), "utf8");
+test("Tart's prepare-windows-image.sh strips Proxmox SMBIOS address steps from firstlogon.ps1 and replaces the address check in check.ps1", () => {
+  const tartScriptPath = join(SETUP, "tart", "prepare-windows-image.sh");
+  const tartScript = readFileSync(tartScriptPath, "utf8");
+  const startMarker = "# The first logon without the SMBIOS address";
+  const endMarker = "\njson() {";
+  const startIndex = tartScript.indexOf(startMarker);
+  const endIndex = tartScript.indexOf(endMarker, startIndex);
+  assert.ok(startIndex >= 0 && endIndex > startIndex, "prepare-windows-image.sh contains the Windows script strip block");
 
-  assert.match(firstLogon, /& C:\\bb-box\\install-address\.ps1 -Source C:\\bb-box\\bb-box-address\.c/);
-  assert.doesNotMatch(firstLogon, /Register-ScheduledTask -TaskName 'bb-box address'/);
-  assert.match(refresh, /& 'C:\\bb-box\\install-address\.ps1' -Source 'C:\\bb-box\\bb-box-address\.c'/);
-  assert.match(installAddress, /sc\.exe create \$serviceName binPath= \$binPath start= auto depend= nsi\/Tcpip/);
-  assert.match(installAddress, /Unregister-ScheduledTask -TaskName 'bb-box address'/);
-  assert.match(addressSource, /GetSystemFirmwareTable\(SMBIOS_FIRMWARE_PROVIDER/);
-  assert.match(addressSource, /ipInterface\.DadTransmits = 0;/);
-  assert.match(bootScript, /netsh interface ipv4 set interface \$index dadtransmits=0/);
+  const root = tempDir("tart-windows-strip");
+  const answerDir = join(root, "answer");
+  const workDir = join(root, "work");
+  mkdirSync(join(answerDir, "bb-box"), { recursive: true });
+  mkdirSync(workDir, { recursive: true });
 
-  const tartAwk = [
-    `$0 == "Step \\"Build address $($build.address)\\"" { n++; next }`,
-    `$0 == "& C:\\\\bb-box\\\\boot.ps1 -Address $build.address -Gateway $build.gateway -Dns $build.dns" { n++; next }`,
-    `$0 == "# The downloads below need the network the address has just brought up." { print "# The downloads below need the network."; n++; next }`,
-    `index($0, "Step 'The box address at each boot") == 1 { drop = 1 }`,
-    `drop { if (index($0, "Set-Content C:\\\\bb-box\\\\dns.txt") == 1) { drop = 0; n++ } next }`,
-    `{ if (sub(/OpenSSH-Win64-/, "OpenSSH-ARM64-")) n++; print }`,
-    `END { if (n != 5) exit 1 }`,
+  const stripSnippet = [
+    "set -euo pipefail",
+    'die() { echo "$*" >&2; exit 1; }',
+    tartScript.slice(startIndex, endIndex),
   ].join("\n");
-  const stripped = execFileSync("awk", [tartAwk, firstLogonPath], { encoding: "utf8" });
 
-  assert.doesNotMatch(stripped, /boot\.ps1|install-address\.ps1|bb-box-address\.c|\$build\.(address|gateway|dns)|Win64/);
+  execFileSync("bash", ["-c", stripSnippet], {
+    env: {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      here: join(SETUP, "tart"),
+      template: join(SETUP, "proxmox-qemu"),
+      a: answerDir,
+      w: workDir,
+    },
+    encoding: "utf8",
+  });
+
+  const strippedFirstLogon = readFileSync(join(answerDir, "bb-box", "firstlogon.ps1"), "utf8");
+  assert.doesNotMatch(strippedFirstLogon, /boot\.ps1|bb-box address|dns\.txt|\$build\.(address|gateway|dns)|Win64/);
+  assert.match(strippedFirstLogon, /OpenSSH-ARM64-/);
+
+  const strippedCheck = readFileSync(join(workDir, "check.ps1"), "utf8");
+  const checkClock = readFileSync(join(SETUP, "tart", "windows", "check-clock.ps1"), "utf8").trim();
+  assert.ok(strippedCheck.includes(checkClock));
+  assert.doesNotMatch(strippedCheck, /address from the SMBIOS serial|boot\.log|dns\.txt|Get-NetIPInterface/);
 });
