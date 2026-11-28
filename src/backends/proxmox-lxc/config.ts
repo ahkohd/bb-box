@@ -452,7 +452,7 @@ const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = {
     type: "number",
     label: "Proxmox LXC: container swap (%)",
     description:
-      "Swap given to each container as a percentage of its memory, from 0 to 100, with a floor of 512 MiB. 0 gives every container 512 MiB. Existing containers pick it up on their next resize or when made again.",
+      "Swap given to each container as a percentage of its memory, from 0 to 100, with a floor of 512 MiB. 0 gives every container 512 MiB. Containers made with another value pick it up on a resize that changes their size, a restore or when made again.",
     default: LXC_DEFAULTS.swapPercent,
   },
 };

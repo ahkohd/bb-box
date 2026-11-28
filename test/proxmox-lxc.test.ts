@@ -2492,15 +2492,16 @@ test("live resize updates swap in proportion to memory, upgrades pre-deploy boxe
   proxmox.guests.get(vmid)!.config.memory = "8192";
   proxmox.guests.get(vmid)!.config.swap = "512";
 
-  await backend.resize(guest, "linux", { cores: 2, memoryMiB: 8192, diskGiB: 16 }, { restart: false }, signal());
+  await backend.resize(guest, "linux", { cores: 4, memoryMiB: 8192, diskGiB: 16 }, { restart: false }, signal());
   assert.equal(proxmox.guests.get(vmid)?.config.swap, "2048");
 
   proxmox.nextTaskExit.set("resize", "lvextend failed: insufficient free space");
   await assert.rejects(
-    backend.resize(guest, "linux", { cores: 4, memoryMiB: 16384, diskGiB: 40 }, { restart: false }, signal()),
+    backend.resize(guest, "linux", { cores: 8, memoryMiB: 16384, diskGiB: 40 }, { restart: false }, signal()),
     /insufficient free space/,
   );
 
+  assert.equal(proxmox.guests.get(vmid)?.config.cores, "4");
   assert.equal(proxmox.guests.get(vmid)?.config.memory, "8192");
   assert.equal(proxmox.guests.get(vmid)?.config.swap, "2048");
 });

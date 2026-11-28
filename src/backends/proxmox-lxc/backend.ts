@@ -1180,15 +1180,17 @@ export class ProxmoxLxcBackend implements Backend {
     await this.#snapshots.rollback(guest, ref, hooks, signal);
     const api = await this.client();
     const vmid = this.#vmid(guest);
-    await this.#owned(api).configure(
-      vmid,
-      this.#boxOf(guest),
-      (config) => {
-        const targetSwap = this.#swapFor(configuredMemoryMiB(config));
-        return configuredSwapMiB(config) === targetSwap ? null : { swap: targetSwap };
-      },
-      signal,
-    );
+    await this.#owned(api)
+      .configure(
+        vmid,
+        this.#boxOf(guest),
+        (config) => {
+          const targetSwap = this.#swapFor(configuredMemoryMiB(config));
+          return configuredSwapMiB(config) === targetSwap ? null : { swap: targetSwap };
+        },
+        signal,
+      )
+      .catch((error: unknown) => this.#context.logError(`write swap for CT ${vmid} after its rollback`, error));
   }
 
   outsideRollbacks(since: number, signal?: AbortSignal): Promise<readonly OutsideRollback[]> {

@@ -691,14 +691,21 @@ fields against the host; Save and turn on saves them. From a terminal,
   refill never starts while a thread's start is waiting. Warm and spare refills check the gate before cloning
   and give up at once with a wait of 0 s until the next top-up.
 - Each container's swap is set to `swap-percent` of its memory (25% by default,
-  range 0 to 100), with a floor of 512 MiB so no container gets less than the
-  template default (decision 108). Setting `swap-percent` to 0 gives every
-  container 512 MiB. BB Box sets `swap` alongside `memory` when making boxes,
-  filling or claiming warm boxes, filling spares, resizing (live, so swap
-  follows memory), forking, restoring and starting image boxes.
-  `template/build.sh` keeps `--swap 512` because clones are configured before
-  use. Existing containers are not changed automatically; they get the new swap
-  on their next resize or when made again.
+  range 0 to 100), with a floor of 512 MiB (decision 108). Setting
+  `swap-percent` to 0 gives every container 512 MiB. BB Box sets `swap`
+  alongside `memory` when making boxes, filling or claiming warm boxes, filling
+  spares, resizing (live, so swap follows memory), forking, restoring and
+  starting image boxes. A resize that changes a container's size or a restore
+  also updates its swap to the current `swap-percent`. Per-container swap caps
+  can add up to more than the host's swap (for example, five 64 GiB containers
+  at 25% can swap up to 80 GiB on a host with 72 GiB of swap). Full swap does
+  not drain by itself: once free swap falls below `start-swap-free-mib`, new
+  starts and warm refills wait and then fail until a box is stopped or
+  released, and containers that cannot swap fall back to file cache reclaim. On
+  hosts whose swap is zram, swapped pages consume host RAM outside any
+  container's memory limit, which only the start gate's free-memory rule sees.
+  Lower `swap-percent` when the containers' swap caps add up to more than the
+  host's swap.
 
 ## Check it worked
 
