@@ -454,7 +454,7 @@ const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = {
     type: "boolean",
     label: "Proxmox LXC: reclaim idle page cache",
     description:
-      "Reclaim cold page cache from idle containers so busy boxes keep theirs. Runs during upkeep through cgroup memory.reclaim with swappiness=0, keeping 128 MiB warm and leaving busy boxes, anonymous memory and shmem untouched.",
+      "Reclaim cold page cache from idle containers so busy boxes keep theirs. Runs during upkeep through cgroup memory.reclaim with swappiness=0, keeping 128 MiB of non-shmem file cache warm and leaving busy boxes, warm boxes, spares, active file pages, anonymous memory and shmem untouched.",
     default: LXC_DEFAULTS.idleCacheReclaim,
   },
   [LXC_KEYS.idleCacheMinutes]: {

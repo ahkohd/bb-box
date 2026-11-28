@@ -1,0 +1,32 @@
+# 109. Proxmox LXC reclaims cold page cache from idle containers through cgroup memory.reclaim
+
+Status: Accepted  
+Date: 2026-11-28
+
+## Context
+
+On a Proxmox node with many running LXC containers, idle containers keep gigabytes of cold file-backed page cache. Under memory pressure, especially when one NUMA node runs short of free memory, Linux global reclaim evicts file pages across cgroups in proportion to their cache size rather than sparing busy containers. Busy containers then stall in direct reclaim and repeatedly refault their hot working set, while idle containers hold cold cache they no longer need.
+
+BB Box reaches Proxmox only through its pool-scoped API token and has no root access on the Proxmox host. We tested what an unprivileged LXC container's own root (`sudo`) can trigger from inside:
+
+- `/proc/sys/vm/drop_caches` is mounted read-only inside unprivileged containers (`Read-only file system`, exit 2) and cannot be used.
+- `/sys/fs/cgroup/memory.reclaim` is writable by container root (`-rw-rw-r-- nobody root`, mapped to the container's `lxc/<vmid>/ns` cgroup v2) and accepts `<bytes> swappiness=0` on Linux 6.11 and later (including Proxmox VE 9's Linux 6.17 kernel). Writing `<bytes> swappiness=0` frees file-backed page cache while leaving `anon`, `shmem` and `memory.swap.current` untouched. Without `swappiness=0`, plain `<bytes>` can swap anonymous pages even while cold file cache is present.
+- In `memory.stat`, `file` includes `shmem` (tmpfs and `/dev/shm`), which `swappiness=0` cannot reclaim, and `active_file` holds hot pages such as mapped binaries and libraries. Reclaiming blindly from `file` can strip real page cache and hot pages down to a few megabytes when `shmem` or `active_file` is large.
+- Proxmox's `/nodes/{node}/lxc` `cpu` field is a point sample over the interval since the `pvedaemon` worker last listed guests (and reads 0 on a fresh worker's first call), so it is suitable only as a cheap pre-filter, not as proof that a container was idle across the whole window.
+
+## Decision
+
+Proxmox LXC runs an idle page cache sweep (`src/backends/proxmox-lxc/idle-cache.ts`) inside its existing upkeep loop (`ProxmoxLxcBackend.maintain()`, run by the 3-minute sweep and throttled to at most once a minute), after warm pool top-ups (`#topUp`).
+
+- **Settings (on by default):** Proxmox LXC adds two advanced settings: `idle-cache-reclaim` (boolean, default `true`) and `idle-cache-minutes` (whole number from `1` to `1440`, default `15`).
+- **Scope (no warm boxes or spares):** the sweep considers only this install's running, in-range containers and skips templates, warm boxes (`warm` tag), spares (`thread.spare`), filling, acquiring, reserved, image and retired containers. Warm boxes and spares stay warm so they are handed over with their page cache intact. Claiming a warm box (`hold`) or relabelling a spare (`relabel`) resets the container's idle tracker so a freshly claimed box starts a full idle window.
+- **Idle detection (`cpu.stat` authority with Proxmox pre-filter):** each sweep reads running containers in one Proxmox API call (`GET /nodes/{node}/lxc`) and skips any container whose `uptime` is under `idle-cache-minutes`, whose Proxmox `cpu` exceeds 5% (resetting its baseline), that is inside its per-box cooldown (`idle-cache-minutes`), or whose reported memory is at or below 192 MiB. An eligible container's first visit reads `/sys/fs/cgroup/cpu.stat` `usage_usec` without `sudo` and reclaims nothing. Only on a later visit, after at least `idle-cache-minutes` since that baseline, does BB Box run the reclaim script, which first checks that `(usage_usec - prev_usage_usec)` over the full elapsed window is at most 5% of the container's cores. If CPU usage exceeded 5%, the box is marked busy and the baseline resets to the new sample.
+- **Inactive-file-only, stepped `swappiness=0` reclaim:** the sweep visits at most one container at a time, capped at 3 containers and 20 seconds per sweep, using direct SSH (`ConnectTimeout=2`, skipping the 15-second lost-connection retry wait) and wrapping the in-box script in `timeout(1)` so a stalled run stops inside the container before the SSH timeout. Inside the container, the script checks `sudo -n true` first (reporting `sudo_failed` distinctly from unanswered SSH), checks `memory.pressure` (`some` avg10 or avg60 at least 1%, or `full` avg10 or avg60 at least 0.5%), and probes `0 swappiness=0` on `/sys/fs/cgroup/memory.reclaim` (skipping kernels without `swappiness=`, such as Proxmox VE 8 on Linux 6.8). It computes the reclaim budget from inactive, non-shmem file pages only: `min(inactive_file, file - shmem - 128 MiB)`, skipping if below 64 MiB. It steps in 256 MiB chunks (up to 32 steps), stopping immediately if swap grows, `memory.pressure` rises (`some` avg10 at least 1%, `full` avg10 at least 0.5%, `some` total rises by 50 ms or more, or `full` total rises by 10 ms or more), `active_file` falls, `workingset_refault_file` rises by 1024 pages or more in a step, `memory.reclaim` returns `EAGAIN`, or non-shmem file cache falls by less than 16 MiB.
+- **Cooldown, logging, history and doctor:** unanswered boxes get the same `idle-cache-minutes` cooldown as reclaimed boxes and give up quietly without stopping the rest of the sweep. Each container whose cache is freed is logged with the estimated non-shmem file bytes reclaimed, before and after figures, step count and stop reason. Only sweeps that checked at least one box are stored (keeping the last 10 in backend storage) and reported by `bb box doctor` under `proxmox.idle-cache` ("Idle page cache"), which warns when every checked container across recent sweeps failed `sudo`, was unsupported or did not answer.
+
+## Consequences
+
+- Idle Proxmox LXC containers return cold inactive page cache above 128 MiB back to the host without host-side root helpers or extra Proxmox API privileges, while preserving `shmem`, `active_file`, warm boxes, spares, anonymous memory and swap.
+- Bursty workloads that spike CPU between 3-minute sweeps are caught by `cpu.stat` `usage_usec` across the full idle window and are not reclaimed mid-task.
+- Unanswered boxes fail fast without stalling warm pool top-ups or retrying on every sweep, and sweeps after a BB restart stagger across 3 boxes per sweep.
+- Operators on Proxmox VE 8 (Linux 6.8) see containers safely skipped and a warning in `bb box doctor` suggesting turning `idle-cache-reclaim` off on older hosts.

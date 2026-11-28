@@ -691,19 +691,25 @@ fields against the host; Save and turn on saves them. From a terminal,
   order, so a large waiting VM does not block smaller containers that fit. A
   refill never starts while a thread's start is waiting. Warm and spare refills check the gate before cloning
   and give up at once with a wait of 0 s until the next top-up.
-- During upkeep, Proxmox LXC reclaims cold page cache from idle containers so
-  busy boxes keep their working set (decision 108). It is on by default
-  (`idle-cache-reclaim`) with a 15-minute idle threshold (`idle-cache-minutes`).
-  A container qualifies once its uptime and continuous low CPU (`cpu <= 5%` from
-  Proxmox, plus `cpu.stat` between sweeps) pass the idle window and it has no
-  memory pressure (`memory.pressure`). BB Box visits idle containers one at a
-  time over SSH and writes `/sys/fs/cgroup/memory.reclaim` with `swappiness=0`
-  in 256 MiB steps down to a 128 MiB floor, stopping early if memory pressure
-  or file refaults rise and leaving anonymous memory and `shmem` untouched.
-  On older kernels without `swappiness=0` (such as Proxmox VE 8), containers
-  with free swap headroom are skipped rather than swapped. Unanswered containers
-  are skipped quietly, freed bytes are logged, and `bb box doctor` reports what
-  the last sweeps freed.
+- During upkeep, after warm pool top-ups, Proxmox LXC reclaims cold inactive
+  page cache from idle containers so busy boxes keep their working set (decision
+  109). It is on by default (`idle-cache-reclaim`) with a 15-minute idle
+  threshold (`idle-cache-minutes`). Warm boxes and spares are never reclaimed,
+  and claiming or relabelling a box resets its idle tracker. Proxmox's `cpu`
+  reading acts as a cheap pre-filter while `/sys/fs/cgroup/cpu.stat` `usage_usec`
+  inside the container is the authority: the first visit records a baseline
+  without reclaiming, and a later visit reclaims only if CPU usage across the
+  whole idle window is at most 5% and `memory.pressure` is low. Each sweep
+  visits at most 3 containers and runs for at most 20 s, one container at a time,
+  using direct SSH and `timeout(1)` inside the box. It writes
+  `/sys/fs/cgroup/memory.reclaim` with `swappiness=0` for at most
+  `min(inactive_file, file - shmem - 128 MiB)` in 256 MiB steps, stopping early
+  if `active_file` falls, swap grows, memory pressure or file refaults rise, or
+  `EAGAIN` occurs. Older kernels without `swappiness=0` (such as Proxmox VE 8)
+  are always skipped rather than risked. Unanswered containers get the same
+  cooldown and are skipped quietly, freed bytes are logged, sweeps that checked
+  at least one container are kept, and `bb box doctor` reports them (warning
+  when every checked container failed `sudo`, was unsupported or did not answer).
 
 ## Check it worked
 

@@ -9,7 +9,10 @@ export const IDLE_CACHE_MINUTES_MIN = 1;
 export const IDLE_CACHE_MINUTES_MAX = 1440;
 
 export const IDLE_CACHE_SWEEP_EVERY_MS = 60_000;
-export const IDLE_CACHE_SSH_TIMEOUT_MS = 30_000;
+export const IDLE_CACHE_MAX_BOXES_PER_SWEEP = 3;
+export const IDLE_CACHE_SWEEP_BUDGET_MS = 20_000;
+export const IDLE_CACHE_SSH_TIMEOUT_MS = 10_000;
+export const IDLE_CACHE_SAMPLE_TIMEOUT_MS = 5_000;
 export const IDLE_CPU_MAX = 0.05;
 export const IDLE_CACHE_FLOOR_BYTES = 128 * MIB;
 export const IDLE_CACHE_MIN_RECLAIM_BYTES = 64 * MIB;
@@ -33,7 +36,10 @@ export interface ObservedIdleGuest {
   readonly memoryUsedBytes: number;
 }
 
+export type IdleCacheAction = "sample" | "reclaim";
+
 export interface IdleCacheCandidate {
+  readonly action: IdleCacheAction;
   readonly vmid: number;
   readonly name: string;
   readonly cpus: number;
@@ -42,12 +48,14 @@ export interface IdleCacheCandidate {
 }
 
 export type ReclaimStatus =
+  | "sampled"
   | "reclaimed"
   | "below_floor"
   | "pressure"
   | "busy_cpu"
   | "unsupported"
-  | "no_swappiness0";
+  | "no_swappiness0"
+  | "sudo_failed";
 
 export interface ReclaimCommandResult {
   readonly status: ReclaimStatus;
@@ -56,6 +64,10 @@ export interface ReclaimCommandResult {
   readonly steps: number;
   readonly fileBeforeBytes: number;
   readonly fileAfterBytes: number;
+  readonly inactiveFileBeforeBytes: number;
+  readonly inactiveFileAfterBytes: number;
+  readonly activeFileBeforeBytes: number;
+  readonly activeFileAfterBytes: number;
   readonly anonBeforeBytes: number;
   readonly anonAfterBytes: number;
   readonly shmemBeforeBytes: number;
@@ -80,6 +92,7 @@ export interface IdleCacheSweepSummary {
   readonly skippedPressure: number;
   readonly skippedFloor: number;
   readonly skippedUnsupported: number;
+  readonly sudoFailed: number;
   readonly unanswered: number;
 }
 
@@ -90,26 +103,30 @@ export interface ReclaimScriptOptions {
   readonly maxSteps?: number;
   readonly minProgressBytes?: number;
   readonly pressureAvgLimit?: number;
+  readonly fullPressureAvgLimit?: number;
   readonly pressureTotalDeltaUs?: number;
+  readonly fullPressureTotalDeltaUs?: number;
   readonly refaultStopDelta?: number;
-  readonly prevCpuUsageUsec?: number | null;
-  readonly maxCpuDeltaUsec?: number | null;
+  readonly prevCpuUsageUsec: number;
+  readonly maxCpuDeltaUsec: number;
+  readonly timeoutSeconds?: number;
 }
 
 interface GuestActivity {
-  idleSince: number | null;
   lastUptimeSeconds: number;
-  lastReclaimedAt: number | null;
-  lastCpuSample: { readonly at: number; readonly usec: number } | null;
+  cpuBaseline: { readonly at: number; readonly usec: number } | null;
+  cooldownUntil: number;
 }
 
 const VALID_STATUSES: ReadonlySet<string> = new Set([
+  "sampled",
   "reclaimed",
   "below_floor",
   "pressure",
   "busy_cpu",
   "unsupported",
   "no_swappiness0",
+  "sudo_failed",
 ]);
 
 function wholeNumber(value: string | undefined, fallback = 0): number {
@@ -125,21 +142,41 @@ export function formatIdleBytes(bytes: number): string {
   return `${(mib / 1024).toFixed(1).replace(/\.0$/, "")} GiB`;
 }
 
-export function reclaimIdleCacheScript(options: ReclaimScriptOptions = {}): string {
+export function sampleIdleCpuScript(timeoutSeconds = 4): string {
+  const limit = Math.max(1, Math.trunc(timeoutSeconds));
+  return String.raw`timeout ${limit} sh -s <<'SAMPLE'
+set -u
+cg=/sys/fs/cgroup
+if [ ! -r "$cg/cpu.stat" ]; then
+  echo "status=unsupported"
+  exit 0
+fi
+cpu_usec=$(awk '$1 == "usage_usec" { print $2; found = 1; exit } END { if (!found) print -1 }' "$cg/cpu.stat")
+if [ "$cpu_usec" -lt 0 ]; then
+  echo "status=unsupported"
+  exit 0
+fi
+printf 'status=sampled\ncpu_usage_usec=%s\n' "$cpu_usec"
+SAMPLE`;
+}
+
+export function reclaimIdleCacheScript(options: ReclaimScriptOptions): string {
   const floor = Math.max(0, Math.trunc(options.floorBytes ?? IDLE_CACHE_FLOOR_BYTES));
   const minReclaim = Math.max(0, Math.trunc(options.minReclaimBytes ?? IDLE_CACHE_MIN_RECLAIM_BYTES));
   const step = Math.max(4096, Math.trunc(options.stepBytes ?? IDLE_CACHE_STEP_BYTES));
   const maxSteps = Math.max(1, Math.trunc(options.maxSteps ?? IDLE_CACHE_MAX_STEPS));
   const minProgress = Math.max(4096, Math.trunc(options.minProgressBytes ?? IDLE_CACHE_MIN_PROGRESS_BYTES));
   const pressureAvg = options.pressureAvgLimit ?? IDLE_CACHE_PRESSURE_AVG_LIMIT;
-  const fullPressureAvg = IDLE_CACHE_FULL_PRESSURE_AVG_LIMIT;
+  const fullPressureAvg = options.fullPressureAvgLimit ?? IDLE_CACHE_FULL_PRESSURE_AVG_LIMIT;
   const pressureDeltaUs = Math.max(1, Math.trunc(options.pressureTotalDeltaUs ?? IDLE_CACHE_PRESSURE_TOTAL_DELTA_US));
-  const fullPressureDeltaUs = IDLE_CACHE_FULL_PRESSURE_TOTAL_DELTA_US;
+  const fullPressureDeltaUs = Math.max(1, Math.trunc(options.fullPressureTotalDeltaUs ?? IDLE_CACHE_FULL_PRESSURE_TOTAL_DELTA_US));
   const refaultDelta = Math.max(1, Math.trunc(options.refaultStopDelta ?? IDLE_CACHE_REFAULT_STOP_DELTA));
-  const prevCpuUsec = options.prevCpuUsageUsec !== undefined && options.prevCpuUsageUsec !== null ? Math.trunc(options.prevCpuUsageUsec) : -1;
-  const maxCpuDeltaUsec = options.maxCpuDeltaUsec !== undefined && options.maxCpuDeltaUsec !== null ? Math.trunc(options.maxCpuDeltaUsec) : -1;
+  const prevCpuUsec = Math.trunc(options.prevCpuUsageUsec);
+  const maxCpuDeltaUsec = Math.trunc(options.maxCpuDeltaUsec);
+  const innerTimeout = Math.max(1, Math.trunc(options.timeoutSeconds ?? Math.floor(IDLE_CACHE_SSH_TIMEOUT_MS / 1000) - 2));
 
-  return String.raw`sudo -n sh -s -- ${floor} ${minReclaim} ${step} ${maxSteps} ${minProgress} ${pressureAvg} ${fullPressureAvg} ${pressureDeltaUs} ${fullPressureDeltaUs} ${refaultDelta} ${prevCpuUsec} ${maxCpuDeltaUsec} <<'RECLAIM'
+  return String.raw`sudo -n true 2>/dev/null || { echo "status=sudo_failed"; exit 0; }
+sudo -n timeout ${innerTimeout} sh -s -- ${floor} ${minReclaim} ${step} ${maxSteps} ${minProgress} ${pressureAvg} ${fullPressureAvg} ${pressureDeltaUs} ${fullPressureDeltaUs} ${refaultDelta} ${prevCpuUsec} ${maxCpuDeltaUsec} <<'RECLAIM'
 set -u
 floor=$1
 min_reclaim=$2
@@ -156,7 +193,7 @@ prev_cpu_usec=$2
 max_cpu_delta=$3
 
 cg=/sys/fs/cgroup
-if [ ! -f "$cg/memory.reclaim" ] || [ ! -w "$cg/memory.reclaim" ] || [ ! -r "$cg/memory.stat" ]; then
+if [ ! -f "$cg/memory.reclaim" ] || [ ! -w "$cg/memory.reclaim" ] || [ ! -r "$cg/memory.stat" ] || [ ! -r "$cg/cpu.stat" ]; then
   echo "status=unsupported"
   exit 0
 fi
@@ -188,20 +225,25 @@ read_pressure() {
 
 read_swap() {
   cur=0
-  max=max
   [ -r "$cg/memory.swap.current" ] && read -r cur < "$cg/memory.swap.current" || true
-  [ -r "$cg/memory.swap.max" ] && read -r max < "$cg/memory.swap.max" || true
   [ -n "$cur" ] || cur=0
-  [ -n "$max" ] || max=max
-  printf '%s %s\n' "$cur" "$max"
+  printf '%s\n' "$cur"
 }
 
 read_cpu() {
-  if [ ! -r "$cg/cpu.stat" ]; then
-    echo "-1"
-    return
-  fi
   awk '$1 == "usage_usec" { print $2; found = 1; exit } END { if (!found) print -1 }' "$cg/cpu.stat"
+}
+
+reclaimable_budget() {
+  non_shmem=$(( $1 - $2 ))
+  if [ "$non_shmem" -lt 0 ]; then non_shmem=0; fi
+  above_floor=$(( non_shmem - floor ))
+  if [ "$above_floor" -lt 0 ]; then above_floor=0; fi
+  if [ "$3" -lt "$above_floor" ]; then
+    echo "$3"
+  else
+    echo "$above_floor"
+  fi
 }
 
 is_initial_pressure_high() {
@@ -216,17 +258,22 @@ is_step_pressure_high() {
 }
 
 cpu_usec=$(read_cpu)
+if [ "$cpu_usec" -lt 0 ]; then
+  echo "status=unsupported"
+  exit 0
+fi
+
 read -r file_b inactive_b active_b anon_b shmem_b refaults_b <<EOF
 $(read_stat)
 EOF
 read -r s10_b s60_b s300_b st_b f10_b f60_b f300_b ft_b <<EOF
 $(read_pressure)
 EOF
-read -r swap_b swap_max <<EOF
-$(read_swap)
-EOF
+swap_b=$(read_swap)
 
 file_c=$file_b
+inactive_c=$inactive_b
+active_c=$active_b
 anon_c=$anon_b
 shmem_c=$shmem_b
 swap_c=$swap_b
@@ -241,18 +288,22 @@ f300_c=$f300_b
 ft_c=$ft_b
 
 emit() {
-  printf 'status=%s\nmode=%s\nstop=%s\nsteps=%d\nfile_before=%d\nfile_after=%d\nanon_before=%d\nanon_after=%d\nshmem_before=%d\nshmem_after=%d\nswap_before=%d\nswap_after=%d\nrefaults_before=%d\nrefaults_after=%d\npressure_some_before=%s/%s/%s/%d\npressure_some_after=%s/%s/%s/%d\npressure_full_before=%s/%s/%s/%d\npressure_full_after=%s/%s/%s/%d\ncpu_usage_usec=%s\n' \
-    "$1" "$2" "$3" "$4" "$file_b" "$file_c" "$anon_b" "$anon_c" "$shmem_b" "$shmem_c" "$swap_b" "$swap_c" "$refaults_b" "$refaults_c" \
+  printf 'status=%s\nmode=%s\nstop=%s\nsteps=%d\nfile_before=%d\nfile_after=%d\ninactive_file_before=%d\ninactive_file_after=%d\nactive_file_before=%d\nactive_file_after=%d\nanon_before=%d\nanon_after=%d\nshmem_before=%d\nshmem_after=%d\nswap_before=%d\nswap_after=%d\nrefaults_before=%d\nrefaults_after=%d\npressure_some_before=%s/%s/%s/%d\npressure_some_after=%s/%s/%s/%d\npressure_full_before=%s/%s/%s/%d\npressure_full_after=%s/%s/%s/%d\ncpu_usage_usec=%s\n' \
+    "$1" "$2" "$3" "$4" "$file_b" "$file_c" "$inactive_b" "$inactive_c" "$active_b" "$active_c" \
+    "$anon_b" "$anon_c" "$shmem_b" "$shmem_c" "$swap_b" "$swap_c" "$refaults_b" "$refaults_c" \
     "$s10_b" "$s60_b" "$s300_b" "$st_b" "$s10_c" "$s60_c" "$s300_c" "$st_c" \
     "$f10_b" "$f60_b" "$f300_b" "$ft_b" "$f10_c" "$f60_c" "$f300_c" "$ft_c" "$cpu_usec"
 }
 
-if [ "$prev_cpu_usec" -ge 0 ] && [ "$max_cpu_delta" -ge 0 ] && [ "$cpu_usec" -gt "$prev_cpu_usec" ]; then
-  cpu_delta=$(( cpu_usec - prev_cpu_usec ))
-  if [ "$cpu_delta" -gt "$max_cpu_delta" ]; then
-    emit "busy_cpu" "none" "busy_cpu" 0
-    exit 0
-  fi
+if [ "$prev_cpu_usec" -lt 0 ] || [ "$max_cpu_delta" -lt 0 ] || [ "$cpu_usec" -lt "$prev_cpu_usec" ]; then
+  emit "sampled" "none" "baseline" 0
+  exit 0
+fi
+
+cpu_delta=$(( cpu_usec - prev_cpu_usec ))
+if [ "$cpu_delta" -gt "$max_cpu_delta" ]; then
+  emit "busy_cpu" "none" "busy_cpu" 0
+  exit 0
 fi
 
 if is_initial_pressure_high; then
@@ -260,17 +311,13 @@ if is_initial_pressure_high; then
   exit 0
 fi
 
-if [ "$file_b" -lt $(( floor + min_reclaim )) ]; then
+initial_budget=$(reclaimable_budget "$file_b" "$shmem_b" "$inactive_b")
+if [ "$initial_budget" -lt "$min_reclaim" ]; then
   emit "below_floor" "none" "floor" 0
   exit 0
 fi
 
-mode=""
-if printf '0 swappiness=0\n' | dd of="$cg/memory.reclaim" bs=64 status=none 2>/dev/null; then
-  mode="swappiness0"
-elif [ "$swap_max" != "max" ] && [ "$swap_b" -ge "$swap_max" ]; then
-  mode="no_swap_headroom"
-else
+if ! printf '0 swappiness=0\n' | dd of="$cg/memory.reclaim" bs=64 status=none 2>/dev/null; then
   emit "no_swappiness0" "none" "no_swappiness0" 0
   exit 0
 fi
@@ -278,12 +325,14 @@ fi
 steps=0
 stop="floor"
 file_prev=$file_b
+shmem_prev=$shmem_b
+active_prev=$active_b
 refaults_prev=$refaults_b
 st_prev=$st_b
 ft_prev=$ft_b
 
 while [ "$steps" -lt "$max_steps" ]; do
-  remaining=$(( file_c - floor ))
+  remaining=$(reclaimable_budget "$file_c" "$shmem_c" "$inactive_c")
   if [ "$remaining" -lt "$min_progress" ]; then
     stop="floor"
     break
@@ -293,12 +342,7 @@ while [ "$steps" -lt "$max_steps" ]; do
   else
     step=$step_bytes
   fi
-  if [ "$mode" = "swappiness0" ]; then
-    payload="$step swappiness=0"
-  else
-    payload="$step"
-  fi
-  if printf '%s\n' "$payload" | dd of="$cg/memory.reclaim" bs=64 status=none 2>/dev/null; then
+  if printf '%s swappiness=0\n' "$step" | dd of="$cg/memory.reclaim" bs=64 status=none 2>/dev/null; then
     rc=0
   else
     rc=1
@@ -310,15 +354,17 @@ EOF
   read -r s10_c s60_c s300_c st_c f10_c f60_c f300_c ft_c <<EOF
 $(read_pressure)
 EOF
-  read -r swap_c swap_max_c <<EOF
-$(read_swap)
-EOF
+  swap_c=$(read_swap)
   if [ "$swap_c" -gt "$swap_b" ]; then
     stop="swap_grew"
     break
   fi
   if is_step_pressure_high; then
     stop="pressure"
+    break
+  fi
+  if [ "$active_c" -lt "$active_prev" ]; then
+    stop="active_file"
     break
   fi
   if [ $(( refaults_c - refaults_prev )) -ge "$refault_delta" ]; then
@@ -329,11 +375,15 @@ EOF
     stop="eagain"
     break
   fi
-  if [ $(( file_prev - file_c )) -lt "$min_progress" ]; then
+  prev_non_shmem=$(( file_prev - shmem_prev ))
+  cur_non_shmem=$(( file_c - shmem_c ))
+  if [ $(( prev_non_shmem - cur_non_shmem )) -lt "$min_progress" ]; then
     stop="stalled"
     break
   fi
   file_prev=$file_c
+  shmem_prev=$shmem_c
+  active_prev=$active_c
   refaults_prev=$refaults_c
   st_prev=$st_c
   ft_prev=$ft_c
@@ -342,7 +392,7 @@ EOF
   fi
 done
 
-emit "reclaimed" "$mode" "$stop" "$steps"
+emit "reclaimed" "swappiness0" "$stop" "$steps"
 RECLAIM`;
 }
 
@@ -366,6 +416,10 @@ export function parseReclaimOutput(stdout: string): ReclaimCommandResult | null 
     steps: wholeNumber(fields.get("steps"), 0),
     fileBeforeBytes: wholeNumber(fields.get("file_before"), 0),
     fileAfterBytes: wholeNumber(fields.get("file_after"), 0),
+    inactiveFileBeforeBytes: wholeNumber(fields.get("inactive_file_before"), 0),
+    inactiveFileAfterBytes: wholeNumber(fields.get("inactive_file_after"), 0),
+    activeFileBeforeBytes: wholeNumber(fields.get("active_file_before"), 0),
+    activeFileAfterBytes: wholeNumber(fields.get("active_file_after"), 0),
     anonBeforeBytes: wholeNumber(fields.get("anon_before"), 0),
     anonAfterBytes: wholeNumber(fields.get("anon_after"), 0),
     shmemBeforeBytes: wholeNumber(fields.get("shmem_before"), 0),
@@ -383,18 +437,27 @@ export function parseReclaimOutput(stdout: string): ReclaimCommandResult | null 
 }
 
 export function freedBytesOf(result: ReclaimCommandResult): number {
-  return result.status === "reclaimed" ? Math.max(0, result.fileBeforeBytes - result.fileAfterBytes) : 0;
+  if (result.status !== "reclaimed") return 0;
+  const before = Math.max(0, result.fileBeforeBytes - result.shmemBeforeBytes);
+  const after = Math.max(0, result.fileAfterBytes - result.shmemAfterBytes);
+  return Math.max(0, before - after);
 }
 
 export function reclaimLogLine(vmid: number, name: string, result: ReclaimCommandResult): string {
   const freed = freedBytesOf(result);
+  const before = Math.max(0, result.fileBeforeBytes - result.shmemBeforeBytes);
+  const after = Math.max(0, result.fileAfterBytes - result.shmemAfterBytes);
   const steps = `${result.steps} ${result.steps === 1 ? "step" : "steps"}`;
   const stop = result.stop ? `, stopped at ${result.stop}` : "";
-  return `Reclaimed ${formatIdleBytes(freed)} of idle page cache from CT ${vmid} (${name}): file cache ${formatIdleBytes(result.fileBeforeBytes)} to ${formatIdleBytes(result.fileAfterBytes)} in ${steps}${stop}.`;
+  return `Reclaimed ${formatIdleBytes(freed)} of idle page cache from CT ${vmid} (${name}): file cache ${formatIdleBytes(before)} to ${formatIdleBytes(after)} in ${steps}${stop}.`;
 }
 
 export class IdleCacheTracker {
   readonly #guests = new Map<number, GuestActivity>();
+
+  forget(vmid: number): void {
+    this.#guests.delete(vmid);
+  }
 
   observe(
     guests: readonly ObservedIdleGuest[],
@@ -402,7 +465,7 @@ export class IdleCacheTracker {
     idleMs: number,
   ): { readonly candidates: IdleCacheCandidate[]; readonly skippedBusy: number; readonly skippedFloor: number } {
     const present = new Set<number>();
-    const candidates: IdleCacheCandidate[] = [];
+    const pending: (IdleCacheCandidate & { readonly priorityAt: number })[] = [];
     let skippedBusy = 0;
     let skippedFloor = 0;
 
@@ -411,44 +474,55 @@ export class IdleCacheTracker {
       let state = this.#guests.get(guest.vmid);
       const restarted = state !== undefined && guest.uptimeSeconds < state.lastUptimeSeconds;
       if (!state || restarted) {
-        state = { idleSince: null, lastUptimeSeconds: guest.uptimeSeconds, lastReclaimedAt: null, lastCpuSample: null };
+        state = { lastUptimeSeconds: guest.uptimeSeconds, cpuBaseline: null, cooldownUntil: 0 };
         this.#guests.set(guest.vmid, state);
       }
 
       const tooYoung = guest.uptimeSeconds * 1000 < idleMs;
       const busyCpu = guest.cpu === null || guest.cpu > IDLE_CPU_MAX;
       if (tooYoung || busyCpu) {
-        state.idleSince = null;
+        state.cpuBaseline = null;
         state.lastUptimeSeconds = guest.uptimeSeconds;
         if (!tooYoung && busyCpu) skippedBusy++;
         continue;
       }
 
-      if (state.idleSince === null) state.idleSince = now;
       state.lastUptimeSeconds = guest.uptimeSeconds;
 
-      const idleLongEnough = now - state.idleSince >= idleMs;
-      const cooldownDone = state.lastReclaimedAt === null || now - state.lastReclaimedAt >= idleMs;
-      if (!idleLongEnough || !cooldownDone) continue;
+      if (now < state.cooldownUntil) continue;
 
       if (guest.memoryUsedBytes > 0 && guest.memoryUsedBytes <= IDLE_CACHE_FLOOR_BYTES + IDLE_CACHE_MIN_RECLAIM_BYTES) {
         skippedFloor++;
         continue;
       }
 
-      const prevSample = state.lastCpuSample;
-      const elapsedSec = prevSample && now > prevSample.at ? (now - prevSample.at) / 1000 : null;
-      const maxCpuDeltaUsec =
-        prevSample && elapsedSec !== null && elapsedSec > 0
-          ? Math.floor(elapsedSec * Math.max(1, guest.cpus) * IDLE_CPU_MAX * 1_000_000)
-          : null;
+      const baseline = state.cpuBaseline;
+      if (!baseline) {
+        pending.push({
+          action: "sample",
+          vmid: guest.vmid,
+          name: guest.name,
+          cpus: Math.max(1, guest.cpus),
+          prevCpuUsageUsec: null,
+          maxCpuDeltaUsec: null,
+          priorityAt: 0,
+        });
+        continue;
+      }
 
-      candidates.push({
+      const elapsedMs = now - baseline.at;
+      if (elapsedMs < idleMs) continue;
+
+      const elapsedSec = elapsedMs / 1000;
+      const maxCpuDeltaUsec = Math.floor(elapsedSec * Math.max(1, guest.cpus) * IDLE_CPU_MAX * 1_000_000);
+      pending.push({
+        action: "reclaim",
         vmid: guest.vmid,
         name: guest.name,
         cpus: Math.max(1, guest.cpus),
-        prevCpuUsageUsec: prevSample ? prevSample.usec : null,
+        prevCpuUsageUsec: baseline.usec,
         maxCpuDeltaUsec,
+        priorityAt: baseline.at,
       });
     }
 
@@ -456,23 +530,48 @@ export class IdleCacheTracker {
       if (!present.has(vmid)) this.#guests.delete(vmid);
     }
 
+    pending.sort((a, b) => {
+      if (a.action !== b.action) return a.action === "reclaim" ? -1 : 1;
+      if (a.priorityAt !== b.priorityAt) return a.priorityAt - b.priorityAt;
+      return a.vmid - b.vmid;
+    });
+
+    const candidates: IdleCacheCandidate[] = pending.map(({ priorityAt: _priorityAt, ...candidate }) => candidate);
     return { candidates, skippedBusy, skippedFloor };
   }
 
-  recordOutcome(vmid: number, now: number, result: ReclaimCommandResult): void {
+  recordUnanswered(vmid: number, now: number, idleMs: number): void {
+    const state = this.#guests.get(vmid);
+    if (!state) return;
+    state.cooldownUntil = now + idleMs;
+  }
+
+  recordOutcome(vmid: number, now: number, idleMs: number, result: ReclaimCommandResult): void {
     const state = this.#guests.get(vmid);
     if (!state) return;
 
-    if (result.cpuUsageUsec !== null) {
-      state.lastCpuSample = { at: now, usec: result.cpuUsageUsec };
-    }
-
-    if (result.status === "busy_cpu" || result.status === "pressure") {
-      state.idleSince = null;
+    if (result.status === "sampled") {
+      if (result.cpuUsageUsec !== null) {
+        state.cpuBaseline = { at: now, usec: result.cpuUsageUsec };
+      }
       return;
     }
 
-    state.lastReclaimedAt = now;
+    if (result.status === "busy_cpu") {
+      state.cpuBaseline = result.cpuUsageUsec !== null ? { at: now, usec: result.cpuUsageUsec } : null;
+      return;
+    }
+
+    if (result.status === "pressure") {
+      state.cpuBaseline = result.cpuUsageUsec !== null ? { at: now, usec: result.cpuUsageUsec } : null;
+      state.cooldownUntil = now + idleMs;
+      return;
+    }
+
+    if (result.cpuUsageUsec !== null) {
+      state.cpuBaseline = { at: now, usec: result.cpuUsageUsec };
+    }
+    state.cooldownUntil = now + idleMs;
   }
 }
 
@@ -509,7 +608,7 @@ export function idleCacheDoctorCheck(input: {
       id,
       name,
       status: "ok",
-      detail: `On (idle after ${threshold}, keeping ${formatIdleBytes(IDLE_CACHE_FLOOR_BYTES)} warm). No idle cache sweep has run yet.`,
+      detail: `On (idle after ${threshold}, keeping ${formatIdleBytes(IDLE_CACHE_FLOOR_BYTES)} warm). No idle container has been checked yet.`,
       fix: null,
     };
   }
@@ -518,20 +617,26 @@ export function idleCacheDoctorCheck(input: {
   const parts: string[] = [`On (idle after ${threshold}, keeping ${formatIdleBytes(IDLE_CACHE_FLOOR_BYTES)} warm).`];
 
   const when = input.ago(Math.max(0, input.now - last.at));
-  if (last.checked === 0) {
-    parts.push(`Last sweep ${when} found no idle container ready to reclaim.`);
-  } else {
-    const checkedWords = `${last.checked} idle ${last.checked === 1 ? "container" : "containers"}`;
-    const reclaimedWords = `${last.reclaimedBoxes} ${last.reclaimedBoxes === 1 ? "container" : "containers"}`;
-    parts.push(`Last sweep ${when} checked ${checkedWords} and freed ${formatIdleBytes(last.freedBytes)} from ${reclaimedWords}.`);
-  }
+  const checkedWords = `${last.checked} idle ${last.checked === 1 ? "container" : "containers"}`;
+  const reclaimedWords = `${last.reclaimedBoxes} ${last.reclaimedBoxes === 1 ? "container" : "containers"}`;
+  parts.push(`Last sweep ${when} checked ${checkedWords} and freed ${formatIdleBytes(last.freedBytes)} from ${reclaimedWords}.`);
+
+  const totalChecked = input.sweeps.reduce((sum, sweep) => sum + sweep.checked, 0);
+  const totalFreed = input.sweeps.reduce((sum, sweep) => sum + sweep.freedBytes, 0);
+  const totalBoxes = input.sweeps.reduce((sum, sweep) => sum + sweep.reclaimedBoxes, 0);
+  const totalUnsupported = input.sweeps.reduce((sum, sweep) => sum + sweep.skippedUnsupported, 0);
+  const totalSudoFailed = input.sweeps.reduce((sum, sweep) => sum + (sweep.sudoFailed ?? 0), 0);
+  const totalUnanswered = input.sweeps.reduce((sum, sweep) => sum + sweep.unanswered, 0);
 
   if (input.sweeps.length > 1) {
-    const totalFreed = input.sweeps.reduce((sum, sweep) => sum + sweep.freedBytes, 0);
-    const totalBoxes = input.sweeps.reduce((sum, sweep) => sum + sweep.reclaimedBoxes, 0);
     parts.push(
       `Across the last ${input.sweeps.length} sweeps, ${formatIdleBytes(totalFreed)} freed across ${totalBoxes} ${totalBoxes === 1 ? "container" : "containers"}.`,
     );
+  }
+
+  const lastSudoFailed = last.sudoFailed ?? 0;
+  if (lastSudoFailed > 0) {
+    parts.push(`${lastSudoFailed} failed sudo without a password.`);
   }
 
   if (last.unanswered > 0) {
@@ -539,7 +644,18 @@ export function idleCacheDoctorCheck(input: {
   }
 
   if (last.skippedUnsupported > 0) {
-    parts.push(`${last.skippedUnsupported} skipped because cgroup memory.reclaim could not guarantee file-only reclaim.`);
+    parts.push(`${last.skippedUnsupported} skipped because the kernel does not support cgroup memory.reclaim with swappiness=0.`);
+  }
+
+  const allFailed = totalChecked > 0 && totalUnsupported + totalSudoFailed + totalUnanswered === totalChecked;
+  if (allFailed) {
+    const fix =
+      totalSudoFailed > 0
+        ? `Grant passwordless sudo to the box user in the Proxmox LXC templates, or set idle-cache-reclaim to false in ${PRODUCT}'s settings.`
+        : totalUnsupported > 0
+          ? `Idle page cache reclaim needs Linux 6.11 or later with cgroup v2 memory.reclaim swappiness=0 (such as Proxmox VE 9). Set idle-cache-reclaim to false on older hosts.`
+          : `Check that ${PRODUCT} can reach running containers over SSH, or set idle-cache-reclaim to false in ${PRODUCT}'s settings.`;
+    return { id, name, status: "warn", detail: parts.join(" "), fix };
   }
 
   return { id, name, status: "ok", detail: parts.join(" "), fix: null };

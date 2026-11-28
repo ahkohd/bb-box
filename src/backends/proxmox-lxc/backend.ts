@@ -240,8 +240,11 @@ import {
   type LxcTemplate,
 } from "./config.ts";
 import {
+  IDLE_CACHE_MAX_BOXES_PER_SWEEP,
+  IDLE_CACHE_SAMPLE_TIMEOUT_MS,
   IDLE_CACHE_SSH_TIMEOUT_MS,
   IDLE_CACHE_SWEEPS_KEY,
+  IDLE_CACHE_SWEEP_BUDGET_MS,
   IDLE_CACHE_SWEEP_EVERY_MS,
   IdleCacheTracker,
   appendIdleCacheSweep,
@@ -250,6 +253,7 @@ import {
   parseReclaimOutput,
   reclaimIdleCacheScript,
   reclaimLogLine,
+  sampleIdleCpuScript,
   type IdleCacheSweepSummary,
   type ObservedIdleGuest,
 } from "./idle-cache.ts";
@@ -1077,8 +1081,8 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #upkeep = new Upkeep(async (signal) => {
     await this.#readGpus(signal).catch((error) => signal.aborted || this.#context.logError("read GPU memory", error));
     await this.#checkCards(signal).catch((error) => signal.aborted || this.#context.logError("check boxes' cards", error));
-    await this.#reclaimIdleCache(signal).catch((error) => signal.aborted || this.#context.logError("reclaim idle page cache", error));
     await this.#topUp(signal);
+    await this.#reclaimIdleCache(signal).catch((error) => signal.aborted || this.#context.logError("reclaim idle page cache", error));
   });
   readonly #idleCache = new IdleCacheTracker();
   #idleCacheSweptAt = 0;
@@ -3833,6 +3837,7 @@ export class ProxmoxLxcBackend implements Backend {
   async hold(member: PoolMember, box: BoxIdentity, template: number | null, signal?: AbortSignal): Promise<void> {
     const api = await this.client();
     const vmid = Number(member.ref);
+    this.#idleCache.forget(vmid);
     const installId = this.#context.installId;
     const owner = boxOwner(installId, box.boxId);
     const warm = warmOwner(installId, String((await this.#guestConfig(api, vmid, signal))?.description ?? ""));
@@ -4658,6 +4663,7 @@ export class ProxmoxLxcBackend implements Backend {
   async relabel(guest: Guest, box: BoxIdentity, from: string, signal?: AbortSignal): Promise<void> {
     const api = await this.client();
     const vmid = Number(guest.ref);
+    this.#idleCache.forget(vmid);
     const installId = this.#context.installId;
     const was = eitherOwner(this.#boxOf(guest), boxOwner(installId, box.boxId));
     await this.#owned(api).configure(vmid, was, { hostname: box.name, description: describe(box, installId) }, signal);
@@ -5587,9 +5593,9 @@ export class ProxmoxLxcBackend implements Backend {
   async #reclaimIdleCache(signal: AbortSignal): Promise<void> {
     if (!this.#config.idleCache.reclaim) return;
 
-    const now = this.#now();
-    if (this.#idleCacheSweptAt > 0 && now - this.#idleCacheSweptAt < IDLE_CACHE_SWEEP_EVERY_MS) return;
-    this.#idleCacheSweptAt = now;
+    const sweepStartedAt = this.#now();
+    if (this.#idleCacheSweptAt > 0 && sweepStartedAt - this.#idleCacheSweptAt < IDLE_CACHE_SWEEP_EVERY_MS) return;
+    this.#idleCacheSweptAt = sweepStartedAt;
 
     const api = await this.client();
     const guests = await api.nodeGuests("lxc", signal);
@@ -5597,12 +5603,16 @@ export class ProxmoxLxcBackend implements Backend {
 
     const observed: ObservedIdleGuest[] = [];
     for (const guest of guests) {
+      const isWarm = guest.tags.includes(WARM);
+      const isSpare = guest.tags.includes(`thread.${SPARES}`) || ownerFromTags(guest.tags)?.threadId === SPARES;
       if (
         guest.type !== "lxc" ||
         guest.template ||
         guest.status !== "running" ||
         !this.#inRange(guest.vmid) ||
         installFromTags(guest.tags) !== this.#context.installId ||
+        isWarm ||
+        isSpare ||
         this.#filling.has(guest.vmid) ||
         this.#reserved.has(guest.vmid) ||
         this.#imageBoxes.has(guest.vmid) ||
@@ -5625,50 +5635,80 @@ export class ProxmoxLxcBackend implements Backend {
     }
 
     const idleMs = this.#config.idleCache.idleMinutes * 60_000;
-    const { candidates, skippedBusy: busyAtNode, skippedFloor: floorAtNode } = this.#idleCache.observe(observed, now, idleMs);
+    const { candidates, skippedBusy: busyAtNode, skippedFloor: floorAtNode } = this.#idleCache.observe(observed, sweepStartedAt, idleMs);
+    if (!candidates.length) return;
 
+    const { ssh } = await this.#keys();
+
+    let visited = 0;
+    let checked = 0;
     let reclaimedBoxes = 0;
     let freedBytes = 0;
     let skippedBusy = busyAtNode;
     let skippedPressure = 0;
     let skippedFloor = floorAtNode;
     let skippedUnsupported = 0;
+    let sudoFailed = 0;
     let unanswered = 0;
 
     for (const candidate of candidates) {
       signal.throwIfAborted();
-      const script = reclaimIdleCacheScript({
-        prevCpuUsageUsec: candidate.prevCpuUsageUsec,
-        maxCpuDeltaUsec: candidate.maxCpuDeltaUsec,
-      });
+      if (visited >= IDLE_CACHE_MAX_BOXES_PER_SWEEP) break;
+
+      const remainingBudgetMs = IDLE_CACHE_SWEEP_BUDGET_MS - (this.#now() - sweepStartedAt);
+      if (remainingBudgetMs <= 0) break;
+
+      visited++;
+      const capMs = candidate.action === "sample" ? IDLE_CACHE_SAMPLE_TIMEOUT_MS : IDLE_CACHE_SSH_TIMEOUT_MS;
+      const commandTimeoutMs = Math.max(1_000, Math.min(capMs, remainingBudgetMs));
+      const innerTimeoutSeconds = Math.max(1, Math.floor(commandTimeoutMs / 1000) - 1);
+      const script =
+        candidate.action === "sample"
+          ? sampleIdleCpuScript(innerTimeoutSeconds)
+          : reclaimIdleCacheScript({
+              prevCpuUsageUsec: candidate.prevCpuUsageUsec!,
+              maxCpuDeltaUsec: candidate.maxCpuDeltaUsec!,
+              timeoutSeconds: innerTimeoutSeconds,
+            });
 
       let stdout = "";
       try {
-        const command = await this.#command(candidate.vmid);
-        const run = await command.run(script, {
-          timeoutMs: IDLE_CACHE_SSH_TIMEOUT_MS,
-          signal,
-          maxOutputBytes: 16_384,
-        });
+        const run = await ssh.run(
+          this.#access(candidate.vmid),
+          script,
+          { timeoutMs: commandTimeoutMs, signal, maxOutputBytes: 16_384 },
+          "linux",
+        );
         if (run.timedOut || run.exitCode !== 0) {
+          checked++;
           unanswered++;
+          this.#idleCache.recordUnanswered(candidate.vmid, this.#now(), idleMs);
           continue;
         }
         stdout = run.stdout;
       } catch (error) {
         if (signal.aborted) throw error;
+        checked++;
         unanswered++;
+        this.#idleCache.recordUnanswered(candidate.vmid, this.#now(), idleMs);
         continue;
       }
 
       const parsed = parseReclaimOutput(stdout);
       if (!parsed) {
+        checked++;
         unanswered++;
+        this.#idleCache.recordUnanswered(candidate.vmid, this.#now(), idleMs);
         continue;
       }
 
-      this.#idleCache.recordOutcome(candidate.vmid, this.#now(), parsed);
+      this.#idleCache.recordOutcome(candidate.vmid, this.#now(), idleMs, parsed);
 
+      if (parsed.status === "sampled") {
+        continue;
+      }
+
+      checked++;
       if (parsed.status === "reclaimed") {
         const freed = freedBytesOf(parsed);
         if (freed > 0) {
@@ -5682,22 +5722,27 @@ export class ProxmoxLxcBackend implements Backend {
         skippedPressure++;
       } else if (parsed.status === "below_floor") {
         skippedFloor++;
+      } else if (parsed.status === "sudo_failed") {
+        sudoFailed++;
       } else if (parsed.status === "unsupported" || parsed.status === "no_swappiness0") {
         skippedUnsupported++;
       }
     }
 
-    await this.#recordIdleCacheSweep({
-      at: this.#now(),
-      checked: candidates.length,
-      reclaimedBoxes,
-      freedBytes,
-      skippedBusy,
-      skippedPressure,
-      skippedFloor,
-      skippedUnsupported,
-      unanswered,
-    });
+    if (checked > 0) {
+      await this.#recordIdleCacheSweep({
+        at: this.#now(),
+        checked,
+        reclaimedBoxes,
+        freedBytes,
+        skippedBusy,
+        skippedPressure,
+        skippedFloor,
+        skippedUnsupported,
+        sudoFailed,
+        unanswered,
+      });
+    }
   }
 
   #cardsNamed(notes: string, ids: Iterable<string>): Set<string> {
