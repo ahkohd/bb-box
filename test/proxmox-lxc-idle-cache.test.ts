@@ -149,11 +149,44 @@ function writeFakeCgroup(sshRoot: string, host: string, options: FakeCgroupOptio
   writeFileSync(join(cgroupDir, "memory.swap.max"), `${swapMax}\n`);
   writeFileSync(join(cgroupDir, "cpu.stat"), `usage_usec ${cpuUsec}\n`);
 
+  const sudoPath = join(binDir, "sudo");
   if (options.failSudo) {
-    const sudoPath = join(binDir, "sudo");
     writeFileSync(sudoPath, "#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n");
-    chmodSync(sudoPath, 0o755);
+  } else {
+    writeFileSync(
+      sudoPath,
+      [
+        "#!/bin/sh",
+        "while [ $# -gt 0 ]; do",
+        '  case "$1" in',
+        "    -u|-g|-p|-C|-D|-R|-T|-U|-h) shift 2 ;;",
+        "    --) shift; break ;;",
+        "    -*) shift ;;",
+        "    *) break ;;",
+        "  esac",
+        "done",
+        "[ $# -gt 0 ] || exit 0",
+        'exec "$@"',
+        "",
+      ].join("\n"),
+    );
   }
+  chmodSync(sudoPath, 0o755);
+
+  const timeoutPath = join(binDir, "timeout");
+  writeFileSync(
+    timeoutPath,
+    [
+      "#!/bin/sh",
+      'case "${1:-}" in',
+      '  ""|*[!0-9]*) exit 125 ;;',
+      "esac",
+      "shift",
+      'exec "$@"',
+      "",
+    ].join("\n"),
+  );
+  chmodSync(timeoutPath, 0o755);
 
   const writesLog = join(cgroupDir, "reclaim.log");
   const stateFile = join(cgroupDir, "reclaim.steps");
