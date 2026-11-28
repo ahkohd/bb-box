@@ -247,7 +247,7 @@ export function snapshotCommands(app: BbBox) {
     }),
     "snapshot keep": cliCommand({
       summary:
-        `Keep a snapshot of a thread's box, or with --machine one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart, microsandbox, Docker and boat.dev. Hetzner Cloud and Namespace keep none. ${PRODUCT} deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list --all names it.`,
+        `Keep a snapshot of a thread's box, or with --machine one of your machines, for 30 days from today unless Settings say otherwise, or until a date: it becomes yours, no agent can delete it, and it outlives its box's release, as a held copy on Proxmox and as it is on Tart, microsandbox, Docker and boat.dev. Hetzner Cloud, Namespace and the SSH host pool keep none. ${PRODUCT} deletes it after that date. Again on a kept snapshot, it renews its keep, never shortening it unless you give the date. A box that was released is named as bb box snapshot list --all names it.`,
       positionals: [
         { name: "box", description: "The box's name or ID.", required: true },
         { name: "snapshot", description: "The snapshot's name or ID.", required: true },

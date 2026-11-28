@@ -56,8 +56,39 @@ import {
   type PoolMember,
   type PowerState,
   type ReleaseHooks,
+  type HeldSnapshot,
+  type SnapshotHooks,
+  type SnapshotPlan,
+  type SnapshotRef,
+  type SnapshotTake,
+  type SnapshotTaken,
+  type Snapshotting,
+  type Started,
+  type TaskOutcome,
+  type TaskRef,
   DEVICE_DISPLAY,
+  SnapshotFailed,
 } from "../types.ts";
+import { randomBytes } from "node:crypto";
+import { newOperationId } from "../../core/snapshot.ts";
+import {
+  HOME_SNAPSHOTS_HELPER_VERSION,
+  HOME_SNAPSHOT_KINDS,
+  SLOT_SNAPSHOTS_LATER,
+  heldHome,
+  homeOffer,
+  homePlan,
+  homeRef,
+  homeStorage,
+  homeTaskRef,
+  homeUserOf,
+  olderHelperWhy,
+  parseHomeListing,
+  parseHomeTask,
+  pauseGuess,
+  type HomeListing,
+  type HomeTask,
+} from "./home-snapshots.ts";
 import type { DeviceOffer } from "../../core/device.ts";
 import { sizesCheck } from "../fit.ts";
 import { PROBE_SECONDS, encoderProbeScript, parseEncoderProbe } from "../encoder-probe.ts";
@@ -99,6 +130,9 @@ const READY_TIMEOUT_MS = 60_000;
 const STATUS_TIMEOUT_MS = 20_000;
 const CLAIM_TIMEOUT_MS = 60_000;
 const SNAPSHOT_PROBE_TIMEOUT_MS = 60_000;
+const HOME_TAKE_TIMEOUT_MS = 10 * 60_000;
+const HOME_STOP_TIMEOUT_MS = 3 * 60_000;
+const HOME_RESTORE_TIMEOUT_MS = 15 * 60_000;
 /** The helper waits this long for its lock, and a whole-machine reset may take as long. */
 const RESET_TIMEOUT_MS = 15 * 60_000;
 const RESET_POLL_MS = 2_000;
@@ -509,6 +543,199 @@ export class SshPoolBackend implements Backend {
     const machine = this.#machines.get(poolSlotOf(guest)?.mac ?? guest.ref);
     if (!machine) return null;
     return noSnapshotsWhy(machine, this.#snapshotReports.get(machine.name) ?? null, listsSlots(machine));
+  }
+
+  #homeMacs(kind: string): SshPoolMachine[] {
+    return this.#config.machines.filter((machine) => machine.os === "macos" && this.#lists(machine, kind));
+  }
+
+  #offersHome(machine: SshPoolMachine): boolean {
+    const report = this.#snapshotReports.get(machine.name);
+    return machine.os === "macos" && report !== undefined && offersOf(report, machine, listsSlots(machine)).home.is === "yes";
+  }
+
+  snapshotting(kind: string): Snapshotting | null {
+    if (!HOME_SNAPSHOT_KINDS.has(kind)) return null;
+    return this.#homeMacs(kind).some((machine) => this.#offersHome(machine)) ? homeOffer() : null;
+  }
+
+  #homeRefusal(guest: Guest, status: MachineStatus | null): string | null {
+    if (poolSlotOf(guest)) return SLOT_SNAPSHOTS_LATER;
+    const machine = this.#machines.get(guest.ref);
+    if (!machine) return `its machine, ${guest.ref}, is no longer in the SSH host pool's settings`;
+    if (!this.#offersHome(machine)) return this.noSnapshotsWhy(guest);
+    if (status && (status.helper ?? 0) < HOME_SNAPSHOTS_HELPER_VERSION) return olderHelperWhy(machine.name, status.helper);
+    return null;
+  }
+
+  #lentGuest(guest: Guest): { machine: SshPoolMachine; box: string; generation: number; user: string } {
+    if (poolSlotOf(guest)) throw new BackendError("unsupported", `${SLOT_SNAPSHOTS_LATER}.`);
+    const machine = this.#machines.get(guest.ref);
+    if (!machine) throw new BackendError("gone", missing(guest.ref));
+    const generation = whole(guest.data?.generation);
+    const box = typeof guest.data?.box === "string" ? guest.data.box : null;
+    const user = typeof guest.data?.user === "string" ? guest.data.user : null;
+    if (generation === null || !box || !user) throw new BackendError("gone", `Machine ${machine.name} does not say which box holds it.`);
+    return { machine, box, generation, user };
+  }
+
+  async #homeListing(machine: SshPoolMachine, signal?: AbortSignal): Promise<HomeListing> {
+    const result = await this.#helper(machine, ["snapshot", "list"], releaseInput(this.#context.installId, null), STATUS_TIMEOUT_MS, signal);
+    if (result.exitCode !== EXIT.ok) throw new Error(`Machine ${machine.name} did not list its home snapshots: ${said(result)}`);
+    return parseHomeListing(result.stdout);
+  }
+
+  async planSnapshots(guest: Guest, _kind: string, _target: SnapshotRef | null, signal?: AbortSignal): Promise<SnapshotPlan> {
+    const machine = this.#machines.get(poolSlotOf(guest)?.mac ?? guest.ref);
+    const homes = machine ? (this.#snapshotReports.get(machine.name)?.homes ?? "/Users") : "/Users";
+    const status = machine && !poolSlotOf(guest) ? (await this.#status(machine, signal)).status : null;
+    const refusal = this.#homeRefusal(guest, status);
+    const listing = machine && !refusal ? await this.#homeListing(machine, signal) : { snapshots: [], store: null };
+    const box = typeof guest.data?.box === "string" ? guest.data.box : "";
+    return homePlan(homeStorage(machine?.name ?? guest.ref, homes, listing.store), refusal, pauseGuess(listing, box));
+  }
+
+  async snapshot(guest: Guest, take: SnapshotTake, hooks: SnapshotHooks, signal?: AbortSignal): Promise<SnapshotTaken> {
+    const { machine, box, generation, user } = this.#lentGuest(guest);
+    const refusal = this.#homeRefusal(guest, null);
+    if (refusal) throw new SnapshotFailed(`${refusal.charAt(0).toUpperCase()}${refusal.slice(1)}.`);
+    await hooks.submitting();
+    await hooks.task({ ref: homeTaskRef({ kind: "take", id: take.id }), host: machine.name });
+    const result = await this.#helper(machine, ["snapshot", "take", String(generation), take.id], releaseInput(this.#context.installId, box), HOME_TAKE_TIMEOUT_MS, signal);
+    if (result.exitCode === EXIT.notOurs) throw new BackendError("gone", `Machine ${machine.name} is no longer this box's.`);
+    if (result.exitCode === EXIT.usage) throw new SnapshotFailed(`${olderHelperWhy(machine.name, null)}.`);
+    if (result.exitCode === EXIT.failed) throw new SnapshotFailed(`Machine ${machine.name} could not take the snapshot: ${said(result)}`);
+    if (result.exitCode !== EXIT.ok) throw new Error(`Machine ${machine.name} did not finish the snapshot: ${said(result)}`);
+    const answer = fields(result.stdout);
+    return {
+      ref: homeRef(machine.name, user, take.id),
+      holds: "disk",
+      capturedAt: Number(answer.get("captured")) || Date.now(),
+      size: null,
+      pausedMs: whole(Number(answer.get("paused_ms") ?? Number.NaN)),
+    };
+  }
+
+  async heldSnapshots(signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    const held: HeldSnapshot[] = [];
+    for (const machine of this.#config.machines.filter((each) => each.os === "macos")) {
+      let listing: HomeListing;
+      try {
+        listing = await this.#homeListing(machine, signal);
+      } catch (error) {
+        signal?.throwIfAborted();
+        this.#context.logError(`list the home snapshots on ${machine.name}`, error);
+        continue;
+      }
+      const homes = this.#snapshotReports.get(machine.name)?.homes ?? "/Users";
+      const guest = this.#guest(machine, null, 0, "", null);
+      held.push(...listing.snapshots.map((listed) => heldHome(guest, listed, homes)));
+    }
+    return held;
+  }
+
+  async snapshotsOn(guest: Guest, signal?: AbortSignal): Promise<readonly HeldSnapshot[]> {
+    const machine = this.#machines.get(guest.ref);
+    if (poolSlotOf(guest) || !machine || machine.os !== "macos") return [];
+    const listing = await this.#homeListing(machine, signal);
+    const homes = this.#snapshotReports.get(machine.name)?.homes ?? "/Users";
+    return listing.snapshots.filter((listed) => listed.box === guest.data?.box).map((listed) => heldHome(this.#guest(machine, null, 0, "", null), listed, homes));
+  }
+
+  async deleteSnapshot(ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    const machine = this.#machines.get(ref.guest.ref);
+    if (!machine) return;
+    const user = homeUserOf(ref.ref);
+    if (!user) throw new Error(`Snapshot ${ref.id} on ${machine.name} does not name the box user whose store holds it, so BB Box deletes nothing.`);
+    await hooks.submitting();
+    await hooks.task({ ref: homeTaskRef({ kind: "delete", user, id: ref.id }), host: machine.name });
+    await this.#deleteHome(machine, user, ref.id, signal);
+  }
+
+  async #deleteHome(machine: SshPoolMachine, user: string, id: string, signal?: AbortSignal): Promise<void> {
+    const result = await this.#helper(machine, ["snapshot", "delete", user, id], releaseInput(this.#context.installId, null), HOME_RESTORE_TIMEOUT_MS, signal);
+    if (result.exitCode !== EXIT.ok) throw new Error(`Machine ${machine.name} could not delete the snapshot: ${said(result)}`);
+  }
+
+  async powerOff(guest: Guest, signal?: AbortSignal): Promise<void> {
+    const { machine, box, generation, user } = this.#lentGuest(guest);
+    const result = await this.#helper(machine, ["snapshot", "stop", String(generation)], releaseInput(this.#context.installId, box), HOME_STOP_TIMEOUT_MS, signal);
+    await (await this.#keys()).ssh.forget(this.#access(machine, user));
+    if (result.exitCode === EXIT.notOurs) throw new BackendError("gone", `Machine ${machine.name} is no longer this box's.`);
+    if (result.exitCode !== EXIT.ok) throw new Error(`Machine ${machine.name} could not end box user ${user}'s session: ${said(result)}`);
+  }
+
+  async rollbackSnapshot(guest: Guest, ref: SnapshotRef, hooks: SnapshotHooks, signal?: AbortSignal): Promise<void> {
+    const { machine, box, generation } = this.#lentGuest(guest);
+    const task: HomeTask = { kind: "restore", box, generation, id: ref.id, operation: newOperationId((bytes) => randomBytes(bytes)) };
+    await hooks.submitting();
+    await hooks.task({ ref: homeTaskRef(task), host: machine.name });
+    const outcome = await this.#restoreHome(machine, task, signal);
+    if (outcome.state === "ok") return;
+    if (outcome.state === "failed" && outcome.unchanged) throw new SnapshotFailed(outcome.words);
+    throw new Error(outcome.state === "failed" || outcome.state === "missing" ? outcome.words : `Machine ${machine.name} did not finish the restore.`);
+  }
+
+  async #restoreHome(machine: SshPoolMachine, task: Extract<HomeTask, { kind: "restore" }>, signal?: AbortSignal): Promise<TaskOutcome> {
+    const result = await this.#helper(machine, ["snapshot", "restore", String(task.generation), task.id, task.operation], releaseInput(this.#context.installId, task.box), HOME_RESTORE_TIMEOUT_MS, signal);
+    if (result.exitCode === EXIT.ok) return { state: "ok" };
+    if (result.exitCode === EXIT.notOurs || result.exitCode === EXIT.dirty) return { state: "failed", words: said(result), unchanged: true };
+    if (result.exitCode === 255 || result.timedOut) return { state: "running" };
+    return { state: "failed", words: `Machine ${machine.name} could not restore the home: ${said(result)}` };
+  }
+
+  async providerTask(task: TaskRef, signal?: AbortSignal): Promise<TaskOutcome> {
+    const machine = task.host ? this.#machines.get(task.host) : undefined;
+    const home = parseHomeTask(task.ref);
+    if (!machine || !home) return { state: "missing", words: `${task.ref} is not a home snapshot task on a machine in the SSH host pool's settings.` };
+    if (home.kind === "restore") return this.#restoreHome(machine, home, signal);
+    if (home.kind === "delete") {
+      await this.#deleteHome(machine, home.user, home.id, signal);
+      return { state: "ok" };
+    }
+    const listed = (await this.#homeListing(machine, signal)).snapshots.find((each) => each.id === home.id);
+    if (listed?.state === "complete") return { state: "ok" };
+    if (listed?.state === "in-progress") return { state: "running" };
+    return { state: "failed", words: listed ? "The take did not finish, and left part of the home's clone." : "The take ended without a snapshot." };
+  }
+
+  async start(guest: Guest, signal?: AbortSignal, timing?: (step: string, ms: number) => void, answered?: () => Promise<void>): Promise<Started | void> {
+    const { machine, box, generation, user } = this.#lentGuest(guest);
+    const started = performance.now();
+    const console = await this.#signBackIn(machine, box, generation, user, signal);
+    timing?.("sign-in", performance.now() - started);
+    await (await this.#keys()).ssh.forget(this.#access(machine, user));
+    const status = (await this.#status(machine, signal)).status;
+    const kind = this.#offer(status?.owner?.kind ?? "macos");
+    const stops = signal ?? new AbortController().signal;
+    const ready = performance.now();
+    if (console === user) await this.#waitReady(machine, user, kind, stops);
+    else await this.#waitAnswers(machine, user, kind, stops);
+    timing?.("ssh", performance.now() - ready);
+    await answered?.();
+  }
+
+  async #waitAnswers(machine: SshPoolMachine, user: string, kind: BoxKind, signal: AbortSignal): Promise<void> {
+    const timeoutMs = this.#options.readyTimeoutMs ?? kind.readyTimeoutMs;
+    const command = await this.#command(machine, user);
+    const ready = await waitUntilAnswers({ probe: (each?: AbortSignal) => command.answers(each) }, { timeoutMs, intervalMs: 250, signal, sleep: this.#options.sleep });
+    if (!ready) throw new Error(`Box user ${user} on ${machine.name} did not answer over SSH within ${Math.round(timeoutMs / 1000)} s after its restore.`);
+  }
+
+  async #signBackIn(machine: SshPoolMachine, box: string, generation: number, user: string, signal?: AbortSignal): Promise<string | null> {
+    const sleep = this.#options.sleep ?? pause;
+    const limitMs = this.#options.resetTimeoutMs ?? RESET_TIMEOUT_MS;
+    const deadline = Date.now() + limitMs;
+    for (;;) {
+      const result = await this.#helper(machine, ["snapshot", "start", String(generation)], releaseInput(this.#context.installId, box), STATUS_TIMEOUT_MS, signal);
+      signal?.throwIfAborted();
+      if (result.exitCode === EXIT.ok) return fields(result.stdout).get("console") || null;
+      const restarting = result.exitCode === 255 || result.timedOut;
+      if (result.exitCode === EXIT.notOurs) throw new BackendError("gone", `Machine ${machine.name} is no longer this box's.`);
+      if (result.exitCode !== EXIT.restoring && !restarting) throw new Error(`Machine ${machine.name} could not sign box user ${user} in again: ${said(result)}`);
+      if (Date.now() >= deadline) throw new Error(`Machine ${machine.name} did not sign box user ${user} in again within ${Math.round(limitMs / 60_000)} minutes.`);
+      await sleep(this.#options.resetPollMs ?? RESET_POLL_MS, signal);
+    }
   }
 
   async #probeRun(mac: string, script: string, signal?: AbortSignal): Promise<string> {
@@ -998,7 +1225,8 @@ export class SshPoolBackend implements Backend {
       marker?.install === this.#context.installId &&
       marker.box === box &&
       marker.generation === whole(guest.data?.generation);
-    return ours ? "running" : null;
+    if (!ours) return null;
+    return probe.status.sessionStopped ? "stopped" : "running";
   }
 
   /** The Mac that holds the box, and the box: a grant is the holder's alone (058). */

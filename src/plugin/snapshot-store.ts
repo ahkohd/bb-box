@@ -48,6 +48,67 @@ const operationsTable = (name: string) => `CREATE TABLE ${SCHEMA}.${name} (
     step_at INTEGER
   )`;
 
+const SNAPSHOT_SCOPES = ["box", "device", "home", "machine"] as const;
+
+const SNAPSHOT_COLUMNS = [
+  "id", "box", "box_name", "box_kind", "box_system", "box_thread", "box_gone_at", "box_gone_how", "backend", "backend_label", "host", "storage", "storage_type",
+  "guest", "lives_on", "name", "note", "taken_at", "captured_at", "took_ms", "who", "agent", "why", "scope", "holds", "excludes", "size_bytes", "size_means",
+  "price", "owner", "kept_until", "kept_at", "undo_of", "fork_safe", "depends_on", "picture", "ref", "state", "error", "state_at", "missing_since", "found_at",
+  "identity", "unflushed", "fork_safe_why", "gpu", "paused_ms", "size_estimated",
+].join(", ");
+
+const snapshotsTableWithEveryScope = (name: string) => `CREATE TABLE ${SCHEMA}.${name} (
+    id TEXT PRIMARY KEY,
+    box TEXT NOT NULL,
+    box_name TEXT NOT NULL,
+    box_kind TEXT NOT NULL,
+    box_system TEXT NOT NULL,
+    box_thread TEXT NOT NULL,
+    box_gone_at INTEGER,
+    box_gone_how TEXT CHECK(box_gone_how IS NULL OR box_gone_how IN (${listed(BOX_GONE_HOW)})),
+    backend TEXT NOT NULL,
+    backend_label TEXT NOT NULL,
+    host TEXT,
+    storage TEXT,
+    storage_type TEXT,
+    guest TEXT NOT NULL CHECK(guest IN ('current', 'earlier', 'held-copy')),
+    lives_on TEXT NOT NULL,
+    name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 60),
+    note TEXT CHECK(note IS NULL OR length(CAST(note AS BLOB)) <= 1024),
+    taken_at INTEGER NOT NULL,
+    captured_at INTEGER,
+    took_ms INTEGER,
+    who TEXT NOT NULL CHECK(who IN (${listed(ACTORS)})),
+    agent TEXT,
+    why TEXT,
+    scope TEXT NOT NULL CHECK(scope IN (${listed(SNAPSHOT_SCOPES)})),
+    holds TEXT NOT NULL CHECK(holds IN ('disk', 'disk-and-memory')),
+    excludes TEXT,
+    size_bytes INTEGER,
+    size_means TEXT CHECK(size_means IS NULL OR size_means IN ('own', 'whole')),
+    price TEXT,
+    owner TEXT NOT NULL CHECK(owner IN ('thread', 'person')),
+    kept_until INTEGER,
+    kept_at INTEGER,
+    undo_of TEXT,
+    fork_safe INTEGER,
+    depends_on TEXT NOT NULL DEFAULT '[]',
+    picture TEXT CHECK(picture IS NULL OR picture IN (${listed(PICTURE_STATES)})),
+    ref TEXT,
+    state TEXT NOT NULL CHECK(state IN (${listed(SNAPSHOT_STATES)})),
+    error TEXT,
+    state_at INTEGER NOT NULL,
+    missing_since INTEGER,
+    found_at INTEGER,
+    identity TEXT,
+    unflushed TEXT CHECK(unflushed IS NULL OR length(CAST(unflushed AS BLOB)) <= 1024),
+    fork_safe_why TEXT CHECK(fork_safe_why IS NULL OR fork_safe_why IN ('reset-off', 'unread')),
+    gpu TEXT,
+    paused_ms INTEGER CHECK(paused_ms IS NULL OR paused_ms >= 0),
+    size_estimated INTEGER CHECK(size_estimated IS NULL OR size_estimated = 1),
+    UNIQUE(box, name)
+  )`;
+
 export const SNAPSHOT_MIGRATIONS: readonly string[] = [
   `CREATE TABLE ${SCHEMA}.snapshots (
     id TEXT PRIMARY KEY,
@@ -151,6 +212,13 @@ export const SNAPSHOT_MIGRATIONS: readonly string[] = [
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN gpu TEXT`,
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN paused_ms INTEGER CHECK(paused_ms IS NULL OR paused_ms >= 0)`,
   `ALTER TABLE ${SCHEMA}.snapshots ADD COLUMN size_estimated INTEGER CHECK(size_estimated IS NULL OR size_estimated = 1)`,
+  [
+    snapshotsTableWithEveryScope("snapshots_every_scope"),
+    `INSERT INTO ${SCHEMA}.snapshots_every_scope (${SNAPSHOT_COLUMNS}) SELECT ${SNAPSHOT_COLUMNS} FROM ${SCHEMA}.snapshots`,
+    `DROP TABLE ${SCHEMA}.snapshots`,
+    `ALTER TABLE ${SCHEMA}.snapshots_every_scope RENAME TO snapshots`,
+    `CREATE INDEX ${SCHEMA}.snapshots_by_backend ON snapshots(backend, state)`,
+  ].join(";\n"),
 ];
 
 export const PICTURES_HELD_BYTES = 48 * 1024 * 1024;
