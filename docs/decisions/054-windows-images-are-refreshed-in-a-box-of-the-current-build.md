@@ -3,7 +3,10 @@
 Status: accepted, 7 October 2026. Extends
 [049](049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md)
 to Windows (#450). Keeps [039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md):
-the image is not generalized.
+the image is not generalized. Extended by
+[110](110-windows-boot-address-runs-at-normal-priority-without-wmi-or-dad.md):
+template capture clears the image box's static IPv4 address and refreshes
+update the startup address task.
 
 ## Context
 

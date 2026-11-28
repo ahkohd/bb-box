@@ -22,6 +22,7 @@ import { backendPart, checkDocument, type BackendConfig, type ConfigDocument, ty
 import { defaultSize, kindSizes } from "../src/core/sizes.ts";
 import { driverFields } from "../src/plugin/configuration.ts";
 import { generateKeyPair } from "../src/transports/ssh.ts";
+import { TransportError } from "../src/transports/types.ts";
 import { FAKE_TOKEN, FakeProxmox, TOKEN_ROLE } from "./fake-proxmox.ts";
 import { EXPIRED_ON, FAKE_SSH_BINARY, KEY, MemoryStorage, NOT_SET_NEVER_TO_EXPIRE, fakeSsh, lxcConfig, tempDir, testContext, windowsWithExpiringPassword } from "./helpers.ts";
 
@@ -2168,7 +2169,7 @@ test("start gate treats ballooned Linux VMs as non-heavy, Windows as heavy, and 
   assert.equal(verdict.ok, false, "needs full 8 GiB plus 4 GiB margin, not 4 GiB balloon floor");
 });
 
-test("Windows capture clears the static IPv4 address and boot log before templating, uses the detached shutdown once stopped, and aborts when clearing fails", async () => {
+test("Windows capture clears the static IPv4 address and boot log before templating, tolerates a lost SSH connection after launch, falls back to api.shutdown, and aborts when clearing fails", async () => {
   const record = { contract: 1, image: "standard", kind: KIND, arch: "x86_64", build: "build.20261128-040000-1234", built: "2026-11-28T04:00:00Z", os: "Windows 11 Pro", pins: "p".repeat(64), tools: { node: "24.21.0" } };
   const detached = imageSetup(record);
   const detachedHost = "192.0.2.150";
@@ -2189,6 +2190,7 @@ test("Windows capture clears the static IPv4 address and boot log before templat
 
   const ranScript = readFileSync(resetFile, "utf8");
   assert.match(ranScript, /Clear-Content C:\\bb-box\\boot\.log/);
+  assert.match(ranScript, /Start-Sleep -Seconds 5/);
   assert.match(ranScript, /Remove-NetRoute -InterfaceIndex \$\(\$adapter\.ifIndex\) -DestinationPrefix 0\.0\.0\.0\/0/);
   assert.match(ranScript, /Remove-NetIPAddress/);
   assert.match(ranScript, /Set-NetIPInterface -InterfaceIndex \$\(\$adapter\.ifIndex\) -AddressFamily IPv4 -Dhcp Enabled/);
@@ -2196,6 +2198,49 @@ test("Windows capture clears the static IPv4 address and boot log before templat
   assert.match(ranScript, /shutdown\.exe \/s \/t 0 \/f/);
   assert.equal(detached.proxmox.calls.filter((call) => call.path === "/nodes/pve/qemu/9700/status/shutdown").length, 0);
   assert.equal(detached.proxmox.guests.get(9700)!.template, true);
+
+  for (const disconnectMode of ["unreachable", "timedOut"] as const) {
+    const dropped = imageSetup(record);
+    const droppedStandard = (await dropped.backend.images.list()).builds.find((build) => build.ref === "9104")!;
+    const droppedBox = await dropped.backend.images.box(droppedStandard, "refresh of 9104", signal());
+    let resetAttempted = false;
+    const lostBox = {
+      ...droppedBox,
+      command: {
+        ...droppedBox.command,
+        run: async (script: string, options?: Parameters<typeof droppedBox.command.run>[1]) => {
+          if (script.includes("Start-Detached")) {
+            resetAttempted = true;
+            if (disconnectMode === "unreachable") {
+              throw new TransportError("unreachable", "The box at 192.0.2.150 did not answer on SSH.");
+            }
+            return { exitCode: null, stdout: "", stderr: "", timedOut: true, truncated: false, durationMs: 30_000 };
+          }
+          return droppedBox.command.run(script, options);
+        },
+      },
+    };
+    dropped.proxmox.intercept = (call) => {
+      if (call.method === "GET" && call.path === "/nodes/pve/qemu/9700/status/current" && resetAttempted) {
+        dropped.proxmox.guests.get(9700)!.status = "stopped";
+      }
+      return undefined;
+    };
+    await dropped.backend.images.capture(lostBox, droppedStandard, "standard", signal());
+    assert.equal(resetAttempted, true, disconnectMode);
+    assert.equal(dropped.proxmox.calls.filter((call) => call.path === "/nodes/pve/qemu/9700/status/shutdown").length, 0, disconnectMode);
+    assert.equal(dropped.proxmox.guests.get(9700)!.template, true, disconnectMode);
+  }
+
+  const fallback = imageSetup(record);
+  const fallbackStandard = (await fallback.backend.images.list()).builds.find((build) => build.ref === "9104")!;
+  const fallbackBox = await fallback.backend.images.box(fallbackStandard, "refresh of 9104", signal());
+  await fallback.backend.images.capture(fallbackBox, fallbackStandard, "standard", signal());
+  const fallbackShutdowns = fallback.proxmox.calls.filter((call) => call.method === "POST" && call.path === "/nodes/pve/qemu/9700/status/shutdown");
+  assert.equal(fallbackShutdowns.length, 1);
+  assert.equal(fallbackShutdowns[0]!.params.timeout, "240");
+  assert.equal(fallback.proxmox.guests.get(9700)!.status, "stopped");
+  assert.equal(fallback.proxmox.guests.get(9700)!.template, true);
 
   const failing = imageSetup(record);
   failing.ssh.powershell(

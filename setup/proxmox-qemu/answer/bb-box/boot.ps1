@@ -5,8 +5,10 @@ function Log($text) {
   Add-Content $log ('{0} +{1:0.0}s {2}' -f (Get-Date -Format o), $uptimeSeconds, $text)
 }
 
-function Get-SmbiosSerial {
-  $raw = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\mssmbios\Data' -ErrorAction SilentlyContinue).SMBiosData
+function Get-SmbiosSerial([byte[]]$raw) {
+  if ($null -eq $raw) {
+    $raw = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\mssmbios\Data' -ErrorAction SilentlyContinue).SMBiosData
+  }
   if (-not $raw -or $raw.Length -lt 12) { return $null }
   $i = 8
   while ($i + 4 -le $raw.Length) {
@@ -58,11 +60,13 @@ if (-not $Address) {
 if (-not $Dns) {
   $Dns = if (Test-Path C:\bb-box\dns.txt) { @((Get-Content C:\bb-box\dns.txt -Raw).Trim() -split '\s+' | Where-Object { $_ }) } else { @('1.1.1.1', '9.9.9.9') }
 }
+$Dns = @($Dns | Where-Object { $_ } | Select-Object -Unique)
 $ip, $prefix = $Address -split '/'
 Log "started: $ip/$prefix via $Gateway"
 
 $adapter = $null
-for ($i = 0; $i -lt 3600 -and -not $adapter; $i++) {
+$adapterDeadline = [Diagnostics.Stopwatch]::StartNew()
+while (-not $adapter -and $adapterDeadline.Elapsed.TotalSeconds -lt 180) {
   $adapter = Find-BoxAdapter
   if (-not $adapter) { Start-Sleep -Milliseconds 50 }
 }

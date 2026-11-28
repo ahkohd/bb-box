@@ -140,7 +140,7 @@ import { displayReason, vmNameScript } from "../proxmox-lxc/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
-import { MIN_DESKTOP, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
+import { MIN_DESKTOP, TransportError, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
 import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUpOrRepairExpiredPassword, extendC, PASSWORD_REPAIR_BY_HAND, repairExpiredPasswordAfterBoot, withDesktop, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
 import type { OpenStream } from "../../core/selkies.ts";
 import { openRoute } from "../../transports/route.ts";
@@ -180,7 +180,7 @@ const WINDOWS_CAPTURE_RESET = [
   `Clear-Content ${BOOT_LOG} -ErrorAction SilentlyContinue`,
   "$reset = @(",
   "  \"`$ErrorActionPreference = 'Continue'\"",
-  "  'Start-Sleep -Milliseconds 500'",
+  "  'Start-Sleep -Seconds 5'",
   "  \"Remove-NetRoute -InterfaceIndex $($adapter.ifIndex) -DestinationPrefix 0.0.0.0/0 -Confirm:`$false -ErrorAction SilentlyContinue\"",
   "  \"Get-NetIPAddress -InterfaceIndex $($adapter.ifIndex) -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:`$false -ErrorAction SilentlyContinue\"",
   "  \"Set-NetIPInterface -InterfaceIndex $($adapter.ifIndex) -AddressFamily IPv4 -Dhcp Enabled -ErrorAction SilentlyContinue\"",
@@ -2805,9 +2805,17 @@ export class ProxmoxQemuBackend implements Backend {
     const source = await api.config(Number(from.ref), signal);
     const build = record.build.startsWith(BUILD) ? record.build : `${BUILD}${record.build}`;
     if (!linux) {
-      const reset = await box.command.run(WINDOWS_CAPTURE_RESET, { timeoutMs: 30_000, signal });
-      if (reset.exitCode !== 0) {
-        throw new Error(`Image box ${vmid} could not clear its static address before capture: ${reset.stderr.trim() || reset.stdout.trim() || `exit code ${reset.exitCode}`}.`);
+      let resetFailed: string | null = null;
+      try {
+        const reset = await box.command.run(WINDOWS_CAPTURE_RESET, { timeoutMs: 30_000, signal });
+        if (reset.exitCode !== 0 && !reset.timedOut) {
+          resetFailed = reset.stderr.trim() || reset.stdout.trim() || `exit code ${reset.exitCode}`;
+        }
+      } catch (error) {
+        if (!(error instanceof TransportError && error.code === "unreachable")) throw error;
+      }
+      if (resetFailed !== null) {
+        throw new Error(`Image box ${vmid} could not clear its static address before capture: ${resetFailed}.`);
       }
       await this.#forget(vmid);
       if (!(await this.#waitStopped(api, vmid, signal))) await api.shutdown(vmid, 240, signal);

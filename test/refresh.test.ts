@@ -1,6 +1,6 @@
 import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -856,4 +856,67 @@ test("Tart's prepare-windows-image.sh strips Proxmox SMBIOS address steps from f
   const checkClock = readFileSync(join(SETUP, "tart", "windows", "check-clock.ps1"), "utf8").trim();
   assert.ok(strippedCheck.includes(checkClock));
   assert.doesNotMatch(strippedCheck, /address from the SMBIOS serial|boot\.log|dns\.txt|Get-NetIPInterface/);
+});
+
+test("boot.ps1 Get-SmbiosSerial parses SMBIOS tables under pwsh", (t) => {
+  const probe = spawnSync("pwsh", ["--version"], { encoding: "utf8" });
+  if (probe.error || probe.status !== 0) {
+    t.skip("pwsh is not installed");
+    return;
+  }
+
+  const smbiosHeader = [0, 3, 0, 0, 0, 0, 0, 0];
+  const ascii = (value: string) => [...Buffer.from(value, "ascii")];
+  const type0NoStrings = [0, 4, 0, 0, 0, 0];
+  const type1 = (serialIndex: number, strings: string[]) => [
+    1,
+    8,
+    1,
+    0,
+    1,
+    0,
+    0,
+    serialIndex,
+    ...(strings.length ? [...strings.flatMap((entry) => [...ascii(entry), 0]), 0] : [0, 0]),
+  ];
+
+  const cases = {
+    type1First: [...smbiosHeader, ...type1(2, ["QEMU", "192.0.2.150/24 192.0.2.1"])],
+    afterEmptyStructure: [...smbiosHeader, ...type0NoStrings, ...type1(1, ["192.0.2.151/24 192.0.2.1"])],
+    serialIndexZero: [...smbiosHeader, ...type1(0, ["QEMU"])],
+    truncatedStrings: [...smbiosHeader, 1, 8, 1, 0, 1, 0, 0, 1, ...ascii("192.0.2.152/24")],
+    truncatedHeader: [...smbiosHeader, 1, 20, 1, 0],
+  };
+
+  const bootScriptPath = join(SETUP, "proxmox-qemu", "answer", "bb-box", "boot.ps1");
+  const harness = [
+    "$ErrorActionPreference = 'Stop'",
+    "$tokens = $null; $errors = $null",
+    "$ast = [Management.Automation.Language.Parser]::ParseFile($env:BOOT_SCRIPT_PATH, [ref]$tokens, [ref]$errors)",
+    "if ($errors.Count) { throw ($errors -join '; ') }",
+    "$fn = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-SmbiosSerial' }, $true)",
+    "if (-not $fn) { throw 'Get-SmbiosSerial not found' }",
+    ". ([scriptblock]::Create($fn.Extent.Text))",
+    "$inputCases = $env:SMBIOS_CASES | ConvertFrom-Json",
+    "$out = [ordered]@{}",
+    "foreach ($prop in $inputCases.PSObject.Properties) {",
+    "  $bytes = [byte[]]@($prop.Value | ForEach-Object { [byte]$_ })",
+    "  $out[$prop.Name] = Get-SmbiosSerial $bytes",
+    "}",
+    "$out | ConvertTo-Json -Compress",
+  ].join("\n");
+
+  const output = execFileSync("pwsh", ["-NoProfile", "-Command", harness], {
+    env: { ...process.env, BOOT_SCRIPT_PATH: bootScriptPath, SMBIOS_CASES: JSON.stringify(cases) },
+    encoding: "utf8",
+  });
+  const parsed = JSON.parse(output.trim()) as Record<string, string | null>;
+
+  assert.deepEqual(parsed, {
+    type1First: "192.0.2.150/24 192.0.2.1",
+    afterEmptyStructure: "192.0.2.151/24 192.0.2.1",
+    serialIndexZero: null,
+    truncatedStrings: null,
+    truncatedHeader: null,
+  });
 });

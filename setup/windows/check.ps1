@@ -115,7 +115,7 @@ Check 'address from the SMBIOS serial' {
   if ($addr.AddressState -ne 'Preferred') { throw "$ip is $($addr.AddressState), not Preferred" }
   $iface = Get-NetIPInterface -InterfaceIndex $addr.InterfaceIndex -AddressFamily IPv4 -ErrorAction Stop
   if ($iface.Dhcp -ne 'Disabled') { throw "DHCP is $($iface.Dhcp) on adapter $($addr.InterfaceIndex)" }
-  $expectedDns = if (Test-Path C:\bb-box\dns.txt) { @((Get-Content C:\bb-box\dns.txt -Raw).Trim() -split '\s+' | Where-Object { $_ }) } else { @('1.1.1.1', '9.9.9.9') }
+  $expectedDns = if (Test-Path C:\bb-box\dns.txt) { @((Get-Content C:\bb-box\dns.txt -Raw).Trim() -split '\s+' | Where-Object { $_ } | Select-Object -Unique) } else { @('1.1.1.1', '9.9.9.9') }
   $actualDns = @((Get-DnsClientServerAddress -InterfaceIndex $addr.InterfaceIndex -AddressFamily IPv4 -ErrorAction Stop).ServerAddresses)
   if (($actualDns -join ',') -ne ($expectedDns -join ',')) { throw "DNS is $($actualDns -join ' '), expected $($expectedDns -join ' ')" }
   "$($line -replace '^\S+ ', ''); DHCP off, Preferred"
