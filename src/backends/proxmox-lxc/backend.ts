@@ -5613,7 +5613,6 @@ export class ProxmoxLxcBackend implements Backend {
         installFromTags(guest.tags) !== this.#context.installId ||
         isWarm ||
         isSpare ||
-        this.#filling.has(guest.vmid) ||
         this.#reserved.has(guest.vmid) ||
         this.#imageBoxes.has(guest.vmid) ||
         acquiringVmids.has(guest.vmid) ||

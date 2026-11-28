@@ -704,7 +704,8 @@ fields against the host; Save and turn on saves them. From a terminal,
   using direct SSH and `timeout(1)` inside the box. It writes
   `/sys/fs/cgroup/memory.reclaim` with `swappiness=0` for at most
   `min(inactive_file, file - shmem - 128 MiB)` in 256 MiB steps, stopping early
-  if `active_file` falls, swap grows, memory pressure or file refaults rise, or
+  if `active_file` falls by more than 32 MiB or 10% from the start of the run,
+  swap grows, memory pressure or file refaults rise, or
   `EAGAIN` occurs. Older kernels without `swappiness=0` (such as Proxmox VE 8)
   are always skipped rather than risked. Unanswered containers get the same
   cooldown and are skipped quietly, freed bytes are logged, sweeps that checked

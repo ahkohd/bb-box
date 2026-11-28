@@ -24,6 +24,8 @@ export const IDLE_CACHE_FULL_PRESSURE_AVG_LIMIT = 0.5;
 export const IDLE_CACHE_PRESSURE_TOTAL_DELTA_US = 50_000;
 export const IDLE_CACHE_FULL_PRESSURE_TOTAL_DELTA_US = 10_000;
 export const IDLE_CACHE_REFAULT_STOP_DELTA = 1024;
+export const IDLE_CACHE_ACTIVE_DROP_MIN_BYTES = 32 * MIB;
+export const IDLE_CACHE_ACTIVE_DROP_PERCENT = 10;
 export const IDLE_CACHE_SWEEPS_KEPT = 10;
 export const IDLE_CACHE_SWEEPS_KEY = "idle-cache-sweeps";
 
@@ -107,6 +109,8 @@ export interface ReclaimScriptOptions {
   readonly pressureTotalDeltaUs?: number;
   readonly fullPressureTotalDeltaUs?: number;
   readonly refaultStopDelta?: number;
+  readonly activeDropMinBytes?: number;
+  readonly activeDropPercent?: number;
   readonly prevCpuUsageUsec: number;
   readonly maxCpuDeltaUsec: number;
   readonly timeoutSeconds?: number;
@@ -171,12 +175,14 @@ export function reclaimIdleCacheScript(options: ReclaimScriptOptions): string {
   const pressureDeltaUs = Math.max(1, Math.trunc(options.pressureTotalDeltaUs ?? IDLE_CACHE_PRESSURE_TOTAL_DELTA_US));
   const fullPressureDeltaUs = Math.max(1, Math.trunc(options.fullPressureTotalDeltaUs ?? IDLE_CACHE_FULL_PRESSURE_TOTAL_DELTA_US));
   const refaultDelta = Math.max(1, Math.trunc(options.refaultStopDelta ?? IDLE_CACHE_REFAULT_STOP_DELTA));
+  const activeDropMin = Math.max(0, Math.trunc(options.activeDropMinBytes ?? IDLE_CACHE_ACTIVE_DROP_MIN_BYTES));
+  const activeDropPct = Math.max(0, Math.trunc(options.activeDropPercent ?? IDLE_CACHE_ACTIVE_DROP_PERCENT));
   const prevCpuUsec = Math.trunc(options.prevCpuUsageUsec);
   const maxCpuDeltaUsec = Math.trunc(options.maxCpuDeltaUsec);
   const innerTimeout = Math.max(1, Math.trunc(options.timeoutSeconds ?? Math.floor(IDLE_CACHE_SSH_TIMEOUT_MS / 1000) - 2));
 
   return String.raw`sudo -n true 2>/dev/null || { echo "status=sudo_failed"; exit 0; }
-sudo -n timeout ${innerTimeout} sh -s -- ${floor} ${minReclaim} ${step} ${maxSteps} ${minProgress} ${pressureAvg} ${fullPressureAvg} ${pressureDeltaUs} ${fullPressureDeltaUs} ${refaultDelta} ${prevCpuUsec} ${maxCpuDeltaUsec} <<'RECLAIM'
+sudo -n timeout ${innerTimeout} sh -s -- ${floor} ${minReclaim} ${step} ${maxSteps} ${minProgress} ${pressureAvg} ${fullPressureAvg} ${pressureDeltaUs} ${fullPressureDeltaUs} ${refaultDelta} ${prevCpuUsec} ${maxCpuDeltaUsec} ${activeDropMin} ${activeDropPct} <<'RECLAIM'
 set -u
 floor=$1
 min_reclaim=$2
@@ -191,6 +197,8 @@ shift 9
 refault_delta=$1
 prev_cpu_usec=$2
 max_cpu_delta=$3
+active_drop_min=$4
+active_drop_pct=$5
 
 cg=/sys/fs/cgroup
 if [ ! -f "$cg/memory.reclaim" ] || [ ! -w "$cg/memory.reclaim" ] || [ ! -r "$cg/memory.stat" ] || [ ! -r "$cg/cpu.stat" ]; then
@@ -326,10 +334,15 @@ steps=0
 stop="floor"
 file_prev=$file_b
 shmem_prev=$shmem_b
-active_prev=$active_b
 refaults_prev=$refaults_b
 st_prev=$st_b
 ft_prev=$ft_b
+active_pct_limit=$(( active_b * active_drop_pct / 100 ))
+if [ "$active_pct_limit" -gt "$active_drop_min" ]; then
+  active_drop_limit=$active_pct_limit
+else
+  active_drop_limit=$active_drop_min
+fi
 
 while [ "$steps" -lt "$max_steps" ]; do
   remaining=$(reclaimable_budget "$file_c" "$shmem_c" "$inactive_c")
@@ -363,7 +376,7 @@ EOF
     stop="pressure"
     break
   fi
-  if [ "$active_c" -lt "$active_prev" ]; then
+  if [ $(( active_b - active_c )) -gt "$active_drop_limit" ]; then
     stop="active_file"
     break
   fi
@@ -383,7 +396,6 @@ EOF
   fi
   file_prev=$file_c
   shmem_prev=$shmem_c
-  active_prev=$active_c
   refaults_prev=$refaults_c
   st_prev=$st_c
   ft_prev=$ft_c

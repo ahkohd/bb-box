@@ -944,7 +944,8 @@ the API client, ownership tags, TLS pin and settings. Set up by
   `timeout(1)`. Inside the container it checks `sudo -n`, `memory.pressure` and
   `0 swappiness=0` on `/sys/fs/cgroup/memory.reclaim` (skipping kernels without
   `swappiness=`), then reclaims at most `min(inactive_file, file - shmem - 128 MiB)`
-  in 256 MiB steps, stopping early if `active_file` falls, swap grows, pressure
+  in 256 MiB steps, stopping early if `active_file` falls by more than 32 MiB or
+  10% from the start of the run, swap grows, pressure
   or refaults rise, or `EAGAIN` occurs. Unanswered containers get the same
   cooldown and are skipped quietly, freed bytes are logged, sweeps that checked
   at least one box are kept, and `bb box doctor` reports them under

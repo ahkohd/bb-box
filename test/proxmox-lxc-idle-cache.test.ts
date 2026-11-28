@@ -455,7 +455,7 @@ test("cpu.stat usage_usec catches work across the idle window even when Proxmox 
   assert.equal(cgroup.readInactiveBytes(), IDLE_CACHE_FLOOR_BYTES, "reclaims once a full idle window passes");
 });
 
-test("floor excludes shmem, budget uses inactive_file only, and stepping stops as soon as active_file falls", async () => {
+test("floor excludes shmem, budget uses inactive_file only, and active_file tolerates small drift while stopping on large drops", async () => {
   let clock = 1_800_000_000_000;
   const { ssh, proxmox, make } = setup();
   const backend = make(undefined, { ...fakes(proxmox), now: () => clock });
@@ -464,9 +464,10 @@ test("floor excludes shmem, budget uses inactive_file only, and stepping stops a
   const largeShmem = await backend.acquire(identity("linux"), null, emptyHooks(), signal);
   const shmemAtFloor = await backend.acquire(identity("linux"), null, emptyHooks(), signal);
   const mostlyActive = await backend.acquire(identity("linux"), null, emptyHooks(), signal);
+  const activeDrifts = await backend.acquire(identity("linux"), null, emptyHooks(), signal);
   const activeDrops = await backend.acquire(identity("linux"), null, emptyHooks(), signal);
 
-  for (const guest of [largeShmem, shmemAtFloor, mostlyActive, activeDrops]) {
+  for (const guest of [largeShmem, shmemAtFloor, mostlyActive, activeDrifts, activeDrops]) {
     const entry = proxmox.guests.get(Number(guest.ref))!;
     entry.cpu = 0.0;
     entry.uptime = 3600;
@@ -488,11 +489,17 @@ test("floor excludes shmem, budget uses inactive_file only, and stepping stops a
     inactiveFileBytes: 40 * MIB,
     activeFileBytes: 600 * MIB,
   });
+  const cgActiveDrifts = writeFakeCgroup(ssh.dir, activeDrifts.address!, {
+    shmemBytes: 0,
+    inactiveFileBytes: 768 * MIB,
+    activeFileBytes: 64 * MIB,
+    activeDropAfterStep: { step: 1, dropBytes: 4 * MIB },
+  });
   const cgActiveDrops = writeFakeCgroup(ssh.dir, activeDrops.address!, {
     shmemBytes: 0,
-    inactiveFileBytes: 512 * MIB,
-    activeFileBytes: 300 * MIB,
-    activeDropAfterStep: { step: 1, dropBytes: 16 * MIB },
+    inactiveFileBytes: 768 * MIB,
+    activeFileBytes: 500 * MIB,
+    activeDropAfterStep: { step: 1, dropBytes: 36 * MIB },
   });
 
   await backend.maintain(signal);
@@ -511,9 +518,13 @@ test("floor excludes shmem, budget uses inactive_file only, and stepping stops a
   assert.deepEqual(cgShmemFloor.readWrites(), [], "large shmem does not make 128 MiB real file cache reclaimable");
   assert.deepEqual(cgMostlyActive.readWrites(), [], "active_file is not reclaimed when inactive_file is below 64 MiB");
 
-  assert.equal(cgActiveDrops.readWrites().length, 2, "probe plus 1 step, then stops as soon as active_file falls");
-  assert.equal(cgActiveDrops.readActiveBytes(), 284 * MIB);
-  assert.equal(cgActiveDrops.readInactiveBytes(), 272 * MIB);
+  assert.equal(cgActiveDrifts.readWrites().length, 4, "continues through small multi-generation LRU drift down to the floor");
+  assert.equal(cgActiveDrifts.readFileBytes(), IDLE_CACHE_FLOOR_BYTES);
+  assert.equal(cgActiveDrifts.readActiveBytes(), 52 * MIB);
+
+  assert.equal(cgActiveDrops.readWrites().length, 3, "allows 36 MiB (<10% of 500 MiB) on step 1 and stops at 72 MiB (>10%) on step 2");
+  assert.equal(cgActiveDrops.readActiveBytes(), 428 * MIB);
+  assert.equal(cgActiveDrops.readInactiveBytes(), 328 * MIB);
 });
 
 test("runs reclaim after warm top-up, caps at 3 boxes and 20s, and unanswered boxes fail fast with cooldown", async () => {
@@ -634,17 +645,32 @@ test("runs reclaim after warm top-up, caps at 3 boxes and 20s, and unanswered bo
   assert.equal(sampledBudget.size, 1, "20s sweep time cap stops after first box exceeds budget");
 });
 
-test("skips warm boxes, spares, other installs, out-of-range, templates and transient states, and resets tracker on relabel", async () => {
+function readSshCommands(sshDir: string): { readonly target: string; readonly command: string }[] {
+  const logPath = join(sshDir, "log");
+  if (!existsSync(logPath)) return [];
+  return readFileSync(logPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { target: string; command: string; control?: string })
+    .filter((entry) => !entry.control)
+    .map(({ target, command }) => ({ target, command }));
+}
+
+test("sends no SSH commands to warm boxes, spares, other installs, out-of-range, stopped, or filling, image-box and retired tags", async () => {
   let clock = 1_800_000_000_000;
-  const { ssh, proxmox, make } = setup({ "proxmox-lxc-linux-warm": 1 });
+  const { ssh, proxmox, storage, errors, make } = setup({ "proxmox-lxc-linux-warm": 1 });
   const backend = make(undefined, { ...fakes(proxmox), now: () => clock });
   const signal = new AbortController().signal;
 
-  const ownBox = await backend.acquire(identity("linux"), null, emptyHooks(), signal);
   const spareBox = await backend.acquire(identity("linux", SPARES), null, emptyHooks(), signal);
+  const spareEntry = proxmox.guests.get(Number(spareBox.ref))!;
+  spareEntry.cpu = 0;
+  spareEntry.uptime = 3600;
+  spareEntry.memoryUsed = 900 * MIB;
 
-  proxmox.guests.set(7002, {
-    vmid: 7002,
+  proxmox.guests.set(7001, {
+    vmid: 7001,
     name: "bb-box-warm",
     pool: "bbbox",
     status: "running",
@@ -657,11 +683,11 @@ test("skips warm boxes, spares, other installs, out-of-range, templates and tran
       description: "bb-box warm linux\ninstall test\n",
       cores: "2",
       memory: "4096",
-      rootfs: "local-lvm:base-9000-disk-0/vm-7002-disk-0,size=8G",
+      rootfs: "local-lvm:base-9000-disk-0/vm-7001-disk-0,size=8G",
     },
   });
-  proxmox.guests.set(7003, {
-    vmid: 7003,
+  proxmox.guests.set(7002, {
+    vmid: 7002,
     name: "other-install",
     pool: "bbbox",
     status: "running",
@@ -671,8 +697,8 @@ test("skips warm boxes, spares, other installs, out-of-range, templates and tran
     memoryUsed: 900 * MIB,
     config: { tags: "bb-box;install.other;box.box_other;thread.thr_other" },
   });
-  proxmox.guests.set(6999, {
-    vmid: 6999,
+  proxmox.guests.set(7020, {
+    vmid: 7020,
     name: "out-of-range",
     pool: "bbbox",
     status: "running",
@@ -722,44 +748,215 @@ test("skips warm boxes, spares, other installs, out-of-range, templates and tran
     status: "stopped",
     template: false,
     cpu: 0,
-    uptime: 0,
-    memoryUsed: 0,
+    uptime: 3600,
+    memoryUsed: 900 * MIB,
     config: { tags: "bb-box;install.test;box.box_stopped;thread.thr_stopped" },
   });
 
-  for (const guest of [ownBox, spareBox]) {
+  const filteredHosts = [
+    spareBox.address!,
+    "10.200.0.11",
+    "10.200.0.12",
+    "10.200.0.30",
+    "10.200.0.14",
+    "10.200.0.15",
+    "10.200.0.16",
+    "10.200.0.17",
+  ];
+  const cgroups = filteredHosts.map((host) => writeFakeCgroup(ssh.dir, host, { inactiveFileBytes: 640 * MIB, shmemBytes: 0 }));
+
+  const beforeSweeps = readSshCommands(ssh.dir).length;
+
+  await backend.maintain(signal);
+  clock += 15 * MINUTE_MS;
+  await backend.maintain(signal);
+  clock += 15 * MINUTE_MS;
+  await backend.maintain(signal);
+
+  const afterSweeps = readSshCommands(ssh.dir).slice(beforeSweeps);
+  assert.deepEqual(afterSweeps, [], "no SSH command reaches any filtered guest across the idle window");
+  assert.deepEqual(errors, []);
+  assert.equal(await storage.get("idle-cache-sweeps"), undefined);
+  for (const cg of cgroups) {
+    assert.deepEqual(cg.readWrites(), []);
+  }
+});
+
+test("sends no SSH commands to guests in the in-memory reserved, imageBoxes or acquiring sets", async () => {
+  const signal = new AbortController().signal;
+
+  {
+    let clock = 1_800_000_000_000;
+    const baseStorage = new MemoryStorage();
+    let intercepted = false;
+    let backend!: ProxmoxLxcBackend;
+    let proxmox!: FakeProxmox;
+    let sshDir = "";
+    const wrappedStorage = new MemoryStorage();
+    wrappedStorage.get = baseStorage.get.bind(baseStorage);
+    wrappedStorage.delete = baseStorage.delete.bind(baseStorage);
+    wrappedStorage.set = async (key: string, value: unknown) => {
+      await baseStorage.set(key, value);
+      if (key === "next-vmid" && !intercepted) {
+        intercepted = true;
+        proxmox.guests.set(7000, {
+          vmid: 7000,
+          name: "reserved-box",
+          pool: "bbbox",
+          status: "running",
+          template: false,
+          cpu: 0,
+          uptime: 3600,
+          memoryUsed: 900 * MIB,
+          config: { tags: "bb-box;install.test;box.box_res;thread.thr_res" },
+        });
+        writeFakeCgroup(sshDir, "10.200.0.10", { inactiveFileBytes: 640 * MIB, shmemBytes: 0 });
+        const before = readSshCommands(sshDir).length;
+        await backend.maintain(signal);
+        clock += 15 * MINUTE_MS;
+        await backend.maintain(signal);
+        clock += 15 * MINUTE_MS;
+        await backend.maintain(signal);
+        assert.deepEqual(readSshCommands(sshDir).slice(before), [], "reserved VMID receives no SSH commands");
+        proxmox.guests.delete(7000);
+      }
+    };
+
+    const env = setup({}, wrappedStorage);
+    proxmox = env.proxmox;
+    sshDir = env.ssh.dir;
+    backend = env.make(undefined, { ...fakes(proxmox), now: () => clock });
+    await backend.acquire(identity("linux"), null, emptyHooks(), signal);
+    assert.equal(intercepted, true);
+  }
+
+  {
+    let clock = 1_800_000_000_000;
+    const { ssh, proxmox, make } = setup();
+    const backend = make(undefined, { ...fakes(proxmox), now: () => clock });
+    const { builds } = await backend.images.list(signal);
+    const imageBox = await backend.images.box(builds[0]!, "try", signal);
+    const imageVmid = Number(imageBox.ref);
+    const entry = proxmox.guests.get(imageVmid)!;
+    entry.config.tags = "bb-box;install.test";
+    entry.cpu = 0;
+    entry.uptime = 3600;
+    entry.memoryUsed = 900 * MIB;
+    writeFakeCgroup(ssh.dir, "10.200.0.10", { inactiveFileBytes: 640 * MIB, shmemBytes: 0 });
+
+    const before = readSshCommands(ssh.dir).length;
+    await backend.maintain(signal);
+    clock += 15 * MINUTE_MS;
+    await backend.maintain(signal);
+    clock += 15 * MINUTE_MS;
+    await backend.maintain(signal);
+    assert.deepEqual(readSshCommands(ssh.dir).slice(before), [], "in-memory imageBox receives no SSH commands even without image-box tag");
+  }
+
+  {
+    let clock = 1_800_000_000_000;
+    const { ssh, proxmox, make } = setup();
+    const backend = make(undefined, { ...fakes(proxmox), now: () => clock });
+    const id = identity("linux");
+    const guest = await backend.acquire(id, null, emptyHooks(), signal);
     const entry = proxmox.guests.get(Number(guest.ref))!;
     entry.cpu = 0;
     entry.uptime = 3600;
     entry.memoryUsed = 900 * MIB;
+    writeFakeCgroup(ssh.dir, guest.address!, { inactiveFileBytes: 640 * MIB, shmemBytes: 0 });
+
+    let checkedDuringAcquire = false;
+    await backend.acquire(
+      id,
+      guest,
+      {
+        ...emptyHooks(),
+        starting: async () => {
+          const before = readSshCommands(ssh.dir).length;
+          await backend.maintain(signal);
+          clock += 15 * MINUTE_MS;
+          await backend.maintain(signal);
+          clock += 15 * MINUTE_MS;
+          await backend.maintain(signal);
+          assert.deepEqual(readSshCommands(ssh.dir).slice(before), [], "guest being acquired receives no SSH commands");
+          checkedDuringAcquire = true;
+        },
+      },
+      signal,
+    );
+    assert.equal(checkedDuringAcquire, true);
+  }
+});
+
+test("resets idle tracker on hold() and relabel()", async () => {
+  const signal = new AbortController().signal;
+
+  {
+    let clock = 1_800_000_000_000;
+    const { ssh, proxmox, make } = setup();
+    const backend = make(undefined, { ...fakes(proxmox), now: () => clock });
+    const id = identity("linux");
+    const guest = await backend.acquire(id, null, emptyHooks(), signal);
+    const entry = proxmox.guests.get(Number(guest.ref))!;
+    entry.cpu = 0;
+    entry.uptime = 3600;
+    entry.memoryUsed = 900 * MIB;
+    const cg = writeFakeCgroup(ssh.dir, guest.address!, { inactiveFileBytes: 640 * MIB, shmemBytes: 0 });
+
+    await backend.maintain(signal);
+    await backend.hold(
+      { ref: guest.ref, host: guest.host, kinds: ["linux"], state: "free", reason: null, since: clock, generation: 0 },
+      id,
+      9000,
+      signal,
+    );
+
+    clock += 15 * MINUTE_MS;
+    await backend.maintain(signal);
+    assert.deepEqual(cg.readWrites(), [], "hold() reset the idle tracker so the next visit only re-samples");
+
+    clock += 15 * MINUTE_MS;
+    await backend.maintain(signal);
+    assert.equal(cg.readInactiveBytes(), IDLE_CACHE_FLOOR_BYTES, "reclaims after full idle window post-hold");
   }
 
-  const ownCgroup = writeFakeCgroup(ssh.dir, ownBox.address!, { inactiveFileBytes: 640 * MIB, shmemBytes: 0 });
-  const spareCgroup = writeFakeCgroup(ssh.dir, spareBox.address!, { inactiveFileBytes: 640 * MIB, shmemBytes: 0 });
-  const extraHosts = ["10.200.0.12", "10.200.0.13", "10.200.0.14", "10.200.0.15", "10.200.0.16", "10.200.0.17"];
-  const extraCgroups = extraHosts.map((host) => writeFakeCgroup(ssh.dir, host, { inactiveFileBytes: 640 * MIB, shmemBytes: 0 }));
+  {
+    let clock = 1_800_000_000_000;
+    const { ssh, proxmox, make } = setup();
+    const backend = make(undefined, { ...fakes(proxmox), now: () => clock });
+    const guest = await backend.acquire(identity("linux"), null, emptyHooks(), signal);
+    const entry = proxmox.guests.get(Number(guest.ref))!;
+    entry.cpu = 0;
+    entry.uptime = 3600;
+    entry.memoryUsed = 900 * MIB;
+    const cg = writeFakeCgroup(ssh.dir, guest.address!, { inactiveFileBytes: 640 * MIB, shmemBytes: 0 });
 
-  await backend.maintain(signal);
+    await backend.maintain(signal);
+    await backend.relabel(guest, identity("linux", "thr_claimed"), guest.address!, signal);
 
-  const relabelled = identity("linux", "thr_claimed");
-  await backend.relabel(ownBox, relabelled, ownBox.address!, signal);
+    clock += 15 * MINUTE_MS;
+    await backend.maintain(signal);
+    assert.deepEqual(cg.readWrites(), [], "relabel() reset the idle tracker so the next visit only re-samples");
 
-  clock += 15 * MINUTE_MS;
-  await backend.maintain(signal);
-  assert.deepEqual(ownCgroup.readWrites(), [], "relabel reset the idle tracker so the next visit only re-samples");
-  assert.deepEqual(spareCgroup.readWrites(), [], "spare box is never reclaimed");
-  for (const cg of extraCgroups) {
-    assert.deepEqual(cg.readWrites(), [], "filtered guests are never reclaimed");
+    clock += 15 * MINUTE_MS;
+    await backend.maintain(signal);
+    assert.equal(cg.readInactiveBytes(), IDLE_CACHE_FLOOR_BYTES, "reclaims after full idle window post-relabel");
   }
-
-  clock += 15 * MINUTE_MS;
-  await backend.maintain(signal);
-  assert.equal(ownCgroup.readInactiveBytes(), IDLE_CACHE_FLOOR_BYTES, "reclaims after full idle window post-relabel");
-  assert.deepEqual(spareCgroup.readWrites(), []);
 });
 
 test("enforces swap-growth stop and every initial and step memory.pressure rule plus refaults and EAGAIN", async () => {
   const cases: { readonly name: string; readonly cgroup: FakeCgroupOptions; readonly expectedWrites: number; readonly expectedInactiveMiB: number }[] = [
+    {
+      name: "initial some avg10",
+      cgroup: {
+        inactiveFileBytes: 768 * MIB,
+        shmemBytes: 0,
+        pressureSome: "some avg10=1.20 avg60=0.00 avg300=0.00 total=1000",
+        pressureFull: "full avg10=0.00 avg60=0.00 avg300=0.00 total=1000",
+      },
+      expectedWrites: 0,
+      expectedInactiveMiB: 768,
+    },
     {
       name: "initial some avg60",
       cgroup: {
@@ -799,6 +996,20 @@ test("enforces swap-growth stop and every initial and step memory.pressure rule 
         inactiveFileBytes: 768 * MIB,
         shmemBytes: 0,
         swapGrowAfterStep: 1,
+      },
+      expectedWrites: 2,
+      expectedInactiveMiB: 512,
+    },
+    {
+      name: "step some avg10",
+      cgroup: {
+        inactiveFileBytes: 768 * MIB,
+        shmemBytes: 0,
+        pressureAfterStep: {
+          step: 1,
+          some: "some avg10=1.20 avg60=0.00 avg300=0.00 total=1000",
+          full: "full avg10=0.00 avg60=0.00 avg300=0.00 total=1000",
+        },
       },
       expectedWrites: 2,
       expectedInactiveMiB: 512,
