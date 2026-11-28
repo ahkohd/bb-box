@@ -251,8 +251,15 @@ try {
     & $installers[$pin.name] $pin $file
     Remove-Item $file -Force -ErrorAction SilentlyContinue
   }
-  # The script that gives each clone its address at boot, as the setup has it now: the first logon put the first one in place.
-  if (Test-Path "$dir\boot.ps1") { Copy-Item "$dir\boot.ps1" 'C:\bb-box\boot.ps1' -Force; Step 'boot.ps1: as its source' }
+  if (Test-Path "$dir\boot.ps1") {
+    Copy-Item "$dir\boot.ps1" 'C:\bb-box\boot.ps1' -Force
+    $addressAction = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\bb-box\boot.ps1'
+    $addressTrigger = New-ScheduledTaskTrigger -AtStartup
+    $addressPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    $addressSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 4) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Priority 4
+    Register-ScheduledTask -TaskName 'bb-box address' -Action $addressAction -Trigger $addressTrigger -Principal $addressPrincipal -Settings $addressSettings -Force | Out-Null
+    Step 'boot.ps1: as its source, scheduled task at priority 4'
+  }
   # bb-box-stream.exe (060), built again when its source has changed, where the image has its encoder.
   $stream = "$tools\bb-box-stream"
   if (Test-Path "$stream\openh264.dll") {

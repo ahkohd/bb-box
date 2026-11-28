@@ -11,6 +11,10 @@ file copies run in PowerShell rather than SFTP.
 Extended by
 [046](046-windows-on-a-mac-runs-in-qemu-in-the-tart-backend.md): the same
 guest, built for arm64, runs in QEMU on a Mac, in the Tart backend.
+Extended by
+[110](110-windows-boot-address-runs-at-normal-priority-without-wmi-or-dad.md):
+the address task runs at normal priority, reads SMBIOS without WMI and
+disables IPv4 duplicate address detection.
 
 ## Context
 
@@ -65,8 +69,10 @@ It also found that:
   `relabel` renames the VM in Proxmox only.
 - **Address.** The backend picks a static address on the boxes' bridge,
   as for LXC, and writes it in the VM's SMBIOS serial (`base64=1`, since
-  Proxmox takes only base64 there). A startup task reads it early in
-  boot and sets it. No Cloudbase-Init.
+  Proxmox takes only base64 there). A normal-priority startup task reads
+  it early in boot without WMI and sets it with IPv4 duplicate address
+  detection disabled ([110](110-windows-boot-address-runs-at-normal-priority-without-wmi-or-dad.md)).
+  No Cloudbase-Init.
 - **Warm pool.** Warm VMs are hibernated (`qm suspend --todisk 1`), at the
   kind's default size. A hibernated VM holds no memory, but holds its
   memory size on disk. A claim resumes one, and the backend sets the

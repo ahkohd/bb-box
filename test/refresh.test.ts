@@ -1,6 +1,6 @@
 import "./check-test-machine.mjs";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -533,6 +533,7 @@ test("a Windows refresh runs refresh.ps1 in a box of the image, restarts it whil
   assert.equal(written.tools.pwsh, pins.tools.find((pin) => pin.name === "pwsh")!.version);
   assert.equal(written.tools["hardware-cursor"], "1", "refresh.ps1 turns on the hardware cursor, so the record lists it (060)");
   assert.equal(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\refresh.ps1")), readFileSync(join(SETUP, "windows", "refresh.ps1"), "utf8"));
+  assert.equal(new TextDecoder().decode(made.written.get("C:\\bb-box\\build\\boot.ps1")), readFileSync(join(SETUP, "proxmox-qemu", "answer", "bb-box", "boot.ps1"), "utf8"));
 });
 
 test("a Windows refresh waits for the box to stay up after a restart, through the restart Windows makes by itself to finish its updates", async () => {
@@ -772,4 +773,150 @@ test("Windows scripts install Codex's complete package and check codex-code-mode
   assert.match(refresh, /Install-Tool codex \$file 'bin\\codex\.exe'/);
   assert.match(refresh, /System32\\tar\.exe" -xzf \$file -C \$to/);
   assert.match(check, /Check 'Codex code-mode host beside codex'[\s\S]*codex-code-mode-host\.exe/);
+});
+
+test("windows-arm64-desktop refresh does not stage Proxmox boot.ps1", async () => {
+  const armCurrent = { ...WINDOWS, kind: "windows-arm64-desktop" };
+  const armWritten = new Map<string, Uint8Array>();
+  const armCommand: CommandTransport = {
+    probe: async () => true,
+    run: async (script) => {
+      if (script.includes("Start-Detached")) {
+        return { exitCode: 0, stdout: "pid=4321 start=133000000000000000\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+      }
+      if (script.includes("@alive")) {
+        return { exitCode: 0, stdout: "@alive=False\n@status=0\n@size=0\n@log\n\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+      }
+      return { exitCode: 0, stdout: "boot 1\n", stderr: "", timedOut: false, truncated: false, durationMs: 1 };
+    },
+    stream: async () => ({ exitCode: 0, timedOut: false }),
+    writeFile: async (path, bytes) => {
+      armWritten.set(path, bytes);
+    },
+    readFile: async () => new Uint8Array(),
+  };
+  const armImages: BackendImages = {
+    windows: true,
+    list: async () => ({ builds: [armCurrent], boxes: [] }),
+    box: async () => ({ ref: "7100", bootMs: 5_000, steps: [], command: armCommand }),
+    capture: async () => ({ ...armCurrent, ref: "7100", current: false }),
+    replace: async (build) => ({ ...build, ref: armCurrent.ref, current: true }),
+    remove: async () => undefined,
+  };
+  await refreshImage({
+    images: armImages,
+    current: armCurrent,
+    setup: SETUP,
+    bbUrl: "https://bb.example.com",
+    bbApp: APP,
+    signal: AbortSignal.timeout(60_000),
+    restart: { timeoutMs: 1_000, pollMs: 0, steadyMs: 0 },
+  });
+
+  assert.equal(armWritten.has("C:\\bb-box\\build\\boot.ps1"), false);
+});
+
+test("Tart's prepare-windows-image.sh strips Proxmox SMBIOS address steps from firstlogon.ps1 and replaces the address check in check.ps1", () => {
+  const tartScriptPath = join(SETUP, "tart", "prepare-windows-image.sh");
+  const tartScript = readFileSync(tartScriptPath, "utf8");
+  const startMarker = "# The first logon without the SMBIOS address";
+  const endMarker = "\njson() {";
+  const startIndex = tartScript.indexOf(startMarker);
+  const endIndex = tartScript.indexOf(endMarker, startIndex);
+  assert.ok(startIndex >= 0 && endIndex > startIndex, "prepare-windows-image.sh contains the Windows script strip block");
+
+  const root = tempDir("tart-windows-strip");
+  const answerDir = join(root, "answer");
+  const workDir = join(root, "work");
+  mkdirSync(join(answerDir, "bb-box"), { recursive: true });
+  mkdirSync(workDir, { recursive: true });
+
+  const stripSnippet = [
+    "set -euo pipefail",
+    'die() { echo "$*" >&2; exit 1; }',
+    tartScript.slice(startIndex, endIndex),
+  ].join("\n");
+
+  execFileSync("bash", ["-c", stripSnippet], {
+    env: {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      here: join(SETUP, "tart"),
+      template: join(SETUP, "proxmox-qemu"),
+      a: answerDir,
+      w: workDir,
+    },
+    encoding: "utf8",
+  });
+
+  const strippedFirstLogon = readFileSync(join(answerDir, "bb-box", "firstlogon.ps1"), "utf8");
+  assert.doesNotMatch(strippedFirstLogon, /boot\.ps1|bb-box address|dns\.txt|\$build\.(address|gateway|dns)|Win64/);
+  assert.match(strippedFirstLogon, /OpenSSH-ARM64-/);
+
+  const strippedCheck = readFileSync(join(workDir, "check.ps1"), "utf8");
+  const checkClock = readFileSync(join(SETUP, "tart", "windows", "check-clock.ps1"), "utf8").trim();
+  assert.ok(strippedCheck.includes(checkClock));
+  assert.doesNotMatch(strippedCheck, /address from the SMBIOS serial|boot\.log|dns\.txt|Get-NetIPInterface/);
+});
+
+test("boot.ps1 Get-SmbiosSerial parses SMBIOS tables under pwsh", (t) => {
+  const probe = spawnSync("pwsh", ["--version"], { encoding: "utf8" });
+  if (probe.error || probe.status !== 0) {
+    t.skip("pwsh is not installed");
+    return;
+  }
+
+  const smbiosHeader = [0, 3, 0, 0, 0, 0, 0, 0];
+  const ascii = (value: string) => [...Buffer.from(value, "ascii")];
+  const type0NoStrings = [0, 4, 0, 0, 0, 0];
+  const type1 = (serialIndex: number, strings: string[]) => [
+    1,
+    8,
+    1,
+    0,
+    1,
+    0,
+    0,
+    serialIndex,
+    ...(strings.length ? [...strings.flatMap((entry) => [...ascii(entry), 0]), 0] : [0, 0]),
+  ];
+
+  const cases = {
+    type1First: [...smbiosHeader, ...type1(2, ["QEMU", "192.0.2.150/24 192.0.2.1"])],
+    afterEmptyStructure: [...smbiosHeader, ...type0NoStrings, ...type1(1, ["192.0.2.151/24 192.0.2.1"])],
+    serialIndexZero: [...smbiosHeader, ...type1(0, ["QEMU"])],
+    truncatedStrings: [...smbiosHeader, 1, 8, 1, 0, 1, 0, 0, 1, ...ascii("192.0.2.152/24")],
+    truncatedHeader: [...smbiosHeader, 1, 20, 1, 0],
+  };
+
+  const bootScriptPath = join(SETUP, "proxmox-qemu", "answer", "bb-box", "boot.ps1");
+  const harness = [
+    "$ErrorActionPreference = 'Stop'",
+    "$tokens = $null; $errors = $null",
+    "$ast = [Management.Automation.Language.Parser]::ParseFile($env:BOOT_SCRIPT_PATH, [ref]$tokens, [ref]$errors)",
+    "if ($errors.Count) { throw ($errors -join '; ') }",
+    "$fn = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-SmbiosSerial' }, $true)",
+    "if (-not $fn) { throw 'Get-SmbiosSerial not found' }",
+    ". ([scriptblock]::Create($fn.Extent.Text))",
+    "$inputCases = $env:SMBIOS_CASES | ConvertFrom-Json",
+    "$out = [ordered]@{}",
+    "foreach ($prop in $inputCases.PSObject.Properties) {",
+    "  $bytes = [byte[]]@($prop.Value | ForEach-Object { [byte]$_ })",
+    "  $out[$prop.Name] = Get-SmbiosSerial $bytes",
+    "}",
+    "$out | ConvertTo-Json -Compress",
+  ].join("\n");
+
+  const output = execFileSync("pwsh", ["-NoProfile", "-Command", harness], {
+    env: { ...process.env, BOOT_SCRIPT_PATH: bootScriptPath, SMBIOS_CASES: JSON.stringify(cases) },
+    encoding: "utf8",
+  });
+  const parsed = JSON.parse(output.trim()) as Record<string, string | null>;
+
+  assert.deepEqual(parsed, {
+    type1First: "192.0.2.150/24 192.0.2.1",
+    afterEmptyStructure: "192.0.2.151/24 192.0.2.1",
+    serialIndexZero: null,
+    truncatedStrings: null,
+    truncatedHeader: null,
+  });
 });

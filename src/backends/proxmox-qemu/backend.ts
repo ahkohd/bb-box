@@ -140,7 +140,7 @@ import { displayReason, vmNameScript } from "../proxmox-lxc/backend.ts";
 import { SELKIES_DISPLAY, selkiesDisplay } from "../selkies.ts";
 import { pause, waitForPort, waitUntilAnswers, type PortCheck } from "../../transports/ready.ts";
 import { KeyFile, Ssh, SshTransport, publicKey } from "../../transports/ssh.ts";
-import { MIN_DESKTOP, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
+import { MIN_DESKTOP, TransportError, type Display, type DisplaySize, type GuestOs, type SshAccess } from "../../transports/types.ts";
 import { CUA_PIPE, WINDOWS_STREAM, WINDOWS_VIDEO, compileDisplay, desktopUpOrRepairExpiredPassword, extendC, PASSWORD_REPAIR_BY_HAND, repairExpiredPasswordAfterBoot, withDesktop, setClock, setMode, QEMU_KEY_DELAY_MS, windowsCharacterInput, windowsPointer, windowsTypesAsCharacter } from "../windows.ts";
 import type { OpenStream } from "../../core/selkies.ts";
 import { openRoute } from "../../transports/route.ts";
@@ -171,6 +171,24 @@ const TEMPLATE_POLL_MS = 250;
 const CUA_DRIVER: ComputerUse = { driver: "cua", version: "0.30.4", socket: CUA_PIPE };
 /** Where boot.ps1 logs how it set the box's address. */
 const BOOT_LOG = "C:\\bb-box\\boot.log";
+const CAPTURE_SHUTDOWN_POLL_MS = 2_000;
+const CAPTURE_SHUTDOWN_POLLS = 60;
+const WINDOWS_CAPTURE_RESET = [
+  "$ErrorActionPreference = 'Stop'",
+  "$adapter = Get-NetAdapter -Physical | Select-Object -First 1",
+  "if (-not $adapter) { throw 'no physical network adapter' }",
+  `Clear-Content ${BOOT_LOG} -ErrorAction SilentlyContinue`,
+  "$reset = @(",
+  "  \"`$ErrorActionPreference = 'Continue'\"",
+  "  'Start-Sleep -Seconds 5'",
+  "  \"Remove-NetRoute -InterfaceIndex $($adapter.ifIndex) -DestinationPrefix 0.0.0.0/0 -Confirm:`$false -ErrorAction SilentlyContinue\"",
+  "  \"Get-NetIPAddress -InterfaceIndex $($adapter.ifIndex) -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:`$false -ErrorAction SilentlyContinue\"",
+  "  \"Set-NetIPInterface -InterfaceIndex $($adapter.ifIndex) -AddressFamily IPv4 -Dhcp Enabled -ErrorAction SilentlyContinue\"",
+  "  \"Set-DnsClientServerAddress -InterfaceIndex $($adapter.ifIndex) -ResetServerAddresses -ErrorAction SilentlyContinue\"",
+  "  'shutdown.exe /s /t 0 /f'",
+  ") -join '; '",
+  "Start-Detached -Command $reset | Out-Null",
+].join("\n");
 /** Tags of a warm VM: filling while bb-box makes it, warm once it is ready. */
 const WARM = "warm";
 const FILLING = "filling";
@@ -2786,10 +2804,25 @@ export class ProxmoxQemuBackend implements Backend {
     if (!record) throw new Error(`Image box ${vmid} has no image record in ${at}, which the refresh writes.`);
     const source = await api.config(Number(from.ref), signal);
     const build = record.build.startsWith(BUILD) ? record.build : `${BUILD}${record.build}`;
-    // Clones start with an empty boot log, as build.sh leaves the template's. finalize.sh empties Linux' logs.
-    if (!linux) await box.command.run(`Clear-Content ${BOOT_LOG} -ErrorAction SilentlyContinue`, { timeoutMs: 15_000, signal });
-    await this.#forget(vmid);
-    await api.shutdown(vmid, 300, signal);
+    if (!linux) {
+      let resetFailed: string | null = null;
+      try {
+        const reset = await box.command.run(WINDOWS_CAPTURE_RESET, { timeoutMs: 30_000, signal });
+        if (reset.exitCode !== 0 && !reset.timedOut) {
+          resetFailed = reset.stderr.trim() || reset.stdout.trim() || `exit code ${reset.exitCode}`;
+        }
+      } catch (error) {
+        if (!(error instanceof TransportError && error.code === "unreachable")) throw error;
+      }
+      if (resetFailed !== null) {
+        throw new Error(`Image box ${vmid} could not clear its static address before capture: ${resetFailed}.`);
+      }
+      await this.#forget(vmid);
+      if (!(await this.#waitStopped(api, vmid, signal))) await api.shutdown(vmid, 240, signal);
+    } else {
+      await this.#forget(vmid);
+      await api.shutdown(vmid, 300, signal);
+    }
     if (!linux) await this.#freshVariables(api, vmid, signal);
     const sourceMemory = Number(source.memory);
     const balloon = sourceMemory > 0 && (from.kind === KIND.id || isLinuxVmKind(from.kind)) ? sourceMemory : undefined;
@@ -2812,6 +2845,16 @@ export class ProxmoxQemuBackend implements Backend {
     await api.configure(vmid, { protection: true }, signal);
     this.#imageBoxes.delete(vmid);
     return { ref: String(vmid), image, kind: from.kind, build, record, current: false };
+  }
+
+  async #waitStopped(api: Proxmox, vmid: number, signal: AbortSignal): Promise<boolean> {
+    const sleep = this.#options.sleep ?? pause;
+    for (let poll = 0; poll < CAPTURE_SHUTDOWN_POLLS; poll++) {
+      const status = await api.guestStatus("qemu", vmid, signal);
+      if (status?.status === "stopped") return true;
+      await sleep(CAPTURE_SHUTDOWN_POLL_MS, signal);
+    }
+    return (await api.guestStatus("qemu", vmid, signal))?.status === "stopped";
   }
 
   /**

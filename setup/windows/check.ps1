@@ -107,8 +107,18 @@ Check 'boot' {
   'up {0:N1} s; type 0x{1:X}; boot manager waited {2} ms; firmware order {3}' -f $up.TotalSeconds, $type, $waited, $order
 }
 Check 'address from the SMBIOS serial' {
-  $line = Get-Content C:\bb-box\boot.log -Tail 1
-  if ($line -notmatch ' address \d') { throw $line }; $line -replace '^\S+ ', ''
+  $line = (Get-Content C:\bb-box\boot.log -Tail 1) -join ''
+  if (-not $line -or $line -notmatch ' address (\d+\.\d+\.\d+\.\d+)') { throw $(if ($line) { $line } else { 'boot.log is empty' }) }
+  $ip = $Matches[1]
+  $addr = Get-NetIPAddress -AddressFamily IPv4 -IPAddress $ip -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $addr) { throw "$ip is not assigned on any adapter" }
+  if ($addr.AddressState -ne 'Preferred') { throw "$ip is $($addr.AddressState), not Preferred" }
+  $iface = Get-NetIPInterface -InterfaceIndex $addr.InterfaceIndex -AddressFamily IPv4 -ErrorAction Stop
+  if ($iface.Dhcp -ne 'Disabled') { throw "DHCP is $($iface.Dhcp) on adapter $($addr.InterfaceIndex)" }
+  $expectedDns = if (Test-Path C:\bb-box\dns.txt) { @((Get-Content C:\bb-box\dns.txt -Raw).Trim() -split '\s+' | Where-Object { $_ } | Select-Object -Unique) } else { @('1.1.1.1', '9.9.9.9') }
+  $actualDns = @((Get-DnsClientServerAddress -InterfaceIndex $addr.InterfaceIndex -AddressFamily IPv4 -ErrorAction Stop).ServerAddresses)
+  if (($actualDns -join ',') -ne ($expectedDns -join ',')) { throw "DNS is $($actualDns -join ' '), expected $($expectedDns -join ' ')" }
+  "$($line -replace '^\S+ ', ''); DHCP off, Preferred"
 }
 Check 'no BitLocker' { $s = (Get-BitLockerVolume -MountPoint C:).VolumeStatus; if ("$s" -ne 'FullyDecrypted') { throw "$s" }; "$s" }
 Check 'standard font smoothing' {

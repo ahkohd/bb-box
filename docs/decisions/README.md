@@ -46,7 +46,7 @@ which records still stand as written. The current design as a whole is in
 | [036](036-your-machines-are-boxes-you-own.md) | Your machines are boxes you own, kept as BB machines | Current |
 | [037](037-a-panel-keeps-a-boxs-desktop-and-terminal.md) | A panel keeps a box's desktop and terminal across tab switches | Current |
 | [038](038-the-agent-can-take-control-back.md) | The agent can take control back when asked | Current |
-| [039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md) | Windows desktops are clones of a template that is not generalized | Current |
+| [039](039-windows-desktops-are-clones-of-a-template-that-is-not-generalized.md) | Windows desktops are clones of a template that is not generalized | Current; extended by 046, 100 and 110 |
 | [040](040-linux-on-arm64-has-kinds-of-its-own.md) | Linux on arm64 has kinds of its own | Partly superseded by 041 |
 | [041](041-every-linux-box-has-docker.md) | Every Linux box has Docker, started on first use | Current, but for its check's rule, superseded by 098 |
 | [042](042-a-docker-host-can-be-a-bb-machine.md) | A Docker host can be a BB machine, reached through BB | Current |
@@ -59,7 +59,7 @@ which records still stand as written. The current design as a whole is in
 | [049](049-a-project-image-is-a-script-on-the-standard-image-and-images-are-rebuilt-when-stale.md) | A project's image is a script on the standard image, and images are rebuilt when stale | Current |
 | [050](050-a-box-can-join-the-operators-tailnet-as-an-ephemeral-node.md) | A box can join the operator's tailnet as an ephemeral node | Not built yet, but for TUN in Proxmox LXC templates |
 | [053](053-microsandbox-runs-light-linux-boxes-as-microvms.md) | microsandbox runs light Linux boxes as microVMs | Current, amended: an option beside Docker, not the default |
-| [054](054-windows-images-are-refreshed-in-a-box-of-the-current-build.md) | Windows images are refreshed in a box of the current build | Being built |
+| [054](054-windows-images-are-refreshed-in-a-box-of-the-current-build.md) | Windows images are refreshed in a box of the current build | Being built; extended by 110 |
 | [055](055-cloud-boxes-run-on-cloud-hosts-first-and-a-cloud-vm-per-box-later.md) | Cloud boxes run on cloud hosts first, and a cloud VM per box later | Not built yet |
 | [056](056-linux-x11-desktops-add-a-selkies-stream-and-rfb-stays-for-the-rest-tuned.md) | Linux X11 desktops add a Selkies stream, and RFB stays for the rest, tuned | Current, amended: video for every viewer, on by default |
 | [057](057-linux-boxes-can-be-proxmox-vms-for-their-own-kernel.md) | Linux boxes can be Proxmox VMs, for their own kernel | Proposed |
@@ -114,3 +114,4 @@ which records still stand as written. The current design as a whole is in
 | [107](107-proxmox-qemu-boxes-enable-the-virtio-balloon-device.md) | Proxmox QEMU boxes enable the virtio balloon device | Accepted; extends 106 |
 | [108](108-proxmox-lxc-boxes-get-swap-in-proportion-to-their-memory.md) | Proxmox LXC boxes get swap in proportion to their memory | Accepted |
 | [109](109-proxmox-lxc-reclaims-idle-page-cache-through-cgroup-memory-reclaim.md) | Proxmox LXC reclaims cold page cache from idle containers through cgroup memory.reclaim | Accepted |
+| [110](110-windows-boot-address-runs-at-normal-priority-without-wmi-or-dad.md) | Windows boot address runs at normal priority without WMI or DAD | Accepted; extends 039 and 054 |
