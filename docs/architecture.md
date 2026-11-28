@@ -929,6 +929,18 @@ the API client, ownership tags, TLS pin and settings. Set up by
   gate before cloning and use a wait of 0 s.
 - A warm box serves only a box with its cores, as a running container
   takes new cores only when Proxmox next rebalances CPUs.
+- During upkeep (`maintain()`), Proxmox LXC reclaims cold file-backed page
+  cache from idle containers so busy boxes keep their working set (decision
+  108). Controlled by `idle-cache-reclaim` (on by default) and
+  `idle-cache-minutes` (15 minutes by default), it reads running containers in
+  one Proxmox API call, tracks continuous low CPU (`cpu <= 5%`) and uptime,
+  and visits eligible containers one at a time over SSH. Inside the container
+  it checks `cpu.stat` and `memory.pressure` and writes `/sys/fs/cgroup/memory.reclaim`
+  with `swappiness=0` in 256 MiB steps down to a 128 MiB floor, stopping early
+  on rising pressure, file refaults or `EAGAIN`, and skipping containers on
+  older kernels without `swappiness=0` when swap headroom exists. Unanswered
+  containers are skipped quietly, freed bytes are logged, and `bb box doctor`
+  reports what the last sweeps freed under `proxmox.idle-cache`.
 
 ### Proxmox QEMU
 

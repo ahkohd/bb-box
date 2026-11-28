@@ -629,6 +629,8 @@ fields against the host; Save and turn on saves them. From a terminal,
 | `start-memory-wait-seconds` | `600` | seconds a start waits for free memory, low memory stalls and free swap before failing, checked every 10 s; 0 refuses at once |
 | `start-memory-pressure-percent` | `5` | highest memory stall percentage allowed before a start, from the newest completed minute's mean (`cf=AVERAGE`) of Proxmox VE 9's 10-second samples in RRD data (up to two minutes old, or three minutes with the 60 s cache); skipped on Proxmox VE 8 or when stale or missing; 0 turns the rule off |
 | `start-swap-free-mib` | `2048` | free swap, in MiB, required on the node before a start, capped at 5% of total swap; skipped when the node has no swap; 0 turns the rule off |
+| `idle-cache-reclaim` | `true` | reclaim cold page cache from idle containers during upkeep through cgroup `memory.reclaim` with `swappiness=0` |
+| `idle-cache-minutes` | `15` | minutes a running container must stay at low CPU before its cold page cache is reclaimed (1 to 1440) |
 
 - Linux templates serve `linux`, GPU desktop templates `linux-desktop`, CPU
   desktop templates `linux-desktop-cpu`, and Wayland desktop templates
@@ -689,6 +691,19 @@ fields against the host; Save and turn on saves them. From a terminal,
   order, so a large waiting VM does not block smaller containers that fit. A
   refill never starts while a thread's start is waiting. Warm and spare refills check the gate before cloning
   and give up at once with a wait of 0 s until the next top-up.
+- During upkeep, Proxmox LXC reclaims cold page cache from idle containers so
+  busy boxes keep their working set (decision 108). It is on by default
+  (`idle-cache-reclaim`) with a 15-minute idle threshold (`idle-cache-minutes`).
+  A container qualifies once its uptime and continuous low CPU (`cpu <= 5%` from
+  Proxmox, plus `cpu.stat` between sweeps) pass the idle window and it has no
+  memory pressure (`memory.pressure`). BB Box visits idle containers one at a
+  time over SSH and writes `/sys/fs/cgroup/memory.reclaim` with `swappiness=0`
+  in 256 MiB steps down to a 128 MiB floor, stopping early if memory pressure
+  or file refaults rise and leaving anonymous memory and `shmem` untouched.
+  On older kernels without `swappiness=0` (such as Proxmox VE 8), containers
+  with free swap headroom are skipped rather than swapped. Unanswered containers
+  are skipped quietly, freed bytes are logged, and `bb box doctor` reports what
+  the last sweeps freed.
 
 ## Check it worked
 

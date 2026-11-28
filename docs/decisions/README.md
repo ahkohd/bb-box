@@ -112,3 +112,4 @@ which records still stand as written. The current design as a whole is in
 | [105](105-the-live-agent-pointer-changes-shape-by-the-rules-recordings-use.md) | The live agent pointer changes shape by the rules recordings use | Accepted; extends 073 and 102 |
 | [106](106-proxmox-guests-wait-for-free-host-memory-and-heavy-vms-boot-one-at-a-time.md) | Proxmox guests wait for free host memory, and heavy VMs boot one at a time | Accepted |
 | [107](107-proxmox-qemu-boxes-enable-the-virtio-balloon-device.md) | Proxmox QEMU boxes enable the virtio balloon device | Accepted; extends 106 |
+| [108](108-proxmox-lxc-reclaims-idle-page-cache-through-cgroup-memory-reclaim.md) | Proxmox LXC reclaims cold page cache from idle containers through cgroup memory.reclaim | Accepted |

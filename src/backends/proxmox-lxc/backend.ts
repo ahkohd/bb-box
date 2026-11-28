@@ -239,6 +239,20 @@ import {
   type LxcFlavourConfig,
   type LxcTemplate,
 } from "./config.ts";
+import {
+  IDLE_CACHE_SSH_TIMEOUT_MS,
+  IDLE_CACHE_SWEEPS_KEY,
+  IDLE_CACHE_SWEEP_EVERY_MS,
+  IdleCacheTracker,
+  appendIdleCacheSweep,
+  freedBytesOf,
+  idleCacheDoctorCheck,
+  parseReclaimOutput,
+  reclaimIdleCacheScript,
+  reclaimLogLine,
+  type IdleCacheSweepSummary,
+  type ObservedIdleGuest,
+} from "./idle-cache.ts";
 import { restartWayvnc, wayvncAttached, waylandPointer } from "../wayvnc.ts";
 import { storedKeyPair } from "../ssh-key.ts";
 import { PRODUCT } from "../../brand.ts";
@@ -425,6 +439,7 @@ const GPU_MIGRATION: Check = ["proxmox.gpu-migration", "Markers on GPU guests"];
 const GPU_CARDS: Check = ["proxmox.gpu-cards", "Boxes on their cards"];
 const SNAPSHOTS: Check = ["proxmox.snapshots", "Snapshots"];
 const IMAGE_STORAGE: Check = ["proxmox.image-storage", "Image storage"];
+const IDLE_CACHE: Check = ["proxmox.idle-cache", "Idle page cache"];
 const SSH_KEY_CHECK: Check = ["ssh.key", "SSH key"];
 
 function powerOf(status: string): PowerState {
@@ -1062,8 +1077,12 @@ export class ProxmoxLxcBackend implements Backend {
   readonly #upkeep = new Upkeep(async (signal) => {
     await this.#readGpus(signal).catch((error) => signal.aborted || this.#context.logError("read GPU memory", error));
     await this.#checkCards(signal).catch((error) => signal.aborted || this.#context.logError("check boxes' cards", error));
+    await this.#reclaimIdleCache(signal).catch((error) => signal.aborted || this.#context.logError("reclaim idle page cache", error));
     await this.#topUp(signal);
   });
+  readonly #idleCache = new IdleCacheTracker();
+  #idleCacheSweptAt = 0;
+  #idleCacheSweeps: IdleCacheSweepSummary[] | undefined;
   /** Image boxes (049) from before their clone until their capture or removal, which no sweep counts. */
   readonly #imageBoxes = new Set<number>();
   readonly #sightings = new Map<number, { readonly words: string; readonly at: number }>();
@@ -3297,7 +3316,7 @@ export class ProxmoxLxcBackend implements Backend {
       `template.${template.vmid}`,
       `${FLAVOUR_NAMES[flavour]} template ${template.vmid}${template.gpu ? ` (GPU ${template.gpu})` : ""}`,
     ];
-    const later = [NODE, MEMORY, POOL, ...templates.map(templateCheck), BRIDGE, VMIDS, SNAPSHOTS, IMAGE_STORAGE];
+    const later = [NODE, MEMORY, POOL, ...templates.map(templateCheck), BRIDGE, VMIDS, SNAPSHOTS, IMAGE_STORAGE, IDLE_CACHE];
     const templateStorages: GuestDiskStorage[] = [];
     const templateUsages: ProxmoxTemplateUsage[] = [];
     const storageReadings = new Map<string, ProxmoxStorageReading | Error>();
@@ -3652,6 +3671,15 @@ export class ProxmoxLxcBackend implements Backend {
           activeVmids,
           candidateConfigs,
           now,
+        }),
+      );
+      checks.push(
+        idleCacheDoctorCheck({
+          enabled: this.#config.idleCache.reclaim,
+          idleMinutes: this.#config.idleCache.idleMinutes,
+          sweeps: await this.#idleCacheHistory(),
+          now,
+          ago,
         }),
       );
     }
@@ -5538,6 +5566,138 @@ export class ProxmoxLxcBackend implements Backend {
       this.#mismatches.set(guest.vmid, { card: claim.card, seen: reading.seen, at: this.#now() });
     }
     for (const vmid of this.#mismatches.keys()) if (!checked.has(vmid)) this.#mismatches.delete(vmid);
+  }
+
+  async #idleCacheHistory(): Promise<readonly IdleCacheSweepSummary[]> {
+    if (this.#idleCacheSweeps === undefined) {
+      const stored = await this.#context.storage.get<IdleCacheSweepSummary[]>(IDLE_CACHE_SWEEPS_KEY).catch(() => null);
+      this.#idleCacheSweeps = Array.isArray(stored) ? stored : [];
+    }
+    return this.#idleCacheSweeps;
+  }
+
+  async #recordIdleCacheSweep(summary: IdleCacheSweepSummary): Promise<void> {
+    const next = appendIdleCacheSweep(await this.#idleCacheHistory(), summary);
+    this.#idleCacheSweeps = next;
+    await this.#context.storage
+      .set(IDLE_CACHE_SWEEPS_KEY, next)
+      .catch((error: unknown) => this.#context.logError("record idle page cache sweep", error));
+  }
+
+  async #reclaimIdleCache(signal: AbortSignal): Promise<void> {
+    if (!this.#config.idleCache.reclaim) return;
+
+    const now = this.#now();
+    if (this.#idleCacheSweptAt > 0 && now - this.#idleCacheSweptAt < IDLE_CACHE_SWEEP_EVERY_MS) return;
+    this.#idleCacheSweptAt = now;
+
+    const api = await this.client();
+    const guests = await api.nodeGuests("lxc", signal);
+    const acquiringVmids = new Set([...this.#acquiring.values()].flatMap((entry) => (entry.vmid === null ? [] : [entry.vmid])));
+
+    const observed: ObservedIdleGuest[] = [];
+    for (const guest of guests) {
+      if (
+        guest.type !== "lxc" ||
+        guest.template ||
+        guest.status !== "running" ||
+        !this.#inRange(guest.vmid) ||
+        installFromTags(guest.tags) !== this.#context.installId ||
+        this.#filling.has(guest.vmid) ||
+        this.#reserved.has(guest.vmid) ||
+        this.#imageBoxes.has(guest.vmid) ||
+        acquiringVmids.has(guest.vmid) ||
+        guest.tags.includes(FILLING) ||
+        guest.tags.includes(IMAGE_BOX) ||
+        guest.tags.includes(RETIRED)
+      ) {
+        continue;
+      }
+
+      observed.push({
+        vmid: guest.vmid,
+        name: guest.name || `CT ${guest.vmid}`,
+        uptimeSeconds: guest.uptime,
+        cpu: guest.cpu,
+        cpus: guest.cpus ?? 1,
+        memoryUsedBytes: guest.memoryUsedBytes,
+      });
+    }
+
+    const idleMs = this.#config.idleCache.idleMinutes * 60_000;
+    const { candidates, skippedBusy: busyAtNode, skippedFloor: floorAtNode } = this.#idleCache.observe(observed, now, idleMs);
+
+    let reclaimedBoxes = 0;
+    let freedBytes = 0;
+    let skippedBusy = busyAtNode;
+    let skippedPressure = 0;
+    let skippedFloor = floorAtNode;
+    let skippedUnsupported = 0;
+    let unanswered = 0;
+
+    for (const candidate of candidates) {
+      signal.throwIfAborted();
+      const script = reclaimIdleCacheScript({
+        prevCpuUsageUsec: candidate.prevCpuUsageUsec,
+        maxCpuDeltaUsec: candidate.maxCpuDeltaUsec,
+      });
+
+      let stdout = "";
+      try {
+        const command = await this.#command(candidate.vmid);
+        const run = await command.run(script, {
+          timeoutMs: IDLE_CACHE_SSH_TIMEOUT_MS,
+          signal,
+          maxOutputBytes: 16_384,
+        });
+        if (run.timedOut || run.exitCode !== 0) {
+          unanswered++;
+          continue;
+        }
+        stdout = run.stdout;
+      } catch (error) {
+        if (signal.aborted) throw error;
+        unanswered++;
+        continue;
+      }
+
+      const parsed = parseReclaimOutput(stdout);
+      if (!parsed) {
+        unanswered++;
+        continue;
+      }
+
+      this.#idleCache.recordOutcome(candidate.vmid, this.#now(), parsed);
+
+      if (parsed.status === "reclaimed") {
+        const freed = freedBytesOf(parsed);
+        if (freed > 0) {
+          reclaimedBoxes++;
+          freedBytes += freed;
+          this.#context.log?.(reclaimLogLine(candidate.vmid, candidate.name, parsed));
+        }
+      } else if (parsed.status === "busy_cpu") {
+        skippedBusy++;
+      } else if (parsed.status === "pressure") {
+        skippedPressure++;
+      } else if (parsed.status === "below_floor") {
+        skippedFloor++;
+      } else if (parsed.status === "unsupported" || parsed.status === "no_swappiness0") {
+        skippedUnsupported++;
+      }
+    }
+
+    await this.#recordIdleCacheSweep({
+      at: this.#now(),
+      checked: candidates.length,
+      reclaimedBoxes,
+      freedBytes,
+      skippedBusy,
+      skippedPressure,
+      skippedFloor,
+      skippedUnsupported,
+      unanswered,
+    });
   }
 
   #cardsNamed(notes: string, ids: Iterable<string>): Set<string> {

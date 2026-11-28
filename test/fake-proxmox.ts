@@ -20,6 +20,7 @@ export interface FakeGuest {
   /** A started container's root filesystem size in bytes, as df gave it then. */
   filesystem?: number;
   memoryUsed?: number;
+  cpu?: number;
   balloonTargetMiB?: number;
   startedAt?: number;
   uptime?: number;
@@ -144,6 +145,7 @@ export class FakeProxmox {
       name: guest.name,
       status: guest.status,
       uptime: this.#guestUptime(guest),
+      cpu: guest.status === "running" ? (guest.cpu ?? 0) : 0,
       mem: guest.status === "running" ? (guest.memoryUsed ?? 0) : 0,
       ...(guest.template ? { template: 1 } : {}),
       // As Proxmox gives them: unset cores are the node's, and memory and disk are in bytes.
@@ -634,6 +636,7 @@ export class FakeProxmox {
           name: guest.name,
           status: guest.status,
           uptime: this.#guestUptime(guest),
+          cpu: guest.status === "running" ? (guest.cpu ?? 0) : 0,
           mem,
           ...(guest.status === "running" && guest.balloonTargetMiB !== undefined ? { balloon: guest.balloonTargetMiB * 2 ** 20 } : {}),
           ...(guest.config.lock ? { lock: guest.config.lock } : {}),

@@ -116,6 +116,11 @@ export const CHECKS = {
     from: ["proxmox-lxc", "proxmox-qemu"],
     what: `${PRODUCT}'s templates and their storage use, any leftover build containers or VMs older than a build takes, and free space on each template's storage against what a build needs.`,
   },
+  "proxmox.idle-cache": {
+    name: "Idle page cache",
+    from: ["proxmox-lxc"],
+    what: `Whether ${PRODUCT} reclaims cold page cache from idle containers during upkeep, the idle threshold, and what the last sweeps freed.`,
+  },
   "proxmox.gpu-helper": {
     name: "Host's GPU helper",
     from: ["proxmox-lxc"],

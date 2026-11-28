@@ -51,6 +51,12 @@ import {
   START_MEMORY_WAIT_DEFAULT_S,
   START_SWAP_FREE_DEFAULT_MIB,
 } from "../proxmox/start-gate.ts";
+import {
+  IDLE_CACHE_MINUTES_DEFAULT,
+  IDLE_CACHE_MINUTES_MAX,
+  IDLE_CACHE_MINUTES_MIN,
+  IDLE_CACHE_RECLAIM_DEFAULT,
+} from "./idle-cache.ts";
 import { BOXES_PER_CARD, DESKTOP_GPU_MIB, MOST_GPU_MEMORY_MIB, SERVER_GPU_MIB } from "../card-check.ts";
 import {
   fieldLabel,
@@ -111,6 +117,10 @@ export interface LxcConfig {
     readonly memoryPressurePercent: number;
     readonly swapFreeMiB: number;
   };
+  readonly idleCache: {
+    readonly reclaim: boolean;
+    readonly idleMinutes: number;
+  };
 }
 
 export const LXC_DEFAULTS = {
@@ -129,6 +139,8 @@ export const LXC_DEFAULTS = {
   startMemoryWaitSeconds: START_MEMORY_WAIT_DEFAULT_S,
   startMemoryPressurePercent: START_MEMORY_PRESSURE_PERCENT_DEFAULT,
   startSwapFreeMiB: START_SWAP_FREE_DEFAULT_MIB,
+  idleCacheReclaim: IDLE_CACHE_RECLAIM_DEFAULT,
+  idleCacheMinutes: IDLE_CACHE_MINUTES_DEFAULT,
   boxesPerCard: BOXES_PER_CARD,
   gpuMemoryMiB: SERVER_GPU_MIB,
 } as const;
@@ -163,6 +175,8 @@ export const LXC_KEYS = {
   startMemoryWaitSeconds: "proxmox-lxc-start-memory-wait-seconds",
   startMemoryPressurePercent: "proxmox-lxc-start-memory-pressure-percent",
   startSwapFreeMiB: "proxmox-lxc-start-swap-free-mib",
+  idleCacheReclaim: "proxmox-lxc-idle-cache-reclaim",
+  idleCacheMinutes: "proxmox-lxc-idle-cache-minutes",
 } as const;
 
 /** The cores, memory and disk keys are those replaced by box sizes (028). */
@@ -436,6 +450,20 @@ const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = {
       "Free swap, in MiB, required on the node before a guest starts, capped at 5% of total swap. Skipped when the node has no swap. 0 turns the rule off.",
     default: LXC_DEFAULTS.startSwapFreeMiB,
   },
+  [LXC_KEYS.idleCacheReclaim]: {
+    type: "boolean",
+    label: "Proxmox LXC: reclaim idle page cache",
+    description:
+      "Reclaim cold page cache from idle containers so busy boxes keep theirs. Runs during upkeep through cgroup memory.reclaim with swappiness=0, keeping 128 MiB warm and leaving busy boxes, anonymous memory and shmem untouched.",
+    default: LXC_DEFAULTS.idleCacheReclaim,
+  },
+  [LXC_KEYS.idleCacheMinutes]: {
+    type: "number",
+    label: "Proxmox LXC: idle time before cache reclaim (minutes)",
+    description:
+      "Minutes a running container must stay at low CPU before its cold page cache is reclaimed. Default is 15 minutes; accepts 1 to 1440.",
+    default: LXC_DEFAULTS.idleCacheMinutes,
+  },
 };
 
 const REPLACED: Readonly<Record<string, string>> = { [LXC_KEYS.perGpu]: LXC_KEYS.boxesPerCard };
@@ -474,6 +502,8 @@ const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
   [LXC_KEYS.startMemoryWaitSeconds, "advanced"],
   [LXC_KEYS.startMemoryPressurePercent, "advanced"],
   [LXC_KEYS.startSwapFreeMiB, "advanced"],
+  [LXC_KEYS.idleCacheReclaim, "advanced"],
+  [LXC_KEYS.idleCacheMinutes, "advanced"],
 ];
 
 export const LXC_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(
@@ -648,6 +678,19 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
   const reserve = checkReserve(values, LXC_KEYS, LXC_DEFAULTS, problem);
   const startGate = checkStartMemoryGate(values, LXC_KEYS, LXC_DEFAULTS, problem);
 
+  const rawIdleCacheReclaim = values[LXC_KEYS.idleCacheReclaim];
+  if (isSet(rawIdleCacheReclaim) && typeof rawIdleCacheReclaim !== "boolean") {
+    problem(LXC_KEYS.idleCacheReclaim, "Reclaim idle page cache is true or false.");
+  }
+  const idleCacheReclaim: boolean = typeof rawIdleCacheReclaim === "boolean" ? rawIdleCacheReclaim : LXC_DEFAULTS.idleCacheReclaim;
+  const idleCacheMinutes = number(values, LXC_KEYS.idleCacheMinutes, LXC_DEFAULTS.idleCacheMinutes);
+  if (!wholeInRange(idleCacheMinutes, IDLE_CACHE_MINUTES_MIN, IDLE_CACHE_MINUTES_MAX)) {
+    problem(
+      LXC_KEYS.idleCacheMinutes,
+      `Use a whole number of minutes from ${IDLE_CACHE_MINUTES_MIN} to ${IDLE_CACHE_MINUTES_MAX} for the idle time before cache reclaim.`,
+    );
+  }
+
   if (problems.length) return { config: null, problems };
   return {
     problems,
@@ -661,6 +704,10 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
       ssh,
       reserve,
       startGate,
+      idleCache: {
+        reclaim: idleCacheReclaim,
+        idleMinutes: idleCacheMinutes,
+      },
     },
   };
 }
