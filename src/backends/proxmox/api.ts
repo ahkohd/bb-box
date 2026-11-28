@@ -168,6 +168,7 @@ export interface GuestStatus {
   readonly status: "running" | "stopped" | string;
   readonly name?: string;
   readonly uptime?: number;
+  readonly cpu?: number;
   /** The guest's lock, such as "suspended" for a VM hibernated to disk. */
   readonly lock?: string;
   readonly diskUsed?: number;
@@ -181,6 +182,8 @@ export interface NodeGuest {
   readonly status: string;
   readonly template: boolean;
   readonly uptime: number;
+  readonly cpu: number | null;
+  readonly cpus: number | null;
   readonly memoryMaxBytes: number;
   readonly memoryUsedBytes: number;
   readonly tags: readonly string[];
@@ -536,6 +539,7 @@ export class Proxmox {
         status: String(data?.status ?? "unknown"),
         name: typeof data?.name === "string" ? data.name : undefined,
         uptime: typeof data?.uptime === "number" ? data.uptime : undefined,
+        cpu: typeof data?.cpu === "number" && Number.isFinite(data.cpu) && data.cpu >= 0 ? data.cpu : undefined,
         lock: typeof data?.lock === "string" ? data.lock : undefined,
         diskUsed: typeof data?.disk === "number" && data.disk > 0 ? data.disk : undefined,
         memoryUsed: typeof data?.mem === "number" && data.mem >= 0 ? data.mem : undefined,
@@ -571,6 +575,8 @@ export class Proxmox {
         status: String(entry.status ?? "unknown"),
         template: entry.template === 1 || entry.template === true,
         uptime: typeof entry.uptime === "number" && Number.isFinite(entry.uptime) && entry.uptime >= 0 ? entry.uptime : 0,
+        cpu: finiteNonNegative(entry.cpu),
+        cpus: finiteNonNegative(entry.cpus),
         memoryMaxBytes: typeof entry.maxmem === "number" && Number.isFinite(entry.maxmem) && entry.maxmem > 0 ? entry.maxmem : 0,
         memoryUsedBytes: typeof entry.mem === "number" && Number.isFinite(entry.mem) && entry.mem >= 0 ? entry.mem : 0,
         tags: parseTags(entry.tags),

@@ -113,4 +113,5 @@ which records still stand as written. The current design as a whole is in
 | [106](106-proxmox-guests-wait-for-free-host-memory-and-heavy-vms-boot-one-at-a-time.md) | Proxmox guests wait for free host memory, and heavy VMs boot one at a time | Accepted |
 | [107](107-proxmox-qemu-boxes-enable-the-virtio-balloon-device.md) | Proxmox QEMU boxes enable the virtio balloon device | Accepted; extends 106 |
 | [108](108-proxmox-lxc-boxes-get-swap-in-proportion-to-their-memory.md) | Proxmox LXC boxes get swap in proportion to their memory | Accepted |
+| [109](109-proxmox-lxc-reclaims-idle-page-cache-through-cgroup-memory-reclaim.md) | Proxmox LXC reclaims cold page cache from idle containers through cgroup memory.reclaim | Accepted |
 | [110](110-windows-boot-address-runs-at-normal-priority-without-wmi-or-dad.md) | Windows boot address runs at normal priority without WMI or DAD | Accepted; extends 039 and 054 |
