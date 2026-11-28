@@ -869,3 +869,39 @@ test("071 unit 9, Astra re-review 3: a start that fails after the grant, in word
   bridge.seenInBox.delete(fox.vmid);
   assert.equal(bridge.proxmox.guests.get(fox.vmid)!.status, "stopped");
 });
+
+test("GPU resize updates swap with memory and puts swap back when the GPU helper refuses", async () => {
+  const bridge = new ClaimsBridge();
+  withUserspace(bridge);
+  let watched: number | null = null;
+  const backend = bridge.backend({
+    onSleep: () => {
+      if (watched === null || !bridge.gpuTags(watched).some((tag) => tag.startsWith("gpu.shared."))) return;
+      bridge.proxmox.guests.get(watched)!.config.lock = "backup";
+      watched = null;
+    },
+  });
+
+  const fox = await server(bridge, backend, "none", "amber-fox");
+  assert.equal(bridge.proxmox.guests.get(fox.vmid)?.config.memory, "4096");
+  assert.equal(bridge.proxmox.guests.get(fox.vmid)?.config.swap, "1024");
+
+  const resized = await backend.resize(fox.guest, "linux", { cores: 4, memoryMiB: 16384, diskGiB: null, gpu: "shared" }, { restart: true }, signal());
+  assert.equal(resized.claim?.part, "shared");
+  assert.equal(bridge.proxmox.guests.get(fox.vmid)?.config.memory, "16384");
+  assert.equal(bridge.proxmox.guests.get(fox.vmid)?.config.swap, "4096");
+
+  const owl = await server(bridge, backend, "none", "swift-owl");
+  assert.equal(bridge.proxmox.guests.get(owl.vmid)?.config.memory, "4096");
+  assert.equal(bridge.proxmox.guests.get(owl.vmid)?.config.swap, "1024");
+
+  watched = owl.vmid;
+  await assert.rejects(
+    backend.resize(owl.guest, "linux", { cores: 4, memoryMiB: 16384, diskGiB: null, gpu: "shared" }, { restart: true }, signal()),
+    (error: unknown) => error instanceof ResizeLeftStopped,
+  );
+  delete bridge.proxmox.guests.get(owl.vmid)!.config.lock;
+
+  assert.equal(bridge.proxmox.guests.get(owl.vmid)?.config.memory, "4096");
+  assert.equal(bridge.proxmox.guests.get(owl.vmid)?.config.swap, "1024");
+});

@@ -629,6 +629,7 @@ fields against the host; Save and turn on saves them. From a terminal,
 | `start-memory-wait-seconds` | `600` | seconds a start waits for free memory, low memory stalls and free swap before failing, checked every 10 s; 0 refuses at once |
 | `start-memory-pressure-percent` | `5` | highest memory stall percentage allowed before a start, from the newest completed minute's mean (`cf=AVERAGE`) of Proxmox VE 9's 10-second samples in RRD data (up to two minutes old, or three minutes with the 60 s cache); skipped on Proxmox VE 8 or when stale or missing; 0 turns the rule off |
 | `start-swap-free-mib` | `2048` | free swap, in MiB, required on the node before a start, capped at 5% of total swap; skipped when the node has no swap; 0 turns the rule off |
+| `swap-percent` | `25` | swap given to each container as a percentage of its memory, from 0 to 100, with a floor of 512 MiB; 0 gives 512 MiB |
 | `idle-cache-reclaim` | `true` | reclaim cold page cache from idle containers during upkeep through cgroup `memory.reclaim` with `swappiness=0` |
 | `idle-cache-minutes` | `15` | minutes a running container must stay at low CPU before its cold page cache is reclaimed (1 to 1440) |
 
@@ -691,6 +692,22 @@ fields against the host; Save and turn on saves them. From a terminal,
   order, so a large waiting VM does not block smaller containers that fit. A
   refill never starts while a thread's start is waiting. Warm and spare refills check the gate before cloning
   and give up at once with a wait of 0 s until the next top-up.
+- Each container's swap is set to `swap-percent` of its memory (25% by default,
+  range 0 to 100), with a floor of 512 MiB (decision 108). Setting
+  `swap-percent` to 0 gives every container 512 MiB. BB Box sets `swap`
+  alongside `memory` when making boxes, filling or claiming warm boxes, filling
+  spares, resizing (live, so swap follows memory), forking, restoring and
+  starting image boxes. A resize that changes a container's size or a restore
+  also updates its swap to the current `swap-percent`. Per-container swap caps
+  can add up to more than the host's swap (for example, five 64 GiB containers
+  at 25% can swap up to 80 GiB on a host with 72 GiB of swap). Full swap does
+  not drain by itself: once free swap falls below `start-swap-free-mib`, new
+  starts and warm refills wait and then fail until a box is stopped or
+  released, and containers that cannot swap fall back to file cache reclaim. On
+  hosts whose swap is zram, swapped pages consume host RAM outside any
+  container's memory limit, which only the start gate's free-memory rule sees.
+  Lower `swap-percent` when the containers' swap caps add up to more than the
+  host's swap.
 - During upkeep, after warm pool top-ups, Proxmox LXC reclaims cold inactive
   page cache from idle containers so busy boxes keep their working set (decision
   109). It is on by default (`idle-cache-reclaim`) with a 15-minute idle

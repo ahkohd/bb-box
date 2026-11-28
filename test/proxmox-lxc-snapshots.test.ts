@@ -1096,3 +1096,63 @@ for (const refusal of [
     assert.ok(error instanceof SnapshotFailed);
   });
 }
+
+test("forks and restores keep swap proportional to container memory even from 512 MiB snapshots", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks } = tasks();
+
+  state.proxmox.guests.get(vmid)!.config.memory = "8192";
+  state.proxmox.guests.get(vmid)!.config.swap = "512";
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+
+  const forked = identity();
+  const forkedWithSize: BoxIdentity = { ...forked, size: { cores: 4, memoryMiB: 16384, diskGiB: null, gpu: "none" } };
+  const forkGuest = await state.backend.forkSnapshot({ id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, forkedWithSize, null, quiet, new AbortController().signal);
+
+  assert.equal(state.proxmox.guests.get(Number(forkGuest.ref))?.config.memory, "16384");
+  assert.equal(state.proxmox.guests.get(Number(forkGuest.ref))?.config.swap, "4096");
+
+  await state.backend.powerOff(guest);
+  await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks);
+
+  assert.equal(state.proxmox.guests.get(vmid)?.config.memory, "8192");
+  assert.equal(state.proxmox.guests.get(vmid)?.config.swap, "2048");
+
+  state.proxmox.guests.get(vmid)!.config.swap = "512";
+  const guestIdentity = await state.backend.guestIdentity(guest);
+  const copy = await state.backend.copyGuest(guest, { box: id.boxId, snapshot: "snbbbbbbbbbbbb", kept: null }, { ...tasks().hooks, claimed: async () => {} });
+  await state.backend.disarmCopy(copy);
+  await state.backend.templateCopy(copy);
+  const adopted = await state.backend.adoptCopy(copy, id, guestIdentity, { ...tasks().hooks, claimed: async () => {} });
+
+  assert.equal(state.proxmox.guests.get(Number(adopted.ref))?.config.memory, "8192");
+  assert.equal(state.proxmox.guests.get(Number(adopted.ref))?.config.swap, "2048");
+});
+
+test("a failed swap write after a completed rollback is logged without failing the restore", async () => {
+  const state = world();
+  const { guest, vmid, id } = await box(state);
+  const { hooks } = tasks();
+
+  state.proxmox.guests.get(vmid)!.config.memory = "8192";
+  state.proxmox.guests.get(vmid)!.config.swap = "512";
+  await state.backend.snapshot(guest, { id: SNAPSHOT, box: id.boxId, memory: false }, hooks);
+  state.proxmox.guests.get(vmid)!.config.memory = "4096";
+  await state.backend.powerOff(guest);
+
+  let swapWrites = 0;
+  state.proxmox.intercept = (call) => {
+    if (call.method === "PUT" && call.path.endsWith(`/lxc/${vmid}/config`) && call.params.swap !== undefined) {
+      swapWrites++;
+      return failedAnswer(500, "CT is locked (backup)");
+    }
+    return undefined;
+  };
+
+  await state.backend.rollbackSnapshot(guest, { id: SNAPSHOT, ref: snapshotName(SNAPSHOT), guest }, hooks);
+
+  assert.equal(swapWrites, 1);
+  assert.equal(state.proxmox.guests.get(vmid)?.config.memory, "8192");
+  assert.equal(state.proxmox.guests.get(vmid)?.config.swap, "512");
+});
