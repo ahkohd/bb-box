@@ -69,6 +69,15 @@ import {
 export const LXC_FLAVOURS = ["linux", "desktop", "desktop-cpu", "desktop-wayland-cpu"] as const;
 export type LxcFlavour = (typeof LXC_FLAVOURS)[number];
 
+export const LXC_SWAP_PERCENT_DEFAULT = 25;
+export const LXC_SWAP_PERCENT_MIN = 0;
+export const LXC_SWAP_PERCENT_MAX = 100;
+export const LXC_SWAP_FLOOR_MIB = 512;
+
+export function swapForMemoryMiB(memoryMiB: number, swapPercent: number): number {
+  return Math.max(LXC_SWAP_FLOOR_MIB, Math.round((memoryMiB * swapPercent) / 100));
+}
+
 /** The kinds each flavour's clones serve. */
 export const FLAVOUR_KINDS: Readonly<Record<LxcFlavour, readonly string[]>> = {
   linux: ["linux"],
@@ -111,6 +120,7 @@ export interface LxcConfig {
     readonly memoryPressurePercent: number;
     readonly swapFreeMiB: number;
   };
+  readonly swapPercent: number;
 }
 
 export const LXC_DEFAULTS = {
@@ -129,6 +139,7 @@ export const LXC_DEFAULTS = {
   startMemoryWaitSeconds: START_MEMORY_WAIT_DEFAULT_S,
   startMemoryPressurePercent: START_MEMORY_PRESSURE_PERCENT_DEFAULT,
   startSwapFreeMiB: START_SWAP_FREE_DEFAULT_MIB,
+  swapPercent: LXC_SWAP_PERCENT_DEFAULT,
   boxesPerCard: BOXES_PER_CARD,
   gpuMemoryMiB: SERVER_GPU_MIB,
 } as const;
@@ -163,6 +174,7 @@ export const LXC_KEYS = {
   startMemoryWaitSeconds: "proxmox-lxc-start-memory-wait-seconds",
   startMemoryPressurePercent: "proxmox-lxc-start-memory-pressure-percent",
   startSwapFreeMiB: "proxmox-lxc-start-swap-free-mib",
+  swapPercent: "proxmox-lxc-swap-percent",
 } as const;
 
 /** The cores, memory and disk keys are those replaced by box sizes (028). */
@@ -436,6 +448,13 @@ const LATER_SETTINGS: Readonly<Record<string, PluginSettingDescriptor>> = {
       "Free swap, in MiB, required on the node before a guest starts, capped at 5% of total swap. Skipped when the node has no swap. 0 turns the rule off.",
     default: LXC_DEFAULTS.startSwapFreeMiB,
   },
+  [LXC_KEYS.swapPercent]: {
+    type: "number",
+    label: "Proxmox LXC: container swap (%)",
+    description:
+      "Swap given to each container as a percentage of its memory, from 0 to 100, with a floor of 512 MiB. 0 gives every container 512 MiB. Containers made with another value pick it up on a resize that changes their size, a restore or when made again.",
+    default: LXC_DEFAULTS.swapPercent,
+  },
 };
 
 const REPLACED: Readonly<Record<string, string>> = { [LXC_KEYS.perGpu]: LXC_KEYS.boxesPerCard };
@@ -474,6 +493,7 @@ const FIELD_GROUPS: readonly (readonly [string, FieldGroup])[] = [
   [LXC_KEYS.startMemoryWaitSeconds, "advanced"],
   [LXC_KEYS.startMemoryPressurePercent, "advanced"],
   [LXC_KEYS.startSwapFreeMiB, "advanced"],
+  [LXC_KEYS.swapPercent, "advanced"],
 ];
 
 export const LXC_FIELDS: Readonly<Record<string, FieldDescriptor>> = Object.fromEntries(
@@ -647,6 +667,13 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
 
   const reserve = checkReserve(values, LXC_KEYS, LXC_DEFAULTS, problem);
   const startGate = checkStartMemoryGate(values, LXC_KEYS, LXC_DEFAULTS, problem);
+  const swapPercent = number(values, LXC_KEYS.swapPercent, LXC_DEFAULTS.swapPercent);
+  if (!wholeInRange(swapPercent, LXC_SWAP_PERCENT_MIN, LXC_SWAP_PERCENT_MAX)) {
+    problem(
+      LXC_KEYS.swapPercent,
+      `Use a whole percentage from ${LXC_SWAP_PERCENT_MIN} to ${LXC_SWAP_PERCENT_MAX} for the container swap percentage.`,
+    );
+  }
 
   if (problems.length) return { config: null, problems };
   return {
@@ -661,6 +688,7 @@ function checkLxc(values: Readonly<Record<string, unknown>>): { config: LxcConfi
       ssh,
       reserve,
       startGate,
+      swapPercent,
     },
   };
 }

@@ -2292,6 +2292,7 @@ same guest.
 | `stamp` | a box's guest from before install IDs | its install label | the guest names the box and no install |
 | `copyGuest`, `labelCopy`, `labelKept`, `disarmCopy`, `templateCopy`, `deleteCopy`, `retireGuest` | held copies and earlier guests | network, labels, keep date, template, delete | held copy or earlier guest of the box, of this install |
 | `adoptCopy`, `forkSnapshot`, `armAdopted`, `#armWithClaim` | the guest a restore or fork has just made | network, size, labels, marker; `armAdopted` its marker and its start at boot, once its claim is granted and its lines checked | its description names this install and the box it is made for |
+| `rollbackSnapshot` | a box's guest after a rollback | swap in proportion to memory ([108](108-proxmox-lxc-boxes-get-swap-in-proportion-to-their-memory.md)) | box |
 | `releaseGpuClaim`, `armReturned`, `#armWithClaim` | a swap's old guest | its `gpu.none` marker with its start at boot off, in one write; its claim and start at boot back, once granted and checked, when the swap fails | box |
 | `#writesFor`, `disarm`, `armFork`, `dropHalfMadeFork`, `forkByFullClone` | a fork's guest, in the fork module | network, delete | as above, or box |
 | `#fill`, `#topUp`, `#retireForWhole` | warm guests | cores and memory, labels and marker, start, retirement, delete; `#retireForWhole` retires and deletes this install's warm desktops on a card it keeps whole for a box (unit 8) | the warm guest of this install that bb-box made, by its description |
