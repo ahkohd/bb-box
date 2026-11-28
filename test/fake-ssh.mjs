@@ -139,7 +139,13 @@ if (existsSync(join(root, "windows", host))) {
 }
 const powershell = join(root, "powershell", host);
 const shell = existsSync(powershell) ? [powershell] : ["-c"];
-const [binary, ...argv] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), "sh", ...shell, script.replaceAll("/run/bb-box/", `${run}/`).replaceAll("/sys/module/nvidia/", `${home}/sys/module/nvidia/`).replaceAll("/usr/share/bb-box/nvidia-version", `${home}/usr/share/bb-box/nvidia-version`)];
+const cgroupDir = join(home, "sys", "fs", "cgroup");
+const rewrittenScript = script
+  .replaceAll("/run/bb-box/", `${run}/`)
+  .replaceAll("/sys/module/nvidia/", `${home}/sys/module/nvidia/`)
+  .replaceAll("/usr/share/bb-box/nvidia-version", `${home}/usr/share/bb-box/nvidia-version`);
+const finalScript = existsSync(cgroupDir) ? rewrittenScript.replaceAll("/sys/fs/cgroup", cgroupDir) : rewrittenScript;
+const [binary, ...argv] = [...JSON.parse(process.env.FAKE_GROUP ?? "[]"), "sh", ...shell, finalScript];
 const boxPath = pathWithHostStubs(root, [join(home, "bin"), join(root, "bin")], process.env.PATH);
 const refusal = refusalForRealHostTools("The fake ssh", boxPath);
 if (refusal) {

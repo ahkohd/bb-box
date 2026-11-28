@@ -1855,6 +1855,7 @@ test("doctor passes on a complete setup and shows the generated public key", asy
       ["proxmox.vmids", "VMID range", "ok"],
       ["proxmox.snapshots", "Snapshots", "ok"],
       ["proxmox.image-storage", "Image storage", "ok"],
+      ["proxmox.idle-cache", "Idle page cache", "ok"],
       ["ssh.key", "SSH key", "ok"],
     ],
   );

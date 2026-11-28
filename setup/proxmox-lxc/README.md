@@ -630,6 +630,8 @@ fields against the host; Save and turn on saves them. From a terminal,
 | `start-memory-pressure-percent` | `5` | highest memory stall percentage allowed before a start, from the newest completed minute's mean (`cf=AVERAGE`) of Proxmox VE 9's 10-second samples in RRD data (up to two minutes old, or three minutes with the 60 s cache); skipped on Proxmox VE 8 or when stale or missing; 0 turns the rule off |
 | `start-swap-free-mib` | `2048` | free swap, in MiB, required on the node before a start, capped at 5% of total swap; skipped when the node has no swap; 0 turns the rule off |
 | `swap-percent` | `25` | swap given to each container as a percentage of its memory, from 0 to 100, with a floor of 512 MiB; 0 gives 512 MiB |
+| `idle-cache-reclaim` | `true` | reclaim cold page cache from idle containers during upkeep through cgroup `memory.reclaim` with `swappiness=0` |
+| `idle-cache-minutes` | `15` | minutes a running container must stay at low CPU before its cold page cache is reclaimed (1 to 1440) |
 
 - Linux templates serve `linux`, GPU desktop templates `linux-desktop`, CPU
   desktop templates `linux-desktop-cpu`, and Wayland desktop templates
@@ -706,6 +708,26 @@ fields against the host; Save and turn on saves them. From a terminal,
   container's memory limit, which only the start gate's free-memory rule sees.
   Lower `swap-percent` when the containers' swap caps add up to more than the
   host's swap.
+- During upkeep, after warm pool top-ups, Proxmox LXC reclaims cold inactive
+  page cache from idle containers so busy boxes keep their working set (decision
+  109). It is on by default (`idle-cache-reclaim`) with a 15-minute idle
+  threshold (`idle-cache-minutes`). Warm boxes and spares are never reclaimed,
+  and claiming or relabelling a box resets its idle tracker. Proxmox's `cpu`
+  reading acts as a cheap pre-filter while `/sys/fs/cgroup/cpu.stat` `usage_usec`
+  inside the container is the authority: the first visit records a baseline
+  without reclaiming, and a later visit reclaims only if CPU usage across the
+  whole idle window is at most 5% and `memory.pressure` is low. Each sweep
+  visits at most 3 containers and runs for at most 20 s, one container at a time,
+  using direct SSH and `timeout(1)` inside the box. It writes
+  `/sys/fs/cgroup/memory.reclaim` with `swappiness=0` for at most
+  `min(inactive_file, file - shmem - 128 MiB)` in 256 MiB steps, stopping early
+  if `active_file` falls by more than 32 MiB or 10% from the start of the run,
+  swap grows, memory pressure or file refaults rise, or
+  `EAGAIN` occurs. Older kernels without `swappiness=0` (such as Proxmox VE 8)
+  are always skipped rather than risked. Unanswered containers get the same
+  cooldown and are skipped quietly, freed bytes are logged, sweeps that checked
+  at least one container are kept, and `bb box doctor` reports them (warning
+  when every checked container failed `sudo`, was unsupported or did not answer).
 
 ## Check it worked
 
